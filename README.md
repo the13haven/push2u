@@ -1,165 +1,275 @@
 # push2u
 
-**push2u** (*push events to user*) — a small, zero-dependency JVM library for the
-[Web Push protocol](https://datatracker.ietf.org/doc/html/rfc8030): VAPID-authenticated,
-end-to-end-encrypted delivery of push messages to browsers (FCM / Mozilla autopush / Apple
-Web Push) from a Java application server.
+**push2u** (*push events to user*) is a Java library for sending
+[Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
+It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, retries,
+and Spring Boot auto-configuration.
 
-> **Status: design / early development.** No published artifact yet. The architecture and the
-> public API shape live in [`DESIGN.md`](DESIGN.md); the phased build plan is in
-> [`ROADMAP.md`](ROADMAP.md). The snippets below describe the *target* API.
+The project is under active development. The current version is `0.1.0-SNAPSHOT` and artifacts
+are not published to Maven Central yet. The implemented architecture is described in
+[`DESIGN.md`](DESIGN.md).
 
-## Why
+## Features
 
-The de-facto JVM library, `nl.martijndwars:web-push`, is effectively unmaintained and drags an
-EOL transitive surface (Apache HttpClient 4.x, jose4j, BouncyCastle) that leaks through its
-public API. On a modern JDK every primitive Web Push needs — ECDH, HKDF, AES-128-GCM, ES256 —
-is a platform primitive, so push2u's `core` ships with **zero runtime dependencies** (baseline
-Java 21). See [`DESIGN.md`](DESIGN.md) §1, §4.
+- Java 21 baseline.
+- Zero runtime dependencies in `push2u-core`.
+- RFC 8291 / RFC 8188 payload encryption using JDK cryptography.
+- RFC 8292 VAPID authentication with a local EC key or an external signer.
+- JDK `HttpClient` transport, with a small transport SPI for replacements.
+- Normal result handling for expired subscriptions (`404` / `410`).
+- Configurable retry policy for `429` and `5xx` responses.
+- Optional HashiCorp Vault Transit signer.
+- Optional Spring Boot 4 auto-configuration and health indicator.
 
-## Usage
+## Modules
 
-`push2u-core` is batteries-included — one dependency sends out of the box with a local, in-JVM
-VAPID signer and the JDK `HttpClient`:
+| Module | Purpose |
+|---|---|
+| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport |
+| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit |
+| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator |
+| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer |
 
-```java
-// Default: VAPID key pair held locally, signed in-JVM (LocalEcVapidSigner),
-// transport = java.net.http.HttpClient.
-PushSender pusher = PushSender.builder()
-    .vapid(VapidKeys.fromBase64(publicKey, privateKey))
-    .contact("mailto:ops@example.com")
-    .build();
+## Requirements
 
-PushResult result = pusher.send(
-    subscription,                                  // endpoint + p256dh + auth (from the browser)
-    PushMessage.of(payloadBytes).ttl(Duration.ofHours(1)));
+- Java 21 or newer at runtime.
+- A VAPID P-256 key pair, or an implementation of `VapidSigner`.
+- An HTTPS Web Push subscription endpoint containing the browser-provided `p256dh` and `auth`
+  values.
 
-if (result.isSubscriptionExpired()) {              // 404 / 410 — a normal result, not an exception
-    subscriptionStore.delete(subscription);        // your store; push2u is stateless
+The build uses a JDK 26 toolchain with `--release 21`. Run it with the included Gradle wrapper.
+
+## Using the snapshot from source
+
+Until artifacts are published, include this repository as a Gradle composite build:
+
+```kotlin
+// settings.gradle.kts
+includeBuild("../push2u")
+```
+
+Then use the normal module coordinate:
+
+```kotlin
+dependencies {
+    implementation("io.push2u:push2u-core:0.1.0-SNAPSHOT")
 }
 ```
 
-Override only what you need — absence is the default (no `withDefaultX()` ceremony):
+## Core usage
+
+### Create a subscription
+
+The browser supplies the endpoint, `p256dh`, and `auth` values. JSON parsing remains an
+application responsibility:
 
 ```java
-PushSender pusher = PushSender.builder()
-    .vapid(VapidKeys.fromBase64(publicKey, privateKey))
+Subscription subscription = Subscription.fromBase64(
+    browserSubscription.endpoint(),
+    browserSubscription.p256dh(),
+    browserSubscription.auth());
+```
+
+Use only the HTTPS endpoint returned by the browser. Treat the complete endpoint as a secret:
+Web Push endpoints are capability URLs.
+
+### Create a sender with a local VAPID key
+
+`VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
+scalar, both encoded as unpadded base64url:
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey))
     .contact("mailto:ops@example.com")
-    .httpClient(new OkHttpPushClient(myOkHttpClient))   // default: JdkHttpPushClient
     .build();
 ```
 
-For a key that must never touch the JVM heap, pass a remote signer instead of `.vapid(...)` —
-Vault Transit signs internally, so the signer holds no private key and supplies the VAPID public
-key itself; the key-pair argument is omitted:
+The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI.
+
+### Send a message
 
 ```java
-PushSender pusher = PushSender.builder()
-    // Fetched mode: the signer reads its own public key from transit/keys/<key> at startup, so the
-    // Vault Transit key is the single source of truth (token needs `sign` + `read` on the key).
-    .signer(new VaultTransitVapidSigner(
-        URI.create("https://vault.example:8200"), "transit", "vapid", vaultToken))  // push2u-signer-vault
+PushMessage message = PushMessage.builder(payloadBytes)
+    .ttl(Duration.ofHours(1))
+    .urgency(Urgency.NORMAL)
+    .topic("account_update")
+    .build();
+
+PushResult result = sender.send(subscription, message);
+
+if (result.delivered()) {
+    // The push service accepted the message.
+} else if (result.isSubscriptionExpired()) {
+    subscriptionStore.delete(subscription);
+} else {
+    log.warn("Push rejected: HTTP {}, attempts={}",
+        result.statusCode(), result.attempts());
+}
+```
+
+`404` and `410` are returned as `SUBSCRIPTION_EXPIRED`, not as exceptions. Transport failures
+throw `PushDeliveryException`; cryptographic failures throw `PushCryptoException`.
+
+`sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The current
+implementation runs the blocking send pipeline on the common `ForkJoinPool`.
+
+### Retry behavior
+
+The default policy makes up to three attempts. Backoff starts at one second, doubles after each
+retry, and is capped at 60 seconds. A numeric `Retry-After` value on a `429` response overrides
+the computed delay.
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
     .contact("mailto:ops@example.com")
+    .retryPolicy(new RetryPolicy(
+        5,
+        Duration.ofMillis(500),
+        Duration.ofSeconds(30)))
     .build();
 ```
 
-The signer has two modes. **Fetched** (above) keeps the Transit key the single source of truth —
-the published public key can never drift from the signing key, even across rotation. **Explicit**
-passes the public key yourself, so the token needs only `sign` (no `read`) — useful for a strict
-sign-only token or an air-gapped public key:
+Use `RetryPolicy.none()` to disable retries.
+
+### Custom HTTP transport
+
+Implement `PushHttpClient` when the application needs a different HTTP stack, proxy policy, or
+observability integration:
 
 ```java
-// publicKeyBytes = the 65-byte X9.62 uncompressed P-256 point
-.signer(new VaultTransitVapidSigner(
-    URI.create("https://vault.example:8200"), "transit", "vapid", vaultToken, publicKeyBytes))
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .httpClient(customPushHttpClient)
+    .build();
 ```
 
-The Spring Boot starter (`push2u-signer-vault-spring-boot-starter`) exposes the same choice via
-`push2u.signer.vault.*`: set `address` / `key-name` / `token` for fetched mode, and add
-`public-key` (base64url) to switch to explicit mode.
+The default is `JdkHttpPushClient`, with a 30-second per-request timeout.
 
-Exactly one key source is required (`.vapid(...)` **or** `.signer(...)`); `.contact(...)` is
-required in both. `build()` throws if that invariant is violated.
+### JCE provider selection
 
-## BouncyCastle (FIPS / constrained JVMs)
+By default, cryptographic primitives resolve through the JVM provider chain. Passing a provider
+binds the encryption primitives and, when the local signer is used, EC key import and ES256
+signing to that provider:
 
-push2u's `core` uses the JDK's built-in JCE providers (SunEC / SunJCE) for every crypto
-primitive, which is what you want almost everywhere. Two situations call for BouncyCastle
-instead:
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .cryptoProvider(provider)
+    .build();
+```
 
-- **FIPS compliance** — the stock Sun providers are not FIPS-validated; a regulated deployment
-  must route crypto through a validated module (`bc-fips`).
-- **A stripped / `jlink`-ed runtime** that omits `jdk.crypto.ec` (no SunEC) — the regular
-  `bcprov` provider supplies the missing EC algorithms.
+The provider must support EC key generation/import, ECDH, HMAC-SHA-256, AES-GCM, and
+`SHA256withECDSAinP1363Format` when `LocalEcVapidSigner` is used. An external `VapidSigner`
+controls its own signing provider.
 
-push2u deliberately ships **no** `push2u-crypto-bc` module: `java.security.Provider` is already
-the JDK's provider abstraction, so there is nothing to wrap. You wire BouncyCastle one of two
-ways.
+## Spring Boot
 
-### Variant A — BouncyCastle installed globally (whole JVM)
-
-When BC is registered as a JVM-wide JCE provider, **push2u needs no special configuration** —
-every `getInstance(...)` resolves through the standard provider search order and lands on BC.
-This is the usual shape of a strict FIPS deployment (BC-FIPS installed, often as the only
-provider, the JVM run in approved-only mode).
-
-Add the dependency and register the provider (via the `java.security` file, or programmatically
-before any crypto runs):
+Add the core starter:
 
 ```kotlin
-// build.gradle.kts of YOUR application (not push2u)
-runtimeOnly("org.bouncycastle:bc-fips:<version>")
+dependencies {
+    implementation("io.push2u:push2u-spring-boot-starter:0.1.0-SNAPSHOT")
+}
 ```
 
-```java
-// e.g. in a @PostConstruct / main() before the first PushSender.send(...)
-Security.addProvider(new org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider());
+Configure a local VAPID signer:
+
+```yaml
+push2u:
+  vapid:
+    public-key: "${VAPID_PUBLIC_KEY}"
+    private-key: "${VAPID_PRIVATE_KEY}"
+    subject: "mailto:ops@example.com"
+  jwt-expiry: 12h
+  default-ttl: 24h
+  retry:
+    max-attempts: 3
+    initial-backoff: 1s
+    max-backoff: 60s
 ```
 
-Then build the `PushSender` normally — **do not** call `.cryptoProvider(...)`; the global provider
-already backs every primitive:
+The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
+same types take precedence. When Spring Boot health support is present, the starter also exposes
+a health indicator that verifies the configured signer can produce a 64-byte ES256 signature.
 
-```java
-PushSender pusher = PushSender.builder()
-    .vapid(VapidKeys.fromBase64(publicKey, privateKey))
-    .contact("mailto:ops@example.com")
-    .build();
+## Vault Transit signer
+
+For plain Java, add the signer module:
+
+```kotlin
+dependencies {
+    implementation("io.push2u:push2u-signer-vault:0.1.0-SNAPSHOT")
+}
 ```
 
-### Variant B — BouncyCastle for push2u only (scoped)
+For Spring Boot, combine the core starter with the Vault signer starter. The latter already
+brings in `push2u-signer-vault`:
 
-When you want BC for push2u's content-encryption primitives but leave the rest of the JVM on
-the stock providers, pass a provider *instance* to the builder. push2u threads it through every
-`getInstance(algo, provider)` the encryptor makes — ECDH key agreement, the HKDF HMAC,
-AES-128-GCM, and EC key import:
-
-```java
-java.security.Provider bc = new org.bouncycastle.jce.provider.BouncyCastleProvider();
-// note: no Security.addProvider(...) — the provider stays scoped to push2u
-
-PushSender pusher = PushSender.builder()
-    .vapid(VapidKeys.fromBase64(publicKey, privateKey))
-    .contact("mailto:ops@example.com")
-    .cryptoProvider(bc)
-    .build();
+```kotlin
+dependencies {
+    implementation("io.push2u:push2u-spring-boot-starter:0.1.0-SNAPSHOT")
+    implementation("io.push2u:push2u-signer-vault-spring-boot-starter:0.1.0-SNAPSHOT")
+}
 ```
 
-The provider you pass must supply `KeyAgreement(ECDH)`, `KeyFactory(EC)`, `Mac(HmacSHA256)`,
-and `Cipher(AES/GCM/NoPadding)`.
+### Fetched public key
 
-### Caveat — the VAPID signature
+The recommended configuration reads the public key from Vault at startup. The token needs
+`update` on `transit/sign/<key>` and `read` on `transit/keys/<key>`:
 
-The default local signer (`LocalEcVapidSigner`) produces the ES256 JWT signature via the
-JDK-specific algorithm name `SHA256withECDSAinP1363Format`, which yields the raw `r‖s` JOSE
-needs. Not every third-party provider registers that exact name (BouncyCastle, for one, spells
-its raw-format ECDSA differently), so `.cryptoProvider(...)` (Variant B) is scoped to the
-*content-encryption* primitives, **not** the signature. If your compliance boundary must also
-cover the **signature**, use **Variant A** (a globally installed provider — the JVM resolves
-whatever signing names BC registers) or, better, a remote `VapidSigner`
-(`push2u-signer-vault` / KMS / HSM), where the FIPS-validated signing happens off-box and
-push2u never computes the signature locally.
+```yaml
+push2u:
+  signer:
+    vault:
+      address: "https://vault.example:8200"
+      mount: "transit"
+      key-name: "vapid"
+      token: "${VAULT_TOKEN}"
+```
+
+### Explicit public key
+
+Set `public-key` when the token must be sign-only:
+
+```yaml
+push2u:
+  signer:
+    vault:
+      address: "https://vault.example:8200"
+      mount: "transit"
+      key-name: "vapid"
+      token: "${VAULT_TOKEN}"
+      public-key: "${VAPID_PUBLIC_KEY}"
+```
+
+The Vault key must be `ecdsa-p256`. The signer caches the advertised public key at construction,
+while Vault signs with its active key version. Do not rotate that Transit key independently of
+the application and browser subscriptions: VAPID subscriptions are bound to the public key used
+when they were created.
+
+## Protocol limits
+
+- Only `aes128gcm` content coding is supported.
+- Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes.
+- `PushMessage.topic`, when set, must contain at most 32 URL- and filename-safe base64
+  characters as required by RFC 8030.
+- VAPID JWT expiry must be greater than zero and no more than 24 hours.
+- The library is stateless; subscription persistence and deletion belong to the application.
+
+## Build and test
+
+```bash
+./gradlew clean build
+./gradlew javadoc
+```
+
+The test suite includes RFC 5869, RFC 8291, and RFC 8292 vectors, sender/retry tests, Spring Boot
+auto-configuration tests, and a Vault Transit integration contract.
 
 ## License
 
-To be decided at extraction ([`DESIGN.md`](DESIGN.md) ADR-008) — most likely MIT, to match the
-library it replaces. Not yet published.
+Licensed under the [Apache License 2.0](LICENSE).

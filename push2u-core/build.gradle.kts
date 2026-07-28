@@ -1,13 +1,12 @@
 plugins {
     `java-library`
     // Hosts the shared VapidSigner conformance contract (src/testFixtures), extended by the local
-    // signer's test here and by each remote signer module (ROADMAP phase 3).
+    // signer's test here and by remote signer modules.
     `java-test-fixtures`
 }
 
 description = "push2u-core — zero-dependency JVM Web Push library core " +
-    "(RFC 8030/8291/8292/8188). In-repo during the hagit PoC; extracted + published post-PoC " +
-    "(DESIGN.md ADR-009)."
+    "(RFC 8030/8291/8292/8188)."
 
 // Toolchain (JDK 26) + `--release 21` + JUnit Platform are configured for every module in the
 // composite-build root build.gradle.kts. Zero runtime dependencies (ADR-002): the only declared
