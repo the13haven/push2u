@@ -18,7 +18,7 @@ import javax.crypto.Mac;
  * through here, optionally bound to a specific {@link Provider}.
  *
  * <p>This is the seam DESIGN.md §5.1 describes — instead of a bespoke {@code CryptoProvider}
- * SPI, the optional {@code .cryptoProvider(java.security.Provider)} builder option (Phase 2)
+ * SPI, the optional {@code .cryptoProvider(java.security.Provider)} builder option
  * constructs {@link #using(Provider)}; everything else uses {@link #platform()} and resolves
  * against the JVM's default provider chain. Centralizing it here means the encryptor and the
  * local signer never touch a provider directly — they ask this helper.

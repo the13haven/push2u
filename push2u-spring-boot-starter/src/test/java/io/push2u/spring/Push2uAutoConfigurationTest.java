@@ -23,7 +23,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * {@link Push2uAutoConfiguration} wires a {@link PushSender} (and an Actuator health indicator)
- * from {@code push2u.*} properties, backing off to application-supplied beans (ROADMAP phase 5).
+ * from {@code push2u.*} properties, backing off to application-supplied beans.
  */
 class Push2uAutoConfigurationTest {
 

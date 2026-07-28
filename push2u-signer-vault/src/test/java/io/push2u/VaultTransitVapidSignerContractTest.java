@@ -21,7 +21,7 @@ import org.testcontainers.vault.VaultContainer;
 /**
  * {@link VaultTransitVapidSigner} satisfies the shared {@link VapidSignerContractTest} against a
  * real Vault (dev mode) with a Transit {@code ecdsa-p256} key — proving local and Vault signers
- * produce interchangeable, verifiable ES256 signatures (ROADMAP phase 3).
+ * produce interchangeable, verifiable ES256 signatures.
  *
  * <p>The contract here runs against the <b>fetched</b> mode (no explicit public key — the signer
  * reads it from {@code transit/keys/<key>} itself). Since the contract verifies each signature

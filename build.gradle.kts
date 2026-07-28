@@ -1,8 +1,7 @@
 import org.gradle.api.plugins.JavaPluginExtension
 
-// Shared configuration for every push2u module. Lives here (the composite build root) rather than
-// being duplicated per module — and deliberately separate from hagit, so the library is built the
-// same way standalone as it will be once extracted (DESIGN.md ADR-009).
+// Shared configuration for every push2u module. It lives at the standalone build root rather than
+// being duplicated per module.
 
 allprojects {
     group = "io.push2u"
@@ -44,9 +43,8 @@ subprojects {
 }
 
 // Catalog handles for the BouncyCastle security pin, referenced by the constraints below.
-// (Jackson is not pinned: Spring Boot's managed jackson-2-bom governs it to 2.21.4 on every
-// push2u classpath, and — unlike the hagit root build — no node-gradle plugin pulls a stale
-// jackson onto the buildscript classpath here.)
+// Jackson is not pinned: Spring Boot's managed jackson-2-bom governs it on the starter
+// classpaths.
 val bouncycastleBcpkix = libs.bouncycastle.bcpkix
 val bouncycastleBcprov = libs.bouncycastle.bcprov
 
@@ -55,10 +53,10 @@ subprojects {
     plugins.withType<JavaPlugin> {
 
         // Pin BouncyCastle via dependency CONSTRAINTS rather than resolutionStrategy.force. Same
-        // resolved classpath (1.84), but constraints report only the resolved version in the GitHub
+        // resolved classpath (1.85), but constraints report only the resolved version in the GitHub
         // dependency graph, whereas `force` also leaked the original requested version (1.82) as a
-        // phantom node that Dependabot alerted on. Mirrors the hagit root build; added to every
-        // declarable configuration for global reach. See the root build.gradle.kts for full rationale.
+        // phantom node that Dependabot alerted on. Added to every declarable configuration for
+        // consistent resolution across modules.
         configurations.configureEach {
             if (isCanBeDeclared && !isCanBeResolved && !isCanBeConsumed) {
                 val bucket = name

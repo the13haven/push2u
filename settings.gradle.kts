@@ -1,7 +1,5 @@
-// push2u — a standalone Gradle build (composite), included by the hagit root settings via
-// `includeBuild("backend/lib/push2u")`. Kept as its own build so the library carries none of
-// hagit's build conventions and extraction to its own repository is a directory move
-// (DESIGN.md ADR-009). Its own version catalog lives in gradle/libs.versions.toml.
+// push2u is a standalone multi-project Gradle build. Keeping its build conventions and version
+// catalog local makes it usable directly or as an included build in a consuming application.
 rootProject.name = "push2u"
 
 include("push2u-core")
