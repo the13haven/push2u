@@ -1,0 +1,42 @@
+# push2u's own version catalog — this is a standalone composite build (see settings.gradle.kts).
+# Test stack only; the library core has zero runtime dependencies (DESIGN.md ADR-002). Versions
+# verified present on Maven Central.
+[versions]
+junit = "6.1.2"
+assertj = "3.27.7"
+testcontainers = "2.0.5"
+# Spring Boot — only for the push2u-spring-boot-starter module's auto-configuration (the core
+# stays Spring-free / zero runtime-dep, ADR-002). Targets 4.x: push2u is a new library, so its
+# adopters build on the current Spring Boot (legacy 3.x projects are unlikely to swap a working
+# web-push lib for a new one); this also matches hagit's own Spring Boot. Java 17+ baseline, so the
+# module's --release 21 is fine.
+springBoot = "4.1.0"
+
+# BouncyCastle security pin applied as a dependency constraint across all push2u subprojects
+# (see build.gradle.kts). 1.84 patches all open BC CVEs. Jackson is not pinned — Spring Boot's
+# managed jackson-2-bom governs it (2.21.4).
+bouncycastle = "1.85"
+
+[libraries]
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+# Vault (dev mode) container for the push2u-signer-vault integration test.
+testcontainers-vault = { module = "org.testcontainers:testcontainers-vault", version.ref = "testcontainers" }
+
+# Spring Boot — for the push2u-spring-boot-starter module. The BOM (spring-boot-dependencies)
+# manages every Spring/Spring-Boot version; the individual modules below omit versions.
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
+spring-boot-health = { module = "org.springframework.boot:spring-boot-health" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
+# Jackson annotations — spring-boot-health's Health type carries @JsonInclude; having the annotation
+# jar on the compile classpath keeps javac from warning about the (BOM-managed) enum constant.
+jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations" }
+
+
+# Pinned to a patched version via a dependency constraint (see build.gradle.kts).
+bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
