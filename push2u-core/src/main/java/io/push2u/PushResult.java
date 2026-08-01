@@ -1,9 +1,9 @@
 package io.push2u;
 
 /**
- * The outcome of a send. A dead subscription is a normal result here, not an exception
- * (ADR-007): callers prune their store on {@link #isSubscriptionExpired()} without
- * exception-driven control flow.
+ * The outcome of a send. A dead subscription is a normal result here, not an exception:
+ * callers prune their store on {@link #isSubscriptionExpired()} without exception-driven
+ * control flow.
  *
  * @param status     the interpreted outcome
  * @param statusCode the final HTTP status from the push service (0 if none was obtained)

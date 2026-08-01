@@ -8,7 +8,7 @@ import java.util.Objects;
  * Builds the VAPID (RFC 8292) JWT and the {@code Authorization: vapid t=<jwt>, k=<key>} header.
  *
  * <p>The JWT JSON is handwritten: the claims are tiny ({@code aud}/{@code exp}/{@code sub}) and
- * fixed-shape, so a JSON library would be dead weight (DESIGN.md §4). The header is the constant
+ * fixed-shape, so a JSON library would be dead weight. The header is the constant
  * {@code {"typ":"JWT","alg":"ES256"}}. The ES256 signature is delegated to a {@link VapidSigner}.
  */
 final class Vapid {

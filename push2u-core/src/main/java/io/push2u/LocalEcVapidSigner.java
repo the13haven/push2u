@@ -6,11 +6,14 @@ import java.security.interfaces.ECPrivateKey;
 import java.util.Objects;
 
 /**
- * The default {@link VapidSigner}: holds the P-256 private key in memory and signs in-JVM via
- * {@code SHA256withECDSAinP1363Format}, which emits the raw {@code r || s} JOSE wants directly
- * (DESIGN.md §4). Suitable when the key is sourced at rest (e.g. from a secrets manager) and
- * signing in-process is acceptable; for a key that must never touch the heap, use a remote
- * signer instead (ADR-010).
+ * The default {@link VapidSigner}: holds the P-256 private key in memory and signs in-JVM,
+ * always producing the raw {@code r || s} pair JOSE wants. When the configured provider
+ * registers raw-format ECDSA ({@code SHA256withECDSAinP1363Format}) the signature is used as
+ * is; when it registers only the standard DER form ({@code SHA256withECDSA}, e.g. BouncyCastle
+ * FIPS), the DER output is strictly re-encoded to {@code r || s} — a representation change
+ * only, the signing itself stays inside that provider. Suitable when the key is sourced at
+ * rest (e.g. from a secrets manager) and signing in-process is acceptable; for a key that must
+ * never touch the heap, use a remote signer instead.
  */
 public final class LocalEcVapidSigner implements VapidSigner {
 
@@ -36,11 +39,13 @@ public final class LocalEcVapidSigner implements VapidSigner {
 
     @Override
     public byte[] sign(byte[] signingInput) {
+        Jca.EcdsaSignature es256 = jca.es256();
         try {
-            Signature signature = jca.es256();
+            Signature signature = es256.delegate();
             signature.initSign(privateKey);
             signature.update(signingInput);
-            return signature.sign();
+            byte[] raw = signature.sign();
+            return es256.encoding() == Jca.EcdsaSignature.Encoding.DER ? EcdsaDer.toP1363(raw) : raw;
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("VAPID ES256 signing failed", e);
         }

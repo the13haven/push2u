@@ -6,9 +6,10 @@ import java.util.Map;
 /**
  * The HTTP transport seam: POST the encrypted body to a push endpoint and report the status.
  *
- * <p>An extension point (DESIGN.md §5.1) because users standardize on a specific HTTP stack for
- * connection pooling, proxies, and observability. The default is {@link JdkHttpPushClient} over
- * {@code java.net.http}; applications can provide another implementation.
+ * <p>An extension point because users standardize on a specific HTTP stack for connection
+ * pooling, proxies, and observability. The default is {@link JdkHttpPushClient} over
+ * {@code java.net.http}; applications can supply another implementation (OkHttp, Apache
+ * HttpClient 5, ...) by implementing this interface.
  *
  * <p>Implementations report a push service <em>rejecting</em> the request as a {@link PushResponse}
  * with the status code — only genuine I/O failures (no connection, timeout) throw

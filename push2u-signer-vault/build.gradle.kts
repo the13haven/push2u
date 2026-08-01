@@ -3,7 +3,7 @@ plugins {
 }
 
 description = "push2u-signer-vault — a VapidSigner backed by HashiCorp Vault Transit: the private " +
-    "key never leaves Vault (DESIGN.md ADR-010). Opt-in module on top of push2u-core; not zero-dep " +
+    "key never leaves Vault. Opt-in module on top of push2u-core; not zero-dep " +
     "(it calls Vault over HTTP, reusing push2u-core's PushHttpClient transport)."
 
 // Toolchain + `--release 21` + JUnit Platform come from the composite-build root build.gradle.kts.

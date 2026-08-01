@@ -14,7 +14,7 @@ import java.util.Objects;
 
 /**
  * The default {@link PushHttpClient}, over the JDK's {@code java.net.http.HttpClient} — no third
- * party HTTP stack, keeping {@code core} zero-dependency (DESIGN.md §4). The response body is read
+ * party HTTP stack, keeping {@code core} zero-dependency. The response body is read
  * as UTF-8 so remote-signer calls can use it; push sends ignore it.
  */
 public final class JdkHttpPushClient implements PushHttpClient {
@@ -52,10 +52,12 @@ public final class JdkHttpPushClient implements PushHttpClient {
                 httpClient.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             return new PushResponse(response.statusCode(), firstValues(response.headers().map()), response.body());
         } catch (IOException e) {
-            throw new PushDeliveryException("POST to push endpoint failed: " + endpoint, e);
+            throw new PushDeliveryException(
+                "POST to push endpoint failed: " + Endpoints.redact(endpoint.toString()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new PushDeliveryException("Interrupted while POSTing to push endpoint: " + endpoint, e);
+            throw new PushDeliveryException(
+                "Interrupted while POSTing to push endpoint: " + Endpoints.redact(endpoint.toString()), e);
         }
     }
 

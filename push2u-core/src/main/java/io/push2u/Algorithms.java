@@ -36,6 +36,13 @@ final class Algorithms {
     /** ES256 in P1363 format — raw {@code r||s} signatures for the VAPID JWT (RFC 8292), no DER. */
     static final String ES256_P1363 = "SHA256withECDSAinP1363Format";
 
+    /**
+     * ES256 in the standard DER format — the fallback when a provider does not register
+     * {@link #ES256_P1363} (BouncyCastle FIPS registers only this name); the DER output is then
+     * strictly converted to the raw {@code r||s} JOSE needs.
+     */
+    static final String ES256_DER = "SHA256withECDSA";
+
     /** NIST P-256 / {@code secp256r1} — the only curve Web Push uses. */
     static final String SECP256R1 = "secp256r1";
 }

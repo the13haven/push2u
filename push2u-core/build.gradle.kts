@@ -1,25 +1,75 @@
 plugins {
     `java-library`
     // Hosts the shared VapidSigner conformance contract (src/testFixtures), extended by the local
-    // signer's test here and by remote signer modules.
+    // signer's test here and by each remote signer module (e.g. push2u-signer-vault).
     `java-test-fixtures`
 }
 
 description = "push2u-core — zero-dependency JVM Web Push library core " +
-    "(RFC 8030/8291/8292/8188)."
+    "(RFC 8030/8291/8292/8188): VAPID-authenticated, end-to-end-encrypted push delivery " +
+    "from a Java application server to browser push services."
+
+// The BC-FIPS provider tests run in their own source set with their own classpath: bc-fips and
+// stock bcprov both ship the org.bouncycastle.crypto package with incompatible
+// CryptoServicesRegistrar classes, so the two jars can never coexist on one classpath — the
+// non-FIPS class shadows the FIPS one and BC-FIPS fails with NoSuchMethodError
+// (isInApprovedOnlyMode). The regular `test` set carries bcprov only; `fipsTest` carries bc-fips
+// only. fipsTest reuses the compiled helpers of `test` (mock receiver, vectors, subscription
+// helpers) by putting the test OUTPUT — classes only, not the test dependency configurations —
+// on its classpath, so bcprov cannot leak across. The main classes and the testFixtures
+// contract are NOT added here: they arrive once via the testFixtures(project) dependency below
+// (adding sourceSets.main output too would duplicate every main class on the classpath).
+val fipsTest: SourceSet by sourceSets.creating {
+    compileClasspath += sourceSets.test.get().output
+    runtimeClasspath += sourceSets.test.get().output
+}
 
 // Toolchain (JDK 26) + `--release 21` + JUnit Platform are configured for every module in the
-// composite-build root build.gradle.kts. Zero runtime dependencies (ADR-002): the only declared
-// deps are the test stack (JUnit + AssertJ) from the version catalog.
+// composite-build root build.gradle.kts. Zero runtime dependencies is a deliberate design
+// constraint of the core — the library replaces nl.martijndwars:web-push precisely because it
+// dragged a heavy transitive surface (EOL Apache HttpClient 4.x, plus jose4j and BouncyCastle)
+// and leaked it into its public API. The only declared deps are the test stack (JUnit + AssertJ)
+// from the version catalog.
 dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
     testRuntimeOnly(libs.junit.platform.launcher)
 
+    // Stock BouncyCastle for the ES256 provider-matrix tests: it registers raw-format ECDSA
+    // (SHA256withECDSAinP1363Format) and exercises the direct r||s path. Test-scoped only — the
+    // library core keeps zero runtime dependencies. bc-fips must NOT be added here (see the
+    // fipsTest source set above).
+    testImplementation(libs.bouncycastle.bcprov)
+
+    // BC-FIPS for the DER-fallback tests (registers only DER-format SHA256withECDSA) — isolated
+    // in the fipsTest source set, never on the same classpath as bcprov.
+    "fipsTestImplementation"(platform(libs.junit.bom))
+    "fipsTestImplementation"(libs.junit.jupiter)
+    "fipsTestImplementation"(libs.assertj.core)
+    "fipsTestImplementation"(testFixtures(project))
+    "fipsTestImplementation"(libs.bouncycastle.bcfips)
+    "fipsTestRuntimeOnly"(libs.junit.platform.launcher)
+
     // Test fixtures = the shared VapidSigner conformance contract, published with the module so
     // downstream signer implementations can extend it.
     testFixturesApi(platform(libs.junit.bom))
     testFixturesApi(libs.junit.jupiter)
     testFixturesApi(libs.assertj.core)
+}
+
+val fipsTestTask = tasks.register<Test>("fipsTest") {
+    description = "Runs the BC-FIPS provider tests (ES256 DER fallback) on a bcprov-free classpath."
+    group = "verification"
+    testClassesDirs = fipsTest.output.classesDirs
+    classpath = fipsTest.runtimeClasspath
+    shouldRunAfter(tasks.test)
+    // A run that discovers zero tests is a false green (e.g. the FIPS classes silently stopped
+    // compiling into this source set) — fail instead of passing empty.
+    failOnNoDiscoveredTests = true
+}
+
+// Part of `check`, so the FIPS suite runs in every full build — it must not silently drop out.
+tasks.named("check") {
+    dependsOn(fipsTestTask)
 }

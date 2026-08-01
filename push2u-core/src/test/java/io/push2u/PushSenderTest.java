@@ -1,14 +1,12 @@
 package io.push2u;
 
-import static io.push2u.TestVectors.b64;
+import static io.push2u.PushTestSupport.generateVapidKeys;
+import static io.push2u.PushTestSupport.subscription;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -136,6 +134,10 @@ class PushSenderTest {
         }
     }
 
+    // The same full pipeline with BC-FIPS as the crypto provider (the ES256 DER fallback) lives
+    // in BcFipsPushSenderTest in the fipsTest source set — bc-fips cannot share a classpath with
+    // the stock bcprov this source set carries.
+
     @Test
     void builderRequiresExactlyOneKeySource() {
         VapidKeys keys = generateVapidKeys();
@@ -164,18 +166,6 @@ class PushSenderTest {
             .contact("mailto:ops@example.com")
             .sleeper(sleeper)
             .build();
-    }
-
-    private static Subscription subscription(MockPushReceiver receiver) {
-        return new Subscription(
-            receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
-    }
-
-    private static VapidKeys generateVapidKeys() {
-        KeyPair keyPair = EcKeys.generateP256(Jca.platform());
-        return VapidKeys.of(
-            EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
-            TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
     }
 
     private static byte[] bytes(String value) {

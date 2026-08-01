@@ -8,7 +8,7 @@ import java.util.Objects;
  * plus the user agent's P-256 public key ({@code p256dh}, 65-byte uncompressed point) and the
  * 16-byte authentication secret ({@code auth}).
  *
- * <p>push2u is stateless (ADR-004) — the application owns persistence and supplies this record
+ * <p>push2u is stateless — the application owns persistence and supplies this record
  * per send. The browser delivers {@code p256dh}/{@code auth} as base64url strings; use
  * {@link #fromBase64} at the REST boundary.
  *
@@ -16,13 +16,22 @@ import java.util.Objects;
  * and {@code equals}/{@code hashCode}/{@code toString} are overridden for content-based value
  * semantics with the {@code auth} secret kept out of {@code toString}.
  *
- * @param endpoint the push service endpoint URL that encrypted messages are POSTed to
+ * <p>The endpoint must be an absolute {@code https} URL (RFC 8030 requires TLS between the
+ * application server and the push service). It is a capability URL — whoever holds it can send
+ * messages to the subscriber — so it is treated as a secret and never printed verbatim; see
+ * {@link Endpoints#redact}.
+ *
+ * @param endpoint the push service endpoint URL that encrypted messages are POSTed to — an
+ *                 absolute {@code https} URL, treated as a secret
  * @param p256dh   the user agent's P-256 public key — a 65-byte X9.62 uncompressed point
  * @param auth     the 16-byte authentication secret (RFC 8291 §3.2)
  */
 public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
-    /** Validates the key material (lengths and the {@code 0x04} prefix) and defensively copies the arrays. */
+    /**
+     * Validates the key material (lengths and the {@code 0x04} prefix), requires an absolute
+     * {@code https} endpoint, and defensively copies the arrays.
+     */
     public Subscription {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(p256dh, "p256dh");
@@ -33,6 +42,7 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
         if (auth.length != 16) {
             throw new IllegalArgumentException("auth must be 16 bytes (RFC 8291 §3.2)");
         }
+        Endpoints.requireSecure(endpoint);
         p256dh = p256dh.clone();
         auth = auth.clone();
     }
@@ -75,8 +85,10 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
     @Override
     public String toString() {
-        // auth is the message-encryption secret (RFC 8291 §3.2) — never expose it in logs.
-        return "Subscription[endpoint=" + endpoint + ", p256dh=" + p256dh.length + " bytes, auth=<redacted>]";
+        // Both secrets stay out of logs: auth is the message-encryption secret (RFC 8291 §3.2)
+        // and the endpoint is a capability URL (RFC 8030 §8.3) — only its origin + fingerprint show.
+        return "Subscription[endpoint=" + Endpoints.redact(endpoint)
+            + ", p256dh=" + p256dh.length + " bytes, auth=<redacted>]";
     }
 
     /**

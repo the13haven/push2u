@@ -7,7 +7,7 @@ import java.util.HexFormat;
 /**
  * Published conformance vectors used across the crypto tests, transcribed verbatim from the
  * RFCs (whitespace removed). Decoding these against the production code is what makes the tests
- * <em>conformance</em> checks rather than tautologies (DESIGN.md §7).
+ * <em>conformance</em> checks rather than tautologies.
  */
 final class TestVectors {
 

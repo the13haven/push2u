@@ -5,9 +5,9 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * HKDF (RFC 5869) over HMAC-SHA-256, hand-rolled in ~25 lines per DESIGN.md ADR-003. It is
- * deliberately NOT an extension point: the bytes are identical regardless of implementation,
- * and a pluggable seam here would fail silently as wrong ciphertext.
+ * HKDF (RFC 5869) over HMAC-SHA-256, hand-rolled in ~25 lines so the library keeps zero runtime
+ * dependencies. It is deliberately NOT an extension point: the bytes are identical regardless of
+ * implementation, and a pluggable seam here would fail silently as wrong ciphertext.
  *
  * <p>Pinned by the RFC 5869 Appendix A SHA-256 vectors (and again, end-to-end, by the RFC 8291
  * §5 worked example).

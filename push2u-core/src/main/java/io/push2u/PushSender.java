@@ -17,9 +17,10 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>Build it with {@link #builder()}. Exactly one key source is required — {@code .vapid(keys)}
  * (the default in-JVM signer) <em>or</em> {@code .signer(externalSigner)} (which supplies the
- * VAPID public key itself); {@code .contact(...)} is required in both. See DESIGN.md §5.2.
+ * VAPID public key itself); {@code .contact(...)} is required in both.
  *
- * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception (ADR-007).
+ * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a
+ * store on expiry is expected control flow, not an error.
  */
 public final class PushSender {
 
@@ -67,7 +68,16 @@ public final class PushSender {
         Objects.requireNonNull(message, "message");
 
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), message.payload(), recordSize);
-        URI endpoint = URI.create(subscription.endpoint());
+        URI endpoint;
+        try {
+            endpoint = URI.create(subscription.endpoint());
+        } catch (IllegalArgumentException e) {
+            // Unreachable after Subscription's constructor validation, but URI.create's own message
+            // would carry the raw capability URL — replace it with the redacted form. No cause for
+            // the same reason: URISyntaxException's message embeds the raw input.
+            throw new IllegalArgumentException(
+                "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
+        }
         String authorization =
             Vapid.authorizationHeader(signer, origin(endpoint), contact, Instant.now().plus(jwtExpiry));
         Map<String, String> headers = requestHeaders(authorization, message);
@@ -153,7 +163,8 @@ public final class PushSender {
         String scheme = endpoint.getScheme();
         String host = endpoint.getHost();
         if (scheme == null || host == null) {
-            throw new IllegalArgumentException("subscription endpoint is not an absolute http(s) URL: " + endpoint);
+            throw new IllegalArgumentException(
+                "subscription endpoint is not an absolute http(s) URL: " + Endpoints.redact(endpoint.toString()));
         }
         int port = endpoint.getPort();
         return port == -1 ? scheme + "://" + host : scheme + "://" + host + ":" + port;
@@ -224,8 +235,15 @@ public final class PushSender {
         }
 
         /**
-         * The JCE provider backing the content-encryption primitives; defaults to the platform
-         * provider chain (see DESIGN.md §5.1 and the README for BouncyCastle / FIPS use).
+         * The JCE provider backing the <em>entire</em> local cryptographic path: the
+         * content-encryption primitives (ECDH, HKDF's HMAC, AES-128-GCM, EC key import) and —
+         * when the default in-JVM signer is used — the VAPID ES256 signature. Defaults to the
+         * platform provider chain. For the signature the library first asks this provider for
+         * raw-format ECDSA ({@code SHA256withECDSAinP1363Format}); if the provider does not
+         * register that name (BouncyCastle FIPS registers only {@code SHA256withECDSA}), it
+         * falls back to DER-format ECDSA from the <em>same</em> provider and strictly converts
+         * the DER output to the raw {@code r || s} JOSE needs — the fallback never resolves
+         * against a different provider.
          *
          * @param cryptoProvider the JCE provider, or {@code null} for the platform default
          * @return this builder

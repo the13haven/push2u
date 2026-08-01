@@ -162,9 +162,12 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The provider must support EC key generation/import, ECDH, HMAC-SHA-256, AES-GCM, and
-`SHA256withECDSAinP1363Format` when `LocalEcVapidSigner` is used. An external `VapidSigner`
-controls its own signing provider.
+The provider must support EC key generation/import, ECDH, HMAC-SHA-256, AES-GCM, and an ES256
+signature form when `LocalEcVapidSigner` is used. The library prefers
+`SHA256withECDSAinP1363Format`; if the selected provider exposes only DER-output
+`SHA256withECDSA` (as BC-FIPS does), it signs with that algorithm on the same provider and strictly
+re-encodes the result to JOSE's 64-byte `r || s` form. The fallback never widens provider lookup.
+An external `VapidSigner` controls its own signing provider.
 
 ## Spring Boot
 
@@ -218,8 +221,22 @@ dependencies {
 
 ### Fetched public key
 
-The recommended configuration reads the public key from Vault at startup. The token needs
-`update` on `transit/sign/<key>` and `read` on `transit/keys/<key>`:
+The recommended configuration treats the Transit key as the single source of truth. At startup,
+the signer reads `latest_version` and that version's public key from one
+`transit/keys/<key>` response, then includes the captured `key_version` in every sign request.
+The advertised public key therefore continues to match the signing key even when Vault creates a
+new latest version. The token needs `update` on `transit/sign/<key>` and `read` on
+`transit/keys/<key>`:
+
+```java
+VapidSigner signer = new VaultTransitVapidSigner(
+    URI.create("https://vault.example:8200"),
+    "transit",
+    "vapid",
+    vaultToken);
+```
+
+The equivalent Spring Boot configuration is:
 
 ```yaml
 push2u:
@@ -233,7 +250,9 @@ push2u:
 
 ### Explicit public key
 
-Set `public-key` when the token must be sign-only:
+Set `public-key` when the token must be sign-only. Also set `key-version` to the Transit version
+that owns that public key, so subsequent rotations cannot make Vault sign with a different private
+key:
 
 ```yaml
 push2u:
@@ -244,12 +263,32 @@ push2u:
       key-name: "vapid"
       token: "${VAULT_TOKEN}"
       public-key: "${VAPID_PUBLIC_KEY}"
+      key-version: 3
 ```
 
-The Vault key must be `ecdsa-p256`. The signer caches the advertised public key at construction,
-while Vault signs with its active key version. Do not rotate that Transit key independently of
-the application and browser subscriptions: VAPID subscriptions are bound to the public key used
-when they were created.
+The equivalent plain-Java constructor takes the version after the public key:
+
+```java
+VapidSigner signer = new VaultTransitVapidSigner(
+    URI.create("https://vault.example:8200"),
+    "transit",
+    "vapid",
+    vaultToken,
+    publicKeyBytes,
+    3);
+```
+
+The explicit constructor/property form without a version is retained for compatibility, but it
+sends no `key_version`; Vault then signs with its latest version. Use that form only when the
+Transit key is guaranteed never to rotate.
+
+The Vault key must be `ecdsa-p256`. Ordinary Vault rotation is safe for an already-running pinned
+signer: it continues using the version whose public key it advertises. Raising
+`min_encryption_version` above the pinned version, or removing that version with
+`min_available_version`, makes Vault reject subsequent sign requests. Recover by recreating the
+fetched signer, or by configuring the matching new public key and version in explicit mode.
+Adopting a new VAPID public key is an application-level migration: browser subscriptions created
+for the previous application-server key must be replaced.
 
 ## Protocol limits
 
