@@ -4,10 +4,10 @@ package io.push2u;
  * Produces the VAPID (RFC 8292) ES256 signature over a JWT signing input and advertises the
  * corresponding public key.
  *
- * <p>This is the library's primary extension point (DESIGN.md §5.1): the seam is <em>key
- * custody</em>. The default {@link LocalEcVapidSigner} holds the private key in memory; a
- * Vault Transit / KMS / HSM implementation keeps it off the JVM heap entirely — a genuinely
- * different security posture (ADR-010), the articulable reason this is an SPI.
+ * <p>This is the library's primary extension point: the seam is <em>key custody</em>. The
+ * default {@link LocalEcVapidSigner} holds the private key in memory; a Vault Transit / KMS /
+ * HSM implementation keeps it off the JVM heap entirely — a genuinely different security
+ * posture, the articulable reason this is an SPI.
  */
 public interface VapidSigner {
 

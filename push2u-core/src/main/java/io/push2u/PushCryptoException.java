@@ -5,10 +5,10 @@ package io.push2u;
  * misconfiguration (a required JCE algorithm/provider is missing, an invalid key, a malformed
  * EC point), never a normal protocol outcome.
  *
- * <p>Unchecked on purpose: per the library contract (DESIGN.md §5.2) the public surface throws
- * only on genuine errors, and a missing {@code AES/GCM/NoPadding} or {@code HmacSHA256} is a
- * deployment fault the caller cannot meaningfully recover from at the call site. A dead
- * subscription, by contrast, is a {@code PushResult}, not an exception (ADR-007).
+ * <p>Unchecked on purpose: the library's contract is that the public surface throws only on
+ * genuine errors, and a missing {@code AES/GCM/NoPadding} or {@code HmacSHA256} is a deployment
+ * fault the caller cannot meaningfully recover from at the call site. A dead subscription, by
+ * contrast, is a normal protocol outcome and therefore a {@code PushResult}, not an exception.
  */
 public class PushCryptoException extends RuntimeException {
 

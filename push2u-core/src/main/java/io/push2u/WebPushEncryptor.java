@@ -14,9 +14,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 /**
  * The RFC 8291 / RFC 8188 message encryptor: turns a plaintext into an {@code aes128gcm} body
- * for a given subscription. This is deliberately concrete, not an extension point (DESIGN.md
- * §5.1) — there is no externalizable secret and a pluggable seam would fail silently as wrong
- * ciphertext.
+ * for a given subscription. This is deliberately concrete, not an extension point — there is no
+ * externalizable secret and a pluggable seam would fail silently as wrong ciphertext.
  *
  * <p>Derivation (RFC 8291 §3.4), single record, sequence number zero:
  * <pre>

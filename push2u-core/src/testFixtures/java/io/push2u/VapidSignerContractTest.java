@@ -19,8 +19,7 @@ import org.junit.jupiter.api.Test;
  * The conformance contract every {@link VapidSigner} must satisfy: signing produces a raw
  * {@code r || s} ES256 signature (64 bytes) that verifies against the public key the signer
  * advertises. Each implementation extends this and supplies a configured signer via
- * {@link #signer()} — the local signer's unit test and every remote signer's integration test
- * (DESIGN.md §5).
+ * {@link #signer()} — the local signer's unit test and every remote signer's integration test.
  *
  * <p>Verification uses only the JDK and the public {@link VapidSigner} surface, so the contract is
  * self-contained and carries no push2u-internal dependency.

@@ -14,10 +14,13 @@ import org.springframework.context.annotation.Bean;
 /**
  * Autoconfigures a {@link VaultTransitVapidSigner} as the {@link VapidSigner} from
  * {@code push2u.signer.vault.*}. Active when {@code address}, {@code key-name} and {@code token} are
- * set; {@code public-key} is optional — when omitted (or blank) the signer reads its public key from
- * {@code transit/keys/<key>} at startup (the recommended single-source-of-truth mode; the token then
- * needs {@code read} on the key), and when supplied the signer uses it verbatim (token needs only
- * {@code sign}).
+ * set; {@code public-key} is optional — when omitted (or blank) the signer reads its public key and
+ * key version from {@code transit/keys/<key>} at startup and pins that version for signing (the
+ * recommended single-source-of-truth mode; the token then needs {@code read} on the key), and when
+ * supplied the signer uses it verbatim (token needs only {@code sign}). With an explicit
+ * {@code public-key}, set {@code key-version} to pin the matching Transit key version — without it
+ * Vault signs with the latest version, which stops matching the configured public key after a key
+ * rotation.
  *
  * <p>Ordered before the core starter's {@code Push2uAutoConfiguration} (by name, so this module
  * need not depend on it) and {@link ConditionalOnMissingBean}: when both starters are present this
@@ -37,7 +40,7 @@ public final class VaultSignerAutoConfiguration {
 
     /**
      * The Vault Transit signer, built from {@code push2u.signer.vault.*}. Absent unless the address,
-     * key name, token and public key are all set, and yields to an application-supplied signer.
+     * key name and token are all set, and yields to an application-supplied signer.
      *
      * @param properties the bound configuration
      * @param httpClient an optional application HTTP transport for the Vault calls
@@ -49,21 +52,39 @@ public final class VaultSignerAutoConfiguration {
     VapidSigner vaultTransitVapidSigner(VaultSignerProperties properties, ObjectProvider<PushHttpClient> httpClient) {
         PushHttpClient client = httpClient.getIfAvailable();
         String publicKey = properties.publicKey();
+        Integer keyVersion = properties.keyVersion();
         if (publicKey == null || publicKey.isBlank()) {
-            // Fetched mode: the signer reads the public key from transit/keys/<key> at construction,
-            // keeping the Transit key the single source of truth (the token needs `read` on the key).
+            if (keyVersion != null) {
+                throw new IllegalStateException(
+                    "push2u.signer.vault.key-version requires push2u.signer.vault.public-key: in the"
+                        + " fetched mode the signer pins the key version it reads from Vault itself");
+            }
+            // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
+            // construction and pins that version, keeping the Transit key the single source of truth
+            // (the token needs `read` on the key).
             return client == null
                 ? new VaultTransitVapidSigner(
                     properties.address(), properties.mount(), properties.keyName(), properties.token())
                 : new VaultTransitVapidSigner(
                     properties.address(), properties.mount(), properties.keyName(), properties.token(), client);
         }
-        // Explicit mode: the published public key is supplied; the token needs only `sign`.
+        // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
+        // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
         byte[] point = Base64.getUrlDecoder().decode(publicKey);
+        if (keyVersion == null) {
+            return client == null
+                ? new VaultTransitVapidSigner(
+                    properties.address(), properties.mount(), properties.keyName(), properties.token(), point)
+                : new VaultTransitVapidSigner(
+                    properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
+                    client);
+        }
         return client == null
             ? new VaultTransitVapidSigner(
-                properties.address(), properties.mount(), properties.keyName(), properties.token(), point)
+                properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
+                keyVersion)
             : new VaultTransitVapidSigner(
-                properties.address(), properties.mount(), properties.keyName(), properties.token(), point, client);
+                properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
+                keyVersion, client);
     }
 }

@@ -58,9 +58,29 @@ class DomainTypesTest {
         assertThat(a).isEqualTo(b).hasSameHashCodeAs(b).isNotEqualTo(differentAuth);
 
         assertThat(a.toString())
-            .contains("https://push.example.net/x")
+            .as("origin stays visible, but the capability path and the auth secret do not")
+            .contains("https://push.example.net")
+            .doesNotContain("/x")
             .contains("redacted")
             .doesNotContain("0123456789abcdef");
+    }
+
+    @Test
+    void subscriptionRejectsNonHttpsEndpoint() {
+        byte[] p256dh = new byte[65];
+        p256dh[0] = 0x04;
+        byte[] auth = new byte[16];
+
+        assertThatThrownBy(() -> new Subscription("http://push.example.net/secret-path", p256dh, auth))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("https")
+            .hasMessageNotContaining("secret-path");
+        assertThatThrownBy(() -> new Subscription("ht tp://push.example.net/secret-path", p256dh, auth))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageNotContaining("push.example.net");
+
+        Subscription https = new Subscription("https://push.example.net/secret-path", p256dh, auth);
+        assertThat(https.endpoint()).isEqualTo("https://push.example.net/secret-path");
     }
 
     @Test

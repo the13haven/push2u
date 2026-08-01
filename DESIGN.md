@@ -137,7 +137,10 @@ would not change intended behavior and would introduce a silent wrong-ciphertext
 
 JCE provider selection uses the standard `java.security.Provider` abstraction rather than a
 custom SPI. The selected provider backs encryption and, for the local signer, EC key import and
-ES256 signing. External signers manage their own providers.
+ES256 signing. Native `SHA256withECDSAinP1363Format` is preferred; when the selected provider
+offers only DER-output `SHA256withECDSA`, the signature is obtained from that same provider and
+strictly converted to JOSE's raw `r || s` form. Provider lookup is never widened by the fallback.
+External signers manage their own providers.
 
 ## 6. Cryptography
 
@@ -146,7 +149,7 @@ ES256 signing. External signers manage their own providers.
 | P-256 ECDH | `KeyAgreement("ECDH")` |
 | HKDF-SHA-256 | RFC 5869 loop over `Mac("HmacSHA256")` |
 | AES-128-GCM | `Cipher("AES/GCM/NoPadding")` |
-| ES256 | `Signature("SHA256withECDSAinP1363Format")` |
+| ES256 | `Signature("SHA256withECDSAinP1363Format")`, or same-provider `SHA256withECDSA` plus strict DER → `r || s` conversion |
 | EC key handling | `KeyFactory("EC")`, `KeyPairGenerator("EC")` |
 | Base64url | `java.util.Base64` |
 
@@ -154,20 +157,38 @@ The implementation supports only modern `aes128gcm` encoding and currently emits
 RFC 8188 record. The default record size is 4096 bytes.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
-redacts the `auth` secret from `toString`; applications must additionally treat the endpoint as a
-capability credential and avoid logging it.
+redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
+Transport and validation exceptions use the same endpoint representation: push-service origin
+plus a short correlation fingerprint, never the path, query, fragment, or user information.
+Applications must still treat the complete endpoint as a credential and avoid logging it directly.
 
 ## 7. Vault Transit integration
 
 `VaultTransitVapidSigner` supports:
 
-- **Fetched mode:** reads the public key from `transit/keys/<key>` at construction.
+- **Fetched mode:** reads `latest_version` and that version's public key atomically from one
+  `transit/keys/<key>` response at construction, then pins the captured version on every sign.
+  The token needs `read` on the key in addition to signing permission.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
+  Supplying the matching Transit key version pins signing to that version. The compatibility form
+  without a version uses Vault's latest version and is safe only for a key that never rotates.
 
-Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form.
-Fetched public keys are cached. Vault signs with its active key version, therefore Transit key
-rotation must be coordinated with the running application and browser re-subscription. Web Push
-subscriptions are bound to their VAPID public key.
+Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form. A
+pinned signer also sends `key_version`; taking the version and public key from the same metadata
+response closes the race where Vault rotates between reading the public key and signing. Creating
+a newer Transit version therefore does not break an existing signer: it continues advertising and
+using the older version as one consistent VAPID identity.
+
+The pin remains usable only while Vault permits signing with that version. Raising
+`min_encryption_version` above it or deleting it through `min_available_version` causes sign calls
+to fail. Recreating a fetched signer adopts Vault's then-latest version; explicit mode instead
+requires the new version and its matching public key. Either action changes the advertised VAPID
+identity and must be coordinated with browser re-subscription, because Web Push subscriptions are
+bound to the application-server public key used at subscribe time.
+
+The Vault Spring Boot starter exposes the same model through `push2u.signer.vault.*`: omitting
+`public-key` selects fetched mode; providing `public-key` selects explicit mode, where
+`key-version` should also be set whenever the Transit key can rotate.
 
 ## 8. Spring Boot integration
 
