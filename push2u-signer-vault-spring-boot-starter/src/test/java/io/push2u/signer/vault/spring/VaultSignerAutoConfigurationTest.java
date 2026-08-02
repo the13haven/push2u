@@ -445,7 +445,7 @@ class VaultSignerAutoConfigurationTest {
 
     /** Serve {@code responseBody} for every request on an ephemeral port and run {@code test}. */
     private static void withStubVault(String responseBody, StubVaultTest test) throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
             byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
             server.createContext("/", exchange -> {

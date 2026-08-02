@@ -124,6 +124,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private final Integer keyVersion;
 
     /** The (version, public key) pair read atomically from one {@code transit/keys/<name>} response. */
+    // ArrayRecordComponent: a private carrier that never escapes this class — the constructor copies
+    // the array into the signer's own field, and nothing else ever reads it.
+    @SuppressWarnings("ArrayRecordComponent")
     private record VaultKeyMetadata(int version, byte[] publicKey) {}
 
     /**

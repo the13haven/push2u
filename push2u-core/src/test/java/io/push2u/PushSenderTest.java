@@ -81,7 +81,7 @@ class PushSenderTest {
         assertThat(result.delivered()).isTrue();
         String authorization = captured.get().get("Authorization");
         String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
-        String claims = new String(Base64Url.decode(jwt.split("\\.")[1]), StandardCharsets.UTF_8);
+        String claims = new String(Base64Url.decode(jwt.split("\\.", -1)[1]), StandardCharsets.UTF_8);
         assertThat(claims)
                 .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
                 .contains("\"aud\":\"https://push.example\"")

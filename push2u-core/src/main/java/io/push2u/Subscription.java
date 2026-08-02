@@ -23,6 +23,11 @@ import java.util.Objects;
  * @param p256dh the user agent's P-256 public key — a 65-byte X9.62 uncompressed point
  * @param auth the 16-byte authentication secret (RFC 8291 §3.2)
  */
+// ArrayRecordComponent: the byte[] components are the wire format this type exists to carry — the
+// browser hands over raw key material. The hazards the check warns about are already closed: the
+// compact constructor copies both arrays, the accessors return copies, and equals/hashCode/toString
+// are overridden to compare by content.
+@SuppressWarnings("ArrayRecordComponent")
 public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
     /**

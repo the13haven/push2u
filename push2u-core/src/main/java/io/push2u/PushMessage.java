@@ -23,6 +23,9 @@ import java.util.Objects;
  *     characters from the URL-safe Base64 alphabet ({@code A-Z a-z 0-9 - _}) — the lower bound is the {@code Topic =
  *     token} grammar, a token being at least one character
  */
+// ArrayRecordComponent: same rationale as Subscription — the payload is bytes by definition, and
+// the constructor, the accessor and equals/hashCode all treat the array by value.
+@SuppressWarnings("ArrayRecordComponent")
 public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String topic) {
 
     private static final int TOPIC_MAX_LENGTH = 32;

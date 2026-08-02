@@ -3,6 +3,7 @@ package io.push2u;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,7 +26,7 @@ class JdkHttpPushClientTest {
 
     @Test
     void aHugeResponseBodyIsDiscardedAndTheStatusAndHeadersStillArrive() throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
             byte[] chunk = new byte[64 * 1024];
             server.createContext("/push", exchange -> {

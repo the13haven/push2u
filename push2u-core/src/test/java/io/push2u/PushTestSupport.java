@@ -23,20 +23,19 @@ final class PushTestSupport {
     static Subscription subscription(MockPushReceiver receiver) {
         // The in-process receiver listens on plain http://127.0.0.1 — allowed only through the
         // package-private test seam; the public Subscription contract stays https-only.
-        AutoCloseable plaintextSeam = Endpoints.allowPlaintextEndpointsForTests();
-        try {
-            // Deliberately NOT inside a catch: if Subscription validation ever regresses, its
-            // IllegalArgumentException must surface as itself, not be renamed to a seam failure.
+        // try-with-resources, not a finally that throws: if the Subscription construction below
+        // fails, a close() failure must be attached as suppressed rather than replace it.
+        try (AutoCloseable plaintextSeam = Endpoints.allowPlaintextEndpointsForTests()) {
             return new Subscription(
                     receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
-        } finally {
-            try {
-                plaintextSeam.close();
-            } catch (Exception e) {
-                // Only close() is wrapped: it merely restores a ThreadLocal (AutoCloseable
-                // forces the checked signature), so a throw here is a broken test fixture.
-                throw new IllegalStateException("plaintext endpoint seam failed to close", e);
-            }
+        } catch (RuntimeException e) {
+            // Rethrown unchanged: if Subscription validation ever regresses, its
+            // IllegalArgumentException must surface as itself, not be renamed to a seam failure.
+            throw e;
+        } catch (Exception e) {
+            // Only close() can get here — it merely restores a ThreadLocal (AutoCloseable forces
+            // the checked signature), so a throw is a broken test fixture.
+            throw new IllegalStateException("plaintext endpoint seam failed to close", e);
         }
     }
 

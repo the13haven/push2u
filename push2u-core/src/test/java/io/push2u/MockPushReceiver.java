@@ -1,6 +1,7 @@
 package io.push2u;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.ArrayDeque;
@@ -25,7 +26,7 @@ final class MockPushReceiver implements AutoCloseable {
     private final List<RecordedRequest> requests = new ArrayList<>();
 
     MockPushReceiver() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/push", exchange -> {
             int bodyLength = exchange.getRequestBody().readAllBytes().length;
             Map<String, String> headers = new HashMap<>();

@@ -37,7 +37,7 @@ class JdkVaultHttpTransportTest {
 
     /** Serve {@code status} + {@code body} once on an ephemeral port and run {@code test} against it. */
     private static void withServer(int status, byte[] body, boolean declareLength, ServerTest test) throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
             server.createContext("/v1", exchange -> {
                 exchange.getRequestBody().readAllBytes();

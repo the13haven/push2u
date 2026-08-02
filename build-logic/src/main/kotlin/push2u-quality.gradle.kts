@@ -150,6 +150,23 @@ dependencies {
     add("errorprone", toolLibrary("nullaway"))
 }
 
+// Checks promoted to ERROR, so a quality run fails on them instead of printing a warning nobody
+// reads. Two groups:
+//   * the defects Error Prone actually caught in this codebase (Finally, StringSplitter,
+//     AddressSelection, ArrayRecordComponent) — each one is fixed or explicitly suppressed at the
+//     site, so a new occurrence is a regression;
+//   * MissingOverride and ReferenceEquality, which config/quality/pmd/ruleset.xml excludes on the
+//     grounds that Error Prone owns them. That claim only holds if they fail the build.
+// Extend the list when a new check proves it earns a build failure here.
+val blockingChecks = listOf(
+    "AddressSelection",
+    "ArrayRecordComponent",
+    "Finally",
+    "MissingOverride",
+    "ReferenceEquality",
+    "StringSplitter",
+)
+
 tasks.withType<JavaCompile>().configureEach {
     val productionCompile = name == "compileJava"
     options.errorprone {
@@ -157,10 +174,17 @@ tasks.withType<JavaCompile>().configureEach {
             gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||
                 gradle.taskGraph.hasTask("${project.path}:qualityCheckCi")
         }
+        error(*blockingChecks.toTypedArray())
+
+        // Style-only check: the Duration literals in the tests mirror protocol values (Retry-After
+        // is specified in seconds), and restating them in minutes breaks that correspondence.
+        disable("CanonicalDuration")
+
         if (productionCompile) {
-            // NullAway runs as a warning: push2u carries no nullability annotations yet (the core
-            // is zero-dependency, so even an annotations-only jar is a deliberate decision).
-            // Promote to error() once the public API is annotated.
+            // NullAway is the deliberate exception to the rule above — it stays a warning, because
+            // push2u carries no nullability annotations yet (the core is zero-dependency, so even
+            // an annotations-only jar is a decision of its own). Its 12 findings are visible in the
+            // build log; promote to error() once the public API is annotated.
             warn("NullAway")
             option("NullAway:AnnotatedPackages", "io.push2u")
         } else {
