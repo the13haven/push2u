@@ -2,6 +2,7 @@ package io.push2u;
 
 import static io.push2u.PushTestSupport.generateVapidKeys;
 import static io.push2u.PushTestSupport.subscription;
+import static io.push2u.TestVectors.b64;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -13,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,6 +54,36 @@ class PushSenderTest {
             // aes128gcm body = 86-byte header + plaintext(5) + delimiter(1) + GCM tag(16)
             assertThat(request.bodyLength()).isEqualTo(86 + 5 + 1 + 16);
         }
+    }
+
+    @Test
+    void audClaimCarriesTheNormalizedRfc6454Origin() {
+        // A capturing transport instead of the receiver: the endpoint's uppercase scheme/host and
+        // explicit :443 exist purely to exercise the origin serialization, not real delivery.
+        AtomicReference<Map<String, String>> captured = new AtomicReference<>();
+        PushHttpClient capturingClient = (endpoint, headers, body) -> {
+            captured.set(headers);
+            return PushResponse.of(201);
+        };
+        Subscription subscription = new Subscription(
+            "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
+
+        PushResult result = PushSender.builder()
+            .vapid(generateVapidKeys())
+            .contact("mailto:ops@example.com")
+            .httpClient(capturingClient)
+            .build()
+            .send(subscription, PushMessage.of(bytes("x")));
+
+        assertThat(result.delivered()).isTrue();
+        String authorization = captured.get().get("Authorization");
+        String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
+        String claims = new String(Base64Url.decode(jwt.split("\\.")[1]), StandardCharsets.UTF_8);
+        assertThat(claims)
+            .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
+            .contains("\"aud\":\"https://push.example\"")
+            .doesNotContain("PUSH.Example")
+            .doesNotContain(":443");
     }
 
     @Test
