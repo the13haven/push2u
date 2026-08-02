@@ -149,11 +149,11 @@ final class WebPushEncryptor {
      * is a violation, not the boundary case. Both callers — {@link PushSender#send} up front and
      * {@link #encrypt} at the last moment — go through here so a single message describes it.
      *
-     * <p>The sum is computed in {@code long} out of necessity, not caution: {@code encrypt} is
-     * reachable directly, without the body-size check that would otherwise bound the plaintext, so
-     * a plaintext longer than {@code Integer.MAX_VALUE - 17} would wrap the {@code int} sum to a
-     * negative number, slip past this guard and blow up in {@link #pad} with a
-     * {@link NegativeArraySizeException}.
+     * <p>The sum is computed in {@code long} because this method takes an arbitrary {@code int}:
+     * {@code encrypt} is reachable directly, without the body-size check that would otherwise
+     * bound the plaintext, and a plaintext longer than {@code Integer.MAX_VALUE - 17} would wrap
+     * the {@code int} sum to a negative number and slip past this guard, letting an unencryptable
+     * record through.
      *
      * @param plaintextLength the plaintext length in octets
      * @param recordSize      the {@code rs} the header would advertise
@@ -163,9 +163,10 @@ final class WebPushEncryptor {
         if (recordSize <= recordContentSize) {
             throw new IllegalArgumentException(
                 "recordSize " + recordSize + " is too small for a " + plaintextLength + "-byte payload: RFC 8291 §4"
-                    + " requires rs to be strictly greater than plaintext + padding delimiter ("
-                    + PADDING_DELIMITER_LENGTH + ") + authentication tag (" + GCM_TAG_BYTES + ") = "
-                    + recordContentSize + "; raise recordSize to at least " + (recordContentSize + 1));
+                    + " requires rs to be strictly greater than plaintext (" + plaintextLength
+                    + ") + padding delimiter (" + PADDING_DELIMITER_LENGTH + ") + authentication tag ("
+                    + GCM_TAG_BYTES + ") = " + recordContentSize + "; raise recordSize to at least "
+                    + (recordContentSize + 1));
         }
     }
 

@@ -125,12 +125,18 @@ class PushSenderPayloadSizeTest {
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("body would be 2147483750 bytes");
 
-        // The largest payload an Integer.MAX_VALUE body limit admits, with an rs to match: both
-        // checks pass and report exact figures at the boundary.
+        // The largest payload an Integer.MAX_VALUE body limit admits, with an rs to match: the
+        // body sum lands exactly on the limit rather than past it.
         WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, Integer.MAX_VALUE, Integer.MAX_VALUE);
+    }
+
+    @Test
+    void theRecordSizeBranchNamesTheExactMinimumForAHugePayload() {
+        // Past the body check (its limit is raised out of the way), so only the RFC 8291 §4 rule
+        // speaks: 2147483544 + 17 + 1. Nothing here overflows — a payload big enough to wrap that
+        // sum cannot reach it, since the body check would already have failed.
         assertThatThrownBy(() ->
             WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, 4096, Integer.MAX_VALUE))
-            .as("the record-size branch names the exact minimum even for a huge payload")
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("raise recordSize to at least 2147483562");
     }

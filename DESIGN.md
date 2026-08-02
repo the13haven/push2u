@@ -108,8 +108,13 @@ The 103-byte overhead is derived from the format the encryptor emits — an 86-b
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
 hard-coded, so the plaintext maximum tracks a configured body limit. The RFC 8291 §4 rule has a
 single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check and
-by the encryptor itself. Its sum is computed in `long` because the encryptor is reachable without
-the body check, where an `int` sum could wrap for a payload near `Integer.MAX_VALUE`.
+by the encryptor itself.
+
+Both sums are computed in `long`. For the body sum this is load-bearing and covered by a test: in
+`int`, a payload above `Integer.MAX_VALUE - 103` would wrap to a negative size and pass any limit
+unnoticed. For the record-size sum it matters on the encryptor path, which is reachable without
+the body check; reached through the pre-flight check that sum cannot overflow, because such a
+payload has already failed the body check.
 
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
