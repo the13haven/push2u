@@ -14,6 +14,8 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Single point of access to the JCA: every {@code getInstance(...)} the library makes goes through here, optionally
  * bound to a specific {@link Provider}.
@@ -25,6 +27,8 @@ import javax.crypto.Mac;
  */
 final class Jca {
 
+    /** {@code null} means the JVM default provider search order. */
+    @Nullable
     private final Provider provider;
 
     /**
@@ -34,11 +38,12 @@ final class Jca {
      * first call at worst resolves twice and both writers store an equal value — safe for the concurrent sends a single
      * {@code PushSender} serves.
      */
+    @Nullable
     private volatile Es256Resolution es256Resolution;
 
     private record Es256Resolution(String algorithm, EcdsaSignature.Encoding encoding) {}
 
-    private Jca(Provider provider) {
+    private Jca(@Nullable Provider provider) {
         this.provider = provider;
     }
 

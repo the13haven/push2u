@@ -3,6 +3,8 @@ package io.push2u;
 import java.util.Arrays;
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * A Web Push subscription as handed to the application by the browser: the push endpoint URL plus the user agent's
  * P-256 public key ({@code p256dh}, 65-byte uncompressed point) and the 16-byte authentication secret ({@code auth}).
@@ -70,7 +72,7 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
     }
 
     @Override
-    public boolean equals(Object other) {
+    public boolean equals(@Nullable Object other) {
         if (this == other) {
             return true;
         }

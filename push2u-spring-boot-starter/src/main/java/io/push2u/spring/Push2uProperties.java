@@ -2,6 +2,7 @@ package io.push2u.spring;
 
 import java.time.Duration;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -25,10 +26,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("push2u")
 public record Push2uProperties(
         @DefaultValue Vapid vapid,
-        Duration jwtExpiry,
-        Duration defaultTtl,
-        Integer recordSize,
-        Integer maxEncryptedBodyBytes,
+        @Nullable Duration jwtExpiry,
+        @Nullable Duration defaultTtl,
+        @Nullable Integer recordSize,
+        @Nullable Integer maxEncryptedBodyBytes,
         @DefaultValue Retry retry) {
 
     /**
@@ -39,7 +40,10 @@ public record Push2uProperties(
      * @param subject the VAPID {@code sub} — a {@code mailto:} / {@code https:} contact. Optional per RFC 8292 §2.1,
      *     but required by push2u and hence by the autoconfigured {@code PushSender}
      */
-    public record Vapid(String publicKey, String privateKey, String subject) {}
+    public record Vapid(
+            @Nullable String publicKey,
+            @Nullable String privateKey,
+            @Nullable String subject) {}
 
     /**
      * Retry policy, mapped onto {@link io.push2u.RetryPolicy}.

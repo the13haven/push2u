@@ -14,6 +14,8 @@ description = "push2u-signer-vault — a VapidSigner backed by HashiCorp Vault T
 // third-party runtime dependency.
 dependencies {
     api(project(":push2u-core"))
+    // Declared directly, not leaned on transitively: this module annotates its own API.
+    api(libs.jspecify)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

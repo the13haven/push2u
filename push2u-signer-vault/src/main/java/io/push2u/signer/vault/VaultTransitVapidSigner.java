@@ -21,6 +21,8 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jspecify.annotations.Nullable;
+
 import io.push2u.PushCryptoException;
 import io.push2u.VapidSigner;
 
@@ -121,6 +123,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private final String token;
     private final byte[] publicKey;
     /** The Transit key version every {@code sign} call pins; {@code null} sends no {@code key_version}. */
+    @Nullable
     private final Integer keyVersion;
 
     /** The (version, public key) pair read atomically from one {@code transit/keys/<name>} response. */
@@ -262,7 +265,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             String mount,
             String keyName,
             String token,
-            Integer keyVersion,
+            @Nullable Integer keyVersion,
             byte[] publicKey,
             VaultHttpTransport transport) {
         Objects.requireNonNull(vaultAddress, "vaultAddress");

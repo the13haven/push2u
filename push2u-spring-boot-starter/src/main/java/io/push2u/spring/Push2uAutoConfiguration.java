@@ -1,5 +1,8 @@
 package io.push2u.spring;
 
+import java.time.Duration;
+import java.util.Objects;
+
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -45,7 +48,12 @@ public final class Push2uAutoConfiguration {
             name = {"public-key", "private-key"})
     public VapidSigner push2uVapidSigner(Push2uProperties properties) {
         Push2uProperties.Vapid vapid = properties.vapid();
-        return new LocalEcVapidSigner(VapidKeys.fromBase64(vapid.publicKey(), vapid.privateKey()));
+        // @ConditionalOnProperty already gates this bean on both keys being set; restated as a
+        // check so the contract holds in the type system too, and so a future change to the
+        // condition fails here with the property name rather than with a NullPointerException.
+        String publicKey = Objects.requireNonNull(vapid.publicKey(), "push2u.vapid.public-key");
+        String privateKey = Objects.requireNonNull(vapid.privateKey(), "push2u.vapid.private-key");
+        return new LocalEcVapidSigner(VapidKeys.fromBase64(publicKey, privateKey));
     }
 
     /**
@@ -101,22 +109,28 @@ public final class Push2uAutoConfiguration {
                 .contact(subject)
                 .httpClient(httpClient)
                 .retryPolicy(new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff()));
-        if (properties.jwtExpiry() != null) {
-            builder.jwtExpiry(properties.jwtExpiry());
+        // Every optional property is read once into a local — see the same pattern in
+        // PushSender.requestHeaders: a @Nullable accessor called twice is two reads.
+        Duration jwtExpiry = properties.jwtExpiry();
+        if (jwtExpiry != null) {
+            builder.jwtExpiry(jwtExpiry);
         }
-        if (properties.defaultTtl() != null) {
-            builder.defaultTtl(properties.defaultTtl());
+        Duration defaultTtl = properties.defaultTtl();
+        if (defaultTtl != null) {
+            builder.defaultTtl(defaultTtl);
         }
-        if (properties.recordSize() != null) {
+        Integer recordSize = properties.recordSize();
+        if (recordSize != null) {
             try {
-                builder.recordSize(properties.recordSize());
+                builder.recordSize(recordSize);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("push2u.record-size: " + e.getMessage(), e);
             }
         }
-        if (properties.maxEncryptedBodyBytes() != null) {
+        Integer maxEncryptedBodyBytes = properties.maxEncryptedBodyBytes();
+        if (maxEncryptedBodyBytes != null) {
             try {
-                builder.maxEncryptedBodyBytes(properties.maxEncryptedBodyBytes());
+                builder.maxEncryptedBodyBytes(maxEncryptedBodyBytes);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("push2u.max-encrypted-body-bytes: " + e.getMessage(), e);
             }

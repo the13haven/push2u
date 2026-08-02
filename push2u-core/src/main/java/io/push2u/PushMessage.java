@@ -5,6 +5,8 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * An immutable push message: the payload plus the optional RFC 8030 delivery headers ({@code TTL}, {@code Urgency},
  * {@code Topic}). The payload is encrypted (RFC 8291) before transport; the headers travel in clear and are applied by
@@ -26,7 +28,11 @@ import java.util.Objects;
 // ArrayRecordComponent: same rationale as Subscription — the payload is bytes by definition, and
 // the constructor, the accessor and equals/hashCode all treat the array by value.
 @SuppressWarnings("ArrayRecordComponent")
-public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String topic) {
+public record PushMessage(
+        byte[] payload,
+        @Nullable Duration ttl,
+        @Nullable Urgency urgency,
+        @Nullable String topic) {
 
     private static final int TOPIC_MAX_LENGTH = 32;
 
@@ -52,7 +58,7 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
      * waiting for a remote HTTP 400 — and because a third-party {@code PushHttpClient} may not reject header values
      * containing CR/LF the way the JDK client does.
      */
-    private static void validateTopic(String topic) {
+    private static void validateTopic(@Nullable String topic) {
         if (topic == null) {
             return;
         }
@@ -132,7 +138,7 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
     }
 
     @Override
-    public boolean equals(Object other) {
+    public boolean equals(@Nullable Object other) {
         if (this == other) {
             return true;
         }
@@ -159,8 +165,14 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
     public static final class Builder {
 
         private final byte[] payload;
+
+        @Nullable
         private Duration ttl;
+
+        @Nullable
         private Urgency urgency;
+
+        @Nullable
         private String topic;
 
         private Builder(byte[] payload) {
@@ -173,7 +185,7 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
          * @param ttl the retention duration, or {@code null}
          * @return this builder
          */
-        public Builder ttl(Duration ttl) {
+        public Builder ttl(@Nullable Duration ttl) {
             this.ttl = ttl;
             return this;
         }
@@ -184,7 +196,7 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
          * @param urgency the urgency, or {@code null}
          * @return this builder
          */
-        public Builder urgency(Urgency urgency) {
+        public Builder urgency(@Nullable Urgency urgency) {
             this.urgency = urgency;
             return this;
         }
@@ -196,7 +208,7 @@ public record PushMessage(byte[] payload, Duration ttl, Urgency urgency, String 
          * @param topic the topic, or {@code null}
          * @return this builder
          */
-        public Builder topic(String topic) {
+        public Builder topic(@Nullable String topic) {
             this.topic = topic;
             return this;
         }

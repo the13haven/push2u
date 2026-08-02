@@ -6,4 +6,7 @@
  * <p>This package is the public surface of {@code push2u-core}. Module boundaries and architectural decisions are
  * documented in the repository's {@code DESIGN.md}.
  */
+@NullMarked
 package io.push2u;
+
+import org.jspecify.annotations.NullMarked;

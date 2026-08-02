@@ -181,12 +181,20 @@ tasks.withType<JavaCompile>().configureEach {
         disable("CanonicalDuration")
 
         if (productionCompile) {
-            // NullAway is the deliberate exception to the rule above — it stays a warning, because
-            // push2u carries no nullability annotations yet (the core is zero-dependency, so even
-            // an annotations-only jar is a decision of its own). Its 12 findings are visible in the
-            // build log; promote to error() once the public API is annotated.
-            warn("NullAway")
-            option("NullAway:AnnotatedPackages", "io.push2u")
+            // The public API is annotated: every package carries JSpecify's @NullMarked, so a
+            // reference type is non-null unless it says @Nullable. NullAway verifies that contract
+            // and fails the build on a violation.
+            //
+            // OnlyNullMarked over the older AnnotatedPackages: the source of truth is the
+            // @NullMarked annotation in package-info.java, not a package prefix repeated in the
+            // build script — a new package is covered by marking it, not by editing this file.
+            // RequireExplicitNullMarking then makes forgetting that mark a build failure.
+            //
+            // NullAway:JSpecifyMode (full generic nullness) is deliberately left off: its authors
+            // still describe it as evolving and prone to false positives. It is the next step, not
+            // this one.
+            error("NullAway", "RequireExplicitNullMarking")
+            option("NullAway:OnlyNullMarked", "true")
         } else {
             disable("NullAway")
         }

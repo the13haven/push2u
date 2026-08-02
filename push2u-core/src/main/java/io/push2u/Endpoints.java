@@ -7,6 +7,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Push-endpoint hygiene: validation of the RFC 8030 endpoint contract and a log-safe rendering.
  *
@@ -43,7 +45,7 @@ public final class Endpoints {
      * @param endpoint the endpoint URL to redact, possibly {@code null}
      * @return a representation containing only the origin and a fingerprint, never the full URL
      */
-    public static String redact(String endpoint) {
+    public static String redact(@Nullable String endpoint) {
         if (endpoint == null) {
             return NULL_ENDPOINT;
         }

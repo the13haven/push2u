@@ -17,6 +17,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 
+import org.jspecify.annotations.Nullable;
+
 import io.push2u.PushCryptoException;
 
 /**
@@ -148,7 +150,7 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         return text.substring(0, cut);
     }
 
-    private static ResponseTooLargeException findTooLarge(Throwable failure) {
+    private static @Nullable ResponseTooLargeException findTooLarge(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             if (cause instanceof ResponseTooLargeException tooLarge) {
                 return tooLarge;
@@ -176,7 +178,9 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         private final int maxBytes;
         private final long declaredLength;
-        private Flow.Subscription subscription;
+        // Assigned in onSubscribe, per the Flow.Subscriber contract — null until then.
+        private Flow.@Nullable Subscription subscription;
+
         private long received;
 
         BoundedByteArraySubscriber(int maxBytes, long declaredLength) {
@@ -207,11 +211,15 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
         @Override
         public void onNext(List<ByteBuffer> buffers) {
+            // Flow.Subscriber guarantees onSubscribe runs first, so this is non-null in practice —
+            // read once into a local so the guarantee is checked rather than assumed, and so a
+            // publisher that breaks the contract fails here instead of dereferencing null.
+            Flow.Subscription current = Objects.requireNonNull(subscription, "onNext before onSubscribe");
             for (ByteBuffer chunk : buffers) {
                 int length = chunk.remaining();
                 received += length;
                 if (received > maxBytes) {
-                    subscription.cancel();
+                    current.cancel();
                     result.completeExceptionally(new ResponseTooLargeException(maxBytes));
                     return;
                 }

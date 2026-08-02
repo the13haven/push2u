@@ -1,6 +1,6 @@
 # push2u's own version catalog — this is a standalone composite build (see settings.gradle.kts).
-# Test stack only; zero runtime dependencies is a deliberate design constraint of the library
-# core. Versions verified present on Maven Central.
+# Zero runtime IMPLEMENTATION dependencies is a deliberate design constraint of the library core:
+# apart from JSpecify (annotations only, no code), everything below is test- or build-scoped. Versions verified present on Maven Central.
 [versions]
 junit = "6.1.2"
 assertj = "3.27.7"
@@ -20,6 +20,12 @@ bouncycastle = "1.85"
 # bcprov ship incompatible org.bouncycastle.crypto classes and can never share a classpath.
 # Version verified present on Maven Central.
 bouncycastleFips = "2.1.3"
+
+# JSpecify — the nullness annotations the public API is marked with (@NullMarked / @Nullable), and
+# the contract NullAway verifies. An annotation-only artifact with no code of its own; exposed as
+# `api` so consumers and their tools (NullAway, IntelliJ, the Kotlin compiler) read the same
+# contract. See README "Requirements".
+jspecify = "1.0.0"
 
 # Quality tool engines — the analyser versions the Gradle plugins run (see build-logic's
 # push2u-quality convention plugin). Build-time only: none of these ever reaches a consumer's
@@ -63,6 +69,8 @@ bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", ver
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # BC-FIPS test provider (separate artifact line from bcprov, so outside the pin above).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }
+
+jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
 
 # Quality tool libraries. The Checkstyle/PMD/SpotBugs/JaCoCo/Palantir entries exist so the
 # convention plugin can pin the analyser version through the catalog; Error Prone and NullAway are

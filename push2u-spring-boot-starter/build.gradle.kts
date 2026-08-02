@@ -11,6 +11,7 @@ description = "push2u-spring-boot-starter — Spring Boot auto-configuration for
 dependencies {
     api(platform(libs.spring.boot.dependencies))
     api(project(":push2u-core"))
+    api(libs.jspecify)
     api(libs.spring.boot.autoconfigure)
     // Health lives in the optional spring-boot-health module (Boot 4 split it out of actuator);
     // the indicator is conditional on it being on the classpath.

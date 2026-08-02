@@ -12,6 +12,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * The send facade: encrypts a {@link PushMessage} for a {@link Subscription} (RFC 8291), signs the VAPID JWT (RFC
  * 8292), POSTs the {@code aes128gcm} body to the endpoint (RFC 8030), and interprets the HTTP status into a
@@ -37,12 +39,19 @@ public final class PushSender {
     private final int maxEncryptedBodyBytes;
     private final Sleeper sleeper;
     private final Clock clock;
+    /** {@code null} selects the library-owned virtual-thread executor; see {@link #sendAsync}. */
+    @Nullable
     private final Executor executor;
 
     private PushSender(Builder builder) {
         Jca jca = builder.cryptoProvider == null ? Jca.platform() : Jca.using(builder.cryptoProvider);
-        this.signer = builder.signer != null ? builder.signer : new LocalEcVapidSigner(builder.vapidKeys, jca);
-        this.contact = builder.contact;
+        // Builder.build() rejects a missing contact and enforces exactly one key source, so both
+        // are present by the time this runs — stated here so the invariant is checked rather than
+        // assumed if build() ever changes.
+        this.signer = builder.signer != null
+                ? builder.signer
+                : new LocalEcVapidSigner(Objects.requireNonNull(builder.vapidKeys, "vapidKeys"), jca);
+        this.contact = Objects.requireNonNull(builder.contact, "contact");
         this.encryptor = new WebPushEncryptor(jca);
         this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkHttpPushClient();
         this.retryPolicy = builder.retryPolicy;
@@ -165,13 +174,17 @@ public final class PushSender {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Authorization", authorization);
         headers.put("Content-Encoding", WebPushEncryptor.CONTENT_ENCODING);
-        Duration ttl = message.ttl() != null ? message.ttl() : defaultTtl;
-        headers.put("TTL", Long.toString(ttl.toSeconds()));
-        if (message.urgency() != null) {
-            headers.put("Urgency", message.urgency().headerValue());
+        // Each optional header is read once into a local: the accessors are @Nullable, and calling
+        // them again after the null check would be a second read for the analysers to reason about.
+        Duration messageTtl = message.ttl();
+        headers.put("TTL", Long.toString((messageTtl != null ? messageTtl : defaultTtl).toSeconds()));
+        Urgency urgency = message.urgency();
+        if (urgency != null) {
+            headers.put("Urgency", urgency.headerValue());
         }
-        if (message.topic() != null) {
-            headers.put("Topic", message.topic());
+        String topic = message.topic();
+        if (topic != null) {
+            headers.put("Topic", topic);
         }
         return headers;
     }
@@ -211,11 +224,21 @@ public final class PushSender {
      */
     public static final class Builder {
 
+        @Nullable
         private VapidKeys vapidKeys;
+
+        @Nullable
         private VapidSigner signer;
+
+        @Nullable
         private String contact;
+
+        @Nullable
         private PushHttpClient httpClient;
+
+        @Nullable
         private Provider cryptoProvider;
+
         private RetryPolicy retryPolicy = RetryPolicy.defaults();
         private Duration jwtExpiry = Duration.ofHours(12);
         private Duration defaultTtl = Duration.ofDays(1);
@@ -223,6 +246,8 @@ public final class PushSender {
         private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES;
         private Sleeper sleeper = Sleeper.REAL;
         private Clock clock = Clock.systemUTC();
+
+        @Nullable
         private Executor executor;
 
         private Builder() {}

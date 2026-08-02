@@ -16,6 +16,8 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Parser for the {@code Retry-After} response header (RFC 9110 §10.2.3): either delta-seconds ({@code 1*DIGIT}) or an
  * HTTP-date in any of the three formats recipients are required to accept (RFC 9110 §5.6.7):
@@ -79,6 +81,7 @@ final class RetryAfter {
      * when stale — a benign race at worst rebuilds an equal pair and both writers store an equivalent value. The key
      * changes once a year, so in steady state this is a single volatile read.
      */
+    @Nullable
     private static volatile Rfc850 rfc850;
 
     /**

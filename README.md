@@ -14,7 +14,9 @@ are not published to Maven Central yet. The implemented architecture is describe
 ## Features
 
 - Java 21 baseline.
-- Zero runtime dependencies in `push2u-core`.
+- Zero runtime *implementation* dependencies in `push2u-core`: the only artefact it brings along is
+  [JSpecify](https://jspecify.dev), an annotation-only jar carrying the nullness contract
+  (`@NullMarked` / `@Nullable`) that the API is verified against.
 - RFC 8291 / RFC 8188 payload encryption using JDK cryptography.
 - RFC 8292 VAPID authentication with a local EC key or an external signer.
 - JDK `HttpClient` transport, with a small transport SPI for replacements.
@@ -466,6 +468,17 @@ must be replaced.
 
 The test suite includes RFC 5869, RFC 8291, and RFC 8292 vectors, sender/retry tests, Spring Boot
 auto-configuration tests, and a Vault Transit integration contract.
+
+## Nullness
+
+Every package is [JSpecify](https://jspecify.dev) `@NullMarked`: a reference type in the API is
+non-null unless annotated `@Nullable`. The annotated exceptions are the optional message headers
+(`PushMessage.ttl` / `urgency` / `topic`), the unset builder fields and the Spring properties.
+
+The contract is machine-checked, not just documented — NullAway fails the build on a violation, and
+`RequireExplicitNullMarking` fails it on a package that forgets the mark. Because JSpecify is an
+`api` dependency, the same annotations are visible to consumers' analysers, IntelliJ and the Kotlin
+compiler.
 
 ## Quality checks
 
