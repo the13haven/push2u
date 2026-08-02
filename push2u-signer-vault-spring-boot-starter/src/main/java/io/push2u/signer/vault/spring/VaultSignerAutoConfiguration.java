@@ -1,10 +1,13 @@
 package io.push2u.signer.vault.spring;
 
-import io.push2u.PushHttpClient;
 import io.push2u.VapidSigner;
+import io.push2u.signer.vault.JdkVaultHttpTransport;
+import io.push2u.signer.vault.VaultHttpTransport;
 import io.push2u.signer.vault.VaultTransitVapidSigner;
+import java.net.http.HttpClient;
 import java.util.Base64;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -25,8 +28,22 @@ import org.springframework.context.annotation.Bean;
  * <p>Ordered before the core starter's {@code Push2uAutoConfiguration} (by name, so this module
  * need not depend on it) and {@link ConditionalOnMissingBean}: when both starters are present this
  * remote signer wins over the in-JVM local signer, while an application-supplied {@link VapidSigner}
- * still overrides both. The Vault {@code sign} calls reuse an application {@link PushHttpClient} bean
- * if present.
+ * still overrides both.
+ *
+ * <p><b>Transport.</b> Every Vault call (the Transit {@code sign} POST and the fetched mode's
+ * startup metadata GET) goes through one {@link VaultHttpTransport}, resolved in priority order:
+ * <ol>
+ *   <li>an application {@link VaultHttpTransport} bean — full control (custom HTTP stack,
+ *       observability); the {@code request-timeout}/{@code connect-timeout}/{@code
+ *       max-response-bytes} properties are then ignored, the bean owns those concerns;</li>
+ *   <li>an application {@link HttpClient} bean qualified {@code "push2uVaultHttpClient"} — the
+ *       middle road for mTLS/proxy setups: the starter wraps it in a {@link JdkVaultHttpTransport}
+ *       with the configured {@code request-timeout} and {@code max-response-bytes}
+ *       ({@code connect-timeout} is ignored, the supplied client owns it);</li>
+ *   <li>otherwise a {@link JdkVaultHttpTransport} built entirely from the properties.</li>
+ * </ol>
+ * The qualifier keeps the Vault client separate from any push-delivery {@code HttpClient} the
+ * application may define — the two transports face different trust domains on purpose.
  */
 @AutoConfiguration(beforeName = "io.push2u.spring.Push2uAutoConfiguration")
 @EnableConfigurationProperties(VaultSignerProperties.class)
@@ -42,15 +59,20 @@ public final class VaultSignerAutoConfiguration {
      * The Vault Transit signer, built from {@code push2u.signer.vault.*}. Absent unless the address,
      * key name and token are all set, and yields to an application-supplied signer.
      *
-     * @param properties the bound configuration
-     * @param httpClient an optional application HTTP transport for the Vault calls
+     * @param properties      the bound configuration
+     * @param transport       an optional application {@link VaultHttpTransport} for the Vault calls
+     * @param vaultHttpClient an optional {@code "push2uVaultHttpClient"}-qualified {@link HttpClient}
+     *                        the default transport wraps when no transport bean exists
      * @return the signer
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
     @ConditionalOnProperty(prefix = "push2u.signer.vault", name = {"address", "key-name", "token"})
-    VapidSigner vaultTransitVapidSigner(VaultSignerProperties properties, ObjectProvider<PushHttpClient> httpClient) {
-        PushHttpClient client = httpClient.getIfAvailable();
+    VapidSigner vaultTransitVapidSigner(VaultSignerProperties properties,
+                                        ObjectProvider<VaultHttpTransport> transport,
+                                        @Qualifier("push2uVaultHttpClient")
+                                        ObjectProvider<HttpClient> vaultHttpClient) {
+        VaultHttpTransport resolved = resolveTransport(properties, transport, vaultHttpClient);
         String publicKey = properties.publicKey();
         Integer keyVersion = properties.keyVersion();
         if (publicKey == null || publicKey.isBlank()) {
@@ -62,29 +84,34 @@ public final class VaultSignerAutoConfiguration {
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
             // (the token needs `read` on the key).
-            return client == null
-                ? new VaultTransitVapidSigner(
-                    properties.address(), properties.mount(), properties.keyName(), properties.token())
-                : new VaultTransitVapidSigner(
-                    properties.address(), properties.mount(), properties.keyName(), properties.token(), client);
+            return new VaultTransitVapidSigner(
+                properties.address(), properties.mount(), properties.keyName(), properties.token(), resolved);
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
         byte[] point = Base64.getUrlDecoder().decode(publicKey);
         if (keyVersion == null) {
-            return client == null
-                ? new VaultTransitVapidSigner(
-                    properties.address(), properties.mount(), properties.keyName(), properties.token(), point)
-                : new VaultTransitVapidSigner(
-                    properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
-                    client);
+            return new VaultTransitVapidSigner(
+                properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
+                resolved);
         }
-        return client == null
-            ? new VaultTransitVapidSigner(
-                properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
-                keyVersion)
-            : new VaultTransitVapidSigner(
-                properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
-                keyVersion, client);
+        return new VaultTransitVapidSigner(
+            properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
+            keyVersion, resolved);
+    }
+
+    /** Transport priority: {@code VaultHttpTransport} bean > qualified {@code HttpClient} > defaults. */
+    private static VaultHttpTransport resolveTransport(VaultSignerProperties properties,
+                                                       ObjectProvider<VaultHttpTransport> transport,
+                                                       ObjectProvider<HttpClient> vaultHttpClient) {
+        VaultHttpTransport supplied = transport.getIfAvailable();
+        if (supplied != null) {
+            return supplied;
+        }
+        HttpClient client = vaultHttpClient.getIfAvailable();
+        if (client == null) {
+            client = HttpClient.newBuilder().connectTimeout(properties.connectTimeout()).build();
+        }
+        return new JdkVaultHttpTransport(client, properties.requestTimeout(), properties.maxResponseBytes());
     }
 }

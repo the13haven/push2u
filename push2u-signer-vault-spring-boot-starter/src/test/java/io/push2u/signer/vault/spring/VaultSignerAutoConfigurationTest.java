@@ -1,14 +1,23 @@
 package io.push2u.signer.vault.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.push2u.PushHttpClient;
-import io.push2u.PushResponse;
+import com.sun.net.httpserver.HttpServer;
+import io.push2u.PushCryptoException;
 import io.push2u.PushSender;
 import io.push2u.VapidSigner;
+import io.push2u.signer.vault.VaultHttpResponse;
+import io.push2u.signer.vault.VaultHttpTransport;
 import io.push2u.signer.vault.VaultTransitVapidSigner;
 import io.push2u.spring.Push2uAutoConfiguration;
+import java.io.OutputStream;
 import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -29,7 +38,9 @@ import org.springframework.context.annotation.Configuration;
 /**
  * {@link VaultSignerAutoConfiguration} wires a {@link VaultTransitVapidSigner} from
  * {@code push2u.signer.vault.*}, outranks the core starter's local signer, and yields to an
- * application-supplied signer.
+ * application-supplied signer. The transport extension point resolves in priority order:
+ * application {@link VaultHttpTransport} bean, then a {@code push2uVaultHttpClient}-qualified
+ * {@link HttpClient} wrapped with the bound transport properties, then pure defaults.
  */
 class VaultSignerAutoConfigurationTest {
 
@@ -158,6 +169,99 @@ class VaultSignerAutoConfigurationTest {
             });
     }
 
+    @Test
+    void aVaultHttpTransportBeanOutranksTheQualifiedHttpClient() {
+        // Both extension points present at once: the transport bean must win, and the qualified
+        // client must stay untouched — otherwise a user migrating to a full transport would keep
+        // silently sending through the leftover client.
+        RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
+        QualifiedHttpClientConfiguration.CLIENT.sends = 0;
+        vaultRunner()
+            .withUserConfiguration(RecordingTransportConfiguration.class, QualifiedHttpClientConfiguration.class)
+            .run(context -> {
+                context.getBean(VapidSigner.class)
+                    .sign("starter transport-priority probe".getBytes(StandardCharsets.UTF_8));
+                assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES).hasSize(1);
+                assertThat(QualifiedHttpClientConfiguration.CLIENT.sends)
+                    .as("the qualified HttpClient is bypassed when a transport bean exists")
+                    .isZero();
+            });
+    }
+
+    @Test
+    void theQualifiedHttpClientBacksTheDefaultTransport() throws Exception {
+        // No VaultHttpTransport bean: the starter must wrap the push2uVaultHttpClient-qualified
+        // client — the mTLS/proxy extension point — and route the sign call through it.
+        QualifiedHttpClientConfiguration.CLIENT.sends = 0;
+        withStubVault(signResponse(), stubAddress ->
+            explicitRunner(stubAddress)
+                .withUserConfiguration(QualifiedHttpClientConfiguration.class)
+                .run(context -> {
+                    byte[] signature = context.getBean(VapidSigner.class)
+                        .sign("starter qualified-client probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(signature).hasSize(64);
+                    assertThat(QualifiedHttpClientConfiguration.CLIENT.sends)
+                        .as("the sign request went through the qualified HttpClient")
+                        .isEqualTo(1);
+                }));
+    }
+
+    @Test
+    void maxResponseBytesReachesTheBuiltTransport() throws Exception {
+        // Bind a deliberately tiny cap and let the stub Vault answer with a normal-size sign
+        // response: the call must fail closed with the transport's limit error — proving the
+        // property actually shapes the transport instead of being silently dropped.
+        withStubVault(signResponse(), stubAddress ->
+            explicitRunner(stubAddress)
+                .withPropertyValues("push2u.signer.vault.max-response-bytes=16")
+                .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
+                    .sign("starter cap probe".getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("exceeded the configured limit of 16 bytes")));
+    }
+
+    @Test
+    void requestTimeoutReachesTheBuiltTransport() throws Exception {
+        // A socket that accepts but never answers: only the bound request-timeout can end the
+        // exchange — before this seam existed, the metadata GET could hang startup forever.
+        try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            explicitRunner("http://127.0.0.1:" + silent.getLocalPort())
+                .withPropertyValues("push2u.signer.vault.request-timeout=500ms")
+                .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
+                    .sign("starter timeout probe".getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("timed out"));
+        }
+    }
+
+    @Test
+    void nonPositiveTransportPropertiesFailStartup() {
+        vaultRunner()
+            .withPropertyValues("push2u.signer.vault.request-timeout=0s")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .hasMessageContaining("request-timeout must be positive");
+            });
+        vaultRunner()
+            .withPropertyValues("push2u.signer.vault.max-response-bytes=0")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .hasMessageContaining("max-response-bytes must be positive");
+            });
+        vaultRunner()
+            .withPropertyValues("push2u.signer.vault.connect-timeout=-1s")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .hasMessageContaining("connect-timeout must be positive");
+            });
+    }
+
     private ApplicationContextRunner vaultRunner() {
         return runner.withPropertyValues(
             "push2u.signer.vault.address=http://vault.example:8200",
@@ -166,10 +270,48 @@ class VaultSignerAutoConfigurationTest {
             "push2u.signer.vault.public-key=" + publicKeyB64);
     }
 
+    /** An explicit-mode runner pointed at a live local stub Vault (no transport bean). */
+    private ApplicationContextRunner explicitRunner(String address) {
+        return runner.withPropertyValues(
+            "push2u.signer.vault.address=" + address,
+            "push2u.signer.vault.key-name=vapid",
+            "push2u.signer.vault.token=test-token",
+            "push2u.signer.vault.public-key=" + publicKeyB64);
+    }
+
+    /** A well-formed Transit sign response carrying 64 zero bytes as the signature. */
+    private static String signResponse() {
+        String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
+        return "{\"data\":{\"signature\":\"vault:v1:" + signature + "\"}}";
+    }
+
+    /** Serve {@code responseBody} for every request on an ephemeral port and run {@code test}. */
+    private static void withStubVault(String responseBody, StubVaultTest test) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
+            server.createContext("/", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(body);
+                }
+            });
+            server.start();
+            test.run("http://127.0.0.1:" + server.getAddress().getPort());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private interface StubVaultTest {
+        void run(String address) throws Exception;
+    }
+
     /**
-     * A {@link PushHttpClient} stub the autoconfigured signer picks up (it reuses an application
-     * transport bean when present): records every sign request body and answers like Vault's
-     * Transit sign endpoint, so tests can assert what was actually sent.
+     * A {@link VaultHttpTransport} stub the autoconfigured signer picks up (an application
+     * transport bean outranks every built-in default): records every sign request body and answers
+     * like Vault's Transit sign endpoint, so tests can assert what was actually sent.
      */
     @Configuration(proxyBeanMethods = false)
     static class RecordingTransportConfiguration {
@@ -177,13 +319,33 @@ class VaultSignerAutoConfigurationTest {
         static final List<String> SIGN_REQUEST_BODIES = new ArrayList<>();
 
         @Bean
-        PushHttpClient recordingTransport() {
-            return (endpoint, headers, body) -> {
-                SIGN_REQUEST_BODIES.add(new String(body, StandardCharsets.UTF_8));
-                String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
-                return new PushResponse(200, Map.of(),
-                    "{\"data\":{\"signature\":\"vault:v3:" + signature + "\"}}");
+        VaultHttpTransport recordingTransport() {
+            return new VaultHttpTransport() {
+                @Override
+                public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                    throw new AssertionError("the explicit mode must never read key metadata from Vault");
+                }
+
+                @Override
+                public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                    SIGN_REQUEST_BODIES.add(new String(body, StandardCharsets.UTF_8));
+                    String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
+                    return new VaultHttpResponse(200,
+                        "{\"data\":{\"signature\":\"vault:v3:" + signature + "\"}}");
+                }
             };
+        }
+    }
+
+    /** The mTLS/proxy extension point: an {@link HttpClient} qualified {@code push2uVaultHttpClient}. */
+    @Configuration(proxyBeanMethods = false)
+    static class QualifiedHttpClientConfiguration {
+
+        static final RecordingHttpClient CLIENT = new RecordingHttpClient(HttpClient.newHttpClient());
+
+        @Bean("push2uVaultHttpClient")
+        HttpClient push2uVaultHttpClient() {
+            return CLIENT;
         }
     }
 

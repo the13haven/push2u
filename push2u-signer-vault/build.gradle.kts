@@ -3,12 +3,13 @@ plugins {
 }
 
 description = "push2u-signer-vault — a VapidSigner backed by HashiCorp Vault Transit: the private " +
-    "key never leaves Vault. Opt-in module on top of push2u-core; not zero-dep " +
-    "(it calls Vault over HTTP, reusing push2u-core's PushHttpClient transport)."
+    "key never leaves Vault. Opt-in module on top of push2u-core; it calls the Vault API over " +
+    "its own VaultHttpTransport seam (default: the JDK HttpClient)."
 
 // Toolchain + `--release 21` + JUnit Platform come from the composite-build root build.gradle.kts.
-// This module is NOT zero-dep — it depends on push2u-core; the Vault call itself goes through
-// push2u-core's JDK HttpClient with hand-built/parsed JSON, so it adds no runtime dependency.
+// This module is NOT zero-dep — it depends on push2u-core; the Vault calls go through the module's
+// own VaultHttpTransport over the JDK HttpClient with hand-built/parsed JSON, so it adds no
+// third-party runtime dependency.
 dependencies {
     api(project(":push2u-core"))
 
