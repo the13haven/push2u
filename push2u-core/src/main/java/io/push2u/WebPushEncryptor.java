@@ -33,6 +33,13 @@ final class WebPushEncryptor {
 
     static final int DEFAULT_RECORD_SIZE = 4096;
 
+    /**
+     * The default ceiling on the encrypted HTTP entity body, in bytes. RFC 8030 §7.2 lets a push
+     * service refuse anything larger than 4096 octets of entity body, so that is what the library
+     * assumes by default.
+     */
+    static final int DEFAULT_MAX_ENCRYPTED_BODY_SIZE = 4096;
+
     /** The RFC 8188 content coding this encryptor produces — also the {@code Content-Encoding} header value. */
     static final String CONTENT_ENCODING = "aes128gcm";
 
@@ -43,6 +50,38 @@ final class WebPushEncryptor {
     private static final int GCM_TAG_BITS = 128;
     private static final int GCM_TAG_BYTES = 16;
     private static final byte PADDING_DELIMITER = 0x02;
+    private static final int PADDING_DELIMITER_LENGTH = 1;
+    private static final int KEY_ID_LENGTH_FIELD = 1;
+
+    /**
+     * The RFC 8188 §2 header this encryptor emits: {@code salt(16) || rs(4) || idlen(1) ||
+     * keyid(65)} — 86 octets, fixed because RFC 8291 §3.4 pins the {@code keyid} to the
+     * uncompressed application-server public key.
+     */
+    static final int HEADER_LENGTH =
+        SALT_LENGTH + Integer.BYTES + KEY_ID_LENGTH_FIELD + EcKeys.UNCOMPRESSED_LENGTH;
+
+    /**
+     * What one record adds to its plaintext: the padding delimiter (1 octet) plus the
+     * AEAD_AES_128_GCM authentication tag (16 octets) — the "sum" RFC 8291 §4 requires {@code rs}
+     * to exceed, minus the plaintext itself.
+     */
+    static final int RECORD_OVERHEAD = PADDING_DELIMITER_LENGTH + GCM_TAG_BYTES;
+
+    /**
+     * What the whole single-record body adds to its plaintext: header plus record overhead, 103
+     * octets. With the RFC 8030 §7.2 body ceiling of 4096 this leaves 3993 octets of plaintext —
+     * exactly the figure RFC 8291 §4 derives — but the number is computed, never hard-coded, so
+     * it follows the body limit a caller configures.
+     */
+    static final int BODY_OVERHEAD = HEADER_LENGTH + RECORD_OVERHEAD;
+
+    /**
+     * The smallest legal {@code rs}: RFC 8188 §2 states that "a 'rs' value of less than 18 is
+     * invalid", which is exactly the record overhead plus the one octet by which {@code rs} must
+     * exceed it (RFC 8291 §4) for a zero-length plaintext.
+     */
+    static final int MIN_RECORD_SIZE = RECORD_OVERHEAD + 1;
 
     private static final byte[] KEY_INFO_PREFIX =
         "WebPush: info\0".getBytes(StandardCharsets.US_ASCII);
@@ -84,10 +123,16 @@ final class WebPushEncryptor {
      */
     byte[] encrypt(byte[] uaPublicKey, byte[] authSecret, byte[] plaintext, int recordSize,
                    KeyPair applicationServerKeyPair, byte[] salt) {
-        int minimumRecordSize = plaintext.length + 1 + GCM_TAG_BYTES;
-        if (recordSize < minimumRecordSize) {
+        // RFC 8291 §4: rs MUST be *greater than* the sum of the plaintext, the padding delimiter
+        // and the tag — equality is a violation, not the boundary case. long arithmetic because a
+        // plaintext near Integer.MAX_VALUE would overflow the sum in int.
+        long recordContentSize = (long) plaintext.length + RECORD_OVERHEAD;
+        if (recordSize <= recordContentSize) {
             throw new IllegalArgumentException(
-                "recordSize " + recordSize + " must exceed plaintext + delimiter + tag (" + minimumRecordSize + ")");
+                "recordSize " + recordSize + " must be strictly greater than plaintext (" + plaintext.length
+                    + ") + padding delimiter (" + PADDING_DELIMITER_LENGTH + ") + authentication tag ("
+                    + GCM_TAG_BYTES + ") = " + recordContentSize + " (RFC 8291 §4); use at least "
+                    + (recordContentSize + 1));
         }
 
         ECPublicKey uaPublic = EcKeys.decodeP256PublicKey(uaPublicKey, jca);
@@ -126,7 +171,7 @@ final class WebPushEncryptor {
 
     /** RFC 8188 header: {@code salt(16) || rs(4, big-endian) || idlen(1) || keyid(idlen)}. */
     private static byte[] buildHeader(byte[] salt, int recordSize, byte[] keyId) {
-        return ByteBuffer.allocate(SALT_LENGTH + Integer.BYTES + 1 + keyId.length)
+        return ByteBuffer.allocate(SALT_LENGTH + Integer.BYTES + KEY_ID_LENGTH_FIELD + keyId.length)
             .put(salt)
             .putInt(recordSize)
             .put((byte) keyId.length)

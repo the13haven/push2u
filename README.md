@@ -129,6 +129,36 @@ PushSender sender = PushSender.builder()
 
 The supplied executor remains application-owned; `PushSender` does not shut it down.
 
+### Payload size limits
+
+RFC 8030 §7.2 allows a push service to refuse an entity body larger than 4096 bytes, so
+`PushSender` caps the encrypted body at 4096 bytes by default and rejects an oversized message
+with `IllegalArgumentException` before encrypting it or contacting the push service.
+
+The single-record `aes128gcm` body adds a fixed 103 bytes to the plaintext: the 86-byte RFC 8188
+header (16 salt, 4 `rs`, 1 `idlen`, 65 `keyid`), the padding delimiter (1) and the AES-GCM
+authentication tag (16). The default therefore admits **3993 bytes of plaintext**, the figure
+RFC 8291 §4 derives.
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .maxEncryptedBodyBytes(8192)  // the endpoint is known to accept a larger body
+    .recordSize(8192)             // rs must cover the payload as well
+    .build();
+```
+
+Raise `maxEncryptedBodyBytes` only for endpoints documented or configured to accept more than
+4096 bytes — a self-hosted or intra-organisation push service, for example. A public push service
+that enforces the RFC minimum answers a larger body with `413`.
+
+`recordSize` is a separate protocol parameter and is never adjusted to follow the body limit.
+RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the padding delimiter
+(1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is rejected
+with a message naming the minimum `rs` it needs. RFC 8188 §2 makes any `rs` below 18 invalid, and
+the builder rejects such values outright.
+
 ### Retry behavior
 
 The default policy makes up to three attempts. Backoff starts at one second, doubles after each
@@ -314,7 +344,10 @@ for the previous application-server key must be replaced.
 ## Protocol limits
 
 - Only `aes128gcm` content coding is supported.
-- Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes.
+- Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes; `rs`
+  must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4) and at least 18 (RFC 8188 §2).
+- The encrypted body is capped at 4096 bytes by default (RFC 8030 §7.2), which allows 3993 bytes
+  of plaintext. Both `maxEncryptedBodyBytes` and `recordSize` must be raised to send more.
 - `PushMessage.topic`, when set, must contain at most 32 URL- and filename-safe base64
   characters as required by RFC 8030.
 - VAPID JWT expiry must be greater than zero and no more than 24 hours.

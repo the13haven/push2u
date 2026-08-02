@@ -92,4 +92,39 @@ class WebPushEncryptorTest {
         assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 50, keyPair, salt))
             .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void recordSizeMustExceedPlaintextPlusDelimiterPlusTagNotMerelyEqualIt() {
+        byte[] uaPublic = b64(TestVectors.UA_PUBLIC);
+        byte[] auth = b64(TestVectors.AUTH_SECRET);
+        byte[] plaintext = new byte[100];
+
+        // RFC 8291 §4: rs MUST be *greater than* plaintext(100) + delimiter(1) + tag(16) = 117.
+        assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 117))
+            .as("rs equal to the sum violates the MUST")
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("strictly greater")
+            .hasMessageContaining("RFC 8291 §4");
+
+        assertThat(encryptor.encrypt(uaPublic, auth, plaintext, 118))
+            .as("one octet more is the smallest legal rs")
+            .hasSize(86 + plaintext.length + 1 + 16);
+    }
+
+    @Test
+    void bodyOverheadIsTheFixedSingleRecordCostNotAMagicNumber() {
+        byte[] body = encryptor.encrypt(b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET),
+            new byte[0], WebPushEncryptor.DEFAULT_RECORD_SIZE);
+
+        // header(86) + delimiter(1) + tag(16); the 4096-byte body ceiling minus this is the
+        // 3993-octet plaintext maximum RFC 8291 §4 derives.
+        assertThat(WebPushEncryptor.HEADER_LENGTH).isEqualTo(86);
+        assertThat(WebPushEncryptor.RECORD_OVERHEAD).isEqualTo(17);
+        assertThat(WebPushEncryptor.BODY_OVERHEAD).isEqualTo(103);
+        assertThat(WebPushEncryptor.MIN_RECORD_SIZE).as("RFC 8188 §2").isEqualTo(18);
+        assertThat(body).as("an empty payload costs exactly the overhead").hasSize(WebPushEncryptor.BODY_OVERHEAD);
+        assertThat(WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_SIZE - WebPushEncryptor.BODY_OVERHEAD)
+            .as("RFC 8291 §4: at most 3993 octets of plaintext")
+            .isEqualTo(3993);
+    }
 }
