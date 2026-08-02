@@ -15,12 +15,15 @@ import java.util.Objects;
  * @param status     the interpreted outcome; never {@code null}
  * @param statusCode the final HTTP status from the push service (0 if none was obtained); never negative
  * @param attempts   how many POSTs were made, including retries (≥ 1)
- * @throws NullPointerException     if {@code status} is {@code null}
- * @throws IllegalArgumentException if {@code statusCode} is negative or {@code attempts} is below 1
  */
 public record PushResult(Status status, int statusCode, int attempts) {
 
-    /** Validates the field contract documented above; see the record's own javadoc for why. */
+    /**
+     * Validates the field contract documented on the record; see there for why it is enforced.
+     *
+     * @throws NullPointerException     if {@code status} is {@code null}
+     * @throws IllegalArgumentException if {@code statusCode} is negative or {@code attempts} is below 1
+     */
     public PushResult {
         Objects.requireNonNull(status, "status");
         if (statusCode < 0) {

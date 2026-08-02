@@ -17,7 +17,6 @@ import java.util.stream.Collectors;
  *
  * @param statusCode the HTTP status code; never negative
  * @param headers    the response headers (keys lower-cased); the pipeline reads {@code Retry-After}
- * @throws IllegalArgumentException if {@code statusCode} is negative
  */
 public record PushResponse(int statusCode, Map<String, String> headers) {
 
@@ -29,6 +28,8 @@ public record PushResponse(int statusCode, Map<String, String> headers) {
      * such as {@code -1} for "no response". It is refused here, at the boundary that produced it,
      * rather than allowed to travel into the {@link PushResult} the sender returns — where the same
      * invariant holds and the offending transport would no longer be identifiable.
+     *
+     * @throws IllegalArgumentException if {@code statusCode} is negative
      */
     public PushResponse {
         Objects.requireNonNull(headers, "headers");

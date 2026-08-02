@@ -71,6 +71,21 @@ class VaultTransitVapidSignerSignResponseTest {
     }
 
     @Test
+    void theEnvelopeCheckAcceptsAMultiDigitKeyVersionAndPaddedBase64() {
+        // Two shapes the previous last-colon strip accepted, which the envelope pattern must not
+        // narrow away: a rotated key reaches double-digit versions, and while Vault's jws marshaling
+        // emits unpadded base64url, Base64.getUrlDecoder() accepts padding and nothing in the Vault
+        // contract forbids it.
+        byte[] expected = wellFormedSignature();
+        String padded = Base64.getUrlEncoder().encodeToString(expected);
+
+        assertThat(sign("{\"data\":{\"signature\":\"vault:v42:" + BASE64_URL.encodeToString(expected) + "\"}}"))
+            .isEqualTo(expected);
+        assertThat(padded).as("the padded form is what this test means to exercise").endsWith("==");
+        assertThat(sign("{\"data\":{\"signature\":\"vault:v1:" + padded + "\"}}")).isEqualTo(expected);
+    }
+
+    @Test
     void anEmptySignatureFailsLoudlyInsteadOfSigningTheJwtWithNothing() {
         // "vault:v1:" with nothing after the prefix decodes to zero bytes — historically that
         // zero-length "signature" went straight into the JWT.
