@@ -34,6 +34,7 @@ public final class PushSender {
     private final Duration jwtExpiry;
     private final Duration defaultTtl;
     private final int recordSize;
+    private final int maxEncryptedBodyBytes;
     private final Sleeper sleeper;
     private final Clock clock;
     private final Executor executor;
@@ -48,6 +49,7 @@ public final class PushSender {
         this.jwtExpiry = builder.jwtExpiry;
         this.defaultTtl = builder.defaultTtl;
         this.recordSize = builder.recordSize;
+        this.maxEncryptedBodyBytes = builder.maxEncryptedBodyBytes;
         this.sleeper = builder.sleeper;
         this.clock = builder.clock;
         this.executor = builder.executor;
@@ -65,15 +67,25 @@ public final class PushSender {
     /**
      * Encrypt, sign, POST (with retries), and interpret the result. Blocks until done.
      *
+     * <p>The payload is size-checked first, before any cryptography or network I/O, against both
+     * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; an oversized
+     * payload throws {@link IllegalArgumentException} rather than being sent for the push service
+     * to reject with {@code 413}.
+     *
      * @param subscription the target subscription
      * @param message      the message to send
      * @return the send result
+     * @throws IllegalArgumentException if the payload does not fit the configured body limit, or
+     *                                  if the configured record size is too small for it
      */
     public PushResult send(Subscription subscription, PushMessage message) {
         Objects.requireNonNull(subscription, "subscription");
         Objects.requireNonNull(message, "message");
 
-        byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), message.payload(), recordSize);
+        byte[] payload = message.payload();
+        WebPushEncryptor.checkPayloadFits(payload.length, recordSize, maxEncryptedBodyBytes);
+
+        byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         URI endpoint;
         try {
             endpoint = URI.create(subscription.endpoint());
@@ -122,7 +134,10 @@ public final class PushSender {
      *
      * <p>If a caller-supplied executor rejects the task, its
      * {@link java.util.concurrent.RejectedExecutionException} propagates from this call rather
-     * than completing the returned future exceptionally.
+     * than completing the returned future exceptionally. The size preconditions {@link #send}
+     * checks go the other way: they run inside the queued task, so an oversized payload completes
+     * the returned future exceptionally with {@link IllegalArgumentException} instead of throwing
+     * from this call.
      *
      * @param subscription the target subscription
      * @param message      the message to send
@@ -207,6 +222,7 @@ public final class PushSender {
         private Duration jwtExpiry = Duration.ofHours(12);
         private Duration defaultTtl = Duration.ofDays(1);
         private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
+        private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES;
         private Sleeper sleeper = Sleeper.REAL;
         private Clock clock = Clock.systemUTC();
         private Executor executor;
@@ -319,13 +335,61 @@ public final class PushSender {
         }
 
         /**
-         * The {@code aes128gcm} record size advertised in the body header (RFC 8188); default 4096.
+         * The {@code aes128gcm} record size advertised in the body header (RFC 8188 {@code rs});
+         * default 4096. The library emits a single record, so {@code rs} must be strictly greater
+         * than the plaintext plus the padding delimiter (1 octet) plus the authentication tag
+         * (16 octets) — RFC 8291 §4 — otherwise the send is rejected with the payload length it
+         * would need.
          *
-         * @param recordSize the record size
+         * <p>This is a separate protocol parameter from {@link #maxEncryptedBodyBytes(int)} and is
+         * never adjusted to follow it: raising the body limit alone leaves {@code rs} where it was
+         * and a payload that outgrows it is rejected on the record-size ground instead. Raise both
+         * when sending larger payloads.
+         *
+         * @param recordSize the record size; must be at least 18 (RFC 8188 §2)
          * @return this builder
+         * @throws IllegalArgumentException if {@code recordSize} is less than 18
          */
         public Builder recordSize(int recordSize) {
+            if (recordSize < WebPushEncryptor.MIN_RECORD_SIZE) {
+                throw new IllegalArgumentException("recordSize must be at least "
+                    + WebPushEncryptor.MIN_RECORD_SIZE + " — RFC 8188 §2 declares smaller values invalid, was "
+                    + recordSize);
+            }
             this.recordSize = recordSize;
+            return this;
+        }
+
+        /**
+         * The ceiling on the encrypted HTTP entity body, in bytes; default 4096.
+         *
+         * <p>RFC 8030 §7.2 lets a push service refuse a body larger than 4096 octets, so the limit
+         * is expressed on the body rather than on the plaintext. The single-record {@code
+         * aes128gcm} format this library emits adds a fixed 103 octets — an 86-octet RFC 8188
+         * header (salt 16, {@code rs} 4, {@code idlen} 1, {@code keyid} 65), the padding delimiter
+         * (1) and the AEAD_AES_128_GCM tag (16) — so the default admits 3993 octets of plaintext,
+         * the figure RFC 8291 §4 derives. {@link PushSender#send} rejects anything larger before
+         * encrypting or contacting the push service.
+         *
+         * <p>Raise it only for an endpoint known to accept more (some push services document a
+         * larger limit; a self-hosted or intra-organisation service may be configured for one).
+         * Doing so does <em>not</em> touch {@link #recordSize(int)}, which stays at whatever it was
+         * configured to — raise that too, or the larger payload is rejected for not fitting the
+         * record.
+         *
+         * @param maxEncryptedBodyBytes the maximum encrypted body size in bytes; must exceed the
+         *                              fixed 103-octet overhead
+         * @return this builder
+         * @throws IllegalArgumentException if the value leaves no room for a payload
+         */
+        public Builder maxEncryptedBodyBytes(int maxEncryptedBodyBytes) {
+            if (maxEncryptedBodyBytes <= WebPushEncryptor.BODY_OVERHEAD) {
+                throw new IllegalArgumentException("maxEncryptedBodyBytes must be greater than the fixed "
+                    + WebPushEncryptor.BODY_OVERHEAD + "-byte aes128gcm overhead (RFC 8188 header "
+                    + WebPushEncryptor.HEADER_LENGTH + " + record overhead " + WebPushEncryptor.RECORD_OVERHEAD
+                    + "), was " + maxEncryptedBodyBytes);
+            }
+            this.maxEncryptedBodyBytes = maxEncryptedBodyBytes;
             return this;
         }
 

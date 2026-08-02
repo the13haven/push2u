@@ -69,6 +69,7 @@ opt-in and cannot leak framework types into the core API.
 ```text
 PushSender.send(subscription, message)
     │
+    ├─ Check the payload against the body limit and the record size
     ├─ Decode the subscription P-256 public key
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
@@ -97,6 +98,29 @@ RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to the
 and the port omitted when it equals the scheme's default. `java.net.URI` performs none of that
 normalization, so the library serializes the origin itself.
 
+The two size preconditions are evaluated first, before any cryptography or network I/O, and are
+reported independently because they constrain different things:
+
+| Precondition | Source | Default |
+|---|---|---|
+| `103 + payload ≤ maxEncryptedBodyBytes` | RFC 8030 §7.2 body limit | 4096 bytes (3993 of plaintext) |
+| `recordSize > payload + 1 + 16` | RFC 8291 §4 | `rs` 4096 |
+
+Either failure is an `IllegalArgumentException`: the first names the resulting body size, the
+configured limit, and the maximum plaintext; the second names the minimum `rs` required.
+
+The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
+(salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
+hard-coded, so the plaintext maximum tracks a configured body limit. The RFC 8291 §4 rule has a
+single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check and
+by the encryptor itself.
+
+Both sums are computed in `long`. For the body sum this is load-bearing and covered by a test: in
+`int`, a payload above `Integer.MAX_VALUE - 103` would wrap to a negative size and pass any limit
+unnoticed. For the record-size sum it matters on the encryptor path, which is reachable without
+the body check; reached through the pre-flight check that sum cannot overflow, because such a
+payload has already failed the body check.
+
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
 builder accepts an application-owned `Executor` when bounded concurrency or a shared execution
@@ -117,7 +141,9 @@ delay at the retry policy's maximum backoff.
 - `signer(VapidSigner)` delegates signing and public-key publication.
 
 The VAPID contact is required in both modes. Optional settings control the HTTP transport, async
-executor, JCE provider, retry policy, JWT expiry, default TTL, and RFC 8188 record size.
+executor, JCE provider, retry policy, JWT expiry, default TTL, RFC 8188 record size, and the
+maximum encrypted body size. The last two are validated when configured: `recordSize` must be at
+least 18 (RFC 8188 §2) and `maxEncryptedBodyBytes` must exceed the fixed 103-byte overhead.
 
 ### VapidSigner
 
@@ -170,7 +196,10 @@ External signers manage their own providers.
 | Base64url | `java.util.Base64` |
 
 The implementation supports only modern `aes128gcm` encoding and currently emits a single
-RFC 8188 record. The default record size is 4096 bytes.
+RFC 8188 record. The default record size is 4096 bytes. Because a single record carries the whole
+payload, `rs` must be strictly greater than the plaintext plus the padding delimiter plus the
+authentication tag (RFC 8291 §4); equality is rejected. The record is not zero-padded up to `rs`,
+so the body size depends only on the payload.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
@@ -270,6 +299,13 @@ dependencies.
 Local signing is the default. Remote signers can improve the custody boundary without changing
 the send pipeline.
 
+### ADR-011 — Size limit expressed on the encrypted body
+
+The configurable limit is `maxEncryptedBodyBytes`, not a plaintext maximum, because RFC 8030 §7.2
+constrains the entity body. The plaintext maximum (3993 bytes at the 4096-byte default) is derived
+from the format's fixed overhead rather than written into the code, and `recordSize` stays an
+independent parameter: raising the body limit does not silently change what the header advertises.
+
 ## 10. Verification
 
 The automated suite covers:
@@ -278,6 +314,9 @@ The automated suite covers:
 - the RFC 8291 end-to-end encryption example;
 - RFC 8292 VAPID structure and signature verification;
 - signer contract tests;
+- the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
+- payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
+  (`PushSenderPayloadSizeTest`);
 - HTTP delivery, status mapping, and retry behavior;
 - Spring Boot auto-configuration;
 - Vault Transit integration through Testcontainers.
