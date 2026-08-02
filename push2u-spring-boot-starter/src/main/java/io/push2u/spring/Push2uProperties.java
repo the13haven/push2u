@@ -7,16 +7,25 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * Binds {@code push2u.*} configuration for the starter.
  *
- * @param vapid      the VAPID identity (keys + subject); always present, its fields may be unset
- * @param jwtExpiry  how far ahead the VAPID JWT {@code exp} is set; {@code null} keeps the
- *                   {@code PushSender} default (12h)
- * @param defaultTtl the push {@code TTL} used when a message sets none; {@code null} keeps the
- *                   {@code PushSender} default (24h)
- * @param retry      the retry policy
+ * @param vapid                 the VAPID identity (keys + subject); always present, its fields
+ *                              may be unset
+ * @param jwtExpiry             how far ahead the VAPID JWT {@code exp} is set; {@code null} keeps
+ *                              the {@code PushSender} default (12h)
+ * @param defaultTtl            the push {@code TTL} used when a message sets none; {@code null}
+ *                              keeps the {@code PushSender} default (24h)
+ * @param recordSize            the {@code aes128gcm} record size (RFC 8188 {@code rs}); {@code
+ *                              null} keeps the {@code PushSender} default (4096 bytes). Must be at
+ *                              least 18 (RFC 8188 §2) and strictly greater than the largest payload
+ *                              plus 17 bytes (RFC 8291 §4)
+ * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body; {@code null} keeps
+ *                              the {@code PushSender} default (4096 bytes, the limit RFC 8030 §7.2
+ *                              lets a push service enforce). Must leave room for the fixed
+ *                              103-byte {@code aes128gcm} overhead
+ * @param retry                 the retry policy
  */
 @ConfigurationProperties("push2u")
 public record Push2uProperties(@DefaultValue Vapid vapid, Duration jwtExpiry, Duration defaultTtl,
-                               @DefaultValue Retry retry) {
+                               Integer recordSize, Integer maxEncryptedBodyBytes, @DefaultValue Retry retry) {
 
     /**
      * The VAPID application-server identity (RFC 8292).

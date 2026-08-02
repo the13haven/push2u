@@ -171,6 +171,55 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void theReadmeExplicitPublicKeyExampleComposesIntoAWorkingSender() {
+        // Regression for a README gap: the "Explicit public key" Vault Spring Boot example printed
+        // only push2u.signer.vault.* until push2u.vapid.subject was added alongside it. This test
+        // reproduces that exact composition (Vault properties + the core starter's subject) and
+        // asserts it actually yields a usable PushSender, not just a VapidSigner bean.
+        new ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+            .withPropertyValues(
+                "push2u.vapid.subject=mailto:ops@example.com",
+                "push2u.signer.vault.address=https://vault.example:8200",
+                "push2u.signer.vault.mount=transit",
+                "push2u.signer.vault.key-name=vapid",
+                "push2u.signer.vault.token=test-token",
+                "push2u.signer.vault.public-key=" + publicKeyB64,
+                "push2u.signer.vault.key-version=3")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasSingleBean(VapidSigner.class);
+                assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                assertThat(context).hasSingleBean(PushSender.class);
+            });
+    }
+
+    @Test
+    void theReadmeVaultExampleWithoutTheCoreSubjectFailsNamingTheProperty() {
+        // Same composition as above, minus push2u.vapid.subject: a user who copies only the
+        // push2u.signer.vault.* block must get a diagnostic that names the missing property, not
+        // PushSender.Builder's generic "contact is required" message.
+        new ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+            .withPropertyValues(
+                "push2u.signer.vault.address=https://vault.example:8200",
+                "push2u.signer.vault.mount=transit",
+                "push2u.signer.vault.key-name=vapid",
+                "push2u.signer.vault.token=test-token",
+                "push2u.signer.vault.public-key=" + publicKeyB64,
+                "push2u.signer.vault.key-version=3")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.vapid.subject");
+            });
+    }
+
+    @Test
     void aVaultHttpTransportBeanOutranksTheQualifiedHttpClient() {
         // Both extension points present at once: the transport bean must win, and the qualified
         // client must stay untouched — otherwise a user migrating to a full transport would keep

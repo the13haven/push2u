@@ -279,6 +279,18 @@ bound properties.
 
 Application beans override these defaults.
 
+`push2u.vapid.subject` (the VAPID `sub` claim) is required whenever a `PushSender` is built,
+including when the `VapidSigner` bean comes from another starter — the Vault Transit signer
+starter supplies only key custody, not a contact address. The `pushSender` bean checks this
+explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing
+`PushSender.Builder#build()`'s generic `"contact is required"`.
+
+`push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
+pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,
+set forwards the value to `Builder#recordSize(int)` / `Builder#maxEncryptedBodyBytes(int)`, whose
+own validation (RFC 8188 §2's 18-byte floor, and the fixed 103-byte `aes128gcm` overhead) then
+governs context startup — an invalid value fails the context with the builder's message.
+
 `push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
 configured, the Vault signer takes precedence over the local signer unless the application
 provides its own `VapidSigner`.

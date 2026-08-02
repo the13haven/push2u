@@ -258,6 +258,8 @@ push2u:
     subject: "mailto:ops@example.com"
   jwt-expiry: 12h
   default-ttl: 24h
+  record-size: 4096
+  max-encrypted-body-bytes: 4096
   retry:
     max-attempts: 3
     initial-backoff: 1s
@@ -267,6 +269,14 @@ push2u:
 The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
 same types take precedence. When Spring Boot health support is present, the starter also exposes
 a health indicator that verifies the configured signer can produce a 64-byte ES256 signature.
+
+`push2u.vapid.subject` is required to build a `PushSender` regardless of where the `VapidSigner`
+comes from; leaving it unset fails the context with a message naming the property.
+
+`record-size` and `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s
+defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) untouched. Setting
+either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` at or
+below the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message.
 
 ## Vault Transit signer
 
@@ -309,6 +319,8 @@ The equivalent Spring Boot configuration is:
 
 ```yaml
 push2u:
+  vapid:
+    subject: "mailto:ops@example.com"
   signer:
     vault:
       address: "https://vault.example:8200"
@@ -316,6 +328,11 @@ push2u:
       key-name: "vapid"
       token: "${VAULT_TOKEN}"
 ```
+
+The Vault signer starter only supplies the `VapidSigner` (key custody); it does not know the
+application's contact address. `push2u.vapid.subject` therefore still comes from the core starter's
+properties — it is the VAPID `sub` claim RFC 8292 §2 requires, and `Push2uAutoConfiguration` fails
+startup with a message naming this property if it is left unset.
 
 ### Explicit public key
 
@@ -325,6 +342,8 @@ key:
 
 ```yaml
 push2u:
+  vapid:
+    subject: "mailto:ops@example.com"
   signer:
     vault:
       address: "https://vault.example:8200"
@@ -334,6 +353,9 @@ push2u:
       public-key: "${VAPID_PUBLIC_KEY}"
       key-version: 3
 ```
+
+As above, `push2u.vapid.subject` (the VAPID `sub` claim) comes from the core starter, not the Vault
+signer starter — it must be set here too.
 
 The equivalent plain-Java constructor takes the version after the public key:
 

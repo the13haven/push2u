@@ -62,19 +62,33 @@ public final class Push2uAutoConfiguration {
      * The send facade, wired from the {@link VapidSigner} (local or application-supplied), the
      * transport, and the properties. Created only once a signer is available.
      *
+     * <p>{@code push2u.vapid.subject} is required even when the signer itself comes from another
+     * starter (e.g. the Vault Transit signer starter, which supplies only key custody, not a
+     * contact address): it is checked here, with a message naming the property, so a missing
+     * subject fails with an actionable diagnostic rather than {@link PushSender.Builder#build()}'s
+     * generic {@code "contact is required"}.
+     *
      * @param signer     the VAPID signer
      * @param httpClient the HTTP transport
      * @param properties the bound configuration
      * @return the configured sender
+     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnBean(VapidSigner.class)
     public PushSender pushSender(VapidSigner signer, PushHttpClient httpClient, Push2uProperties properties) {
+        String subject = properties.vapid().subject();
+        if (subject == null || subject.isBlank()) {
+            throw new IllegalStateException(
+                "push2u.vapid.subject is required (the VAPID 'sub' claim, RFC 8292 §2) — set it even"
+                    + " when the signer itself comes from another starter, e.g. the Vault Transit signer"
+                    + " starter, which supplies only key custody, not a contact address");
+        }
         Push2uProperties.Retry retry = properties.retry();
         PushSender.Builder builder = PushSender.builder()
             .signer(signer)
-            .contact(properties.vapid().subject())
+            .contact(subject)
             .httpClient(httpClient)
             .retryPolicy(new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff()));
         if (properties.jwtExpiry() != null) {
@@ -82,6 +96,12 @@ public final class Push2uAutoConfiguration {
         }
         if (properties.defaultTtl() != null) {
             builder.defaultTtl(properties.defaultTtl());
+        }
+        if (properties.recordSize() != null) {
+            builder.recordSize(properties.recordSize());
+        }
+        if (properties.maxEncryptedBodyBytes() != null) {
+            builder.maxEncryptedBodyBytes(properties.maxEncryptedBodyBytes());
         }
         return builder.build();
     }
