@@ -3,11 +3,11 @@ name: CI
 on:
   workflow_dispatch:
 
-  # Branch pushes keep feature work verified before a PR exists, and — the reason the Codecov steps
-  # below can work at all — produce a run on main after a merge, which no pull_request event does.
-  # The cost is a duplicate run for a commit pushed to a branch that already has a PR open.
+  # main only. A merge is a push event and pull_request does not fire for it, so this is the run that
+  # verifies main and uploads to Codecov. Listing every branch here instead would double-run each
+  # commit pushed to a branch that already has a PR open, since pull_request covers those already.
   push:
-    branches: [ "**" ]
+    branches: [ main ]
     paths-ignore:
       - '**/*.md'
       - '**/*.txt'
