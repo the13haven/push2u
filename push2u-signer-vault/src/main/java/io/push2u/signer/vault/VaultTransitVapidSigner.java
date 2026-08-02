@@ -82,6 +82,8 @@ import java.util.Objects;
 public final class VaultTransitVapidSigner implements VapidSigner {
 
     private static final String VAULT_PREFIX_END = ":";
+    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
+    private static final int ERROR_ECHO_LIMIT = 2048;
     private static final int UNCOMPRESSED_LENGTH = 65;
     private static final int COORDINATE_LENGTH = 32;
     private static final byte UNCOMPRESSED_TAG = 0x04;
@@ -308,8 +310,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName);
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
         if (response.statusCode() != 200) {
-            throw new PushCryptoException(
-                "Vault Transit key read failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
+            throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode()
+                + " — " + abbreviated(response.body()));
         }
         String body = response.body();
         requireP256KeyType(body);
@@ -342,7 +344,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         String type = extractKeyType(json);
         if (!REQUIRED_KEY_TYPE.equals(type) && !MANAGED_KEY_TYPE.equals(type)) {
             throw new PushCryptoException("Vault Transit key type is '" + abbreviated(type) + "', but VAPID requires '"
-                + REQUIRED_KEY_TYPE + "' (RFC 8292 mandates ES256 over NIST P-256)");
+                + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
+                + "') — RFC 8292 mandates ES256 over NIST P-256");
         }
     }
 
@@ -538,7 +541,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         int versionValue = directMemberValueStart(json, keysOpen, Integer.toString(version));
         if (versionValue < 0) {
-            throw new PushCryptoException("Vault key response has no entry for key version " + version + ": " + abbreviated(json));
+            throw new PushCryptoException(
+                "Vault key response has no entry for key version " + version + ": " + abbreviated(json));
         }
         int versionOpen = versionValue;
         while (versionOpen < json.length() && Character.isWhitespace(json.charAt(versionOpen))) {
@@ -759,9 +763,6 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         System.arraycopy(bytes, start, out, offset + COORDINATE_LENGTH - length, length);
     }
-
-    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
-    private static final int ERROR_ECHO_LIMIT = 2048;
 
     /**
      * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT}
