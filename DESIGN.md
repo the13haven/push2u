@@ -220,10 +220,22 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 
 - **Fetched mode:** reads `latest_version` and that version's public key atomically from one
   `transit/keys/<key>` response at construction, then pins the captured version on every sign.
-  The token needs `read` on the key in addition to signing permission.
+  The token needs `read` on the key in addition to signing permission. The key is validated as
+  P-256 before the signer exists, in three independent steps: the advertised `type` must be
+  `ecdsa-p256` or Vault Enterprise's `managed_key` (absent `type` is a failure); the parsed public
+  key's domain parameters must match `secp256r1` by value — prime field, curve coefficients,
+  generator, order, cofactor; and the key's point must satisfy `y² = x³ + ax + b (mod p)` with
+  both coordinates in `[0, p)`. None of the three implies another: the metadata is only Vault's
+  claim, and correct parameters say nothing about the point — the JCA validates neither, so SunEC
+  accepts a key at `(1, 2)` both on import and at verification time. Coordinates are likewise
+  never truncated to fit the 32-byte P-256 fields. Without this, an `ecdsa-p384` key produced a
+  syntactically valid but unusable VAPID key, and the misconfiguration surfaced only as an
+  unexplained push-service rejection on the first send.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The compatibility form
   without a version uses Vault's latest version and is safe only for a key that never rotates.
+  The supplied key is checked structurally only (65 bytes, `0x04` tag) — neither its point nor its
+  correspondence to the Transit key can be established here; both stay with the caller.
 
 Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form. A
 pinned signer also sends `key_version`; taking the version and public key from the same metadata
