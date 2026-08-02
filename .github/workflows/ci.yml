@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  workflow_dispatch:
+
+  push:
+    branches: [ "**" ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -8,20 +16,35 @@ on:
       - '**/*.txt'
 
 permissions:
+  actions: read
   contents: read
+
+# Supersede an in-flight run when new commits land on the same ref. main is exempt: its runs feed
+# Codecov's baseline, so they are left to finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       # Testcontainers' Ryuk container must mount the daemon socket path as seen
       # from inside the runner's Docker VM.
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+      # Codecov's secret is unavailable to pull requests from forks, so the upload steps are
+      # skipped there rather than failing on a missing token.
+      CODECOV_ELIGIBLE: ${{ github.event.pull_request.head.repo.fork != true }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Codecov resolves the base commit of a pull request from history; a shallow clone
+          # leaves it guessing.
+          fetch-depth: 0
 
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
@@ -31,11 +54,21 @@ jobs:
         with:
           distribution: 'liberica'
           java-version: 26
-          cache: gradle
 
-      # qualityCheckCi covers `build` (compile + tests, including the FIPS suite) and adds
-      # Spotless verification, Checkstyle, PMD, SpotBugs, Error Prone/NullAway and the aggregated
-      # coverage threshold.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+          # Keep dependency and wrapper caching, but do not restore Gradle's local
+          # build cache: cached JaCoCo reports contain old session timestamps and
+          # Codecov rejects reports older than 12 hours as REPORT_EXPIRED.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      # qualityCheckCi covers `build` (compile + tests, including push2u-core's fipsTest suite) and
+      # adds Spotless verification, Checkstyle, PMD, SpotBugs, Error Prone/NullAway and the
+      # aggregated coverage threshold. Everything the local `./gradlew qualityCheck` runs, minus the
+      # auto-formatting.
       #
       # --no-build-cache: Gradle would otherwise be free to replay test results cached from an
       # environment without Docker, which turns the Testcontainers-backed Vault test into a silent
@@ -43,9 +76,41 @@ jobs:
       - name: Quality check
         run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
 
+      # Every module's JUnit XML (including fipsTest) under one directory — Codecov's test-results
+      # upload takes a single path. Runs even when the build failed: a failed suite is exactly what
+      # test analytics is for.
+      - name: Collect test results
+        if: ${{ !cancelled() }}
+        run: ./gradlew aggregateTestResults --no-daemon
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: the13haven/push2u
+          # The aggregated report merges all four modules; the per-module reports would double-count.
+          files: build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml
+          disable_search: true
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload test results to Codecov
+        uses: codecov/codecov-action@v7
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: the13haven/push2u
+          report_type: test_results
+          flags: tests
+          directory: build/test-results-aggregated
+          fail_ci_if_error: true
+
       - name: Upload quality reports
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: quality-reports
-          path: '**/build/reports/'
+          path: |
+            **/build/reports/
+            build/test-results-aggregated/

@@ -125,6 +125,30 @@ val testCodeCoverageVerification = tasks.register<JacocoCoverageVerification>("t
     }
 }
 
+// Gradle writes JUnit XML per module and per test task (push2u-core alone has `test` and
+// `fipsTest`). Collect all of it under one directory so a consumer that takes a single path —
+// Codecov's test-results upload, for one — sees every module's results instead of whichever one it
+// was pointed at.
+val aggregateTestResults = tasks.register<Sync>("aggregateTestResults") {
+    description = "Collects the JUnit XML of every module's test tasks into one directory."
+    group = "verification"
+
+    into(layout.buildDirectory.dir("test-results-aggregated"))
+
+    subprojects.forEach { module ->
+        // `*/*.xml` keeps one directory per test task, so push2u-core's `test` and `fipsTest`
+        // results stay apart; `into(module.name)` keeps the modules apart in turn.
+        from(module.layout.buildDirectory.dir("test-results")) {
+            include("*/*.xml")
+            into(module.name)
+        }
+        // mustRunAfter, not dependsOn: this collects whatever the invoked lifecycle task already
+        // ran, and stays usable when the build fails partway (CI calls it with `if: always()`)
+        // instead of forcing the suite to run again.
+        mustRunAfter(module.tasks.withType<Test>())
+    }
+}
+
 // Local entry point: ./gradlew qualityCheck — auto-formats, then runs every analyser.
 tasks.register("qualityCheck") {
     description = "Runs all quality checks locally (auto-formats code)."

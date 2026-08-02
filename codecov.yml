@@ -1,15 +1,26 @@
 coverage:
   status:
+    # Matches the aggregated JaCoCo floor enforced by ./gradlew qualityCheckCi, so CI and Codecov
+    # cannot disagree about what "covered enough" means.
     project:
       default:
         target: 80%
         threshold: 2%
+    # New and changed lines in a pull request, judged on their own.
+    patch:
+      default:
+        target: 80%
+        threshold: 5%
 
 comment:
   layout: "reach, diff, flags, files, tests"
   behavior: default
 
-flags:
-  tests:
-    paths:
-      - plugin/build/test-results/test
+# Only production code is instrumented, but say so explicitly: the uploaded report is the
+# aggregated one, and these paths must never count towards coverage if a future report includes
+# them.
+ignore:
+  - "**/src/test/**"
+  - "**/src/testFixtures/**"
+  - "**/src/fipsTest/**"
+  - "build-logic/**"

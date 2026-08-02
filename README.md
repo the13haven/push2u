@@ -1,5 +1,7 @@
 # push2u
 
+[![codecov](https://codecov.io/gh/the13haven/push2u/graph/badge.svg?token=3T4SIZKKLD)](https://codecov.io/gh/the13haven/push2u)
+
 **push2u** (*push events to user*) is a Java library for sending
 [Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
 It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, retries,
@@ -484,12 +486,18 @@ test only:
 | Error Prone + NullAway | Compiler-attached checks; NullAway reports as warnings     | `build-logic/.../push2u-quality.gradle.kts`  |
 | JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
 
-The analysers run on `main` sources only — test code is exempt. Reports land in
+Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
+the test compilations as well, since its checks are about defects rather than style; NullAway stays
+on `main`. Reports land in
 `<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
 `build/reports/jacoco/testCodeCoverageReport/`.
 
 Rule exclusions carry a comment stating why, and a per-file exception is a `@SuppressWarnings`
 ("PMD.<Rule>") at the narrowest scope that covers it, next to the reason.
+
+`./gradlew aggregateTestResults` collects the JUnit XML of every module — `push2u-core`'s
+`fipsTest` suite included — into `build/test-results-aggregated/`. CI runs it after the quality
+check and hands that directory, plus the aggregated JaCoCo XML, to Codecov.
 
 ## License
 
