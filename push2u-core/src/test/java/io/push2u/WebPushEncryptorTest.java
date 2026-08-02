@@ -123,7 +123,7 @@ class WebPushEncryptorTest {
         assertThat(WebPushEncryptor.BODY_OVERHEAD).isEqualTo(103);
         assertThat(WebPushEncryptor.MIN_RECORD_SIZE).as("RFC 8188 §2").isEqualTo(18);
         assertThat(body).as("an empty payload costs exactly the overhead").hasSize(WebPushEncryptor.BODY_OVERHEAD);
-        assertThat(WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_SIZE - WebPushEncryptor.BODY_OVERHEAD)
+        assertThat(WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES - WebPushEncryptor.BODY_OVERHEAD)
             .as("RFC 8291 §4: at most 3993 octets of plaintext")
             .isEqualTo(3993);
     }

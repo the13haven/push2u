@@ -96,15 +96,20 @@ The encrypted body and VAPID token are reused across retries of the same send op
 The two size preconditions are evaluated first, before any cryptography or network I/O, and are
 reported independently because they constrain different things:
 
-| Precondition | Source | Default | Failure |
-|---|---|---|---|
-| `103 + payload ≤ maxEncryptedBodyBytes` | RFC 8030 §7.2 entity-body limit | 4096 bytes, i.e. 3993 bytes of plaintext | `IllegalArgumentException` naming the body size, the limit, and the maximum plaintext |
-| `recordSize > payload + 1 + 16` | RFC 8291 §4 | `rs` 4096 | `IllegalArgumentException` naming the minimum `rs` required |
+| Precondition | Source | Default |
+|---|---|---|
+| `103 + payload ≤ maxEncryptedBodyBytes` | RFC 8030 §7.2 body limit | 4096 bytes (3993 of plaintext) |
+| `recordSize > payload + 1 + 16` | RFC 8291 §4 | `rs` 4096 |
+
+Either failure is an `IllegalArgumentException`: the first names the resulting body size, the
+configured limit, and the maximum plaintext; the second names the minimum `rs` required.
 
 The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
-hard-coded, so the plaintext maximum tracks a configured body limit. Size arithmetic uses `long`
-so a payload near `Integer.MAX_VALUE` cannot wrap the checks.
+hard-coded, so the plaintext maximum tracks a configured body limit. The RFC 8291 §4 rule has a
+single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check and
+by the encryptor itself. Its sum is computed in `long` because the encryptor is reachable without
+the body check, where an `int` sum could wrap for a payload near `Integer.MAX_VALUE`.
 
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
@@ -299,6 +304,9 @@ The automated suite covers:
 - the RFC 8291 end-to-end encryption example;
 - RFC 8292 VAPID structure and signature verification;
 - signer contract tests;
+- the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
+- payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
+  (`PushSenderPayloadSizeTest`);
 - HTTP delivery, status mapping, and retry behavior;
 - Spring Boot auto-configuration;
 - Vault Transit integration through Testcontainers.

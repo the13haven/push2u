@@ -83,7 +83,7 @@ public final class PushSender {
         Objects.requireNonNull(message, "message");
 
         byte[] payload = message.payload();
-        checkPayloadFits(payload.length, recordSize, maxEncryptedBodyBytes);
+        WebPushEncryptor.checkPayloadFits(payload.length, recordSize, maxEncryptedBodyBytes);
 
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         URI endpoint;
@@ -134,7 +134,10 @@ public final class PushSender {
      *
      * <p>If a caller-supplied executor rejects the task, its
      * {@link java.util.concurrent.RejectedExecutionException} propagates from this call rather
-     * than completing the returned future exceptionally.
+     * than completing the returned future exceptionally. The size preconditions {@link #send}
+     * checks go the other way: they run inside the queued task, so an oversized payload completes
+     * the returned future exceptionally with {@link IllegalArgumentException} instead of throwing
+     * from this call.
      *
      * @param subscription the target subscription
      * @param message      the message to send
@@ -158,33 +161,6 @@ public final class PushSender {
         static final Executor INSTANCE = Executors.newVirtualThreadPerTaskExecutor();
 
         private DefaultAsyncExecutor() {
-        }
-    }
-
-    /**
-     * The two independent size preconditions of a send, checked before any cryptography or I/O.
-     * They constrain different things and are reported separately: the first is the RFC 8030 §7.2
-     * limit on the encrypted entity body a push service must accept, the second the RFC 8291 §4
-     * rule that {@code rs} exceed what one record holds.
-     *
-     * <p>Takes the payload length rather than the payload so the overflow boundaries are testable
-     * without allocating multi-gigabyte arrays; all arithmetic is {@code long} because a payload
-     * near {@link Integer#MAX_VALUE} plus the overhead does not fit in an {@code int}.
-     */
-    static void checkPayloadFits(int payloadLength, int recordSize, int maxEncryptedBodyBytes) {
-        long bodyBytes = (long) payloadLength + WebPushEncryptor.BODY_OVERHEAD;
-        if (bodyBytes > maxEncryptedBodyBytes) {
-            throw new IllegalArgumentException(
-                "Encrypted Web Push body would be " + bodyBytes + " bytes, exceeding the configured maximum of "
-                    + maxEncryptedBodyBytes + " bytes; maximum plaintext payload is "
-                    + (maxEncryptedBodyBytes - WebPushEncryptor.BODY_OVERHEAD) + " bytes");
-        }
-        long minimumRecordSize = (long) payloadLength + WebPushEncryptor.RECORD_OVERHEAD + 1;
-        if (recordSize < minimumRecordSize) {
-            throw new IllegalArgumentException(
-                "recordSize " + recordSize + " is too small for a " + payloadLength + "-byte payload: RFC 8291 §4"
-                    + " requires rs to be strictly greater than plaintext + padding delimiter (1) + authentication"
-                    + " tag (16); raise recordSize to at least " + minimumRecordSize);
         }
     }
 
@@ -258,7 +234,7 @@ public final class PushSender {
         private Duration jwtExpiry = Duration.ofHours(12);
         private Duration defaultTtl = Duration.ofDays(1);
         private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
-        private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_SIZE;
+        private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES;
         private Sleeper sleeper = Sleeper.REAL;
         private Clock clock = Clock.systemUTC();
         private Executor executor;
@@ -388,8 +364,9 @@ public final class PushSender {
          */
         public Builder recordSize(int recordSize) {
             if (recordSize < WebPushEncryptor.MIN_RECORD_SIZE) {
-                throw new IllegalArgumentException("recordSize must be at least " + WebPushEncryptor.MIN_RECORD_SIZE
-                    + " (RFC 8188 §2: a \"rs\" value of less than 18 is invalid), was " + recordSize);
+                throw new IllegalArgumentException("recordSize must be at least "
+                    + WebPushEncryptor.MIN_RECORD_SIZE + " — RFC 8188 §2 declares smaller values invalid, was "
+                    + recordSize);
             }
             this.recordSize = recordSize;
             return this;
@@ -420,9 +397,9 @@ public final class PushSender {
         public Builder maxEncryptedBodyBytes(int maxEncryptedBodyBytes) {
             if (maxEncryptedBodyBytes <= WebPushEncryptor.BODY_OVERHEAD) {
                 throw new IllegalArgumentException("maxEncryptedBodyBytes must be greater than the fixed "
-                    + WebPushEncryptor.BODY_OVERHEAD + "-byte aes128gcm overhead (header "
-                    + WebPushEncryptor.HEADER_LENGTH + " + padding delimiter 1 + authentication tag 16), was "
-                    + maxEncryptedBodyBytes);
+                    + WebPushEncryptor.BODY_OVERHEAD + "-byte aes128gcm overhead (RFC 8188 header "
+                    + WebPushEncryptor.HEADER_LENGTH + " + record overhead " + WebPushEncryptor.RECORD_OVERHEAD
+                    + "), was " + maxEncryptedBodyBytes);
             }
             this.maxEncryptedBodyBytes = maxEncryptedBodyBytes;
             return this;

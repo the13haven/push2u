@@ -150,14 +150,24 @@ PushSender sender = PushSender.builder()
 ```
 
 Raise `maxEncryptedBodyBytes` only for endpoints documented or configured to accept more than
-4096 bytes — a self-hosted or intra-organisation push service, for example. A public push service
-that enforces the RFC minimum answers a larger body with `413`.
+4096 bytes — a self-hosted or intra-organisation push service, for example. RFC 8030 §7.2 only
+requires a push service to accept 4096 bytes; beyond that a service may answer with `413`.
 
 `recordSize` is a separate protocol parameter and is never adjusted to follow the body limit.
 RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the padding delimiter
 (1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is rejected
 with a message naming the minimum `rs` it needs. RFC 8188 §2 makes any `rs` below 18 invalid, and
 the builder rejects such values outright.
+
+**Behaviour change.** These limits reject configurations and payloads that earlier versions
+accepted:
+
+- a payload of 3994–4079 bytes (4079 being the largest the old, off-by-one record-size check
+  admitted at the default `rs`) was previously encrypted and sent as a body of up to 4182 bytes;
+  it now throws `IllegalArgumentException` before the request is built;
+- `recordSize` exactly equal to plaintext + 1 + 16 was previously accepted, in violation of the
+  RFC 8291 §4 `MUST`; it is now rejected;
+- `recordSize(int)` now throws for values below 18 instead of accepting them silently.
 
 ### Retry behavior
 

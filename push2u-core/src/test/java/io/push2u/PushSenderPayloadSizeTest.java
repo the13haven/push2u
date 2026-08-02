@@ -115,24 +115,24 @@ class PushSenderPayloadSizeTest {
     }
 
     @Test
-    void sizeArithmeticDoesNotOverflowAtTheIntBoundaries() {
-        // Exercised through the package-private seam so the boundaries near Integer.MAX_VALUE are
-        // covered without allocating multi-gigabyte payloads.
+    void theBodySizeSumDoesNotWrapNearIntegerMaxValue() {
+        // Driven through the length-taking checks so the boundary is covered without allocating a
+        // two-gigabyte payload. This is the one sum where int arithmetic would actually break:
+        // Integer.MAX_VALUE + 103 wraps to -2147483546, which is below any limit, so the payload
+        // would sail through the check.
         assertThatThrownBy(() ->
-            PushSender.checkPayloadFits(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE))
-            .as("payload + 103 must not wrap to a negative body size")
+            WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("body would be 2147483750 bytes");
 
+        // The largest payload an Integer.MAX_VALUE body limit admits, with an rs to match: both
+        // checks pass and report exact figures at the boundary.
+        WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, Integer.MAX_VALUE, Integer.MAX_VALUE);
         assertThatThrownBy(() ->
-            PushSender.checkPayloadFits(Integer.MAX_VALUE - 103, 4096, Integer.MAX_VALUE))
-            .as("payload + 18 must not wrap either")
+            WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, 4096, Integer.MAX_VALUE))
+            .as("the record-size branch names the exact minimum even for a huge payload")
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("raise recordSize to at least 2147483562");
-
-        // The largest payload an Integer.MAX_VALUE body limit admits, with an rs large enough for
-        // it: both checks pass without either sum overflowing.
-        PushSender.checkPayloadFits(Integer.MAX_VALUE - 103, Integer.MAX_VALUE, Integer.MAX_VALUE);
     }
 
     private static PushSender sender(PushSender.Builder builder) {
