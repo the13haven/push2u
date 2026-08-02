@@ -19,7 +19,10 @@ description = "push2u-core — zero-dependency JVM Web Push library core " +
 // on its classpath, so bcprov cannot leak across. The main classes and the testFixtures
 // contract are NOT added here: they arrive once via the testFixtures(project) dependency below
 // (adding sourceSets.main output too would duplicate every main class on the classpath).
-val fipsTest: SourceSet by sourceSets.creating {
+//
+// `sourceSets.create("fipsTest")`, not the `by sourceSets.creating` delegate: the Kotlin DSL
+// delegated-property syntax is deprecated and scheduled for removal in Gradle 10.
+val fipsTest: SourceSet = sourceSets.create("fipsTest") {
     compileClasspath += sourceSets.test.get().output
     runtimeClasspath += sourceSets.test.get().output
 }
@@ -47,7 +50,9 @@ dependencies {
     "fipsTestImplementation"(platform(libs.junit.bom))
     "fipsTestImplementation"(libs.junit.jupiter)
     "fipsTestImplementation"(libs.assertj.core)
-    "fipsTestImplementation"(testFixtures(project))
+    // testFixtures(project(":push2u-core")), not testFixtures(project): passing the Project object
+    // itself as a dependency notation is deprecated and fails in Gradle 10.
+    "fipsTestImplementation"(testFixtures(project(":push2u-core")))
     "fipsTestImplementation"(libs.bouncycastle.bcfips)
     "fipsTestRuntimeOnly"(libs.junit.platform.launcher)
 

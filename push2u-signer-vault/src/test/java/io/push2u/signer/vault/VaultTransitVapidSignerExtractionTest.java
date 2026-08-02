@@ -200,6 +200,47 @@ class VaultTransitVapidSignerExtractionTest {
             .hasMessageContaining("latest_version");
     }
 
+    @Test
+    void latestVersionMustBeAWholeNumberNotADigitPrefix() {
+        // Each of these starts with digits that a leading-run read would take for version 1, then
+        // continues into something a JSON integer cannot contain. Accepting the prefix would pin
+        // version 1 on every sign call and publish version 1's public key for a response that never
+        // named version 1.
+        for (String value : new String[] {"1.5", "1e3", "1abc", "\"1\"", "1_000"}) {
+            String body = "{\"data\":{\"latest_version\":" + value + ",\"keys\":{" + entry(1) + "}}}";
+            assertThatThrownBy(() -> VaultTransitVapidSigner.extractLatestVersion(body))
+                .as("latest_version: %s", value)
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("latest_version");
+        }
+    }
+
+    @Test
+    void latestVersionAsTheFinalMemberIsAccepted() {
+        // The counterpart to the check above: a value closed by the enclosing '}' rather than a
+        // comma must still parse — the strictness must not reject well-formed responses.
+        assertThat(VaultTransitVapidSigner.extractLatestVersion("{\"data\":{\"latest_version\":7 }}"))
+            .isEqualTo(7);
+    }
+
+    @Test
+    void latestVersionBelowOneFails() {
+        // Transit numbers key versions from 1. A 0 would be pinned into every sign request for Vault
+        // to reject, one send at a time, far from the response that caused it.
+        assertThatThrownBy(() -> VaultTransitVapidSigner.extractLatestVersion("{\"data\":{\"latest_version\":0}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("versions start at 1");
+    }
+
+    @Test
+    void latestVersionRejectsNonAsciiDigits() {
+        // Character.isDigit accepts Arabic-Indic digits and Integer.parseInt converts them, so a
+        // response carrying them would silently yield a version number nothing in it spells out.
+        assertThatThrownBy(() -> VaultTransitVapidSigner.extractLatestVersion("{\"data\":{\"latest_version\":١}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("latest_version");
+    }
+
     /** A realistic per-version entry: creation_time first, then name, then the version-tagged PEM. */
     private static String entry(int version) {
         return "\"" + version + "\":{\"creation_time\":\"2026-08-01T00:00:00Z\",\"name\":\"P-256\","

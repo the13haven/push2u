@@ -20,6 +20,8 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A {@link VapidSigner} that signs the VAPID JWT via HashiCorp Vault Transit — the private key
@@ -81,7 +83,15 @@ import java.util.Objects;
  */
 public final class VaultTransitVapidSigner implements VapidSigner {
 
-    private static final String VAULT_PREFIX_END = ":";
+    /**
+     * Vault's marshalled signature envelope: the literal {@code vault}, the key version, and the
+     * base64url payload, whose alphabet ({@code A-Za-z0-9-_} plus {@code =} padding) contains no
+     * colon — so the payload group cannot swallow a further separator. The payload is allowed to be
+     * empty on purpose: {@code vault:v1:} is a well-formed envelope carrying no signature, and the
+     * length check in {@link #sign} reports that far more usefully ("expected 64 bytes, got 0") than
+     * a format complaint would.
+     */
+    private static final Pattern VAULT_SIGNATURE = Pattern.compile("vault:v\\d+:([A-Za-z0-9\\-_]*={0,2})");
     /** Cap for response text echoed into exception messages — enough context, log-safe size. */
     private static final int ERROR_ECHO_LIMIT = 2048;
     private static final int UNCOMPRESSED_LENGTH = 65;
@@ -485,6 +495,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * member of {@code data} — a string value that merely looks like the label can never hijack the
      * lookup. Targeted extraction (fixed Vault response shape), not a general JSON parser.
      * Package-private for the extraction unit tests.
+     *
+     * <p>The value must be a whole positive number and nothing else. Reading the leading digit run
+     * and stopping wherever it ends would take {@code "latest_version": 1.5} — or a quoted
+     * {@code "1"}, or {@code 1abc} — for version 1, then pin that version on every {@code sign} call
+     * and publish the public key of a version the response never named. A response Vault cannot have
+     * produced is a reason to fail construction, not to guess: the value is checked to run to the
+     * member's end, i.e. to the next {@code ,} or the enclosing {@code }}.
+     *
+     * <p>{@code Character.isDigit} is not used: it accepts non-ASCII digits (Arabic-Indic and the
+     * rest), which {@link Integer#parseInt} would then happily convert — JSON numbers are ASCII.
      */
     static int extractLatestVersion(String json) {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
@@ -497,20 +517,43 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             start++;
         }
         int end = start;
-        while (end < json.length() && Character.isDigit(json.charAt(end))) {
+        while (end < json.length() && json.charAt(end) >= '0' && json.charAt(end) <= '9') {
             end++;
         }
-        if (end == start) {
-            throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json));
+        if (end == start || !endsMember(json, end)) {
+            throw new PushCryptoException("malformed Vault 'latest_version' field — expected a whole number: "
+                + abbreviated(json));
         }
+        int version;
         try {
-            return Integer.parseInt(json.substring(start, end));
+            version = Integer.parseInt(json.substring(start, end));
         } catch (NumberFormatException e) {
             // A digit run too long for an int. Report it as this module's exception, next to the
             // cause: the constructor's documented failure mode is PushCryptoException, and a raw
             // IllegalArgumentException escaping from it would break that contract.
             throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json), e);
         }
+        if (version < 1) {
+            // Transit numbers key versions from 1; a 0 would be pinned into every sign request and
+            // rejected by Vault on each send, far from the response that caused it.
+            throw new PushCryptoException(
+                "Vault reported key version " + version + ", but Transit key versions start at 1: " + abbreviated(json));
+        }
+        return version;
+    }
+
+    /**
+     * Whether the value ending at {@code end} is the whole of its member: the next non-whitespace
+     * character must close the member ({@code ,}) or the enclosing object ({@code }}). Anything else
+     * — a {@code .}, a digit's worth of exponent, a stray letter — means the digits read were only a
+     * prefix of some other value.
+     */
+    private static boolean endsMember(String json, int end) {
+        int cursor = end;
+        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+            cursor++;
+        }
+        return cursor < json.length() && (json.charAt(cursor) == ',' || json.charAt(cursor) == '}');
     }
 
     /**
@@ -784,12 +827,26 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         return text.substring(0, ERROR_ECHO_LIMIT) + "... [truncated, " + text.length() + " chars total]";
     }
 
-    /** {@code vault:v1:<base64url>} → {@code <base64url>}. */
+    /**
+     * {@code vault:v1:<base64url>} → {@code <base64url>}, matching the prefix exactly rather than
+     * cutting at the last colon. Vault's signature is always {@code vault:v<version>:<payload>}, so
+     * anything else is a response this signer did not ask for — an error envelope, a wrapped token,
+     * a value from some other Vault API. Cutting at a colon would hand whatever followed it to the
+     * base64url decoder, and the failure would then surface as "not valid base64url" (or, worse, as
+     * a decoded 64-byte blob) instead of naming the real problem: the response is not a Transit
+     * signature.
+     *
+     * <p>The offending value is not echoed, for the same reason {@link #sign} keeps a corrupt
+     * payload out of its message — and more so here: a value that failed the signature shape is, by
+     * definition, not known to be a signature, and Vault dresses wrapped tokens and Transit
+     * ciphertext in the same {@code vault:v<n>:} clothing.
+     */
     private static String stripVaultPrefix(String marshalled) {
-        int marker = marshalled.lastIndexOf(VAULT_PREFIX_END);
-        if (marker < 0) {
-            throw new PushCryptoException("unexpected Vault signature format: " + abbreviated(marshalled));
+        Matcher signature = VAULT_SIGNATURE.matcher(marshalled);
+        if (!signature.matches()) {
+            throw new PushCryptoException(
+                "unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
         }
-        return marshalled.substring(marker + 1);
+        return signature.group(1);
     }
 }
