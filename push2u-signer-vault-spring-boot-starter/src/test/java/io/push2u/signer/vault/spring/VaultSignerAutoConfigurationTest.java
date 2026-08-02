@@ -213,6 +213,7 @@ class VaultSignerAutoConfigurationTest {
         // GET against transit/keys/<key>, so a stub VaultHttpTransport (an application transport bean
         // — first in the starter's transport priority order) answers it with latest_version + a PEM
         // public key, exactly as the real Vault Transit API would.
+        FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         new ApplicationContextRunner()
             .withConfiguration(
                 AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
@@ -227,6 +228,15 @@ class VaultSignerAutoConfigurationTest {
                 assertThat(context).hasSingleBean(VapidSigner.class);
                 assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
                 assertThat(context).hasSingleBean(PushSender.class);
+                // Exercise the wired signer, not just its bean type: a real sign call proves the
+                // fetched public key/version pair from the stub GET actually reached a working
+                // signer, and that it pins the fetched latest_version (1) on every sign request.
+                byte[] signature = context.getBean(VapidSigner.class)
+                    .sign("starter fetched-mode README probe".getBytes(StandardCharsets.UTF_8));
+                assertThat(signature).hasSize(64);
+                assertThat(FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES)
+                    .singleElement().asString()
+                    .contains("\"key_version\":1");
             });
     }
 
@@ -470,6 +480,7 @@ class VaultSignerAutoConfigurationTest {
     static class FetchedMetadataTransportConfiguration {
 
         private static final KeyPair KEY_PAIR = generateKeyPair();
+        static final List<String> SIGN_REQUEST_BODIES = new ArrayList<>();
 
         @Bean
         VaultHttpTransport fetchedMetadataTransport() {
@@ -481,6 +492,7 @@ class VaultSignerAutoConfigurationTest {
 
                 @Override
                 public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                    SIGN_REQUEST_BODIES.add(new String(body, StandardCharsets.UTF_8));
                     String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
                     return new VaultHttpResponse(200, "{\"data\":{\"signature\":\"vault:v1:" + signature + "\"}}");
                 }
@@ -497,13 +509,17 @@ class VaultSignerAutoConfigurationTest {
             }
         }
 
-        /** A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. */
+        /**
+         * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1.
+         * {@code type} is part of the minimum: the signer refuses any key not advertised as
+         * {@code ecdsa-p256} (see {@code VaultTransitVapidSignerKeyValidationTest} in the signer module).
+         */
         private static String metadataBody(KeyPair keyPair) {
             String pem = "-----BEGIN PUBLIC KEY-----\n"
                 + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keyPair.getPublic().getEncoded())
                 + "\n-----END PUBLIC KEY-----\n";
             return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
-                + "\"}},\"latest_version\":1}}";
+                + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
         }
     }
 

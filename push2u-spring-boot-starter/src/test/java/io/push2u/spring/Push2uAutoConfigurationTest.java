@@ -134,14 +134,21 @@ class Push2uAutoConfigurationTest {
     @Test
     void applicationSuppliedSenderStartsWithoutTheSubject() {
         // The subject pre-flight lives in the pushSender @Bean method, which is
-        // @ConditionalOnMissingBean: an application-supplied PushSender bypasses it entirely, so
-        // push2u.vapid.subject is not required in that case. This is now a contract worth pinning —
-        // it would be easy to break by relocating the check into a property validator instead.
-        // Deliberately just Push2uAutoConfiguration, not the field's runner: the health indicator
-        // (out of scope here) requires its own VapidSigner bean, which this scenario has no reason
-        // to supply.
-        new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+        // @ConditionalOnMissingBean(PushSender.class): an application-supplied PushSender bypasses
+        // it entirely, so push2u.vapid.subject is not required in that case. This is now a contract
+        // worth pinning — it would be easy to break by relocating the check into a property
+        // validator instead.
+        //
+        // Local VAPID keys are configured (without a subject) so that pushSender's OTHER
+        // precondition, @ConditionalOnBean(VapidSigner.class), is also satisfied here — otherwise
+        // the factory method would never run regardless of @ConditionalOnMissingBean, and the test
+        // would pass for the wrong reason (pinned by mutation testing: with no keys configured, the
+        // test stayed green even with @ConditionalOnMissingBean deleted entirely). With a local
+        // signer present, the health indicator has the VapidSigner it needs, so the field runner
+        // (which includes Push2uHealthAutoConfiguration) works unmodified.
+        runner.withPropertyValues(
+                "push2u.vapid.public-key=" + publicKeyB64,
+                "push2u.vapid.private-key=" + privateKeyB64)
             .withUserConfiguration(CustomSenderConfiguration.class)
             .run(context -> {
                 assertThat(context).hasNotFailed();
@@ -213,23 +220,6 @@ class Push2uAutoConfigurationTest {
         });
     }
 
-    /**
-     * The first throwable of exactly {@code type} in {@code root}'s cause chain (inclusive) whose
-     * message contains {@code needle}. Unlike a plain message search, this will not match an outer
-     * wrapper (e.g. Spring's {@code BeanCreationException}) whose own message happens to echo a
-     * nested cause's text.
-     */
-    private static <T extends Throwable> T firstOfTypeContaining(Throwable root, Class<T> type, String needle) {
-        for (Throwable current = root; current != null; current = current.getCause()) {
-            if (type.isInstance(current) && current.getMessage() != null && current.getMessage().contains(needle)) {
-                return type.cast(current);
-            }
-        }
-        throw new AssertionError(
-            "no " + type.getSimpleName() + " in the cause chain of " + root + " has a message containing \""
-                + needle + "\"");
-    }
-
     @Test
     void anApplicationSignerOverridesTheLocalOne() {
         keyedRunner().withUserConfiguration(CustomSignerConfiguration.class).run(context -> {
@@ -271,6 +261,23 @@ class Push2uAutoConfigurationTest {
             "https://push.example.test/send/abc",
             subscriptionKeyB64,
             Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]));
+    }
+
+    /**
+     * The first throwable that is an instance of {@code type} in {@code root}'s cause chain
+     * (inclusive) whose message contains {@code needle} — including subtypes of {@code type}.
+     * Unlike a plain message search, this will not match an outer wrapper (e.g. Spring's
+     * {@code BeanCreationException}) whose own message happens to echo a nested cause's text.
+     */
+    private static <T extends Throwable> T firstOfTypeContaining(Throwable root, Class<T> type, String needle) {
+        for (Throwable current = root; current != null; current = current.getCause()) {
+            if (type.isInstance(current) && current.getMessage() != null && current.getMessage().contains(needle)) {
+                return type.cast(current);
+            }
+        }
+        throw new AssertionError(
+            "no " + type.getSimpleName() + " in the cause chain of " + root + " has a message containing \""
+                + needle + "\"");
     }
 
     /** Answers every POST with 201, so size-limit tests never touch the network. */

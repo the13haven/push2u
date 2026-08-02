@@ -85,7 +85,9 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI.
+The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. It is
+required and must be non-blank: `build()` throws `IllegalStateException` for a `null` or
+whitespace-only contact.
 
 ### Send a message
 
@@ -167,7 +169,10 @@ accepted:
   it now throws `IllegalArgumentException` before the request is built;
 - `recordSize` exactly equal to plaintext + 1 + 16 was previously accepted, in violation of the
   RFC 8291 §4 `MUST`; it is now rejected;
-- `recordSize(int)` now throws for values below 18 instead of accepting them silently.
+- `recordSize(int)` now throws for values below 18 instead of accepting them silently;
+- `.contact("   ")` (or any whitespace-only value) previously built a `PushSender` that would
+  issue a VAPID JWT with a blank `sub` claim; `build()` now rejects it with the same
+  `IllegalStateException` as a missing contact.
 
 ### Retry behavior
 

@@ -141,7 +141,9 @@ delay at the retry policy's maximum backoff.
 - `vapid(VapidKeys)` creates `LocalEcVapidSigner`; or
 - `signer(VapidSigner)` delegates signing and public-key publication.
 
-The VAPID contact is required in both modes. Optional settings control the HTTP transport, async
+The VAPID contact is required in both modes and must be non-blank — `build()` rejects a `null` or
+whitespace-only contact, since a blank `sub` claim would still produce a JWT the push service
+must reject. Optional settings control the HTTP transport, async
 executor, JCE provider, retry policy, JWT expiry, default TTL, RFC 8188 record size, and the
 maximum encrypted body size. The last two are validated when configured: `recordSize` must be at
 least 18 (RFC 8188 §2) and `maxEncryptedBodyBytes` must exceed the fixed 103-byte overhead.
