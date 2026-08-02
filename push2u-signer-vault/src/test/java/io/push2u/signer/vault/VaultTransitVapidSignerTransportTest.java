@@ -78,13 +78,17 @@ class VaultTransitVapidSignerTransportTest {
                 .isTrue());
     }
 
-    /** A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. */
+    /**
+     * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. The
+     * {@code type} is part of the minimum: the signer refuses any key not advertised as
+     * {@code ecdsa-p256} (see {@link VaultTransitVapidSignerKeyValidationTest}).
+     */
     private static String metadataBody(KeyPair keyPair) {
         String pem = "-----BEGIN PUBLIC KEY-----\n"
             + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keyPair.getPublic().getEncoded())
             + "\n-----END PUBLIC KEY-----\n";
         return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
-            + "\"}},\"latest_version\":1}}";
+            + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
     }
 
     private static KeyPair generateP256KeyPair() throws Exception {

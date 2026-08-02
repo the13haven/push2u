@@ -5,9 +5,17 @@ import io.push2u.VapidSigner;
 import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.AlgorithmParameters;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
+import java.security.PublicKey;
 import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECField;
+import java.security.spec.ECFieldFp;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.EllipticCurve;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Map;
@@ -24,14 +32,25 @@ import java.util.Objects;
  * <ul>
  *   <li><b>Explicit</b> — pass the 65-byte X9.62 uncompressed point. The Vault token then needs only
  *       the {@code sign} capability ({@code update} on {@code transit/sign/<key>}); the public key is
- *       never read from Vault. Use this for a strict sign-only token or an air-gapped public key.</li>
+ *       never read from Vault. Use this for a strict sign-only token or an air-gapped public key.
+ *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04}
+ *       uncompressed tag. It is not verified to be a point on P-256, and nothing here can check that
+ *       it is the public half of the Transit key being signed with: that remains the caller's
+ *       responsibility. The P-256 validation described below applies to the fetched mode alone.</p></li>
  *   <li><b>Fetched</b> — omit the public key. The signer reads {@code transit/keys/<key>} once at
  *       construction (a {@code GET}), takes the {@code latest_version} and <em>that version's</em>
  *       public key as an atomic pair, and reduces the PEM to the uncompressed point. This keeps a
  *       <em>single source of truth</em> — the Transit key — so the published key can never drift
  *       from the signing key. The token additionally needs {@code read} on
  *       {@code transit/keys/<key>} (which exposes only the public keys + metadata, never private
- *       material). This is the recommended mode.</li>
+ *       material). This is the recommended mode.
+ *       <p>Construction fails fast unless the key really is P-256: the response's {@code type} must
+ *       be {@code ecdsa-p256} (or Vault Enterprise's {@code managed_key}), and the parsed public key
+ *       must carry P-256's domain parameters <em>and</em> be a point that satisfies the curve
+ *       equation. The checks are independent — the type is only Vault's claim about the key, while
+ *       the curve checks inspect the key material itself — and any failure raises a
+ *       {@link PushCryptoException} at construction instead of surfacing as an unexplained
+ *       push-service rejection on the first send.</p></li>
  * </ul>
  *
  * <p>Both Vault calls — the Transit {@code sign} POST and the fetched mode's one-time
@@ -63,9 +82,30 @@ import java.util.Objects;
 public final class VaultTransitVapidSigner implements VapidSigner {
 
     private static final String VAULT_PREFIX_END = ":";
+    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
+    private static final int ERROR_ECHO_LIMIT = 2048;
     private static final int UNCOMPRESSED_LENGTH = 65;
     private static final int COORDINATE_LENGTH = 32;
     private static final byte UNCOMPRESSED_TAG = 0x04;
+    /**
+     * JCA names for the one curve Web Push uses. Copied rather than shared: core's equivalents
+     * ({@code io.push2u.Algorithms}, {@code io.push2u.EcKeys}) are package-private internals, and
+     * widening core's public API for two string literals would trade a real API commitment for a
+     * trivial saving.
+     */
+    private static final String EC = "EC";
+    private static final String SECP256R1 = "secp256r1";
+    /**
+     * The Vault Transit key type VAPID needs: RFC 8292 §2 mandates ES256, i.e. ECDSA over NIST
+     * P-256. Vault reports it as {@code data.type} of {@code transit/keys/<name>}.
+     */
+    private static final String REQUIRED_KEY_TYPE = "ecdsa-p256";
+    /**
+     * Vault Enterprise's HSM/KMS-backed key type, whose {@code data.type} describes the wrapper
+     * instead of the curve — accepted on the strength of the curve check (see
+     * {@link #requireP256KeyType}).
+     */
+    private static final String MANAGED_KEY_TYPE = "managed_key";
     /** An ES256 signature is exactly {@code r || s}, two 32-byte big-endian scalars. */
     private static final int SIGNATURE_LENGTH = 2 * COORDINATE_LENGTH;
 
@@ -252,6 +292,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * the key is rotated right after this read, the signer keeps signing with the version its
      * advertised public key belongs to. A single startup {@code GET} over the same
      * {@link VaultHttpTransport} the {@code sign} calls use; the token needs {@code read} on the key.
+     *
+     * <p>The key is validated as P-256 before the signer exists, all fail-fast: the Transit
+     * {@code type} ({@link #requireP256KeyType}), then the key's domain parameters and its point
+     * ({@link #requireP256PublicKey}). No check subsumes another — the metadata is only Vault's
+     * claim, right parameters do not put the point on the curve, and a key on another curve would
+     * otherwise be squeezed into 32-byte coordinates and published as a nonsense VAPID key that
+     * fails much later, as an opaque push-service rejection.
      */
     private static VaultKeyMetadata fetchKeyMetadata(URI vaultAddress, String mount, String keyName, String token,
                                                      VaultHttpTransport transport) {
@@ -263,17 +310,157 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName);
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
         if (response.statusCode() != 200) {
-            throw new PushCryptoException(
-                "Vault Transit key read failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
+            throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode()
+                + " — " + abbreviated(response.body()));
         }
         String body = response.body();
+        requireP256KeyType(body);
         int latestVersion = extractLatestVersion(body);
+        ECPublicKey key;
         try {
-            byte[] point = uncompressedPoint(parsePublicKeyPem(extractPublicKeyPem(body, latestVersion)));
-            return new VaultKeyMetadata(latestVersion, point);
+            key = parsePublicKeyPem(extractPublicKeyPem(body, latestVersion));
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("Vault Transit returned an unparseable public key", e);
         }
+        requireP256PublicKey(key);
+        return new VaultKeyMetadata(latestVersion, uncompressedPoint(key));
+    }
+
+    /**
+     * Reject any Transit key whose advertised {@code type} is neither {@code ecdsa-p256} nor
+     * {@code managed_key} — the common misconfiguration is an {@code ecdsa-p384} (or
+     * {@code ed25519}) key, which cannot produce the ES256 signatures VAPID requires. A missing
+     * {@code type} is equally loud: silently accepting a response that does not describe the key
+     * would defeat the check.
+     *
+     * <p>{@code managed_key} is Vault Enterprise's HSM/KMS-backed key type: the response then
+     * describes the wrapper, not the curve, so the type says nothing either way. It is accepted here
+     * because {@link #requireP256PublicKey} inspects the key material itself and is the authoritative
+     * check — the same reason the curve check exists at all. This path has <em>not</em> been
+     * exercised against a real Vault Enterprise; the curve check still refuses anything that is not
+     * P-256, so the worst case is a clear failure, never a bogus VAPID key.
+     */
+    private static void requireP256KeyType(String json) {
+        String type = extractKeyType(json);
+        if (!REQUIRED_KEY_TYPE.equals(type) && !MANAGED_KEY_TYPE.equals(type)) {
+            throw new PushCryptoException("Vault Transit key type is '" + abbreviated(type) + "', but VAPID requires '"
+                + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
+                + "') — RFC 8292 mandates ES256 over NIST P-256");
+        }
+    }
+
+    /**
+     * Reject a public key that is not a point on NIST P-256, independently of what the Transit
+     * metadata claimed. Two steps, both necessary:
+     * <ol>
+     *   <li>the key's domain parameters must be P-256's. They are compared against the canonical
+     *       {@code secp256r1} parameters <em>by value</em> — prime field modulus, curve
+     *       coefficients, generator, order and cofactor — because {@link ECParameterSpec} has no
+     *       {@code equals} and providers hand back equivalent-but-distinct instances (named-curve
+     *       subclasses, cached singletons, keys carrying explicit parameters) that an identity or
+     *       {@code equals} comparison on the spec would wrongly reject;</li>
+     *   <li>the key's point must satisfy the curve equation. Right parameters do not imply a point
+     *       on the curve: the JCA does not validate this — SunEC accepts a {@code KeyFactory} spec
+     *       with P-256 parameters and a point such as {@code (1, 2)}, or a coordinate at or above
+     *       the field prime — so without this step the signer would still publish a VAPID key that
+     *       no push service can verify.</li>
+     * </ol>
+     */
+    private static void requireP256PublicKey(ECPublicKey key) {
+        ECParameterSpec expected = p256Parameters();
+        ECParameterSpec actual = key.getParams();
+        if (actual == null || !sameCurve(actual, expected)) {
+            throw new PushCryptoException("Vault Transit public key is not on NIST P-256 (" + SECP256R1 + "): "
+                + describe(actual, expected) + ". VAPID requires ES256 over P-256 (RFC 8292)");
+        }
+        requireOnCurve(key.getW(), expected);
+    }
+
+    /**
+     * Check {@code point} against the short Weierstrass equation of {@code parameters}:
+     * {@code 0 <= x,y < p} and {@code y² ≡ x³ + ax + b (mod p)}. Called only with the canonical
+     * P-256 parameters, so the field is known to be an {@link ECFieldFp}. Coordinates are public
+     * key material, but the message quotes none of it — the failure is structural, and there is
+     * nothing an operator can do with the digits.
+     */
+    private static void requireOnCurve(ECPoint point, ECParameterSpec parameters) {
+        if (ECPoint.POINT_INFINITY.equals(point)) {
+            throw new PushCryptoException(
+                "Vault Transit public key is the point at infinity, which is not a usable VAPID key");
+        }
+        EllipticCurve curve = parameters.getCurve();
+        BigInteger p = ((ECFieldFp) curve.getField()).getP();
+        BigInteger x = point.getAffineX();
+        BigInteger y = point.getAffineY();
+        if (x.signum() < 0 || x.compareTo(p) >= 0 || y.signum() < 0 || y.compareTo(p) >= 0) {
+            throw new PushCryptoException("Vault Transit public key has a coordinate outside the P-256 field "
+                + "(0 <= x, y < p), so it is not a point on the curve");
+        }
+        BigInteger left = y.multiply(y).mod(p);
+        BigInteger right = x.multiply(x).multiply(x).add(curve.getA().multiply(x)).add(curve.getB()).mod(p);
+        if (!left.equals(right)) {
+            throw new PushCryptoException("Vault Transit public key does not satisfy the NIST P-256 curve equation "
+                + "(y² = x³ + ax + b), so it is not a point on the curve");
+        }
+    }
+
+    /** The canonical NIST P-256 domain parameters, resolved from the platform JCE providers. */
+    private static ECParameterSpec p256Parameters() {
+        try {
+            AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC);
+            parameters.init(new ECGenParameterSpec(SECP256R1));
+            return parameters.getParameterSpec(ECParameterSpec.class);
+        } catch (GeneralSecurityException e) {
+            throw new PushCryptoException(
+                "EC AlgorithmParameters (" + SECP256R1 + ") are unavailable from the platform JCE providers", e);
+        }
+    }
+
+    /** Value-wise equality of two EC domain parameter sets (see {@link #requireP256PublicKey}). */
+    private static boolean sameCurve(ECParameterSpec actual, ECParameterSpec expected) {
+        EllipticCurve actualCurve = actual.getCurve();
+        EllipticCurve expectedCurve = expected.getCurve();
+        return sameField(actualCurve.getField(), expectedCurve.getField())
+            && actualCurve.getA().equals(expectedCurve.getA())
+            && actualCurve.getB().equals(expectedCurve.getB())
+            && actual.getOrder().equals(expected.getOrder())
+            && actual.getCofactor() == expected.getCofactor()
+            && sameGenerator(actual.getGenerator(), expected.getGenerator());
+    }
+
+    /**
+     * Prime-field equality. Only {@link ECFieldFp} counts: comparing bit sizes alone would accept a
+     * binary field ({@code ECFieldF2m}) of the same size as P-256's prime field.
+     */
+    private static boolean sameField(ECField actual, ECField expected) {
+        return actual instanceof ECFieldFp actualFp && expected instanceof ECFieldFp expectedFp
+            && actualFp.getP().equals(expectedFp.getP());
+    }
+
+    /** Affine equality of two generators; the point at infinity (null affine coordinates) never matches. */
+    private static boolean sameGenerator(ECPoint actual, ECPoint expected) {
+        return !ECPoint.POINT_INFINITY.equals(actual) && !ECPoint.POINT_INFINITY.equals(expected)
+            && actual.getAffineX().equals(expected.getAffineX())
+            && actual.getAffineY().equals(expected.getAffineY());
+    }
+
+    /**
+     * A short, log-safe description of a key's curve for the mismatch message. The field size alone
+     * is useless for the curves most likely to be confused with P-256 — secp256k1 and
+     * brainpoolP256r1 are also 256-bit prime-field curves, so "a 256-bit prime field" reads as a
+     * self-contradiction. The {@code b} coefficient discriminates them, and being a published domain
+     * parameter it is safe to log.
+     */
+    private static String describe(ECParameterSpec parameters, ECParameterSpec expected) {
+        if (parameters == null) {
+            return "the key carries no EC domain parameters";
+        }
+        ECField field = parameters.getCurve().getField();
+        return "the key's curve is over a " + field.getFieldSize() + "-bit "
+            + (field instanceof ECFieldFp ? "prime" : "non-prime") + " field with b=0x"
+            + parameters.getCurve().getB().toString(16) + ", while P-256 has a "
+            + expected.getCurve().getField().getFieldSize() + "-bit prime field with b=0x"
+            + expected.getCurve().getB().toString(16);
     }
 
     /**
@@ -320,6 +507,24 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
+     * Pull the {@code type} of the Transit key out of {@code transit/keys/<name>} (e.g.
+     * {@code "ecdsa-p256"}), anchored the whole way: {@code data} as a direct member of the root
+     * object, {@code type} as a direct member of {@code data} — a string value that merely looks like
+     * the label (or a {@code type} nested in some version entry) can never hijack the lookup.
+     * Targeted extraction (fixed Vault response shape), not a general JSON parser. Package-private
+     * for the extraction unit tests.
+     */
+    static String extractKeyType(String json) {
+        int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
+        int valueStart = directMemberValueStart(json, dataOpen, "type");
+        if (valueStart < 0) {
+            throw new PushCryptoException("Vault key response has no 'type' field, so the key cannot be "
+                + "confirmed as '" + REQUIRED_KEY_TYPE + "': " + abbreviated(json));
+        }
+        return stringValueAt(json, valueStart, "type");
+    }
+
+    /**
      * Pull the {@code public_key} PEM of the given key version out of {@code transit/keys/<name>}.
      * The whole chain is anchored, one direct-member hop at a time: root object → {@code data} →
      * {@code keys} → the version entry → {@code public_key} inside that entry's own {@code {...}}.
@@ -336,7 +541,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         int versionValue = directMemberValueStart(json, keysOpen, Integer.toString(version));
         if (versionValue < 0) {
-            throw new PushCryptoException("Vault key response has no entry for key version " + version + ": " + abbreviated(json));
+            throw new PushCryptoException(
+                "Vault key response has no entry for key version " + version + ": " + abbreviated(json));
         }
         int versionOpen = versionValue;
         while (versionOpen < json.length() && Character.isWhitespace(json.charAt(versionOpen))) {
@@ -489,15 +695,39 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         throw new PushCryptoException("malformed Vault key response: unterminated object: " + abbreviated(json));
     }
 
+    /**
+     * Parse Vault's SubjectPublicKeyInfo PEM into an EC public key. The curve and the point are
+     * <em>not</em> checked here — {@link #requireP256PublicKey} does that on the result.
+     */
     private static ECPublicKey parsePublicKeyPem(String pem) throws GeneralSecurityException {
         String base64 = pem.replace("-----BEGIN PUBLIC KEY-----", "")
             .replace("-----END PUBLIC KEY-----", "")
             .replaceAll("\\s", "");
-        byte[] der = Base64.getDecoder().decode(base64);
-        return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(der));
+        byte[] der;
+        try {
+            der = Base64.getDecoder().decode(base64);
+        } catch (IllegalArgumentException e) {
+            // Same convention as sign(): a malformed Vault payload is reported as this module's
+            // exception, next to the cause — a raw IllegalArgumentException must not escape a
+            // public constructor whose documented failure mode is PushCryptoException. The payload
+            // itself is not echoed; it is not worth putting into logs.
+            throw new PushCryptoException("Vault Transit returned a public key PEM that is not valid base64", e);
+        }
+        PublicKey key = KeyFactory.getInstance(EC).generatePublic(new X509EncodedKeySpec(der));
+        if (!(key instanceof ECPublicKey ecKey)) {
+            // Defensive: an EC KeyFactory normally rejects foreign SPKIs outright, but a provider
+            // returning some other key type must not blow up as a ClassCastException.
+            throw new PushCryptoException(
+                "Vault Transit returned a " + key.getAlgorithm() + " public key, not an EC one");
+        }
+        return ecKey;
     }
 
-    /** Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}). */
+    /**
+     * Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}).
+     * Call only after {@link #requireP256Curve}: the fixed 32-byte coordinate fields are P-256's
+     * field size, and a coordinate from a larger curve is rejected rather than truncated.
+     */
     private static byte[] uncompressedPoint(ECPublicKey key) {
         byte[] out = new byte[UNCOMPRESSED_LENGTH];
         out[0] = UNCOMPRESSED_TAG;
@@ -506,18 +736,33 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         return out;
     }
 
-    /** Write {@code value} as a fixed 32-byte big-endian field at {@code offset} (right-aligned). */
+    /**
+     * Write {@code value} as a fixed 32-byte big-endian field at {@code offset} (right-aligned).
+     * {@link BigInteger#toByteArray()} is two's complement, so a 256-bit coordinate with its top bit
+     * set carries a leading {@code 0x00} sign byte — padding, dropped here. Anything wider than that
+     * is <em>significant</em> and fails loudly: truncating it would publish a plausible-looking but
+     * bogus VAPID key whose only symptom is a much later push-service rejection.
+     */
     private static void writeFixed(BigInteger value, byte[] out, int offset) {
         byte[] bytes = value.toByteArray();
-        if (bytes.length >= COORDINATE_LENGTH) {
-            System.arraycopy(bytes, bytes.length - COORDINATE_LENGTH, out, offset, COORDINATE_LENGTH);
-        } else {
-            System.arraycopy(bytes, 0, out, offset + COORDINATE_LENGTH - bytes.length, bytes.length);
+        int start = 0;
+        while (start < bytes.length - COORDINATE_LENGTH && bytes[start] == 0) {
+            start++;
         }
+        int length = bytes.length - start;
+        // Two distinct failures, reported apart: BigInteger.bitLength() is the length of the
+        // MINIMAL two's-complement representation excluding the sign bit, so it is 0 for -1 and
+        // would turn a negative coordinate into a nonsensical "0 bits" complaint.
+        if (value.signum() < 0) {
+            throw new PushCryptoException(
+                "Vault Transit public key has a negative coordinate, which is not a P-256 field element");
+        }
+        if (length > COORDINATE_LENGTH) {
+            throw new PushCryptoException("Vault Transit public key has a coordinate that is not a P-256 field "
+                + "element: " + value.bitLength() + " bits, expected at most " + (COORDINATE_LENGTH * Byte.SIZE));
+        }
+        System.arraycopy(bytes, start, out, offset + COORDINATE_LENGTH - length, length);
     }
-
-    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
-    private static final int ERROR_ECHO_LIMIT = 2048;
 
     /**
      * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT}

@@ -156,6 +156,30 @@ class VaultTransitVapidSignerExtractionTest {
     }
 
     @Test
+    void keyTypeIsReadFromDataItself() {
+        assertThat(VaultTransitVapidSigner.extractKeyType(GO_MAP_ORDERED_BODY)).isEqualTo("ecdsa-p256");
+    }
+
+    @Test
+    void keyTypeIsNotTakenFromANestedObjectOrAStringValue() {
+        // "note" carries the string value "type", and a version entry carries its own "type" saying
+        // ecdsa-p256 — while data.type, the only authoritative one, says ecdsa-p384. An unanchored
+        // search binds to either impostor and the P-384 misconfiguration passes validation.
+        String body = "{\"data\":{\"note\":\"type\",\"keys\":{"
+            + "\"1\":{\"type\":\"ecdsa-p256\",\"public_key\":\"IMPOSTOR\"}},"
+            + "\"latest_version\":1,\"type\":\"ecdsa-p384\"}}";
+
+        assertThat(VaultTransitVapidSigner.extractKeyType(body)).isEqualTo("ecdsa-p384");
+    }
+
+    @Test
+    void missingKeyTypeFails() {
+        assertThatThrownBy(() -> VaultTransitVapidSigner.extractKeyType("{\"data\":{\"keys\":{}}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("no 'type' field");
+    }
+
+    @Test
     void missingDataObjectFails() {
         assertThatThrownBy(() -> VaultTransitVapidSigner.extractPublicKeyPem("{\"foo\":{}}", 1))
             .isInstanceOf(PushCryptoException.class)

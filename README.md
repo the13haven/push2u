@@ -308,7 +308,17 @@ the signer reads `latest_version` and that version's public key from one
 `transit/keys/<key>` response, then includes the captured `key_version` in every sign request.
 The advertised public key therefore continues to match the signing key even when Vault creates a
 new latest version. The token needs `update` on `transit/sign/<key>` and `read` on
-`transit/keys/<key>`:
+`transit/keys/<key>`.
+
+The fetched key is validated as P-256 before the signer is created: the response's `type` must be
+`ecdsa-p256` (a missing `type` is a failure too), the parsed public key must carry P-256's domain
+parameters, and its point must satisfy the curve equation — the JCA checks none of this on its
+own. A key of another type or curve — `ecdsa-p384`, for instance — fails startup with a
+`PushCryptoException` instead of producing a VAPID key that every push service rejects later.
+
+Vault Enterprise reports HSM/KMS-backed keys as `type: managed_key`, which describes the wrapper
+rather than the curve; that value is therefore also accepted and the key is admitted only if the
+curve checks pass. This path has not been exercised against a real Vault Enterprise.
 
 ```java
 VapidSigner signer = new VaultTransitVapidSigner(
@@ -376,6 +386,11 @@ The explicit constructor/property form without a version is retained for compati
 sends no `key_version`; Vault then signs with its latest version. Use that form only when the
 Transit key is guaranteed never to rotate.
 
+An explicitly supplied `public-key` is checked structurally only — 65 bytes with the `0x04`
+uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is
+the public half of the Transit key being signed with; both remain the caller's responsibility. The
+P-256 validation described under *Fetched public key* applies to that mode alone.
+
 ### Vault HTTP transport
 
 All Vault calls — the Transit `sign` POST and, in fetched mode, the startup `transit/keys/<key>`
@@ -410,13 +425,14 @@ Resolution order (two extension points, plus the properties-only fallback):
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
 transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
 
-The Vault key must be `ecdsa-p256`. Ordinary Vault rotation is safe for an already-running pinned
-signer: it continues using the version whose public key it advertises. Raising
-`min_encryption_version` above the pinned version, or removing that version with
-`min_available_version`, makes Vault reject subsequent sign requests. Recover by recreating the
-fetched signer, or by configuring the matching new public key and version in explicit mode.
-Adopting a new VAPID public key is an application-level migration: browser subscriptions created
-for the previous application-server key must be replaced.
+The Vault key must be `ecdsa-p256`; the fetched mode verifies this at construction (see *Fetched
+public key* above). Ordinary Vault rotation is safe for an already-running pinned signer: it
+continues using the version whose public key it advertises. Raising `min_encryption_version` above
+the pinned version, or removing that version with `min_available_version`, makes Vault reject
+subsequent sign requests. Recover by recreating the fetched signer, or by configuring the matching
+new public key and version in explicit mode. Adopting a new VAPID public key is an
+application-level migration: browser subscriptions created for the previous application-server key
+must be replaced.
 
 ## Protocol limits
 
