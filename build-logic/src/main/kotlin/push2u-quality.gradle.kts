@@ -216,11 +216,20 @@ tasks.register("qualityCheckCi") {
     dependsOn("jacocoTestReport")
 }
 
-// Ordering: format first, then style, then the heavier analysers — so the first failure a
-// developer sees is the cheapest one to fix.
-tasks.named("checkstyleMain") { mustRunAfter("spotlessApply", "spotlessCheck") }
+// Ordering: cheapest failure first. Formatting is checked before anything is compiled, the
+// analysers run before the test suites, and within the analysers it goes Checkstyle -> PMD ->
+// SpotBugs. Without this, Gradle is free to schedule the whole build-and-test cycle ahead of
+// spotlessCheck, and a misplaced brace surfaces minutes after the compiler already had the answer.
+//
+// Locally the same ordering is what makes spotlessApply rewrite the sources before javac reads
+// them, rather than racing it.
+val formattingTasks = listOf("spotlessApply", "spotlessCheck")
+
+tasks.withType<JavaCompile>().configureEach { mustRunAfter(formattingTasks) }
+tasks.named("checkstyleMain") { mustRunAfter(formattingTasks) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
+tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }
 
 // Quality tasks are disabled unless a quality lifecycle task is in the graph. That keeps
 // `./gradlew build` (and the `check` task the tool plugins hook into) compile + test only, and it
