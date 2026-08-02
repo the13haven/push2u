@@ -254,6 +254,8 @@ public final class PushSender {
 
         /**
          * The VAPID {@code sub} claim — a {@code mailto:} / {@code https:} the push service can reach you at.
+         * Required; {@link #build()} rejects a {@code null} or blank value, since RFC 8292 §2 requires the
+         * {@code sub} claim and a blank one would still build a JWT, only to be rejected by the push service.
          *
          * @param contact the contact URI
          * @return this builder
@@ -422,13 +424,15 @@ public final class PushSender {
         }
 
         /**
-         * Validates the configuration (exactly one key source, plus a contact) and builds the {@link PushSender}.
+         * Validates the configuration (exactly one key source, plus a non-blank contact) and builds the
+         * {@link PushSender}.
          *
          * @return the configured sender
+         * @throws IllegalStateException if the key source or the contact is missing or invalid
          */
         public PushSender build() {
-            if (contact == null) {
-                throw new IllegalStateException("contact is required (the VAPID 'sub' claim)");
+            if (contact == null || contact.isBlank()) {
+                throw new IllegalStateException("contact is required (the VAPID 'sub' claim, RFC 8292 §2)");
             }
             boolean hasVapid = vapidKeys != null;
             boolean hasSigner = signer != null;
