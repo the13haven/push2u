@@ -85,9 +85,10 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. It is
-required and must be non-blank: `build()` throws `IllegalStateException` for a `null` or
-whitespace-only contact.
+The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. RFC 8292
+§2.1 leaves `sub` optional; push2u requires it, because a push service with a problem to report
+about your application server has no other way to reach you. `build()` therefore throws
+`IllegalStateException` for a `null` or whitespace-only contact.
 
 ### Send a message
 
@@ -282,8 +283,8 @@ bypasses the starter's checks entirely.
 
 `record-size` and `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s
 defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) untouched. Setting
-either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` at or
-below the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
+either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` below
+the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
 prefixed with the YAML property name (the builder itself only names its Java parameter).
 
 ## Vault Transit signer
@@ -349,8 +350,9 @@ push2u:
 
 The Vault signer starter only supplies the `VapidSigner` (key custody); it does not know the
 application's contact address. `push2u.vapid.subject` therefore still comes from the core starter's
-properties — it is the VAPID `sub` claim RFC 8292 §2 requires, and `Push2uAutoConfiguration` fails
-startup with a message naming this property if it is left unset.
+properties — it is the VAPID `sub` claim, which push2u requires even though RFC 8292 §2.1 leaves
+it optional, and `Push2uAutoConfiguration` fails startup with a message naming this property if
+it is left unset.
 
 ### Explicit public key
 

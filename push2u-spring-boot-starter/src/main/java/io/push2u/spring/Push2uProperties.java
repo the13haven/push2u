@@ -20,8 +20,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *                              (RFC 8291 §4) — a per-payload check this property cannot pre-empt
  * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body; {@code null} keeps
  *                              the {@code PushSender} default (4096 bytes, the limit RFC 8030 §7.2
- *                              lets a push service enforce). Rejected at startup if it leaves no
- *                              room for the fixed 103-byte {@code aes128gcm} overhead
+ *                              lets a push service enforce). Rejected at startup if it is below the
+ *                              fixed 103-byte {@code aes128gcm} overhead, which is the body an
+ *                              empty payload produces
  * @param retry                 the retry policy
  */
 @ConfigurationProperties("push2u")
@@ -33,7 +34,9 @@ public record Push2uProperties(@DefaultValue Vapid vapid, Duration jwtExpiry, Du
      *
      * @param publicKey  the base64url uncompressed P-256 public key (the {@code k} value)
      * @param privateKey the base64url raw 32-byte private scalar
-     * @param subject    the VAPID {@code sub} — a {@code mailto:} / {@code https:} contact
+     * @param subject    the VAPID {@code sub} — a {@code mailto:} / {@code https:} contact. Optional
+     *                   per RFC 8292 §2.1, but required by push2u and hence by the autoconfigured
+     *                   {@code PushSender}
      */
     public record Vapid(String publicKey, String privateKey, String subject) {
     }

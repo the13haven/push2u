@@ -370,7 +370,8 @@ class VaultSignerAutoConfigurationTest {
     @Test
     void requestTimeoutReachesTheBuiltTransport() throws Exception {
         // A socket that accepts but never answers: only the bound request-timeout can end the
-        // exchange — before this seam existed, the metadata GET could hang startup forever.
+        // exchange. The metadata GET used to set a connect timeout alone, which such a server
+        // satisfies, so startup could hang forever — that part was a defect, and this pins its fix.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             explicitRunner("http://127.0.0.1:" + silent.getLocalPort())
                 .withPropertyValues("push2u.signer.vault.request-timeout=500ms")

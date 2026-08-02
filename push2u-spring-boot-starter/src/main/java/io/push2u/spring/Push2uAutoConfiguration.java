@@ -91,9 +91,10 @@ public final class Push2uAutoConfiguration {
         String subject = properties.vapid().subject();
         if (subject == null || subject.isBlank()) {
             throw new IllegalStateException(
-                "push2u.vapid.subject is required (the VAPID 'sub' claim, RFC 8292 §2) — set it even"
-                    + " when the signer itself comes from another starter, e.g. the Vault Transit signer"
-                    + " starter, which supplies only key custody, not a contact address");
+                "push2u.vapid.subject is required (the VAPID 'sub' claim: optional in RFC 8292 §2.1,"
+                    + " required by push2u). Set it even when the signer itself comes from another"
+                    + " starter, e.g. the Vault Transit signer starter, which supplies only key"
+                    + " custody, not a contact address");
         }
         Push2uProperties.Retry retry = properties.retry();
         PushSender.Builder builder = PushSender.builder()

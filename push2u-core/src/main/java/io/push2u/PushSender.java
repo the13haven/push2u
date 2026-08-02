@@ -254,8 +254,11 @@ public final class PushSender {
 
         /**
          * The VAPID {@code sub} claim — a {@code mailto:} / {@code https:} the push service can reach you at.
-         * Required; {@link #build()} rejects a {@code null} or blank value, since RFC 8292 §2 requires the
-         * {@code sub} claim and a blank one would still build a JWT, only to be rejected by the push service.
+         * RFC 8292 §2.1 makes {@code sub} optional ({@code MAY}) and only recommends ({@code SHOULD}) those
+         * two URI forms when it is present; requiring it is push2u's own contract, because a push service
+         * that needs to reach the operator about a misbehaving application server has no other channel.
+         * {@link #build()} therefore rejects a {@code null} or blank value — a blank one would still
+         * produce a JWT, only for the push service to reject it.
          *
          * @param contact the contact URI
          * @return this builder
@@ -379,14 +382,15 @@ public final class PushSender {
          * configured to — raise that too, or the larger payload is rejected for not fitting the
          * record.
          *
-         * @param maxEncryptedBodyBytes the maximum encrypted body size in bytes; must exceed the
-         *                              fixed 103-octet overhead
+         * @param maxEncryptedBodyBytes the maximum encrypted body size in bytes; must be at least
+         *                              the fixed 103-octet overhead, which is exactly the body an
+         *                              empty payload produces
          * @return this builder
-         * @throws IllegalArgumentException if the value leaves no room for a payload
+         * @throws IllegalArgumentException if the value cannot hold even an empty payload
          */
         public Builder maxEncryptedBodyBytes(int maxEncryptedBodyBytes) {
-            if (maxEncryptedBodyBytes <= WebPushEncryptor.BODY_OVERHEAD) {
-                throw new IllegalArgumentException("maxEncryptedBodyBytes must be greater than the fixed "
+            if (maxEncryptedBodyBytes < WebPushEncryptor.BODY_OVERHEAD) {
+                throw new IllegalArgumentException("maxEncryptedBodyBytes must be at least the fixed "
                     + WebPushEncryptor.BODY_OVERHEAD + "-byte aes128gcm overhead (RFC 8188 header "
                     + WebPushEncryptor.HEADER_LENGTH + " + record overhead " + WebPushEncryptor.RECORD_OVERHEAD
                     + "), was " + maxEncryptedBodyBytes);
@@ -432,7 +436,8 @@ public final class PushSender {
          */
         public PushSender build() {
             if (contact == null || contact.isBlank()) {
-                throw new IllegalStateException("contact is required (the VAPID 'sub' claim, RFC 8292 §2)");
+                throw new IllegalStateException(
+                    "contact is required (the VAPID 'sub' claim: optional in RFC 8292 §2.1, required by push2u)");
             }
             boolean hasVapid = vapidKeys != null;
             boolean hasSigner = signer != null;

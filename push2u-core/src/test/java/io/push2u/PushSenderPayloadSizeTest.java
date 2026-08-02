@@ -104,14 +104,29 @@ class PushSenderPayloadSizeTest {
     }
 
     @Test
-    void builderRejectsAMaxEncryptedBodyThatLeavesNoRoomForAPayload() {
-        for (int invalid : new int[] {Integer.MIN_VALUE, -1, 0, 103}) {
+    void builderRejectsAMaxEncryptedBodyTooSmallForAnEmptyPayload() {
+        for (int invalid : new int[] {Integer.MIN_VALUE, -1, 0, 102}) {
             assertThatThrownBy(() -> PushSender.builder().maxEncryptedBodyBytes(invalid))
                 .as("maxEncryptedBodyBytes %d", invalid)
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must be greater than the fixed 103-byte aes128gcm overhead");
+                .hasMessageContaining("must be at least the fixed 103-byte aes128gcm overhead");
         }
-        assertThat(PushSender.builder().maxEncryptedBodyBytes(104)).isNotNull();
+        // 103 is the body of an empty payload, which the library does send — so the limit that
+        // admits exactly that body is legal, not one byte above it.
+        assertThat(PushSender.builder().maxEncryptedBodyBytes(103)).isNotNull();
+    }
+
+    @Test
+    void anEmptyPayloadFitsTheSmallestLegalBodyLimit() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            PushResult result = sender(PushSender.builder().maxEncryptedBodyBytes(103))
+                .send(subscription(receiver), PushMessage.of(new byte[0]));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(receiver.requests().getFirst().bodyLength())
+                .as("an empty payload encrypts to exactly the fixed overhead")
+                .isEqualTo(103);
+        }
     }
 
     @Test

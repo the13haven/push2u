@@ -216,7 +216,7 @@ class Push2uAutoConfigurationTest {
             assertThat(firstOfTypeContaining(
                 context.getStartupFailure(), IllegalArgumentException.class, "push2u.max-encrypted-body-bytes:"))
                 .hasMessageContaining("push2u.max-encrypted-body-bytes:")
-                .hasMessageContaining("maxEncryptedBodyBytes must be greater than");
+                .hasMessageContaining("maxEncryptedBodyBytes must be at least");
         });
     }
 

@@ -19,8 +19,11 @@ import org.junit.jupiter.api.Test;
 /**
  * The signer routes <em>both</em> Vault calls through the supplied {@link VaultHttpTransport}: the
  * fetched mode's {@code transit/keys/<name>} metadata GET and the {@code transit/sign/<name>}
- * POST. Historically the metadata read bypassed the transport seam (it used a private JDK client),
- * so an application's mTLS/proxy transport never applied to it — this test pins the fix.
+ * POST. Routing both through one transport is a guarantee this module adopted deliberately, not a
+ * bug fix: the earlier seam was push2u-core's POST-only {@link io.push2u.PushHttpClient}, so the
+ * metadata GET necessarily used a private JDK client, and an application's mTLS/proxy/observability
+ * configuration reached only the sign call. This test pins the guarantee — a future refactor must
+ * not quietly reintroduce a second client.
  */
 class VaultTransitVapidSignerTransportTest {
 
