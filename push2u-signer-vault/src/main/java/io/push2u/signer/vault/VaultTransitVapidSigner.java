@@ -1,7 +1,5 @@
 package io.push2u.signer.vault;
 
-import io.push2u.PushCryptoException;
-import io.push2u.VapidSigner;
 import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -23,97 +21,96 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.push2u.PushCryptoException;
+import io.push2u.VapidSigner;
+
 /**
- * A {@link VapidSigner} that signs the VAPID JWT via HashiCorp Vault Transit — the private key
- * never leaves Vault. It POSTs the signing input to
- * {@code {vaultAddress}/v1/{mount}/sign/{keyName}} with {@code marshaling_algorithm=jws}, so
+ * A {@link VapidSigner} that signs the VAPID JWT via HashiCorp Vault Transit — the private key never leaves Vault. It
+ * POSTs the signing input to {@code {vaultAddress}/v1/{mount}/sign/{keyName}} with {@code marshaling_algorithm=jws}, so
  * Vault returns the raw {@code r || s} pair JOSE wants, and decodes it.
  *
- * <p>The Vault key must be an {@code ecdsa-p256} Transit key. The VAPID public key is your published
- * identity; Vault holds only the private half. There are two ways to supply the public key:
+ * <p>The Vault key must be an {@code ecdsa-p256} Transit key. The VAPID public key is your published identity; Vault
+ * holds only the private half. There are two ways to supply the public key:
+ *
  * <ul>
- *   <li><b>Explicit</b> — pass the 65-byte X9.62 uncompressed point. The Vault token then needs only
- *       the {@code sign} capability ({@code update} on {@code transit/sign/<key>}); the public key is
- *       never read from Vault. Use this for a strict sign-only token or an air-gapped public key.
- *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04}
- *       uncompressed tag. It is not verified to be a point on P-256, and nothing here can check that
- *       it is the public half of the Transit key being signed with: that remains the caller's
- *       responsibility. The P-256 validation described below applies to the fetched mode alone.</p></li>
- *   <li><b>Fetched</b> — omit the public key. The signer reads {@code transit/keys/<key>} once at
- *       construction (a {@code GET}), takes the {@code latest_version} and <em>that version's</em>
- *       public key as an atomic pair, and reduces the PEM to the uncompressed point. This keeps a
- *       <em>single source of truth</em> — the Transit key — so the published key can never drift
- *       from the signing key. The token additionally needs {@code read} on
- *       {@code transit/keys/<key>} (which exposes only the public keys + metadata, never private
- *       material). This is the recommended mode.
- *       <p>Construction fails fast unless the key really is P-256: the response's {@code type} must
- *       be {@code ecdsa-p256} (or Vault Enterprise's {@code managed_key}), and the parsed public key
- *       must carry P-256's domain parameters <em>and</em> be a point that satisfies the curve
- *       equation. The checks are independent — the type is only Vault's claim about the key, while
- *       the curve checks inspect the key material itself — and any failure raises a
- *       {@link PushCryptoException} at construction instead of surfacing as an unexplained
- *       push-service rejection on the first send.</p></li>
+ *   <li><b>Explicit</b> — pass the 65-byte X9.62 uncompressed point. The Vault token then needs only the {@code sign}
+ *       capability ({@code update} on {@code transit/sign/<key>}); the public key is never read from Vault. Use this
+ *       for a strict sign-only token or an air-gapped public key.
+ *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04} uncompressed tag. It
+ *       is not verified to be a point on P-256, and nothing here can check that it is the public half of the Transit
+ *       key being signed with: that remains the caller's responsibility. The P-256 validation described below applies
+ *       to the fetched mode alone.
+ *   <li><b>Fetched</b> — omit the public key. The signer reads {@code transit/keys/<key>} once at construction (a
+ *       {@code GET}), takes the {@code latest_version} and <em>that version's</em> public key as an atomic pair, and
+ *       reduces the PEM to the uncompressed point. This keeps a <em>single source of truth</em> — the Transit key — so
+ *       the published key can never drift from the signing key. The token additionally needs {@code read} on
+ *       {@code transit/keys/<key>} (which exposes only the public keys + metadata, never private material). This is the
+ *       recommended mode.
+ *       <p>Construction fails fast unless the key really is P-256: the response's {@code type} must be
+ *       {@code ecdsa-p256} (or Vault Enterprise's {@code managed_key}), and the parsed public key must carry P-256's
+ *       domain parameters <em>and</em> be a point that satisfies the curve equation. The checks are independent — the
+ *       type is only Vault's claim about the key, while the curve checks inspect the key material itself — and any
+ *       failure raises a {@link PushCryptoException} at construction instead of surfacing as an unexplained
+ *       push-service rejection on the first send.
  * </ul>
  *
- * <p>Both Vault calls — the Transit {@code sign} POST and the fetched mode's one-time
- * {@code transit/keys} read — go through this module's {@link VaultHttpTransport} seam (default
- * {@link JdkVaultHttpTransport}), so an application's mTLS, proxy, or observability transport
- * applies to the startup metadata read as much as to signing. Deliberately <em>not</em>
- * push2u-core's {@code PushHttpClient}: push delivery talks to untrusted capability URLs and
- * discards response bodies, while Vault's responses must be read — buffered under the transport's
- * size cap and per-request timeout. The small Vault request/response JSON is built and parsed by
- * hand — no JSON library.
+ * <p>Both Vault calls — the Transit {@code sign} POST and the fetched mode's one-time {@code transit/keys} read — go
+ * through this module's {@link VaultHttpTransport} seam (default {@link JdkVaultHttpTransport}), so an application's
+ * mTLS, proxy, or observability transport applies to the startup metadata read as much as to signing. Deliberately
+ * <em>not</em> push2u-core's {@code PushHttpClient}: push delivery talks to untrusted capability URLs and discards
+ * response bodies, while Vault's responses must be read — buffered under the transport's size cap and per-request
+ * timeout. The small Vault request/response JSON is built and parsed by hand — no JSON library.
  *
- * <p><b>Key rotation:</b> the fetched mode captures the key version together with its public key at
- * construction and pins that version on every {@code sign} call ({@code key_version} in the request
- * body), so signatures always match the advertised public key — rotating the Transit key in Vault
- * does not break signing <em>by itself</em>. What the pin does not survive is the operator raising
- * the key's {@code min_encryption_version} above the pinned version: Vault then rejects sign
- * requests carrying that {@code key_version}, and every {@code sign} call fails loudly with a
- * {@link PushCryptoException}. Trimming old key versions (raising {@code min_available_version})
- * deletes the pinned version outright and breaks signing the same way. Recover by recreating the
- * signer (the fetched mode re-reads the
- * then-latest version and its public key) or, in the explicit mode, by supplying the new version's
- * public key with the matching {@code keyVersion}. The rotated key is also not picked up until the
- * signer is recreated, which is the behaviour VAPID wants: the public key is your published
- * identity, and push subscriptions pin it at subscribe time. The explicit mode pins whatever
- * version is passed to the constructor. The explicit overloads <em>without</em> a version send no
- * {@code key_version}, so Vault signs with the latest — that form is only safe if the Transit key
- * is never rotated; prefer the {@code keyVersion} overloads otherwise.
+ * <p><b>Key rotation:</b> the fetched mode captures the key version together with its public key at construction and
+ * pins that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
+ * the advertised public key — rotating the Transit key in Vault does not break signing <em>by itself</em>. What the pin
+ * does not survive is the operator raising the key's {@code min_encryption_version} above the pinned version: Vault
+ * then rejects sign requests carrying that {@code key_version}, and every {@code sign} call fails loudly with a
+ * {@link PushCryptoException}. Trimming old key versions (raising {@code min_available_version}) deletes the pinned
+ * version outright and breaks signing the same way. Recover by recreating the signer (the fetched mode re-reads the
+ * then-latest version and its public key) or, in the explicit mode, by supplying the new version's public key with the
+ * matching {@code keyVersion}. The rotated key is also not picked up until the signer is recreated, which is the
+ * behaviour VAPID wants: the public key is your published identity, and push subscriptions pin it at subscribe time.
+ * The explicit mode pins whatever version is passed to the constructor. The explicit overloads <em>without</em> a
+ * version send no {@code key_version}, so Vault signs with the latest — that form is only safe if the Transit key is
+ * never rotated; prefer the {@code keyVersion} overloads otherwise.
  */
+// GodClass / complexity: the bulk of this class is the anchored JSON reader for Vault's responses
+// (see extractSignature). Keeping it here is what lets the module stay dependency-free — pulling a
+// JSON library in would trade these metrics for a transitive surface the library exists to avoid.
+@SuppressWarnings({"PMD.GodClass", "PMD.CyclomaticComplexity", "PMD.CognitiveComplexity"})
 public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
-     * Vault's marshalled signature envelope: the literal {@code vault}, the key version, and the
-     * base64url payload, whose alphabet ({@code A-Za-z0-9-_} plus {@code =} padding) contains no
-     * colon — so the payload group cannot swallow a further separator. The payload is allowed to be
-     * empty on purpose: {@code vault:v1:} is a well-formed envelope carrying no signature, and the
-     * length check in {@link #sign} reports that far more usefully ("expected 64 bytes, got 0") than
-     * a format complaint would.
+     * Vault's marshalled signature envelope: the literal {@code vault}, the key version, and the base64url payload,
+     * whose alphabet ({@code A-Za-z0-9-_} plus {@code =} padding) contains no colon — so the payload group cannot
+     * swallow a further separator. The payload is allowed to be empty on purpose: {@code vault:v1:} is a well-formed
+     * envelope carrying no signature, and the length check in {@link #sign} reports that far more usefully ("expected
+     * 64 bytes, got 0") than a format complaint would.
      */
     private static final Pattern VAULT_SIGNATURE = Pattern.compile("vault:v\\d+:([A-Za-z0-9\\-_]*={0,2})");
     /** Cap for response text echoed into exception messages — enough context, log-safe size. */
     private static final int ERROR_ECHO_LIMIT = 2048;
+
     private static final int UNCOMPRESSED_LENGTH = 65;
     private static final int COORDINATE_LENGTH = 32;
     private static final byte UNCOMPRESSED_TAG = 0x04;
     /**
      * JCA names for the one curve Web Push uses. Copied rather than shared: core's equivalents
-     * ({@code io.push2u.Algorithms}, {@code io.push2u.EcKeys}) are package-private internals, and
-     * widening core's public API for two string literals would trade a real API commitment for a
-     * trivial saving.
+     * ({@code io.push2u.Algorithms}, {@code io.push2u.EcKeys}) are package-private internals, and widening core's
+     * public API for two string literals would trade a real API commitment for a trivial saving.
      */
     private static final String EC = "EC";
+
     private static final String SECP256R1 = "secp256r1";
     /**
-     * The Vault Transit key type VAPID needs: RFC 8292 §2 mandates ES256, i.e. ECDSA over NIST
-     * P-256. Vault reports it as {@code data.type} of {@code transit/keys/<name>}.
+     * The Vault Transit key type VAPID needs: RFC 8292 §2 mandates ES256, i.e. ECDSA over NIST P-256. Vault reports it
+     * as {@code data.type} of {@code transit/keys/<name>}.
      */
     private static final String REQUIRED_KEY_TYPE = "ecdsa-p256";
     /**
-     * Vault Enterprise's HSM/KMS-backed key type, whose {@code data.type} describes the wrapper
-     * instead of the curve — accepted on the strength of the curve check (see
-     * {@link #requireP256KeyType}).
+     * Vault Enterprise's HSM/KMS-backed key type, whose {@code data.type} describes the wrapper instead of the curve —
+     * accepted on the strength of the curve check (see {@link #requireP256KeyType}).
      */
     private static final String MANAGED_KEY_TYPE = "managed_key";
     /** An ES256 signature is exactly {@code r || s}, two 32-byte big-endian scalars. */
@@ -127,123 +124,144 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private final Integer keyVersion;
 
     /** The (version, public key) pair read atomically from one {@code transit/keys/<name>} response. */
-    private record VaultKeyMetadata(int version, byte[] publicKey) {
-    }
+    private record VaultKeyMetadata(int version, byte[] publicKey) {}
 
     /**
-     * Fetched mode with the default {@link JdkVaultHttpTransport} — reads the latest key
-     * version and its public key from {@code transit/keys/<keyName>} at construction and pins that
-     * version for signing.
+     * Fetched mode with the default {@link JdkVaultHttpTransport} — reads the latest key version and its public key
+     * from {@code transit/keys/<keyName>} at construction and pins that version for signing.
      *
      * @param vaultAddress the Vault base address, e.g. {@code https://vault.example:8200}
-     * @param mount        the Transit mount path (commonly {@code "transit"})
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} + {@code read} on the key
+     * @param mount the Transit mount path (commonly {@code "transit"})
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} + {@code read} on the key
      */
     public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token) {
         this(vaultAddress, mount, keyName, token, new JdkVaultHttpTransport());
     }
 
     /**
-     * Fetched mode with the given transport, used for <em>both</em> Vault calls — the construction
-     * time {@code transit/keys/<keyName>} read and every {@code sign} — so custom mTLS/proxy
-     * configuration is never bypassed. Reads the latest key version and its public key at
-     * construction and pins that version for signing.
+     * Fetched mode with the given transport, used for <em>both</em> Vault calls — the construction time
+     * {@code transit/keys/<keyName>} read and every {@code sign} — so custom mTLS/proxy configuration is never
+     * bypassed. Reads the latest key version and its public key at construction and pins that version for signing.
      *
      * @param vaultAddress the Vault base address
-     * @param mount        the Transit mount path
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} + {@code read} on the key
-     * @param transport    the HTTP transport for the Vault API calls
+     * @param mount the Transit mount path
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} + {@code read} on the key
+     * @param transport the HTTP transport for the Vault API calls
      */
-    public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token,
-                                   VaultHttpTransport transport) {
-        this(vaultAddress, mount, keyName, token,
-            fetchKeyMetadata(vaultAddress, mount, keyName, token, transport), transport);
+    public VaultTransitVapidSigner(
+            URI vaultAddress, String mount, String keyName, String token, VaultHttpTransport transport) {
+        this(
+                vaultAddress,
+                mount,
+                keyName,
+                token,
+                fetchKeyMetadata(vaultAddress, mount, keyName, token, transport),
+                transport);
     }
 
-    private VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token,
-                                    VaultKeyMetadata metadata, VaultHttpTransport transport) {
+    private VaultTransitVapidSigner(
+            URI vaultAddress,
+            String mount,
+            String keyName,
+            String token,
+            VaultKeyMetadata metadata,
+            VaultHttpTransport transport) {
         this(vaultAddress, mount, keyName, token, metadata.version(), metadata.publicKey(), transport);
     }
 
     /**
-     * Explicit mode with the default {@link JdkVaultHttpTransport} and <b>no pinned key
-     * version</b>: every {@code sign} request lets Vault use the key's latest version. This form is
-     * incompatible with key rotation — after a rotation Vault signs with the new private key while
-     * this signer keeps advertising the supplied public key, and push services reject the mismatch.
-     * Either never rotate the Transit key, or use the overload that takes a {@code keyVersion}.
+     * Explicit mode with the default {@link JdkVaultHttpTransport} and <b>no pinned key version</b>: every {@code sign}
+     * request lets Vault use the key's latest version. This form is incompatible with key rotation — after a rotation
+     * Vault signs with the new private key while this signer keeps advertising the supplied public key, and push
+     * services reject the mismatch. Either never rotate the Transit key, or use the overload that takes a
+     * {@code keyVersion}.
      *
      * @param vaultAddress the Vault base address
-     * @param mount        the Transit mount path
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} on the key
-     * @param publicKey    the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param mount the Transit mount path
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
      */
     public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token, byte[] publicKey) {
         this(vaultAddress, mount, keyName, token, publicKey, new JdkVaultHttpTransport());
     }
 
     /**
-     * Explicit mode with the given transport and <b>no pinned key version</b>: every {@code sign}
-     * request lets Vault use the key's latest version. This form is incompatible with key rotation —
-     * after a rotation Vault signs with the new private key while this signer keeps advertising the
-     * supplied public key, and push services reject the mismatch. Either never rotate the Transit
-     * key, or use the overload that takes a {@code keyVersion}.
+     * Explicit mode with the given transport and <b>no pinned key version</b>: every {@code sign} request lets Vault
+     * use the key's latest version. This form is incompatible with key rotation — after a rotation Vault signs with the
+     * new private key while this signer keeps advertising the supplied public key, and push services reject the
+     * mismatch. Either never rotate the Transit key, or use the overload that takes a {@code keyVersion}.
      *
      * @param vaultAddress the Vault base address
-     * @param mount        the Transit mount path
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} on the key
-     * @param publicKey    the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
-     * @param transport    the HTTP transport for the Vault API calls
+     * @param mount the Transit mount path
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param transport the HTTP transport for the Vault API calls
      */
-    public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token, byte[] publicKey,
-                                   VaultHttpTransport transport) {
+    public VaultTransitVapidSigner(
+            URI vaultAddress,
+            String mount,
+            String keyName,
+            String token,
+            byte[] publicKey,
+            VaultHttpTransport transport) {
         this(vaultAddress, mount, keyName, token, (Integer) null, publicKey, transport);
     }
 
     /**
-     * Explicit mode with the default {@link JdkVaultHttpTransport}, pinning {@code keyVersion}
-     * on every {@code sign} request — the supplied public key must be that version's public half.
-     * Rotating the Transit key does not affect this signer, but raising the key's
-     * {@code min_encryption_version} above {@code keyVersion} makes Vault reject its sign requests
-     * (see the key-rotation notes on the class).
+     * Explicit mode with the default {@link JdkVaultHttpTransport}, pinning {@code keyVersion} on every {@code sign}
+     * request — the supplied public key must be that version's public half. Rotating the Transit key does not affect
+     * this signer, but raising the key's {@code min_encryption_version} above {@code keyVersion} makes Vault reject its
+     * sign requests (see the key-rotation notes on the class).
      *
      * @param vaultAddress the Vault base address
-     * @param mount        the Transit mount path
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} on the key
-     * @param publicKey    the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
-     * @param keyVersion   the Transit key version {@code publicKey} belongs to (>= 1)
+     * @param mount the Transit mount path
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param keyVersion the Transit key version {@code publicKey} belongs to (>= 1)
      */
-    public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token, byte[] publicKey,
-                                   int keyVersion) {
+    public VaultTransitVapidSigner(
+            URI vaultAddress, String mount, String keyName, String token, byte[] publicKey, int keyVersion) {
         this(vaultAddress, mount, keyName, token, publicKey, keyVersion, new JdkVaultHttpTransport());
     }
 
     /**
-     * Explicit mode with the given transport, pinning {@code keyVersion} on every {@code sign}
-     * request — the supplied public key must be that version's public half. Rotating the Transit key
-     * does not affect this signer, but raising the key's {@code min_encryption_version} above
-     * {@code keyVersion} makes Vault reject its sign requests (see the key-rotation notes on the
-     * class).
+     * Explicit mode with the given transport, pinning {@code keyVersion} on every {@code sign} request — the supplied
+     * public key must be that version's public half. Rotating the Transit key does not affect this signer, but raising
+     * the key's {@code min_encryption_version} above {@code keyVersion} makes Vault reject its sign requests (see the
+     * key-rotation notes on the class).
      *
      * @param vaultAddress the Vault base address
-     * @param mount        the Transit mount path
-     * @param keyName      the {@code ecdsa-p256} Transit key name
-     * @param token        the Vault token authorising {@code sign} on the key
-     * @param publicKey    the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
-     * @param keyVersion   the Transit key version {@code publicKey} belongs to (>= 1)
-     * @param transport    the HTTP transport for the Vault API calls
+     * @param mount the Transit mount path
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param keyVersion the Transit key version {@code publicKey} belongs to (>= 1)
+     * @param transport the HTTP transport for the Vault API calls
      */
-    public VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token, byte[] publicKey,
-                                   int keyVersion, VaultHttpTransport transport) {
+    public VaultTransitVapidSigner(
+            URI vaultAddress,
+            String mount,
+            String keyName,
+            String token,
+            byte[] publicKey,
+            int keyVersion,
+            VaultHttpTransport transport) {
         this(vaultAddress, mount, keyName, token, Integer.valueOf(keyVersion), publicKey, transport);
     }
 
-    private VaultTransitVapidSigner(URI vaultAddress, String mount, String keyName, String token, Integer keyVersion,
-                                    byte[] publicKey, VaultHttpTransport transport) {
+    private VaultTransitVapidSigner(
+            URI vaultAddress,
+            String mount,
+            String keyName,
+            String token,
+            Integer keyVersion,
+            byte[] publicKey,
+            VaultHttpTransport transport) {
         Objects.requireNonNull(vaultAddress, "vaultAddress");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
@@ -264,13 +282,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     @Override
     public byte[] sign(byte[] signingInput) {
         String request = "{\"input\":\"" + Base64.getEncoder().encodeToString(signingInput)
-            + "\",\"marshaling_algorithm\":\"jws\""
-            + (keyVersion == null ? "" : ",\"key_version\":" + keyVersion) + "}";
-        VaultHttpResponse response = transport.post(
-            signUri, Map.of("X-Vault-Token", token), request.getBytes(StandardCharsets.UTF_8));
+                + "\",\"marshaling_algorithm\":\"jws\""
+                + (keyVersion == null ? "" : ",\"key_version\":" + keyVersion) + "}";
+        VaultHttpResponse response =
+                transport.post(signUri, Map.of("X-Vault-Token", token), request.getBytes(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
             throw new PushCryptoException(
-                "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
+                    "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
         }
         String marshalled = extractSignature(response.body());
         byte[] signature;
@@ -285,7 +303,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // opaque push-service rejection of the VAPID JWT, far from the malformed Vault response.
         if (signature.length != SIGNATURE_LENGTH) {
             throw new PushCryptoException("Vault Transit returned a malformed ES256 signature: expected "
-                + SIGNATURE_LENGTH + " bytes (r || s), got " + signature.length);
+                    + SIGNATURE_LENGTH + " bytes (r || s), got " + signature.length);
         }
         return signature;
     }
@@ -296,22 +314,20 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Read the latest key version and <em>that version's</em> public key from
-     * {@code transit/keys/<keyName>} as one atomic pair, reducing the key to the 65-byte
-     * uncompressed P-256 point. Taking both from a single response closes the rotation race: even if
-     * the key is rotated right after this read, the signer keeps signing with the version its
-     * advertised public key belongs to. A single startup {@code GET} over the same
-     * {@link VaultHttpTransport} the {@code sign} calls use; the token needs {@code read} on the key.
+     * Read the latest key version and <em>that version's</em> public key from {@code transit/keys/<keyName>} as one
+     * atomic pair, reducing the key to the 65-byte uncompressed P-256 point. Taking both from a single response closes
+     * the rotation race: even if the key is rotated right after this read, the signer keeps signing with the version
+     * its advertised public key belongs to. A single startup {@code GET} over the same {@link VaultHttpTransport} the
+     * {@code sign} calls use; the token needs {@code read} on the key.
      *
-     * <p>The key is validated as P-256 before the signer exists, all fail-fast: the Transit
-     * {@code type} ({@link #requireP256KeyType}), then the key's domain parameters and its point
-     * ({@link #requireP256PublicKey}). No check subsumes another — the metadata is only Vault's
-     * claim, right parameters do not put the point on the curve, and a key on another curve would
-     * otherwise be squeezed into 32-byte coordinates and published as a nonsense VAPID key that
-     * fails much later, as an opaque push-service rejection.
+     * <p>The key is validated as P-256 before the signer exists, all fail-fast: the Transit {@code type}
+     * ({@link #requireP256KeyType}), then the key's domain parameters and its point ({@link #requireP256PublicKey}). No
+     * check subsumes another — the metadata is only Vault's claim, right parameters do not put the point on the curve,
+     * and a key on another curve would otherwise be squeezed into 32-byte coordinates and published as a nonsense VAPID
+     * key that fails much later, as an opaque push-service rejection.
      */
-    private static VaultKeyMetadata fetchKeyMetadata(URI vaultAddress, String mount, String keyName, String token,
-                                                     VaultHttpTransport transport) {
+    private static VaultKeyMetadata fetchKeyMetadata(
+            URI vaultAddress, String mount, String keyName, String token, VaultHttpTransport transport) {
         Objects.requireNonNull(vaultAddress, "vaultAddress");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
@@ -320,8 +336,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName);
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
         if (response.statusCode() != 200) {
-            throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode()
-                + " — " + abbreviated(response.body()));
+            throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode() + " — "
+                    + abbreviated(response.body()));
         }
         String body = response.body();
         requireP256KeyType(body);
@@ -337,43 +353,40 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Reject any Transit key whose advertised {@code type} is neither {@code ecdsa-p256} nor
-     * {@code managed_key} — the common misconfiguration is an {@code ecdsa-p384} (or
-     * {@code ed25519}) key, which cannot produce the ES256 signatures VAPID requires. A missing
-     * {@code type} is equally loud: silently accepting a response that does not describe the key
-     * would defeat the check.
+     * Reject any Transit key whose advertised {@code type} is neither {@code ecdsa-p256} nor {@code managed_key} — the
+     * common misconfiguration is an {@code ecdsa-p384} (or {@code ed25519}) key, which cannot produce the ES256
+     * signatures VAPID requires. A missing {@code type} is equally loud: silently accepting a response that does not
+     * describe the key would defeat the check.
      *
-     * <p>{@code managed_key} is Vault Enterprise's HSM/KMS-backed key type: the response then
-     * describes the wrapper, not the curve, so the type says nothing either way. It is accepted here
-     * because {@link #requireP256PublicKey} inspects the key material itself and is the authoritative
-     * check — the same reason the curve check exists at all. This path has <em>not</em> been
-     * exercised against a real Vault Enterprise; the curve check still refuses anything that is not
-     * P-256, so the worst case is a clear failure, never a bogus VAPID key.
+     * <p>{@code managed_key} is Vault Enterprise's HSM/KMS-backed key type: the response then describes the wrapper,
+     * not the curve, so the type says nothing either way. It is accepted here because {@link #requireP256PublicKey}
+     * inspects the key material itself and is the authoritative check — the same reason the curve check exists at all.
+     * This path has <em>not</em> been exercised against a real Vault Enterprise; the curve check still refuses anything
+     * that is not P-256, so the worst case is a clear failure, never a bogus VAPID key.
      */
     private static void requireP256KeyType(String json) {
         String type = extractKeyType(json);
         if (!REQUIRED_KEY_TYPE.equals(type) && !MANAGED_KEY_TYPE.equals(type)) {
             throw new PushCryptoException("Vault Transit key type is '" + abbreviated(type) + "', but VAPID requires '"
-                + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
-                + "') — RFC 8292 mandates ES256 over NIST P-256");
+                    + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
+                    + "') — RFC 8292 mandates ES256 over NIST P-256");
         }
     }
 
     /**
-     * Reject a public key that is not a point on NIST P-256, independently of what the Transit
-     * metadata claimed. Two steps, both necessary:
+     * Reject a public key that is not a point on NIST P-256, independently of what the Transit metadata claimed. Two
+     * steps, both necessary:
+     *
      * <ol>
-     *   <li>the key's domain parameters must be P-256's. They are compared against the canonical
-     *       {@code secp256r1} parameters <em>by value</em> — prime field modulus, curve
-     *       coefficients, generator, order and cofactor — because {@link ECParameterSpec} has no
-     *       {@code equals} and providers hand back equivalent-but-distinct instances (named-curve
-     *       subclasses, cached singletons, keys carrying explicit parameters) that an identity or
-     *       {@code equals} comparison on the spec would wrongly reject;</li>
-     *   <li>the key's point must satisfy the curve equation. Right parameters do not imply a point
-     *       on the curve: the JCA does not validate this — SunEC accepts a {@code KeyFactory} spec
-     *       with P-256 parameters and a point such as {@code (1, 2)}, or a coordinate at or above
-     *       the field prime — so without this step the signer would still publish a VAPID key that
-     *       no push service can verify.</li>
+     *   <li>the key's domain parameters must be P-256's. They are compared against the canonical {@code secp256r1}
+     *       parameters <em>by value</em> — prime field modulus, curve coefficients, generator, order and cofactor —
+     *       because {@link ECParameterSpec} has no {@code equals} and providers hand back equivalent-but-distinct
+     *       instances (named-curve subclasses, cached singletons, keys carrying explicit parameters) that an identity
+     *       or {@code equals} comparison on the spec would wrongly reject;
+     *   <li>the key's point must satisfy the curve equation. Right parameters do not imply a point on the curve: the
+     *       JCA does not validate this — SunEC accepts a {@code KeyFactory} spec with P-256 parameters and a point such
+     *       as {@code (1, 2)}, or a coordinate at or above the field prime — so without this step the signer would
+     *       still publish a VAPID key that no push service can verify.
      * </ol>
      */
     private static void requireP256PublicKey(ECPublicKey key) {
@@ -381,22 +394,21 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         ECParameterSpec actual = key.getParams();
         if (actual == null || !sameCurve(actual, expected)) {
             throw new PushCryptoException("Vault Transit public key is not on NIST P-256 (" + SECP256R1 + "): "
-                + describe(actual, expected) + ". VAPID requires ES256 over P-256 (RFC 8292)");
+                    + describe(actual, expected) + ". VAPID requires ES256 over P-256 (RFC 8292)");
         }
         requireOnCurve(key.getW(), expected);
     }
 
     /**
-     * Check {@code point} against the short Weierstrass equation of {@code parameters}:
-     * {@code 0 <= x,y < p} and {@code y² ≡ x³ + ax + b (mod p)}. Called only with the canonical
-     * P-256 parameters, so the field is known to be an {@link ECFieldFp}. Coordinates are public
-     * key material, but the message quotes none of it — the failure is structural, and there is
-     * nothing an operator can do with the digits.
+     * Check {@code point} against the short Weierstrass equation of {@code parameters}: {@code 0 <= x,y < p} and
+     * {@code y² ≡ x³ + ax + b (mod p)}. Called only with the canonical P-256 parameters, so the field is known to be an
+     * {@link ECFieldFp}. Coordinates are public key material, but the message quotes none of it — the failure is
+     * structural, and there is nothing an operator can do with the digits.
      */
     private static void requireOnCurve(ECPoint point, ECParameterSpec parameters) {
         if (ECPoint.POINT_INFINITY.equals(point)) {
             throw new PushCryptoException(
-                "Vault Transit public key is the point at infinity, which is not a usable VAPID key");
+                    "Vault Transit public key is the point at infinity, which is not a usable VAPID key");
         }
         EllipticCurve curve = parameters.getCurve();
         BigInteger p = ((ECFieldFp) curve.getField()).getP();
@@ -404,13 +416,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         BigInteger y = point.getAffineY();
         if (x.signum() < 0 || x.compareTo(p) >= 0 || y.signum() < 0 || y.compareTo(p) >= 0) {
             throw new PushCryptoException("Vault Transit public key has a coordinate outside the P-256 field "
-                + "(0 <= x, y < p), so it is not a point on the curve");
+                    + "(0 <= x, y < p), so it is not a point on the curve");
         }
         BigInteger left = y.multiply(y).mod(p);
-        BigInteger right = x.multiply(x).multiply(x).add(curve.getA().multiply(x)).add(curve.getB()).mod(p);
+        BigInteger right = x.multiply(x)
+                .multiply(x)
+                .add(curve.getA().multiply(x))
+                .add(curve.getB())
+                .mod(p);
         if (!left.equals(right)) {
             throw new PushCryptoException("Vault Transit public key does not satisfy the NIST P-256 curve equation "
-                + "(y² = x³ + ax + b), so it is not a point on the curve");
+                    + "(y² = x³ + ax + b), so it is not a point on the curve");
         }
     }
 
@@ -422,7 +438,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             return parameters.getParameterSpec(ECParameterSpec.class);
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException(
-                "EC AlgorithmParameters (" + SECP256R1 + ") are unavailable from the platform JCE providers", e);
+                    "EC AlgorithmParameters (" + SECP256R1 + ") are unavailable from the platform JCE providers", e);
         }
     }
 
@@ -431,35 +447,36 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         EllipticCurve actualCurve = actual.getCurve();
         EllipticCurve expectedCurve = expected.getCurve();
         return sameField(actualCurve.getField(), expectedCurve.getField())
-            && actualCurve.getA().equals(expectedCurve.getA())
-            && actualCurve.getB().equals(expectedCurve.getB())
-            && actual.getOrder().equals(expected.getOrder())
-            && actual.getCofactor() == expected.getCofactor()
-            && sameGenerator(actual.getGenerator(), expected.getGenerator());
+                && actualCurve.getA().equals(expectedCurve.getA())
+                && actualCurve.getB().equals(expectedCurve.getB())
+                && actual.getOrder().equals(expected.getOrder())
+                && actual.getCofactor() == expected.getCofactor()
+                && sameGenerator(actual.getGenerator(), expected.getGenerator());
     }
 
     /**
-     * Prime-field equality. Only {@link ECFieldFp} counts: comparing bit sizes alone would accept a
-     * binary field ({@code ECFieldF2m}) of the same size as P-256's prime field.
+     * Prime-field equality. Only {@link ECFieldFp} counts: comparing bit sizes alone would accept a binary field
+     * ({@code ECFieldF2m}) of the same size as P-256's prime field.
      */
     private static boolean sameField(ECField actual, ECField expected) {
-        return actual instanceof ECFieldFp actualFp && expected instanceof ECFieldFp expectedFp
-            && actualFp.getP().equals(expectedFp.getP());
+        return actual instanceof ECFieldFp actualFp
+                && expected instanceof ECFieldFp expectedFp
+                && actualFp.getP().equals(expectedFp.getP());
     }
 
     /** Affine equality of two generators; the point at infinity (null affine coordinates) never matches. */
     private static boolean sameGenerator(ECPoint actual, ECPoint expected) {
-        return !ECPoint.POINT_INFINITY.equals(actual) && !ECPoint.POINT_INFINITY.equals(expected)
-            && actual.getAffineX().equals(expected.getAffineX())
-            && actual.getAffineY().equals(expected.getAffineY());
+        return !ECPoint.POINT_INFINITY.equals(actual)
+                && !ECPoint.POINT_INFINITY.equals(expected)
+                && actual.getAffineX().equals(expected.getAffineX())
+                && actual.getAffineY().equals(expected.getAffineY());
     }
 
     /**
-     * A short, log-safe description of a key's curve for the mismatch message. The field size alone
-     * is useless for the curves most likely to be confused with P-256 — secp256k1 and
-     * brainpoolP256r1 are also 256-bit prime-field curves, so "a 256-bit prime field" reads as a
-     * self-contradiction. The {@code b} coefficient discriminates them, and being a published domain
-     * parameter it is safe to log.
+     * A short, log-safe description of a key's curve for the mismatch message. The field size alone is useless for the
+     * curves most likely to be confused with P-256 — secp256k1 and brainpoolP256r1 are also 256-bit prime-field curves,
+     * so "a 256-bit prime field" reads as a self-contradiction. The {@code b} coefficient discriminates them, and being
+     * a published domain parameter it is safe to log.
      */
     private static String describe(ECParameterSpec parameters, ECParameterSpec expected) {
         if (parameters == null) {
@@ -467,18 +484,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         ECField field = parameters.getCurve().getField();
         return "the key's curve is over a " + field.getFieldSize() + "-bit "
-            + (field instanceof ECFieldFp ? "prime" : "non-prime") + " field with b=0x"
-            + parameters.getCurve().getB().toString(16) + ", while P-256 has a "
-            + expected.getCurve().getField().getFieldSize() + "-bit prime field with b=0x"
-            + expected.getCurve().getB().toString(16);
+                + (field instanceof ECFieldFp ? "prime" : "non-prime") + " field with b=0x"
+                + parameters.getCurve().getB().toString(16) + ", while P-256 has a "
+                + expected.getCurve().getField().getFieldSize() + "-bit prime field with b=0x"
+                + expected.getCurve().getB().toString(16);
     }
 
     /**
-     * Pull the {@code signature} value out of Vault's {@code {"data":{"signature":"vault:v1:..."}}}
-     * response, anchored the whole way: {@code data} as a direct member of the root object,
-     * {@code signature} as a direct member of {@code data} — a string value that merely looks like
-     * one of those labels can never hijack the lookup. Targeted extraction (fixed Vault response
-     * shape), not a general JSON parser.
+     * Pull the {@code signature} value out of Vault's {@code {"data":{"signature":"vault:v1:..."}}} response, anchored
+     * the whole way: {@code data} as a direct member of the root object, {@code signature} as a direct member of
+     * {@code data} — a string value that merely looks like one of those labels can never hijack the lookup. Targeted
+     * extraction (fixed Vault response shape), not a general JSON parser.
      */
     private static String extractSignature(String json) {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
@@ -490,21 +506,19 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Pull the integer {@code latest_version} out of {@code transit/keys/<name>}, anchored the whole
-     * way: {@code data} as a direct member of the root object, {@code latest_version} as a direct
-     * member of {@code data} — a string value that merely looks like the label can never hijack the
-     * lookup. Targeted extraction (fixed Vault response shape), not a general JSON parser.
-     * Package-private for the extraction unit tests.
+     * Pull the integer {@code latest_version} out of {@code transit/keys/<name>}, anchored the whole way: {@code data}
+     * as a direct member of the root object, {@code latest_version} as a direct member of {@code data} — a string value
+     * that merely looks like the label can never hijack the lookup. Targeted extraction (fixed Vault response shape),
+     * not a general JSON parser. Package-private for the extraction unit tests.
      *
-     * <p>The value must be a whole positive number and nothing else. Reading the leading digit run
-     * and stopping wherever it ends would take {@code "latest_version": 1.5} — or a quoted
-     * {@code "1"}, or {@code 1abc} — for version 1, then pin that version on every {@code sign} call
-     * and publish the public key of a version the response never named. A response Vault cannot have
-     * produced is a reason to fail construction, not to guess: the value is checked to run to the
-     * member's end, i.e. to the next {@code ,} or the enclosing {@code }}.
+     * <p>The value must be a whole positive number and nothing else. Reading the leading digit run and stopping
+     * wherever it ends would take {@code "latest_version": 1.5} — or a quoted {@code "1"}, or {@code 1abc} — for
+     * version 1, then pin that version on every {@code sign} call and publish the public key of a version the response
+     * never named. A response Vault cannot have produced is a reason to fail construction, not to guess: the value is
+     * checked to run to the member's end, i.e. to the next {@code ,} or the enclosing {@code }}.
      *
-     * <p>{@code Character.isDigit} is not used: it accepts non-ASCII digits (Arabic-Indic and the
-     * rest), which {@link Integer#parseInt} would then happily convert — JSON numbers are ASCII.
+     * <p>{@code Character.isDigit} is not used: it accepts non-ASCII digits (Arabic-Indic and the rest), which
+     * {@link Integer#parseInt} would then happily convert — JSON numbers are ASCII.
      */
     static int extractLatestVersion(String json) {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
@@ -521,8 +535,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             end++;
         }
         if (end == start || !endsMember(json, end)) {
-            throw new PushCryptoException("malformed Vault 'latest_version' field — expected a whole number: "
-                + abbreviated(json));
+            throw new PushCryptoException(
+                    "malformed Vault 'latest_version' field — expected a whole number: " + abbreviated(json));
         }
         int version;
         try {
@@ -536,17 +550,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         if (version < 1) {
             // Transit numbers key versions from 1; a 0 would be pinned into every sign request and
             // rejected by Vault on each send, far from the response that caused it.
-            throw new PushCryptoException(
-                "Vault reported key version " + version + ", but Transit key versions start at 1: " + abbreviated(json));
+            throw new PushCryptoException("Vault reported key version " + version
+                    + ", but Transit key versions start at 1: " + abbreviated(json));
         }
         return version;
     }
 
     /**
-     * Whether the value ending at {@code end} is the whole of its member: the next non-whitespace
-     * character must close the member ({@code ,}) or the enclosing object ({@code }}). Anything else
-     * — a {@code .}, a digit's worth of exponent, a stray letter — means the digits read were only a
-     * prefix of some other value.
+     * Whether the value ending at {@code end} is the whole of its member: the next non-whitespace character must close
+     * the member ({@code ,}) or the enclosing object ({@code }}). Anything else — a {@code .}, a digit's worth of
+     * exponent, a stray letter — means the digits read were only a prefix of some other value.
      */
     private static boolean endsMember(String json, int end) {
         int cursor = end;
@@ -557,33 +570,31 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Pull the {@code type} of the Transit key out of {@code transit/keys/<name>} (e.g.
-     * {@code "ecdsa-p256"}), anchored the whole way: {@code data} as a direct member of the root
-     * object, {@code type} as a direct member of {@code data} — a string value that merely looks like
-     * the label (or a {@code type} nested in some version entry) can never hijack the lookup.
-     * Targeted extraction (fixed Vault response shape), not a general JSON parser. Package-private
-     * for the extraction unit tests.
+     * Pull the {@code type} of the Transit key out of {@code transit/keys/<name>} (e.g. {@code "ecdsa-p256"}), anchored
+     * the whole way: {@code data} as a direct member of the root object, {@code type} as a direct member of
+     * {@code data} — a string value that merely looks like the label (or a {@code type} nested in some version entry)
+     * can never hijack the lookup. Targeted extraction (fixed Vault response shape), not a general JSON parser.
+     * Package-private for the extraction unit tests.
      */
     static String extractKeyType(String json) {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
         int valueStart = directMemberValueStart(json, dataOpen, "type");
         if (valueStart < 0) {
             throw new PushCryptoException("Vault key response has no 'type' field, so the key cannot be "
-                + "confirmed as '" + REQUIRED_KEY_TYPE + "': " + abbreviated(json));
+                    + "confirmed as '" + REQUIRED_KEY_TYPE + "': " + abbreviated(json));
         }
         return stringValueAt(json, valueStart, "type");
     }
 
     /**
-     * Pull the {@code public_key} PEM of the given key version out of {@code transit/keys/<name>}.
-     * The whole chain is anchored, one direct-member hop at a time: root object → {@code data} →
-     * {@code keys} → the version entry → {@code public_key} inside that entry's own {@code {...}}.
-     * No lookup ever scans the response at large, so neither a string value that looks like a label
-     * (e.g. {@code "alias":"keys"}) nor a lookalike entry nested deeper or elsewhere can hijack the
-     * extraction — the failure mode is always a loud {@link PushCryptoException}, never another
-     * object's key. Whitespace between tokens is tolerated (valid JSON may be pretty-printed). The
-     * PEM's {@code \n} are escaped in the JSON. Targeted extraction (fixed Vault response shape),
-     * not a general JSON parser. Package-private for the extraction unit tests.
+     * Pull the {@code public_key} PEM of the given key version out of {@code transit/keys/<name>}. The whole chain is
+     * anchored, one direct-member hop at a time: root object → {@code data} → {@code keys} → the version entry →
+     * {@code public_key} inside that entry's own {@code {...}}. No lookup ever scans the response at large, so neither
+     * a string value that looks like a label (e.g. {@code "alias":"keys"}) nor a lookalike entry nested deeper or
+     * elsewhere can hijack the extraction — the failure mode is always a loud {@link PushCryptoException}, never
+     * another object's key. Whitespace between tokens is tolerated (valid JSON may be pretty-printed). The PEM's
+     * {@code \n} are escaped in the JSON. Targeted extraction (fixed Vault response shape), not a general JSON parser.
+     * Package-private for the extraction unit tests.
      */
     static String extractPublicKeyPem(String json, int version) {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
@@ -592,7 +603,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int versionValue = directMemberValueStart(json, keysOpen, Integer.toString(version));
         if (versionValue < 0) {
             throw new PushCryptoException(
-                "Vault key response has no entry for key version " + version + ": " + abbreviated(json));
+                    "Vault key response has no entry for key version " + version + ": " + abbreviated(json));
         }
         int versionOpen = versionValue;
         while (versionOpen < json.length() && Character.isWhitespace(json.charAt(versionOpen))) {
@@ -600,14 +611,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         if (versionOpen >= json.length() || json.charAt(versionOpen) != '{') {
             throw new PushCryptoException(
-                "Vault key response entry for key version " + version + " is not an object: " + abbreviated(json));
+                    "Vault key response entry for key version " + version + " is not an object: " + abbreviated(json));
         }
         String versionObject = json.substring(versionOpen, matchingCloseBrace(json, versionOpen) + 1);
 
         int pemStart = directMemberValueStart(versionObject, 0, "public_key");
         if (pemStart < 0) {
             throw new PushCryptoException(
-                "Vault key response has no 'public_key' for key version " + version + ": " + abbreviated(json));
+                    "Vault key response has no 'public_key' for key version " + version + ": " + abbreviated(json));
         }
         return stringValueAt(versionObject, pemStart, "public_key").replace("\\n", "\n");
     }
@@ -625,9 +636,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * The opening-brace index of the object-valued direct member {@code name} of the object opening
-     * at {@code objectOpen}. A missing member or a non-object value (e.g. {@code "keys":null}) fails
-     * loudly instead of letting the caller bind to some stray brace later in the response.
+     * The opening-brace index of the object-valued direct member {@code name} of the object opening at
+     * {@code objectOpen}. A missing member or a non-object value (e.g. {@code "keys":null}) fails loudly instead of
+     * letting the caller bind to some stray brace later in the response.
      */
     private static int directMemberObjectStart(String json, int objectOpen, String name) {
         int valueStart = directMemberValueStart(json, objectOpen, name);
@@ -646,11 +657,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * The index just past the colon of the direct member named {@code name} in the object opening at
-     * {@code objectOpen}, or {@code -1} if the object has no such member. Walks the object tracking
-     * nesting depth and string state (honouring backslash escapes), so a lookalike nested inside a
-     * member's value — or sitting past the object's closing brace — never matches; a quoted token
-     * not followed by a colon (i.e. a string <em>value</em> that merely equals the member name, as
-     * in {@code "alias":"keys"}) is skipped whole. Whitespace before the colon is tolerated.
+     * {@code objectOpen}, or {@code -1} if the object has no such member. Walks the object tracking nesting depth and
+     * string state (honouring backslash escapes), so a lookalike nested inside a member's value — or sitting past the
+     * object's closing brace — never matches; a quoted token not followed by a colon (i.e. a string <em>value</em> that
+     * merely equals the member name, as in {@code "alias":"keys"}) is skipped whole. Whitespace before the colon is
+     * tolerated.
      */
     private static int directMemberValueStart(String json, int objectOpen, String name) {
         String label = "\"" + name + "\"";
@@ -693,10 +704,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * The content of the JSON string value at {@code valueStart} (the index just past a member's
-     * colon; leading whitespace tolerated), without unescaping. Escaped characters inside the value
-     * are skipped when locating the terminating quote; a non-string or unterminated value fails
-     * loudly.
+     * The content of the JSON string value at {@code valueStart} (the index just past a member's colon; leading
+     * whitespace tolerated), without unescaping. Escaped characters inside the value are skipped when locating the
+     * terminating quote; a non-string or unterminated value fails loudly.
      */
     private static String stringValueAt(String json, int valueStart, String fieldName) {
         int open = valueStart;
@@ -717,8 +727,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * The index of the closing brace matching the opening brace at {@code openBrace}, skipping
-     * nested objects and brace characters inside JSON strings (honouring backslash escapes).
+     * The index of the closing brace matching the opening brace at {@code openBrace}, skipping nested objects and brace
+     * characters inside JSON strings (honouring backslash escapes).
      */
     private static int matchingCloseBrace(String json, int openBrace) {
         int depth = 0;
@@ -746,13 +756,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Parse Vault's SubjectPublicKeyInfo PEM into an EC public key. The curve and the point are
-     * <em>not</em> checked here — {@link #requireP256PublicKey} does that on the result.
+     * Parse Vault's SubjectPublicKeyInfo PEM into an EC public key. The curve and the point are <em>not</em> checked
+     * here — {@link #requireP256PublicKey} does that on the result.
      */
     private static ECPublicKey parsePublicKeyPem(String pem) throws GeneralSecurityException {
         String base64 = pem.replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "")
-            .replaceAll("\\s", "");
+                .replace("-----END PUBLIC KEY-----", "")
+                .replaceAll("\\s", "");
         byte[] der;
         try {
             der = Base64.getDecoder().decode(base64);
@@ -768,15 +778,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             // Defensive: an EC KeyFactory normally rejects foreign SPKIs outright, but a provider
             // returning some other key type must not blow up as a ClassCastException.
             throw new PushCryptoException(
-                "Vault Transit returned a " + key.getAlgorithm() + " public key, not an EC one");
+                    "Vault Transit returned a " + key.getAlgorithm() + " public key, not an EC one");
         }
         return ecKey;
     }
 
     /**
-     * Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}).
-     * Call only after {@link #requireP256PublicKey}: the fixed 32-byte coordinate fields are P-256's
-     * field size, and a coordinate from a larger curve is rejected rather than truncated.
+     * Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}). Call only after
+     * {@link #requireP256PublicKey}: the fixed 32-byte coordinate fields are P-256's field size, and a coordinate from
+     * a larger curve is rejected rather than truncated.
      */
     private static byte[] uncompressedPoint(ECPublicKey key) {
         byte[] out = new byte[UNCOMPRESSED_LENGTH];
@@ -788,10 +798,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * Write {@code value} as a fixed 32-byte big-endian field at {@code offset} (right-aligned).
-     * {@link BigInteger#toByteArray()} is two's complement, so a 256-bit coordinate with its top bit
-     * set carries a leading {@code 0x00} sign byte — padding, dropped here. Anything wider than that
-     * is <em>significant</em> and fails loudly: truncating it would publish a plausible-looking but
-     * bogus VAPID key whose only symptom is a much later push-service rejection.
+     * {@link BigInteger#toByteArray()} is two's complement, so a 256-bit coordinate with its top bit set carries a
+     * leading {@code 0x00} sign byte — padding, dropped here. Anything wider than that is <em>significant</em> and
+     * fails loudly: truncating it would publish a plausible-looking but bogus VAPID key whose only symptom is a much
+     * later push-service rejection.
      */
     private static void writeFixed(BigInteger value, byte[] out, int offset) {
         byte[] bytes = value.toByteArray();
@@ -805,20 +815,19 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // would turn a negative coordinate into a nonsensical "0 bits" complaint.
         if (value.signum() < 0) {
             throw new PushCryptoException(
-                "Vault Transit public key has a negative coordinate, which is not a P-256 field element");
+                    "Vault Transit public key has a negative coordinate, which is not a P-256 field element");
         }
         if (length > COORDINATE_LENGTH) {
             throw new PushCryptoException("Vault Transit public key has a coordinate that is not a P-256 field "
-                + "element: " + value.bitLength() + " bits, expected at most " + (COORDINATE_LENGTH * Byte.SIZE));
+                    + "element: " + value.bitLength() + " bits, expected at most " + (COORDINATE_LENGTH * Byte.SIZE));
         }
         System.arraycopy(bytes, start, out, offset + COORDINATE_LENGTH - length, length);
     }
 
     /**
-     * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT}
-     * characters with an explicit marker. The default transport caps responses at 1 MiB, but a
-     * megabyte — or whatever a custom {@link VaultHttpTransport} lets through, where the cap holds
-     * only by contract — is far too heavy for a log line.
+     * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT} characters with an
+     * explicit marker. The default transport caps responses at 1 MiB, but a megabyte — or whatever a custom
+     * {@link VaultHttpTransport} lets through, where the cap holds only by contract — is far too heavy for a log line.
      */
     private static String abbreviated(String text) {
         if (text.length() <= ERROR_ECHO_LIMIT) {
@@ -828,24 +837,21 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * {@code vault:v1:<base64url>} → {@code <base64url>}, matching the prefix exactly rather than
-     * cutting at the last colon. Vault's signature is always {@code vault:v<version>:<payload>}, so
-     * anything else is a response this signer did not ask for — an error envelope, a wrapped token,
-     * a value from some other Vault API. Cutting at a colon would hand whatever followed it to the
-     * base64url decoder, and the failure would then surface as "not valid base64url" (or, worse, as
-     * a decoded 64-byte blob) instead of naming the real problem: the response is not a Transit
+     * {@code vault:v1:<base64url>} → {@code <base64url>}, matching the prefix exactly rather than cutting at the last
+     * colon. Vault's signature is always {@code vault:v<version>:<payload>}, so anything else is a response this signer
+     * did not ask for — an error envelope, a wrapped token, a value from some other Vault API. Cutting at a colon would
+     * hand whatever followed it to the base64url decoder, and the failure would then surface as "not valid base64url"
+     * (or, worse, as a decoded 64-byte blob) instead of naming the real problem: the response is not a Transit
      * signature.
      *
-     * <p>The offending value is not echoed, for the same reason {@link #sign} keeps a corrupt
-     * payload out of its message — and more so here: a value that failed the signature shape is, by
-     * definition, not known to be a signature, and Vault dresses wrapped tokens and Transit
-     * ciphertext in the same {@code vault:v<n>:} clothing.
+     * <p>The offending value is not echoed, for the same reason {@link #sign} keeps a corrupt payload out of its
+     * message — and more so here: a value that failed the signature shape is, by definition, not known to be a
+     * signature, and Vault dresses wrapped tokens and Transit ciphertext in the same {@code vault:v<n>:} clothing.
      */
     private static String stripVaultPrefix(String marshalled) {
         Matcher signature = VAULT_SIGNATURE.matcher(marshalled);
         if (!signature.matches()) {
-            throw new PushCryptoException(
-                "unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
+            throw new PushCryptoException("unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
         }
         return signature.group(1);
     }

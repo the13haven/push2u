@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.security.KeyPair;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
+
 import org.junit.jupiter.api.Test;
 
 class EcKeysTest {
@@ -40,17 +41,17 @@ class EcKeysTest {
     @Test
     void decodeRejectsNonUncompressedPoint() {
         assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(new byte[64], jca))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
 
         byte[] wrongPrefix = new byte[65];
         wrongPrefix[0] = 0x02;
         assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(wrongPrefix, jca))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void decodePrivateRejectsWrongScalarLength() {
         assertThatThrownBy(() -> EcKeys.decodeP256PrivateKey(new byte[31], jca))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

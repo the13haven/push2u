@@ -6,37 +6,33 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * Serializes the origin of a push endpoint for the VAPID {@code aud} claim. RFC 8292 §2 requires
- * {@code aud} to be the origin of the push resource. RFC 6454 §4 computes that origin with the
- * scheme and host lowercased, and §6.1 pins down its Unicode serialization: the scheme,
- * {@code "://"}, the host with each label converted to Unicode (IDNA A-label → U-label), and the
- * port only when it differs from the scheme's default. {@link java.net.URI} performs none of that
- * normalization — it preserves the
- * scheme/host case and an explicit default port verbatim — so a push service comparing {@code aud}
- * against its canonical origin would reject an otherwise valid JWT.
+ * Serializes the origin of a push endpoint for the VAPID {@code aud} claim. RFC 8292 §2 requires {@code aud} to be the
+ * origin of the push resource. RFC 6454 §4 computes that origin with the scheme and host lowercased, and §6.1 pins down
+ * its Unicode serialization: the scheme, {@code "://"}, the host with each label converted to Unicode (IDNA A-label →
+ * U-label), and the port only when it differs from the scheme's default. {@link java.net.URI} performs none of that
+ * normalization — it preserves the scheme/host case and an explicit default port verbatim — so a push service comparing
+ * {@code aud} against its canonical origin would reject an otherwise valid JWT.
  */
 final class Origin {
 
     /**
-     * An IPv4 dotted-quad, which must bypass IDNA: RFC 6454 §6.1 applies the ToUnicode conversion
-     * only to registered names, and RFC 5890 excludes address literals from IDNA entirely. The
-     * pattern is deliberately loose about octet ranges — anything {@link java.net.URI} accepted as
-     * a host and that matches this shape is an address literal for our purposes, not a registered
-     * name.
+     * An IPv4 dotted-quad, which must bypass IDNA: RFC 6454 §6.1 applies the ToUnicode conversion only to registered
+     * names, and RFC 5890 excludes address literals from IDNA entirely. The pattern is deliberately loose about octet
+     * ranges — anything {@link java.net.URI} accepted as a host and that matches this shape is an address literal for
+     * our purposes, not a registered name.
      */
     private static final Pattern IPV4_LITERAL = Pattern.compile("\\d{1,3}(\\.\\d{1,3}){3}");
 
-    private Origin() {
-    }
+    private Origin() {}
 
     /**
-     * The Unicode serialization (RFC 6454 §6.1) of the endpoint's origin, for use as the VAPID
-     * {@code aud} claim (RFC 8292 §2).
+     * The Unicode serialization (RFC 6454 §6.1) of the endpoint's origin, for use as the VAPID {@code aud} claim (RFC
+     * 8292 §2).
      *
      * @param endpoint the push endpoint URI
      * @return the serialized origin, e.g. {@code https://push.example} or {@code https://push.example:8443}
-     * @throws IllegalArgumentException if the URI has no scheme or host; the message contains only
-     *     the {@link Endpoints#redact}ed endpoint, never the raw capability URL
+     * @throws IllegalArgumentException if the URI has no scheme or host; the message contains only the
+     *     {@link Endpoints#redact}ed endpoint, never the raw capability URL
      */
     static String serialize(URI endpoint) {
         String scheme = endpoint.getScheme();
@@ -45,14 +41,13 @@ final class Origin {
         // is Endpoints.requireSecure's job at the Subscription boundary, not this serializer's.
         if (scheme == null || host == null || host.isEmpty()) {
             throw new IllegalArgumentException(
-                "subscription endpoint URI has no scheme or host: " + Endpoints.redact(endpoint.toString()));
+                    "subscription endpoint URI has no scheme or host: " + Endpoints.redact(endpoint.toString()));
         }
         scheme = scheme.toLowerCase(Locale.ROOT);
         host = unicodeHost(host);
         int port = endpoint.getPort();
-        boolean defaultPort = port == -1
-            || (port == 443 && "https".equals(scheme))
-            || (port == 80 && "http".equals(scheme));
+        boolean defaultPort =
+                port == -1 || (port == 443 && "https".equals(scheme)) || (port == 80 && "http".equals(scheme));
         return defaultPort ? scheme + "://" + host : scheme + "://" + host + ":" + port;
     }
 

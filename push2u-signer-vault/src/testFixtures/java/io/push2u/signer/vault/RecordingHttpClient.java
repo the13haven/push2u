@@ -16,10 +16,9 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 
 /**
- * A delegating {@link HttpClient} that counts synchronous {@link #send} calls — the only way to
- * prove a user-supplied client instance actually carries the transport's requests, since the JDK
- * client has no interceptor hook. Shared as a test fixture between this module's transport tests
- * and the Vault starter's autoconfiguration tests.
+ * A delegating {@link HttpClient} that counts synchronous {@link #send} calls — the only way to prove a user-supplied
+ * client instance actually carries the transport's requests, since the JDK client has no interceptor hook. Shared as a
+ * test fixture between this module's transport tests and the Vault starter's autoconfiguration tests.
  */
 public final class RecordingHttpClient extends HttpClient {
 
@@ -51,21 +50,22 @@ public final class RecordingHttpClient extends HttpClient {
 
     @Override
     public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler)
-        throws IOException, InterruptedException {
+            throws IOException, InterruptedException {
         sends.incrementAndGet();
         return delegate.send(request, responseBodyHandler);
     }
 
     @Override
     public <T> CompletableFuture<HttpResponse<T>> sendAsync(
-        HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
+            HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
         return delegate.sendAsync(request, responseBodyHandler);
     }
 
     @Override
     public <T> CompletableFuture<HttpResponse<T>> sendAsync(
-        HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler,
-        HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            HttpRequest request,
+            HttpResponse.BodyHandler<T> responseBodyHandler,
+            HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
         return delegate.sendAsync(request, responseBodyHandler, pushPromiseHandler);
     }
 

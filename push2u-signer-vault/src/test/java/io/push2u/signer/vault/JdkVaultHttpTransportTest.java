@@ -3,8 +3,6 @@ package io.push2u.signer.vault;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sun.net.httpserver.HttpServer;
-import io.push2u.PushCryptoException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -16,13 +14,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import io.push2u.PushCryptoException;
+
 /**
- * {@link JdkVaultHttpTransport} against live sockets — the transport-level guarantees the Vault
- * signer relies on: the per-request timeout (a Vault that accepts the connection but never answers
- * must not hang application startup forever), the fail-closed response-size cap counted in raw
- * bytes, interrupt handling, argument validation, and exception hygiene (no token, no query).
+ * {@link JdkVaultHttpTransport} against live sockets — the transport-level guarantees the Vault signer relies on: the
+ * per-request timeout (a Vault that accepts the connection but never answers must not hang application startup
+ * forever), the fail-closed response-size cap counted in raw bytes, interrupt handling, argument validation, and
+ * exception hygiene (no token, no query).
  */
 class JdkVaultHttpTransportTest {
 
@@ -34,8 +36,7 @@ class JdkVaultHttpTransportTest {
     }
 
     /** Serve {@code status} + {@code body} once on an ephemeral port and run {@code test} against it. */
-    private static void withServer(int status, byte[] body, boolean declareLength, ServerTest test)
-        throws Exception {
+    private static void withServer(int status, byte[] body, boolean declareLength, ServerTest test) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         try {
             server.createContext("/v1", exchange -> {
@@ -65,24 +66,27 @@ class JdkVaultHttpTransportTest {
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             URI uri = URI.create("http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid");
 
-            assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024)
-                .get(uri, Map.of("X-Vault-Token", TOKEN)))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("timed out")
-                .hasCauseInstanceOf(HttpTimeoutException.class)
-                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+            assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("timed out")
+                    .hasCauseInstanceOf(HttpTimeoutException.class)
+                    .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
         }
     }
 
     @Test
     void aResponseLargerThanTheCapFailsClosed() throws Exception {
         byte[] oversized = new byte[9];
-        withServer(200, oversized, true, uri ->
-            assertThatThrownBy(() -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
-                .hasMessageContaining("GET")
-                .hasMessageContaining("/v1/transit/keys/vapid"));
+        withServer(
+                200,
+                oversized,
+                true,
+                uri -> assertThatThrownBy(
+                                () -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
+                        .isInstanceOf(PushCryptoException.class)
+                        .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
+                        .hasMessageContaining("GET")
+                        .hasMessageContaining("/v1/transit/keys/vapid"));
     }
 
     @Test
@@ -90,19 +94,24 @@ class JdkVaultHttpTransportTest {
         // No Content-Length on the wire — the early header check cannot fire, proving the raw-byte
         // streaming count enforces the cap on its own.
         byte[] oversized = new byte[64];
-        withServer(200, oversized, false, uri ->
-            assertThatThrownBy(() -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
-                .hasMessageContaining("GET")
-                .hasMessageContaining("/v1/transit/keys/vapid"));
+        withServer(
+                200,
+                oversized,
+                false,
+                uri -> assertThatThrownBy(
+                                () -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
+                        .isInstanceOf(PushCryptoException.class)
+                        .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
+                        .hasMessageContaining("GET")
+                        .hasMessageContaining("/v1/transit/keys/vapid"));
     }
 
     @Test
     void aResponseExactlyAtTheCapSucceeds() throws Exception {
         byte[] exact = "12345678".getBytes(StandardCharsets.UTF_8);
         withServer(200, exact, true, uri -> {
-            VaultHttpResponse response = transport(Duration.ofSeconds(5), exact.length).get(uri, Map.of());
+            VaultHttpResponse response =
+                    transport(Duration.ofSeconds(5), exact.length).get(uri, Map.of());
             assertThat(response.statusCode()).isEqualTo(200);
             assertThat(response.body()).isEqualTo("12345678");
         });
@@ -127,12 +136,16 @@ class JdkVaultHttpTransportTest {
             caller.interrupt();
             caller.join(Duration.ofSeconds(5).toMillis());
 
-            assertThat(caller.isAlive()).as("the interrupted call returns promptly").isFalse();
+            assertThat(caller.isAlive())
+                    .as("the interrupted call returns promptly")
+                    .isFalse();
             assertThat(thrown.get())
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("Interrupted")
-                .hasCauseInstanceOf(InterruptedException.class);
-            assertThat(flagRestored.get()).as("the interrupt flag is restored for the caller").isTrue();
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("Interrupted")
+                    .hasCauseInstanceOf(InterruptedException.class);
+            assertThat(flagRestored.get())
+                    .as("the interrupt flag is restored for the caller")
+                    .isTrue();
         }
     }
 
@@ -141,20 +154,20 @@ class JdkVaultHttpTransportTest {
         HttpClient client = HttpClient.newHttpClient();
 
         assertThatThrownBy(() -> new JdkVaultHttpTransport(client, Duration.ZERO, 1024))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("requestTimeout must be positive");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requestTimeout must be positive");
         assertThatThrownBy(() -> new JdkVaultHttpTransport(client, Duration.ofSeconds(-1), 1024))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("requestTimeout must be positive");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requestTimeout must be positive");
         assertThatThrownBy(() -> new JdkVaultHttpTransport(client, Duration.ofSeconds(30), 0))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("maxResponseBytes must be positive");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxResponseBytes must be positive");
         assertThatThrownBy(() -> new JdkVaultHttpTransport(client, Duration.ofSeconds(30), -1))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("maxResponseBytes must be positive");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxResponseBytes must be positive");
         assertThatThrownBy(() -> new JdkVaultHttpTransport(null, Duration.ofSeconds(30), 1024))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessageContaining("httpClient");
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("httpClient");
     }
 
     @Test
@@ -162,17 +175,16 @@ class JdkVaultHttpTransportTest {
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             // Vault APIs put sensitive detail in queries (e.g. list=true on secret paths) — the
             // message may name the path, never the query.
-            URI uri = URI.create("http://127.0.0.1:" + silent.getLocalPort()
-                + "/v1/transit/keys/vapid?secret-query=marker");
+            URI uri = URI.create(
+                    "http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid?secret-query=marker");
 
-            assertThatThrownBy(() -> transport(Duration.ofMillis(500), 1024)
-                .get(uri, Map.of("X-Vault-Token", TOKEN)))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("/v1/transit/keys/vapid")
-                .satisfies(e -> assertThat(e.getMessage())
-                    .doesNotContain(TOKEN)
-                    .doesNotContain("secret-query")
-                    .doesNotContain("marker"));
+            assertThatThrownBy(() -> transport(Duration.ofMillis(500), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("/v1/transit/keys/vapid")
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .doesNotContain(TOKEN)
+                            .doesNotContain("secret-query")
+                            .doesNotContain("marker"));
         }
     }
 
@@ -184,7 +196,9 @@ class JdkVaultHttpTransportTest {
             JdkVaultHttpTransport transport = new JdkVaultHttpTransport(recording, Duration.ofSeconds(5), 1024);
             transport.get(uri, Map.of());
             transport.post(uri, Map.of(), body);
-            assertThat(recording.sends()).as("both calls went through the supplied client").isEqualTo(2);
+            assertThat(recording.sends())
+                    .as("both calls went through the supplied client")
+                    .isEqualTo(2);
         });
     }
 }

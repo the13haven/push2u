@@ -8,27 +8,24 @@ import java.security.interfaces.ECPublicKey;
 import java.util.Objects;
 
 /**
- * The default {@link VapidSigner}: holds the P-256 private key in memory and signs in-JVM,
- * always producing the raw {@code r || s} pair JOSE wants. When the configured provider
- * registers raw-format ECDSA ({@code SHA256withECDSAinP1363Format}) the signature is used as
- * is; when it registers only the standard DER form ({@code SHA256withECDSA}, e.g. BouncyCastle
- * FIPS), the DER output is strictly re-encoded to {@code r || s} — a representation change
- * only, the signing itself stays inside that provider. Suitable when the key is sourced at
- * rest (e.g. from a secrets manager) and signing in-process is acceptable; for a key that must
- * never touch the heap, use a remote signer instead.
+ * The default {@link VapidSigner}: holds the P-256 private key in memory and signs in-JVM, always producing the raw
+ * {@code r || s} pair JOSE wants. When the configured provider registers raw-format ECDSA
+ * ({@code SHA256withECDSAinP1363Format}) the signature is used as is; when it registers only the standard DER form
+ * ({@code SHA256withECDSA}, e.g. BouncyCastle FIPS), the DER output is strictly re-encoded to {@code r || s} — a
+ * representation change only, the signing itself stays inside that provider. Suitable when the key is sourced at rest
+ * (e.g. from a secrets manager) and signing in-process is acceptable; for a key that must never touch the heap, use a
+ * remote signer instead.
  *
- * <p>The constructor rejects a key pair whose halves do not belong together: the JWT is signed
- * with the private scalar while the public key is advertised verbatim as the {@code k}
- * parameter, so a mismatched pair yields plausible-looking requests that every push service
- * rejects with 401/403. A one-time sign-and-verify self-test catches this at construction —
- * one ECDSA sign plus one verify per signer created, not per send — and throws
+ * <p>The constructor rejects a key pair whose halves do not belong together: the JWT is signed with the private scalar
+ * while the public key is advertised verbatim as the {@code k} parameter, so a mismatched pair yields plausible-looking
+ * requests that every push service rejects with 401/403. A one-time sign-and-verify self-test catches this at
+ * construction — one ECDSA sign plus one verify per signer created, not per send — and throws
  * {@link IllegalArgumentException} on a mismatch.
  */
 public final class LocalEcVapidSigner implements VapidSigner {
 
     /** Fixed probe input for the construction-time key-pair self-test. */
-    private static final byte[] SELF_TEST_INPUT =
-        "push2u VAPID key-pair self-test".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SELF_TEST_INPUT = "push2u VAPID key-pair self-test".getBytes(StandardCharsets.US_ASCII);
 
     private final byte[] publicKey;
     private final ECPrivateKey privateKey;
@@ -52,24 +49,20 @@ public final class LocalEcVapidSigner implements VapidSigner {
     }
 
     /**
-     * One-time self-test that the advertised public key belongs to the private scalar: sign a
-     * fixed probe with the private key, then verify that signature against the decoded public
-     * key. Deriving the public point directly ({@code d * G}) is not an option — the JDK
-     * exposes no public EC point-arithmetic API and this module deliberately carries zero
-     * runtime dependencies — and sign+verify additionally proves the configured provider can
-     * actually sign with this key. Both {@link Signature} instances come from the same
-     * {@link Jca#es256()} resolution, so the probe signature is verified exactly as the
-     * provider produced it — do not convert it with {@code EcdsaDer.toP1363} here, even on a
-     * DER-only provider.
+     * One-time self-test that the advertised public key belongs to the private scalar: sign a fixed probe with the
+     * private key, then verify that signature against the decoded public key. Deriving the public point directly
+     * ({@code d * G}) is not an option — the JDK exposes no public EC point-arithmetic API and this module deliberately
+     * carries zero runtime dependencies — and sign+verify additionally proves the configured provider can actually sign
+     * with this key. Both {@link Signature} instances come from the same {@link Jca#es256()} resolution, so the probe
+     * signature is verified exactly as the provider produced it — do not convert it with {@code EcdsaDer.toP1363} here,
+     * even on a DER-only provider.
      *
-     * <p>A public key that is well-formed but not a point on P-256 is rejected too, by whichever
-     * check fires first: a provider that validates the point on import fails the decode with
-     * {@link PushCryptoException}, while one that does not (SunEC) lets it through to the
-     * verification below, which then reports it as a mismatch. The type therefore follows the
-     * provider — deliberately not normalised here, since the decode also raises
-     * {@code PushCryptoException} when the provider has no EC {@code KeyFactory} at all, and
-     * collapsing both into {@link IllegalArgumentException} would relabel a missing provider as
-     * bad input.
+     * <p>A public key that is well-formed but not a point on P-256 is rejected too, by whichever check fires first: a
+     * provider that validates the point on import fails the decode with {@link PushCryptoException}, while one that
+     * does not (SunEC) lets it through to the verification below, which then reports it as a mismatch. The type
+     * therefore follows the provider — deliberately not normalised here, since the decode also raises
+     * {@code PushCryptoException} when the provider has no EC {@code KeyFactory} at all, and collapsing both into
+     * {@link IllegalArgumentException} would relabel a missing provider as bad input.
      */
     private void requireMatchingKeyPair() {
         ECPublicKey advertised = EcKeys.decodeP256PublicKey(publicKey, jca);
@@ -86,9 +79,9 @@ public final class LocalEcVapidSigner implements VapidSigner {
                 // Deliberately key-free: the message must never carry key bytes, not even the
                 // public half.
                 throw new IllegalArgumentException(
-                    "VAPID public key does not correspond to the private key: a signature"
-                        + " produced with the private scalar does not verify against the"
-                        + " advertised public key");
+                        "VAPID public key does not correspond to the private key: a signature"
+                                + " produced with the private scalar does not verify against the"
+                                + " advertised public key");
             }
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("VAPID key-pair self-test failed", e);

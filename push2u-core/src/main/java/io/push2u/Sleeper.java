@@ -3,8 +3,8 @@ package io.push2u;
 import java.time.Duration;
 
 /**
- * Pauses between retry attempts. Indirected behind an interface so a test can drive the
- * {@link PushSender} retry loop deterministically, without real wall-clock delays.
+ * Pauses between retry attempts. Indirected behind an interface so a test can drive the {@link PushSender} retry loop
+ * deterministically, without real wall-clock delays.
  */
 @FunctionalInterface
 interface Sleeper {

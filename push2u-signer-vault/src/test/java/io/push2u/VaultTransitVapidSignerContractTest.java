@@ -2,7 +2,6 @@ package io.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.push2u.signer.vault.VaultTransitVapidSigner;
 import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,21 +19,23 @@ import java.security.spec.ECPublicKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.Base64;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.vault.VaultContainer;
 
+import io.push2u.signer.vault.VaultTransitVapidSigner;
+
 /**
- * {@link VaultTransitVapidSigner} satisfies the shared {@link VapidSignerContractTest} against a
- * real Vault (dev mode) with a Transit {@code ecdsa-p256} key — proving local and Vault signers
- * produce interchangeable, verifiable ES256 signatures.
+ * {@link VaultTransitVapidSigner} satisfies the shared {@link VapidSignerContractTest} against a real Vault (dev mode)
+ * with a Transit {@code ecdsa-p256} key — proving local and Vault signers produce interchangeable, verifiable ES256
+ * signatures.
  *
- * <p>The contract here runs against the <b>fetched</b> mode (no explicit public key — the signer
- * reads it from {@code transit/keys/<key>} itself). Since the contract verifies each signature
- * against {@code signer.publicKey()}, a green run proves the fetched public key actually matches the
- * private key Vault signs with — i.e. fetch resolved the right key. The explicit mode is covered by
- * its own test below.
+ * <p>The contract here runs against the <b>fetched</b> mode (no explicit public key — the signer reads it from
+ * {@code transit/keys/<key>} itself). Since the contract verifies each signature against {@code signer.publicKey()}, a
+ * green run proves the fetched public key actually matches the private key Vault signs with — i.e. fetch resolved the
+ * right key. The explicit mode is covered by its own test below.
  */
 class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
 
@@ -49,10 +50,9 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     @SuppressWarnings("resource") // the container lives across all test methods; it is closed in @AfterAll
     static void startVault() throws Exception {
         vault = new VaultContainer<>("hashicorp/vault:1.18")
-            .withVaultToken(ROOT_TOKEN)
-            .withInitCommand(
-                "secrets enable " + MOUNT,
-                "write " + MOUNT + "/keys/" + KEY_NAME + " type=ecdsa-p256");
+                .withVaultToken(ROOT_TOKEN)
+                .withInitCommand(
+                        "secrets enable " + MOUNT, "write " + MOUNT + "/keys/" + KEY_NAME + " type=ecdsa-p256");
         vault.start();
         vapidPublicKey = fetchTransitPublicKey(vault.getHttpHostAddress(), KEY_NAME);
     }
@@ -67,70 +67,72 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     /** Fetched mode — the signer reads its own public key from Vault. */
     @Override
     protected VapidSigner signer() {
-        return new VaultTransitVapidSigner(
-            URI.create(vault.getHttpHostAddress()), MOUNT, KEY_NAME, ROOT_TOKEN);
+        return new VaultTransitVapidSigner(URI.create(vault.getHttpHostAddress()), MOUNT, KEY_NAME, ROOT_TOKEN);
     }
 
     @Test
     void fetchedMode_resolvesTheSamePublicKeyVaultHolds() {
         assertThat(signer().publicKey())
-            .as("fetched public key equals the one transit/keys advertises")
-            .isEqualTo(vapidPublicKey);
+                .as("fetched public key equals the one transit/keys advertises")
+                .isEqualTo(vapidPublicKey);
     }
 
     @Test
     void explicitMode_advertisesTheSuppliedKeyAndSigns() {
         VapidSigner explicit = new VaultTransitVapidSigner(
-            URI.create(vault.getHttpHostAddress()), MOUNT, KEY_NAME, ROOT_TOKEN, vapidPublicKey);
+                URI.create(vault.getHttpHostAddress()), MOUNT, KEY_NAME, ROOT_TOKEN, vapidPublicKey);
         assertThat(explicit.publicKey()).isEqualTo(vapidPublicKey);
         // Same Vault sign path as the fetched mode the contract already verifies — assert it produces
         // a raw r||s ES256 signature without re-deriving the (identical) verification here.
         assertThat(explicit.sign("push2u explicit-mode probe".getBytes(StandardCharsets.UTF_8)))
-            .as("raw r||s ES256 signature").hasSize(64);
+                .as("raw r||s ES256 signature")
+                .hasSize(64);
     }
 
     /**
-     * The regression the version pinning fixes: after the Transit key is rotated, a fetched-mode
-     * signer built before the rotation must keep signing with the version whose public key it
-     * advertises — not with Vault's new latest. Rotating twice (to v3) proves the pin holds across
-     * repeated rotations, not just past the first one. A dedicated Transit key keeps the shared
-     * {@code vapid} key single-version for the other tests.
+     * The regression the version pinning fixes: after the Transit key is rotated, a fetched-mode signer built before
+     * the rotation must keep signing with the version whose public key it advertises — not with Vault's new latest.
+     * Rotating twice (to v3) proves the pin holds across repeated rotations, not just past the first one. A dedicated
+     * Transit key keeps the shared {@code vapid} key single-version for the other tests.
      */
     @Test
     void fetchedMode_keepsSigningWithItsPinnedVersionAfterKeyRotation() throws Exception {
         String keyName = "vapid-rotation";
         createTransitKey(keyName);
-        VapidSigner pinned = new VaultTransitVapidSigner(
-            URI.create(vault.getHttpHostAddress()), MOUNT, keyName, ROOT_TOKEN);
+        VapidSigner pinned =
+                new VaultTransitVapidSigner(URI.create(vault.getHttpHostAddress()), MOUNT, keyName, ROOT_TOKEN);
         byte[] advertised = pinned.publicKey();
 
         rotateTransitKey(keyName);
         assertThat(fetchTransitPublicKey(vault.getHttpHostAddress(), keyName))
-            .as("rotation produced a new latest key different from the advertised one — otherwise "
-                + "this test would pass vacuously")
-            .isNotEqualTo(advertised);
-        assertPinnedSignatureVerifies(pinned, advertised,
-            "push2u post-rotation probe", "signature after the first rotation (latest=v2)");
+                .as("rotation produced a new latest key different from the advertised one — otherwise "
+                        + "this test would pass vacuously")
+                .isNotEqualTo(advertised);
+        assertPinnedSignatureVerifies(
+                pinned, advertised, "push2u post-rotation probe", "signature after the first rotation (latest=v2)");
 
         rotateTransitKey(keyName);
         assertThat(fetchTransitPublicKey(vault.getHttpHostAddress(), keyName))
-            .as("second rotation produced yet another latest key")
-            .isNotEqualTo(advertised);
-        assertPinnedSignatureVerifies(pinned, advertised,
-            "push2u post-second-rotation probe", "signature after the second rotation (latest=v3)");
+                .as("second rotation produced yet another latest key")
+                .isNotEqualTo(advertised);
+        assertPinnedSignatureVerifies(
+                pinned,
+                advertised,
+                "push2u post-second-rotation probe",
+                "signature after the second rotation (latest=v3)");
     }
 
     /** Sign {@code message} and verify against {@code advertised} — the key the signer pins. */
     private static void assertPinnedSignatureVerifies(
-        VapidSigner pinned, byte[] advertised, String message, String description) throws Exception {
+            VapidSigner pinned, byte[] advertised, String message, String description) throws Exception {
         byte[] signingInput = message.getBytes(StandardCharsets.UTF_8);
         byte[] signature = pinned.sign(signingInput);
         Signature verifier = Signature.getInstance("SHA256withECDSAinP1363Format");
         verifier.initVerify(decodeP256PublicKey(advertised));
         verifier.update(signingInput);
         assertThat(verifier.verify(signature))
-            .as(description + " verifies against the public key the signer advertises")
-            .isTrue();
+                .as(description + " verifies against the public key the signer advertises")
+                .isTrue();
     }
 
     /** Explicit mode with a pinned version: signing with v1 after a rotation to v2 stays on v1. */
@@ -141,10 +143,11 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
         byte[] v1PublicKey = fetchTransitPublicKey(vault.getHttpHostAddress(), keyName);
         rotateTransitKey(keyName);
         assertThat(fetchTransitPublicKey(vault.getHttpHostAddress(), keyName))
-            .as("rotation produced a new latest key").isNotEqualTo(v1PublicKey);
+                .as("rotation produced a new latest key")
+                .isNotEqualTo(v1PublicKey);
 
         VapidSigner pinned = new VaultTransitVapidSigner(
-            URI.create(vault.getHttpHostAddress()), MOUNT, keyName, ROOT_TOKEN, v1PublicKey, 1);
+                URI.create(vault.getHttpHostAddress()), MOUNT, keyName, ROOT_TOKEN, v1PublicKey, 1);
         assertThat(pinned.publicKey()).isEqualTo(v1PublicKey);
 
         byte[] signingInput = "push2u explicit pinned-version probe".getBytes(StandardCharsets.UTF_8);
@@ -154,8 +157,8 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
         verifier.initVerify(decodeP256PublicKey(v1PublicKey));
         verifier.update(signingInput);
         assertThat(verifier.verify(signature))
-            .as("signature pinned to key_version=1 verifies against the v1 public key")
-            .isTrue();
+                .as("signature pinned to key_version=1 verifies against the v1 public key")
+                .isTrue();
     }
 
     private static void createTransitKey(String keyName) throws Exception {
@@ -168,40 +171,41 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
 
     private static void postToVault(String path, String body) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create(vault.getHttpHostAddress() + path))
-            .header("X-Vault-Token", ROOT_TOKEN)
-            .POST(body.isEmpty()
-                ? HttpRequest.BodyPublishers.noBody()
-                : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-            .build();
+                .header("X-Vault-Token", ROOT_TOKEN)
+                .POST(
+                        body.isEmpty()
+                                ? HttpRequest.BodyPublishers.noBody()
+                                : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
         try (HttpClient client = HttpClient.newHttpClient()) {
             HttpResponse<String> response =
-                client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                    client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             assertThat(response.statusCode())
-                .as("Vault POST " + path + " responded: " + response.body())
-                .isIn(200, 204);
+                    .as("Vault POST " + path + " responded: " + response.body())
+                    .isIn(200, 204);
         }
     }
 
     /** The public key of the key's {@code latest_version}, as a 65-byte uncompressed point. */
     private static byte[] fetchTransitPublicKey(String vaultAddress, String keyName) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create(vaultAddress + "/v1/" + MOUNT + "/keys/" + keyName))
-            .header("X-Vault-Token", ROOT_TOKEN)
-            .GET()
-            .build();
+                .header("X-Vault-Token", ROOT_TOKEN)
+                .GET()
+                .build();
         try (HttpClient client = HttpClient.newHttpClient()) {
-            String body = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
+            String body = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    .body();
             return uncompressedPoint(parsePublicKeyPem(latestVersionPublicKeyPem(body)));
         }
     }
 
     /**
-     * Pull the {@code public_key} PEM of the {@code latest_version} entry out of
-     * {@code transit/keys/<name>} (its {@code \n} are escaped in JSON). Deliberately written here
-     * rather than reusing the production extraction, so the test stays an independent oracle — but
-     * version-aware all the same: it isolates the latest version's own entry inside the {@code keys}
-     * object and takes {@code public_key} from that entry only. On a rotated key a first-occurrence
-     * search can confirm another version's key and mask exactly the pinning bugs these tests exist
-     * to catch.
+     * Pull the {@code public_key} PEM of the {@code latest_version} entry out of {@code transit/keys/<name>} (its
+     * {@code \n} are escaped in JSON). Deliberately written here rather than reusing the production extraction, so the
+     * test stays an independent oracle — but version-aware all the same: it isolates the latest version's own entry
+     * inside the {@code keys} object and takes {@code public_key} from that entry only. On a rotated key a
+     * first-occurrence search can confirm another version's key and mask exactly the pinning bugs these tests exist to
+     * catch.
      */
     private static String latestVersionPublicKeyPem(String json) {
         String data = directObjectMember(json, "data");
@@ -211,9 +215,9 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     }
 
     /**
-     * The value start of the direct member {@code name} of {@code object} (a string starting at an
-     * opening brace), skipping members' nested values and string contents so a lookalike deeper down
-     * — or a string value equal to the label — never matches. Fails the test if absent.
+     * The value start of the direct member {@code name} of {@code object} (a string starting at an opening brace),
+     * skipping members' nested values and string contents so a lookalike deeper down — or a string value equal to the
+     * label — never matches. Fails the test if absent.
      */
     private static int directMemberValue(String object, String name) {
         String label = "\"" + name + "\"";
@@ -313,14 +317,13 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
         AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
         parameters.init(new ECGenParameterSpec("secp256r1"));
         ECParameterSpec p256 = parameters.getParameterSpec(ECParameterSpec.class);
-        return (ECPublicKey) KeyFactory.getInstance("EC")
-            .generatePublic(new ECPublicKeySpec(new ECPoint(x, y), p256));
+        return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(new ECPoint(x, y), p256));
     }
 
     private static ECPublicKey parsePublicKeyPem(String pem) throws Exception {
         String base64 = pem.replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "")
-            .replaceAll("\\s", "");
+                .replace("-----END PUBLIC KEY-----", "")
+                .replaceAll("\\s", "");
         byte[] der = Base64.getDecoder().decode(base64);
         return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(der));
     }

@@ -1,6 +1,5 @@
 package io.push2u;
 
-import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -12,11 +11,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import com.sun.net.httpserver.HttpServer;
+
 /**
- * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpServer} that
- * replies with a pre-queued sequence of status codes (defaulting to 201 once the queue drains)
- * and records every request it receives. No third-party HTTP mock — the test stack stays as
- * dependency-free as the library.
+ * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpServer} that replies with a
+ * pre-queued sequence of status codes (defaulting to 201 once the queue drains) and records every request it receives.
+ * No third-party HTTP mock — the test stack stays as dependency-free as the library.
  */
 final class MockPushReceiver implements AutoCloseable {
 
@@ -72,9 +72,7 @@ final class MockPushReceiver implements AutoCloseable {
         server.stop(0);
     }
 
-    record Response(int status, String retryAfter) {
-    }
+    record Response(int status, String retryAfter) {}
 
-    record RecordedRequest(String method, Map<String, String> headers, int bodyLength) {
-    }
+    record RecordedRequest(String method, Map<String, String> headers, int bodyLength) {}
 }

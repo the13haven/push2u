@@ -1,22 +1,21 @@
 package io.push2u;
 
 /**
- * JCA standard algorithm names used across the crypto code. Centralised so these identifiers —
- * which fail only at runtime if mistyped — live in one place, and so the ones shared between
- * classes cannot drift apart.
+ * JCA standard algorithm names used across the crypto code. Centralised so these identifiers — which fail only at
+ * runtime if mistyped — live in one place, and so the ones shared between classes cannot drift apart.
  *
  * <p>Two invariants this enforces by construction:
+ *
  * <ul>
- *   <li>the HMAC transformation passed to {@code Mac.getInstance} ({@link Jca}) is the same
- *       string as the key algorithm passed to {@code SecretKeySpec} ({@link Hkdf});</li>
- *   <li>the AES cipher <em>transformation</em> ({@link #AES_GCM_NO_PADDING}) and the AES
- *       <em>key algorithm</em> ({@link #AES}) are related but distinct strings, kept separate.</li>
+ *   <li>the HMAC transformation passed to {@code Mac.getInstance} ({@link Jca}) is the same string as the key algorithm
+ *       passed to {@code SecretKeySpec} ({@link Hkdf});
+ *   <li>the AES cipher <em>transformation</em> ({@link #AES_GCM_NO_PADDING}) and the AES <em>key algorithm</em>
+ *       ({@link #AES}) are related but distinct strings, kept separate.
  * </ul>
  */
 final class Algorithms {
 
-    private Algorithms() {
-    }
+    private Algorithms() {}
 
     /** HMAC-SHA-256 — the {@code Mac} transformation and the {@code SecretKeySpec} key algorithm for HKDF. */
     static final String HMAC_SHA256 = "HmacSHA256";
@@ -37,9 +36,9 @@ final class Algorithms {
     static final String ES256_P1363 = "SHA256withECDSAinP1363Format";
 
     /**
-     * ES256 in the standard DER format — the fallback when a provider does not register
-     * {@link #ES256_P1363} (BouncyCastle FIPS registers only this name); the DER output is then
-     * strictly converted to the raw {@code r||s} JOSE needs.
+     * ES256 in the standard DER format — the fallback when a provider does not register {@link #ES256_P1363}
+     * (BouncyCastle FIPS registers only this name); the DER output is then strictly converted to the raw {@code r||s}
+     * JOSE needs.
      */
     static final String ES256_DER = "SHA256withECDSA";
 

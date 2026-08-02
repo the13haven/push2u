@@ -3,10 +3,10 @@ package io.push2u;
 import java.util.Objects;
 
 /**
- * A VAPID (RFC 8292) application-server key pair: the P-256 public key in X9.62 uncompressed
- * form (65 bytes — the value advertised as the {@code k} parameter) and the raw 32-byte private
- * scalar. This is pure key material; turning the scalar into a usable signing key is the
- * signer's job (see {@link LocalEcVapidSigner}), so {@code VapidKeys} carries no JCA state.
+ * A VAPID (RFC 8292) application-server key pair: the P-256 public key in X9.62 uncompressed form (65 bytes — the value
+ * advertised as the {@code k} parameter) and the raw 32-byte private scalar. This is pure key material; turning the
+ * scalar into a usable signing key is the signer's job (see {@link LocalEcVapidSigner}), so {@code VapidKeys} carries
+ * no JCA state.
  *
  * <p>Both halves are commonly distributed as base64url — use {@link #fromBase64}.
  */
@@ -29,7 +29,7 @@ public final class VapidKeys {
     /**
      * Wraps the 65-byte uncompressed public key and the raw 32-byte private scalar.
      *
-     * @param publicKey     the 65-byte uncompressed P-256 public key
+     * @param publicKey the 65-byte uncompressed P-256 public key
      * @param privateScalar the raw 32-byte private scalar
      * @return the key pair
      */
@@ -42,7 +42,7 @@ public final class VapidKeys {
     /**
      * Decodes the base64url public key and private scalar (the usual VAPID distribution form).
      *
-     * @param publicKey  the base64url-encoded uncompressed public key
+     * @param publicKey the base64url-encoded uncompressed public key
      * @param privateKey the base64url-encoded private scalar
      * @return the key pair
      */

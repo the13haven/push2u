@@ -7,19 +7,17 @@ import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 
 /**
- * Shared helpers for the send-pipeline tests. A plain class (not JUnit lifecycle) so both test
- * source sets can use it: the regular {@code test} set and the bcprov-free {@code fipsTest} set,
- * which reuses this compiled output instead of duplicating the receiver/subscription plumbing.
+ * Shared helpers for the send-pipeline tests. A plain class (not JUnit lifecycle) so both test source sets can use it:
+ * the regular {@code test} set and the bcprov-free {@code fipsTest} set, which reuses this compiled output instead of
+ * duplicating the receiver/subscription plumbing.
  *
- * <p><b>Invariant: keep this class provider-free.</b> It is loaded on two deliberately disjoint
- * classpaths — {@code test} carries only bcprov, {@code fipsTest} carries only bc-fips — so any
- * reference to either BouncyCastle provider here breaks one of the two source sets. Platform
- * (SunEC) primitives only.
+ * <p><b>Invariant: keep this class provider-free.</b> It is loaded on two deliberately disjoint classpaths —
+ * {@code test} carries only bcprov, {@code fipsTest} carries only bc-fips — so any reference to either BouncyCastle
+ * provider here breaks one of the two source sets. Platform (SunEC) primitives only.
  */
 final class PushTestSupport {
 
-    private PushTestSupport() {
-    }
+    private PushTestSupport() {}
 
     /** A {@link Subscription} pointing at the in-process receiver, through the plaintext test seam. */
     static Subscription subscription(MockPushReceiver receiver) {
@@ -30,7 +28,7 @@ final class PushTestSupport {
             // Deliberately NOT inside a catch: if Subscription validation ever regresses, its
             // IllegalArgumentException must surface as itself, not be renamed to a seam failure.
             return new Subscription(
-                receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
+                    receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
         } finally {
             try {
                 plaintextSeam.close();
@@ -46,7 +44,7 @@ final class PushTestSupport {
     static VapidKeys generateVapidKeys() {
         KeyPair keyPair = EcKeys.generateP256(Jca.platform());
         return VapidKeys.of(
-            EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
-            TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
+                EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
+                TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
     }
 }

@@ -3,15 +3,6 @@ package io.push2u.signer.vault.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sun.net.httpserver.HttpServer;
-import io.push2u.PushCryptoException;
-import io.push2u.PushSender;
-import io.push2u.VapidSigner;
-import io.push2u.signer.vault.RecordingHttpClient;
-import io.push2u.signer.vault.VaultHttpResponse;
-import io.push2u.signer.vault.VaultHttpTransport;
-import io.push2u.signer.vault.VaultTransitVapidSigner;
-import io.push2u.spring.Push2uAutoConfiguration;
 import java.io.OutputStream;
 import java.math.BigInteger;
 import java.net.InetAddress;
@@ -29,6 +20,8 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -36,20 +29,29 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import io.push2u.PushCryptoException;
+import io.push2u.PushSender;
+import io.push2u.VapidSigner;
+import io.push2u.signer.vault.RecordingHttpClient;
+import io.push2u.signer.vault.VaultHttpResponse;
+import io.push2u.signer.vault.VaultHttpTransport;
+import io.push2u.signer.vault.VaultTransitVapidSigner;
+import io.push2u.spring.Push2uAutoConfiguration;
+
 /**
- * {@link VaultSignerAutoConfiguration} wires a {@link VaultTransitVapidSigner} from
- * {@code push2u.signer.vault.*}, outranks the core starter's local signer, and yields to an
- * application-supplied signer. The transport extension point resolves in priority order:
- * application {@link VaultHttpTransport} bean, then a {@code push2uVaultHttpClient}-qualified
- * {@link HttpClient} wrapped with the bound transport properties, then pure defaults.
+ * {@link VaultSignerAutoConfiguration} wires a {@link VaultTransitVapidSigner} from {@code push2u.signer.vault.*},
+ * outranks the core starter's local signer, and yields to an application-supplied signer. The transport extension point
+ * resolves in priority order: application {@link VaultHttpTransport} bean, then a
+ * {@code push2uVaultHttpClient}-qualified {@link HttpClient} wrapped with the bound transport properties, then pure
+ * defaults.
  */
 class VaultSignerAutoConfigurationTest {
 
     private static String publicKeyB64;
     private static String privateKeyB64;
 
-    private final ApplicationContextRunner runner = new ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(VaultSignerAutoConfiguration.class));
+    private final ApplicationContextRunner runner =
+            new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(VaultSignerAutoConfiguration.class));
 
     @BeforeAll
     static void generateVapidKeys() throws Exception {
@@ -82,10 +84,10 @@ class VaultSignerAutoConfigurationTest {
         // absentWithoutProperties, which wires no bean and starts cleanly). The successful fetch is
         // covered by VaultTransitVapidSignerContractTest.
         runner.withPropertyValues(
-                "push2u.signer.vault.address=http://vault.invalid:8200",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token")
-            .run(context -> assertThat(context).hasFailed());
+                        "push2u.signer.vault.address=http://vault.invalid:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test
@@ -93,12 +95,12 @@ class VaultSignerAutoConfigurationTest {
         // Base64's own message ("Illegal base64 character 2c") names neither the property nor the
         // expected encoding, which leaves the operator guessing which push2u.* value is at fault.
         vaultRunner()
-            .withPropertyValues("push2u.signer.vault.public-key=not base64url!")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("push2u.signer.vault.public-key is not base64url");
-            });
+                .withPropertyValues("push2u.signer.vault.public-key=not base64url!")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.public-key is not base64url");
+                });
     }
 
     @Test
@@ -108,17 +110,20 @@ class VaultSignerAutoConfigurationTest {
         // even if the wiring dropped the version.
         RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         vaultRunner()
-            .withPropertyValues("push2u.signer.vault.key-version=3")
-            .withUserConfiguration(RecordingTransportConfiguration.class)
-            .run(context -> {
-                assertThat(context).hasSingleBean(VapidSigner.class);
-                byte[] signature = context.getBean(VapidSigner.class)
-                    .sign("starter key-version probe".getBytes(StandardCharsets.UTF_8));
-                assertThat(signature).as("decoded raw r||s signature from the stub response").hasSize(64);
-                assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES)
-                    .singleElement().asString()
-                    .contains("\"key_version\":3");
-            });
+                .withPropertyValues("push2u.signer.vault.key-version=3")
+                .withUserConfiguration(RecordingTransportConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    byte[] signature = context.getBean(VapidSigner.class)
+                            .sign("starter key-version probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(signature)
+                            .as("decoded raw r||s signature from the stub response")
+                            .hasSize(64);
+                    assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES)
+                            .singleElement()
+                            .asString()
+                            .contains("\"key_version\":3");
+                });
     }
 
     @Test
@@ -127,14 +132,14 @@ class VaultSignerAutoConfigurationTest {
         // request shape (Vault signs with its latest version).
         RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         vaultRunner()
-            .withUserConfiguration(RecordingTransportConfiguration.class)
-            .run(context -> {
-                context.getBean(VapidSigner.class)
-                    .sign("starter no-pin probe".getBytes(StandardCharsets.UTF_8));
-                assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES)
-                    .singleElement().asString()
-                    .doesNotContain("key_version");
-            });
+                .withUserConfiguration(RecordingTransportConfiguration.class)
+                .run(context -> {
+                    context.getBean(VapidSigner.class).sign("starter no-pin probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES)
+                            .singleElement()
+                            .asString()
+                            .doesNotContain("key_version");
+                });
     }
 
     @Test
@@ -143,16 +148,16 @@ class VaultSignerAutoConfigurationTest {
         // version it reads from Vault itself. A stray key-version must fail startup, not be
         // silently ignored.
         runner.withPropertyValues(
-                "push2u.signer.vault.address=http://vault.invalid:8200",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token",
-                "push2u.signer.vault.key-version=2")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .hasMessageContaining("key-version requires push2u.signer.vault.public-key");
-            });
+                        "push2u.signer.vault.address=http://vault.invalid:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.key-version=2")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("key-version requires push2u.signer.vault.public-key");
+                });
     }
 
     @Test
@@ -166,21 +171,21 @@ class VaultSignerAutoConfigurationTest {
     @Test
     void theVaultSignerOutranksTheCoreLocalSigner() {
         new ApplicationContextRunner()
-            .withConfiguration(
-                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
-            .withPropertyValues(
-                "push2u.vapid.public-key=" + publicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64,
-                "push2u.vapid.subject=mailto:admin@example.com",
-                "push2u.signer.vault.address=http://vault.example:8200",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token",
-                "push2u.signer.vault.public-key=" + publicKeyB64)
-            .run(context -> {
-                assertThat(context).hasSingleBean(VapidSigner.class);
-                assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
-                assertThat(context).hasSingleBean(PushSender.class);
-            });
+                .withConfiguration(
+                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.signer.vault.address=http://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
     }
 
     // The next four tests reproduce the two Vault Spring Boot YAML examples from README.md verbatim
@@ -202,21 +207,21 @@ class VaultSignerAutoConfigurationTest {
         // private-key are set: that test's point is precedence between two signers, this one
         // reproduces the README scenario, where no local VAPID keys exist at all.
         new ApplicationContextRunner()
-            .withConfiguration(
-                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
-            .withPropertyValues(
-                "push2u.vapid.subject=mailto:ops@example.com",
-                "push2u.signer.vault.address=https://vault.example:8200",
-                "push2u.signer.vault.mount=transit",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token",
-                "push2u.signer.vault.public-key=" + publicKeyB64,
-                "push2u.signer.vault.key-version=3")
-            .run(context -> {
-                assertThat(context).hasSingleBean(VapidSigner.class);
-                assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
-                assertThat(context).hasSingleBean(PushSender.class);
-            });
+                .withConfiguration(
+                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.mount=transit",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64,
+                        "push2u.signer.vault.key-version=3")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
     }
 
     @Test
@@ -228,29 +233,30 @@ class VaultSignerAutoConfigurationTest {
         // public key, exactly as the real Vault Transit API would.
         FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         new ApplicationContextRunner()
-            .withConfiguration(
-                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
-            .withPropertyValues(
-                "push2u.vapid.subject=mailto:ops@example.com",
-                "push2u.signer.vault.address=https://vault.example:8200",
-                "push2u.signer.vault.mount=transit",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token")
-            .withUserConfiguration(FetchedMetadataTransportConfiguration.class)
-            .run(context -> {
-                assertThat(context).hasSingleBean(VapidSigner.class);
-                assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
-                assertThat(context).hasSingleBean(PushSender.class);
-                // Exercise the wired signer, not just its bean type: a real sign call proves the
-                // fetched public key/version pair from the stub GET actually reached a working
-                // signer, and that it pins the fetched latest_version (1) on every sign request.
-                byte[] signature = context.getBean(VapidSigner.class)
-                    .sign("starter fetched-mode README probe".getBytes(StandardCharsets.UTF_8));
-                assertThat(signature).hasSize(64);
-                assertThat(FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES)
-                    .singleElement().asString()
-                    .contains("\"key_version\":1");
-            });
+                .withConfiguration(
+                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.mount=transit",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token")
+                .withUserConfiguration(FetchedMetadataTransportConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    // Exercise the wired signer, not just its bean type: a real sign call proves the
+                    // fetched public key/version pair from the stub GET actually reached a working
+                    // signer, and that it pins the fetched latest_version (1) on every sign request.
+                    byte[] signature = context.getBean(VapidSigner.class)
+                            .sign("starter fetched-mode README probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(signature).hasSize(64);
+                    assertThat(FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES)
+                            .singleElement()
+                            .asString()
+                            .contains("\"key_version\":1");
+                });
     }
 
     @Test
@@ -259,22 +265,22 @@ class VaultSignerAutoConfigurationTest {
         // only the push2u.signer.vault.* block must get a diagnostic that names the missing
         // property, not PushSender.Builder's generic "contact is required" message.
         new ApplicationContextRunner()
-            .withConfiguration(
-                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
-            .withPropertyValues(
-                "push2u.signer.vault.address=https://vault.example:8200",
-                "push2u.signer.vault.mount=transit",
-                "push2u.signer.vault.key-name=vapid",
-                "push2u.signer.vault.token=test-token",
-                "push2u.signer.vault.public-key=" + publicKeyB64,
-                "push2u.signer.vault.key-version=3")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("push2u.vapid.subject");
-            });
+                .withConfiguration(
+                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.mount=transit",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64,
+                        "push2u.signer.vault.key-version=3")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.vapid.subject");
+                });
     }
 
     @Test
@@ -285,15 +291,16 @@ class VaultSignerAutoConfigurationTest {
         RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         QualifiedHttpClientConfiguration.CLIENT.reset();
         vaultRunner()
-            .withUserConfiguration(RecordingTransportConfiguration.class, QualifiedHttpClientConfiguration.class)
-            .run(context -> {
-                context.getBean(VapidSigner.class)
-                    .sign("starter transport-priority probe".getBytes(StandardCharsets.UTF_8));
-                assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES).hasSize(1);
-                assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
-                    .as("the qualified HttpClient is bypassed when a transport bean exists")
-                    .isZero();
-            });
+                .withUserConfiguration(RecordingTransportConfiguration.class, QualifiedHttpClientConfiguration.class)
+                .run(context -> {
+                    context.getBean(VapidSigner.class)
+                            .sign("starter transport-priority probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES)
+                            .hasSize(1);
+                    assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
+                            .as("the qualified HttpClient is bypassed when a transport bean exists")
+                            .isZero();
+                });
     }
 
     @Test
@@ -301,17 +308,18 @@ class VaultSignerAutoConfigurationTest {
         // No VaultHttpTransport bean: the starter must wrap the push2uVaultHttpClient-qualified
         // client — the mTLS/proxy extension point — and route the sign call through it.
         QualifiedHttpClientConfiguration.CLIENT.reset();
-        withStubVault(signResponse(), stubAddress ->
-            explicitRunner(stubAddress)
-                .withUserConfiguration(QualifiedHttpClientConfiguration.class)
-                .run(context -> {
-                    byte[] signature = context.getBean(VapidSigner.class)
-                        .sign("starter qualified-client probe".getBytes(StandardCharsets.UTF_8));
-                    assertThat(signature).hasSize(64);
-                    assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
-                        .as("the sign request went through the qualified HttpClient")
-                        .isEqualTo(1);
-                }));
+        withStubVault(
+                signResponse(),
+                stubAddress -> explicitRunner(stubAddress)
+                        .withUserConfiguration(QualifiedHttpClientConfiguration.class)
+                        .run(context -> {
+                            byte[] signature = context.getBean(VapidSigner.class)
+                                    .sign("starter qualified-client probe".getBytes(StandardCharsets.UTF_8));
+                            assertThat(signature).hasSize(64);
+                            assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
+                                    .as("the sign request went through the qualified HttpClient")
+                                    .isEqualTo(1);
+                        }));
     }
 
     @Test
@@ -320,17 +328,20 @@ class VaultSignerAutoConfigurationTest {
         // else (push delivery, arbitrary REST calls) must not be silently drafted into carrying
         // Vault tokens. Without the qualifier the starter builds its own default client.
         UnqualifiedHttpClientConfiguration.CLIENT.reset();
-        withStubVault(signResponse(), stubAddress ->
-            explicitRunner(stubAddress)
-                .withUserConfiguration(UnqualifiedHttpClientConfiguration.class)
-                .run(context -> {
-                    byte[] signature = context.getBean(VapidSigner.class)
-                        .sign("starter unqualified-client probe".getBytes(StandardCharsets.UTF_8));
-                    assertThat(signature).as("the default transport still signs").hasSize(64);
-                    assertThat(UnqualifiedHttpClientConfiguration.CLIENT.sends())
-                        .as("an HttpClient bean without the push2uVaultHttpClient qualifier is ignored")
-                        .isZero();
-                }));
+        withStubVault(
+                signResponse(),
+                stubAddress -> explicitRunner(stubAddress)
+                        .withUserConfiguration(UnqualifiedHttpClientConfiguration.class)
+                        .run(context -> {
+                            byte[] signature = context.getBean(VapidSigner.class)
+                                    .sign("starter unqualified-client probe".getBytes(StandardCharsets.UTF_8));
+                            assertThat(signature)
+                                    .as("the default transport still signs")
+                                    .hasSize(64);
+                            assertThat(UnqualifiedHttpClientConfiguration.CLIENT.sends())
+                                    .as("an HttpClient bean without the push2uVaultHttpClient qualifier is ignored")
+                                    .isZero();
+                        }));
     }
 
     @Test
@@ -340,16 +351,14 @@ class VaultSignerAutoConfigurationTest {
         // startup forever. With the bound request-timeout the refresh must fail fast instead.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             runner.withPropertyValues(
-                    "push2u.signer.vault.address=http://127.0.0.1:" + silent.getLocalPort(),
-                    "push2u.signer.vault.key-name=vapid",
-                    "push2u.signer.vault.token=test-token",
-                    "push2u.signer.vault.request-timeout=500ms")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure())
-                        .rootCause()
-                        .hasMessageContaining("timed out");
-                });
+                            "push2u.signer.vault.address=http://127.0.0.1:" + silent.getLocalPort(),
+                            "push2u.signer.vault.key-name=vapid",
+                            "push2u.signer.vault.token=test-token",
+                            "push2u.signer.vault.request-timeout=500ms")
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure()).rootCause().hasMessageContaining("timed out");
+                    });
         }
     }
 
@@ -358,13 +367,14 @@ class VaultSignerAutoConfigurationTest {
         // Bind a deliberately tiny cap and let the stub Vault answer with a normal-size sign
         // response: the call must fail closed with the transport's limit error — proving the
         // property actually shapes the transport instead of being silently dropped.
-        withStubVault(signResponse(), stubAddress ->
-            explicitRunner(stubAddress)
-                .withPropertyValues("push2u.signer.vault.max-response-bytes=16")
-                .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
-                    .sign("starter cap probe".getBytes(StandardCharsets.UTF_8)))
-                    .isInstanceOf(PushCryptoException.class)
-                    .hasMessageContaining("exceeded the configured limit of 16 bytes")));
+        withStubVault(
+                signResponse(),
+                stubAddress -> explicitRunner(stubAddress)
+                        .withPropertyValues("push2u.signer.vault.max-response-bytes=16")
+                        .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
+                                        .sign("starter cap probe".getBytes(StandardCharsets.UTF_8)))
+                                .isInstanceOf(PushCryptoException.class)
+                                .hasMessageContaining("exceeded the configured limit of 16 bytes")));
     }
 
     @Test
@@ -374,57 +384,57 @@ class VaultSignerAutoConfigurationTest {
         // satisfies, so startup could hang forever — that part was a defect, and this pins its fix.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             explicitRunner("http://127.0.0.1:" + silent.getLocalPort())
-                .withPropertyValues("push2u.signer.vault.request-timeout=500ms")
-                .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
-                    .sign("starter timeout probe".getBytes(StandardCharsets.UTF_8)))
-                    .isInstanceOf(PushCryptoException.class)
-                    .hasMessageContaining("timed out"));
+                    .withPropertyValues("push2u.signer.vault.request-timeout=500ms")
+                    .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
+                                    .sign("starter timeout probe".getBytes(StandardCharsets.UTF_8)))
+                            .isInstanceOf(PushCryptoException.class)
+                            .hasMessageContaining("timed out"));
         }
     }
 
     @Test
     void nonPositiveTransportPropertiesFailStartup() {
         vaultRunner()
-            .withPropertyValues("push2u.signer.vault.request-timeout=0s")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .hasMessageContaining("request-timeout must be positive");
-            });
+                .withPropertyValues("push2u.signer.vault.request-timeout=0s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("request-timeout must be positive");
+                });
         vaultRunner()
-            .withPropertyValues("push2u.signer.vault.max-response-bytes=0")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .hasMessageContaining("max-response-bytes must be positive");
-            });
+                .withPropertyValues("push2u.signer.vault.max-response-bytes=0")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("max-response-bytes must be positive");
+                });
         vaultRunner()
-            .withPropertyValues("push2u.signer.vault.connect-timeout=-1s")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .hasMessageContaining("connect-timeout must be positive");
-            });
+                .withPropertyValues("push2u.signer.vault.connect-timeout=-1s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("connect-timeout must be positive");
+                });
     }
 
     private ApplicationContextRunner vaultRunner() {
         return runner.withPropertyValues(
-            "push2u.signer.vault.address=http://vault.example:8200",
-            "push2u.signer.vault.key-name=vapid",
-            "push2u.signer.vault.token=test-token",
-            "push2u.signer.vault.public-key=" + publicKeyB64);
+                "push2u.signer.vault.address=http://vault.example:8200",
+                "push2u.signer.vault.key-name=vapid",
+                "push2u.signer.vault.token=test-token",
+                "push2u.signer.vault.public-key=" + publicKeyB64);
     }
 
     /** An explicit-mode runner pointed at a live local stub Vault (no transport bean). */
     private ApplicationContextRunner explicitRunner(String address) {
         return runner.withPropertyValues(
-            "push2u.signer.vault.address=" + address,
-            "push2u.signer.vault.key-name=vapid",
-            "push2u.signer.vault.token=test-token",
-            "push2u.signer.vault.public-key=" + publicKeyB64);
+                "push2u.signer.vault.address=" + address,
+                "push2u.signer.vault.key-name=vapid",
+                "push2u.signer.vault.token=test-token",
+                "push2u.signer.vault.public-key=" + publicKeyB64);
     }
 
     /** A well-formed Transit sign response carrying 64 zero bytes as the signature. */
@@ -457,9 +467,9 @@ class VaultSignerAutoConfigurationTest {
     }
 
     /**
-     * A {@link VaultHttpTransport} stub the autoconfigured signer picks up (an application
-     * transport bean outranks every built-in default): records every sign request body and answers
-     * like Vault's Transit sign endpoint, so tests can assert what was actually sent.
+     * A {@link VaultHttpTransport} stub the autoconfigured signer picks up (an application transport bean outranks
+     * every built-in default): records every sign request body and answers like Vault's Transit sign endpoint, so tests
+     * can assert what was actually sent.
      */
     @Configuration(proxyBeanMethods = false)
     static class RecordingTransportConfiguration {
@@ -478,17 +488,16 @@ class VaultSignerAutoConfigurationTest {
                 public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
                     SIGN_REQUEST_BODIES.add(new String(body, StandardCharsets.UTF_8));
                     String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
-                    return new VaultHttpResponse(200,
-                        "{\"data\":{\"signature\":\"vault:v3:" + signature + "\"}}");
+                    return new VaultHttpResponse(200, "{\"data\":{\"signature\":\"vault:v3:" + signature + "\"}}");
                 }
             };
         }
     }
 
     /**
-     * A {@link VaultHttpTransport} stub for fetched mode: answers the startup
-     * {@code transit/keys/<key>} {@code GET} with {@code latest_version} + a PEM public key (as the
-     * real Vault Transit API does) and the {@code sign} {@code POST} like the recording stub above.
+     * A {@link VaultHttpTransport} stub for fetched mode: answers the startup {@code transit/keys/<key>} {@code GET}
+     * with {@code latest_version} + a PEM public key (as the real Vault Transit API does) and the {@code sign}
+     * {@code POST} like the recording stub above.
      */
     @Configuration(proxyBeanMethods = false)
     static class FetchedMetadataTransportConfiguration {
@@ -524,16 +533,17 @@ class VaultSignerAutoConfigurationTest {
         }
 
         /**
-         * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1.
-         * {@code type} is part of the minimum: the signer refuses any key not advertised as
-         * {@code ecdsa-p256} (see {@code VaultTransitVapidSignerKeyValidationTest} in the signer module).
+         * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. {@code type} is part
+         * of the minimum: the signer refuses any key not advertised as {@code ecdsa-p256} (see
+         * {@code VaultTransitVapidSignerKeyValidationTest} in the signer module).
          */
         private static String metadataBody(KeyPair keyPair) {
             String pem = "-----BEGIN PUBLIC KEY-----\n"
-                + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keyPair.getPublic().getEncoded())
-                + "\n-----END PUBLIC KEY-----\n";
+                    + Base64.getMimeEncoder(64, new byte[] {'\n'})
+                            .encodeToString(keyPair.getPublic().getEncoded())
+                    + "\n-----END PUBLIC KEY-----\n";
             return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
-                + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
+                    + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
         }
     }
 

@@ -1,9 +1,8 @@
 package io.push2u;
 
 /**
- * Message urgency (RFC 8030 §5.3), sent as the {@code Urgency} header so a push service can
- * decide whether to deliver to a battery-constrained device immediately. The
- * {@link #headerValue()} is the on-the-wire token.
+ * Message urgency (RFC 8030 §5.3), sent as the {@code Urgency} header so a push service can decide whether to deliver
+ * to a battery-constrained device immediately. The {@link #headerValue()} is the on-the-wire token.
  */
 public enum Urgency {
 

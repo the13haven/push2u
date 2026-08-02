@@ -14,10 +14,9 @@ import java.security.spec.ECPublicKeySpec;
 import java.util.Arrays;
 
 /**
- * P-256 key import/export and ECDH, all through the JDK ({@link Jca}). Handles the two wire
- * forms Web Push uses: the X9.62 uncompressed point ({@code 0x04 || X || Y}, 65 bytes) for
- * public keys ({@code p256dh}, VAPID {@code k}) and the raw 32-byte scalar for the VAPID
- * private key.
+ * P-256 key import/export and ECDH, all through the JDK ({@link Jca}). Handles the two wire forms Web Push uses: the
+ * X9.62 uncompressed point ({@code 0x04 || X || Y}, 65 bytes) for public keys ({@code p256dh}, VAPID {@code k}) and the
+ * raw 32-byte scalar for the VAPID private key.
  */
 final class EcKeys {
 
@@ -25,20 +24,19 @@ final class EcKeys {
     static final int COORDINATE_LENGTH = 32;
     private static final byte UNCOMPRESSED_TAG = 0x04;
 
-    private EcKeys() {
-    }
+    private EcKeys() {}
 
     /** Parse a 65-byte uncompressed P-256 point into a public key. */
     static ECPublicKey decodeP256PublicKey(byte[] uncompressed, Jca jca) {
         if (uncompressed.length != UNCOMPRESSED_LENGTH || uncompressed[0] != UNCOMPRESSED_TAG) {
-            throw new IllegalArgumentException(
-                "Expected a 65-byte uncompressed P-256 point starting with 0x04");
+            throw new IllegalArgumentException("Expected a 65-byte uncompressed P-256 point starting with 0x04");
         }
         BigInteger x = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1, 1 + COORDINATE_LENGTH));
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1 + COORDINATE_LENGTH, UNCOMPRESSED_LENGTH));
         try {
             KeyFactory keyFactory = jca.ecKeyFactory();
-            return (ECPublicKey) keyFactory.generatePublic(new ECPublicKeySpec(new ECPoint(x, y), jca.p256Parameters()));
+            return (ECPublicKey)
+                    keyFactory.generatePublic(new ECPublicKeySpec(new ECPoint(x, y), jca.p256Parameters()));
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("Invalid P-256 public key", e);
         }
@@ -92,9 +90,8 @@ final class EcKeys {
     }
 
     /**
-     * Big-endian, fixed 32-byte serialization of a coordinate. {@link BigInteger#toByteArray()}
-     * can prepend a 0x00 sign byte (33 bytes) or omit leading zeros (&lt;32 bytes); normalise
-     * both to exactly 32 bytes.
+     * Big-endian, fixed 32-byte serialization of a coordinate. {@link BigInteger#toByteArray()} can prepend a 0x00 sign
+     * byte (33 bytes) or omit leading zeros (&lt;32 bytes); normalise both to exactly 32 bytes.
      */
     private static void writeFixed(BigInteger value, byte[] out, int offset) {
         byte[] bytes = value.toByteArray();

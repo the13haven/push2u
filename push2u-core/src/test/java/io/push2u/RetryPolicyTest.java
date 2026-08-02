@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+
 import org.junit.jupiter.api.Test;
 
 class RetryPolicyTest {
@@ -28,10 +29,10 @@ class RetryPolicyTest {
     @Test
     void rejectsInvalidConfiguration() {
         assertThatThrownBy(() -> new RetryPolicy(0, Duration.ZERO, Duration.ZERO))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
 
         Duration negativeBackoff = Duration.ofSeconds(-1);
         assertThatThrownBy(() -> new RetryPolicy(1, negativeBackoff, Duration.ZERO))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

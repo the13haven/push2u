@@ -9,6 +9,7 @@ import java.security.Signature;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.time.Instant;
+
 import org.junit.jupiter.api.Test;
 
 class VapidTest {
@@ -18,8 +19,8 @@ class VapidTest {
 
     @Test
     void serializesHeaderAndClaimsMatchingRfc8292Example() {
-        String[] segments = Vapid.signingInput(
-            TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY).split("\\.");
+        String[] segments = Vapid.signingInput(TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY)
+                .split("\\.");
 
         assertThat(segments).hasSize(2);
         assertThat(segments[0]).as("JWT header").isEqualTo(TestVectors.VAPID_HEADER_B64);
@@ -38,21 +39,22 @@ class VapidTest {
 
         // The advertised "k" is exactly 0x04 || x || y from the JWK.
         assertThat(b64(TestVectors.VAPID_PUBLIC_K))
-            .isEqualTo(TestVectors.concat(new byte[] {0x04}, b64(TestVectors.VAPID_JWK_X), b64(TestVectors.VAPID_JWK_Y)));
+                .isEqualTo(TestVectors.concat(
+                        new byte[] {0x04}, b64(TestVectors.VAPID_JWK_X), b64(TestVectors.VAPID_JWK_Y)));
     }
 
     @Test
     void localSignerProducesAVerifiableEs256JwtWithTheRfcStructure() throws Exception {
         KeyPair keyPair = EcKeys.generateP256(jca);
         VapidKeys keys = VapidKeys.of(
-            EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
-            TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
+                EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
+                TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
         LocalEcVapidSigner signer = new LocalEcVapidSigner(keys);
 
-        assertThat(signer.publicKey())
-            .isEqualTo(EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()));
+        assertThat(signer.publicKey()).isEqualTo(EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()));
 
-        String[] parts = Vapid.jwt(signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY).split("\\.");
+        String[] parts = Vapid.jwt(signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY)
+                .split("\\.");
         assertThat(parts).hasSize(3);
         assertThat(parts[0]).isEqualTo(TestVectors.VAPID_HEADER_B64);
         assertThat(parts[1]).isEqualTo(TestVectors.VAPID_CLAIMS_B64);
@@ -70,19 +72,16 @@ class VapidTest {
     void authorizationHeaderUsesVapidSchemeWithTandKParameters() {
         KeyPair keyPair = EcKeys.generateP256(jca);
         VapidKeys keys = VapidKeys.of(
-            EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
-            TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
+                EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
+                TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
         LocalEcVapidSigner signer = new LocalEcVapidSigner(keys);
 
-        String header = Vapid.authorizationHeader(
-            signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY);
+        String header =
+                Vapid.authorizationHeader(signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY);
 
-        assertThat(header)
-            .startsWith("vapid t=")
-            .contains(", k=" + Base64Url.encode(signer.publicKey()));
+        assertThat(header).startsWith("vapid t=").contains(", k=" + Base64Url.encode(signer.publicKey()));
 
         String token = header.substring("vapid t=".length(), header.indexOf(", k="));
         assertThat(token.split("\\.")).as("t is a compact JWT").hasSize(3);
     }
-
 }

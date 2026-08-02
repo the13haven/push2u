@@ -12,11 +12,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The default {@link PushHttpClient}, over the JDK's {@code java.net.http.HttpClient} — no third
- * party HTTP stack, keeping {@code core} zero-dependency. The response body is discarded without
- * buffering: push delivery (RFC 8030 §5) only needs the status and headers, and the endpoint is a
- * capability URL taken from the subscription — a hostile server answering with a huge body must
- * cost the sender nothing. Discarding still drains the stream, so connections stay reusable.
+ * The default {@link PushHttpClient}, over the JDK's {@code java.net.http.HttpClient} — no third party HTTP stack,
+ * keeping {@code core} zero-dependency. The response body is discarded without buffering: push delivery (RFC 8030 §5)
+ * only needs the status and headers, and the endpoint is a capability URL taken from the subscription — a hostile
+ * server answering with a huge body must cost the sender nothing. Discarding still drains the stream, so connections
+ * stay reusable.
  */
 public final class JdkHttpPushClient implements PushHttpClient {
 
@@ -33,7 +33,7 @@ public final class JdkHttpPushClient implements PushHttpClient {
     /**
      * Uses the given {@link HttpClient} and per-request timeout.
      *
-     * @param httpClient     the HTTP client to send requests with
+     * @param httpClient the HTTP client to send requests with
      * @param requestTimeout the per-request timeout
      */
     public JdkHttpPushClient(HttpClient httpClient, Duration requestTimeout) {
@@ -44,21 +44,21 @@ public final class JdkHttpPushClient implements PushHttpClient {
     @Override
     public PushResponse post(URI endpoint, Map<String, String> headers, byte[] body) {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
-            .timeout(requestTimeout)
-            .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+                .timeout(requestTimeout)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
         headers.forEach(request::header);
 
         try {
-            HttpResponse<Void> response =
-                httpClient.send(request.build(), HttpResponse.BodyHandlers.discarding());
-            return new PushResponse(response.statusCode(), firstValues(response.headers().map()));
+            HttpResponse<Void> response = httpClient.send(request.build(), HttpResponse.BodyHandlers.discarding());
+            return new PushResponse(
+                    response.statusCode(), firstValues(response.headers().map()));
         } catch (IOException e) {
             throw new PushDeliveryException(
-                "POST to push endpoint failed: " + Endpoints.redact(endpoint.toString()), e);
+                    "POST to push endpoint failed: " + Endpoints.redact(endpoint.toString()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PushDeliveryException(
-                "Interrupted while POSTing to push endpoint: " + Endpoints.redact(endpoint.toString()), e);
+                    "Interrupted while POSTing to push endpoint: " + Endpoints.redact(endpoint.toString()), e);
         }
     }
 
