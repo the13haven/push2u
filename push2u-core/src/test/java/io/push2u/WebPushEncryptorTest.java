@@ -7,13 +7,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
+
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins the full RFC 8291 / RFC 8188 encryption path against the §5 worked example via a
- * byte-for-byte match of the encrypted body (header || ciphertext). The body is a deterministic
- * function of every derivation step, so this single assertion exercises the whole
- * ECDH → HKDF → AES-128-GCM composition; the building blocks are pinned in isolation by
+ * Pins the full RFC 8291 / RFC 8188 encryption path against the §5 worked example via a byte-for-byte match of the
+ * encrypted body (header || ciphertext). The body is a deterministic function of every derivation step, so this single
+ * assertion exercises the whole ECDH → HKDF → AES-128-GCM composition; the building blocks are pinned in isolation by
  * HkdfTest (RFC 5869) and EcKeysTest (the §5 ecdh_secret).
  */
 class WebPushEncryptorTest {
@@ -24,17 +24,22 @@ class WebPushEncryptorTest {
     @Test
     void encryptsRfc8291Section5ExampleByteForByte() {
         KeyPair applicationServerKeyPair = new KeyPair(
-            EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
-            EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
+                EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
+                EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
         byte[] plaintext = TestVectors.PLAINTEXT.getBytes(StandardCharsets.US_ASCII);
 
         byte[] body = encryptor.encrypt(
-            b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET), plaintext, 4096,
-            applicationServerKeyPair, b64(TestVectors.SALT));
+                b64(TestVectors.UA_PUBLIC),
+                b64(TestVectors.AUTH_SECRET),
+                plaintext,
+                4096,
+                applicationServerKeyPair,
+                b64(TestVectors.SALT));
 
         // body = header || ciphertext (RFC 8291 §5); a byte-for-byte match pins the whole path.
-        assertThat(body).as("RFC 8291 §5 aes128gcm body")
-            .isEqualTo(TestVectors.concat(b64(TestVectors.HEADER), b64(TestVectors.CIPHERTEXT)));
+        assertThat(body)
+                .as("RFC 8291 §5 aes128gcm body")
+                .isEqualTo(TestVectors.concat(b64(TestVectors.HEADER), b64(TestVectors.CIPHERTEXT)));
     }
 
     @Test
@@ -82,15 +87,15 @@ class WebPushEncryptorTest {
     @Test
     void rejectsRecordSizeTooSmallForPayload() {
         KeyPair keyPair = new KeyPair(
-            EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
-            EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
+                EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
+                EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
         byte[] uaPublic = b64(TestVectors.UA_PUBLIC);
         byte[] auth = b64(TestVectors.AUTH_SECRET);
         byte[] salt = b64(TestVectors.SALT);
         byte[] plaintext = new byte[100];
 
         assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 50, keyPair, salt))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -101,20 +106,23 @@ class WebPushEncryptorTest {
 
         // RFC 8291 §4: rs MUST be *greater than* plaintext(100) + delimiter(1) + tag(16) = 117.
         assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 117))
-            .as("rs equal to the sum violates the MUST")
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("strictly greater")
-            .hasMessageContaining("RFC 8291 §4");
+                .as("rs equal to the sum violates the MUST")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("strictly greater")
+                .hasMessageContaining("RFC 8291 §4");
 
         assertThat(encryptor.encrypt(uaPublic, auth, plaintext, 118))
-            .as("one octet more is the smallest legal rs")
-            .hasSize(86 + plaintext.length + 1 + 16);
+                .as("one octet more is the smallest legal rs")
+                .hasSize(86 + plaintext.length + 1 + 16);
     }
 
     @Test
     void bodyOverheadIsTheFixedSingleRecordCostNotAMagicNumber() {
-        byte[] body = encryptor.encrypt(b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET),
-            new byte[0], WebPushEncryptor.DEFAULT_RECORD_SIZE);
+        byte[] body = encryptor.encrypt(
+                b64(TestVectors.UA_PUBLIC),
+                b64(TestVectors.AUTH_SECRET),
+                new byte[0],
+                WebPushEncryptor.DEFAULT_RECORD_SIZE);
 
         // header(86) + delimiter(1) + tag(16); the 4096-byte body ceiling minus this is the
         // 3993-octet plaintext maximum RFC 8291 §4 derives.
@@ -124,7 +132,7 @@ class WebPushEncryptorTest {
         assertThat(WebPushEncryptor.MIN_RECORD_SIZE).as("RFC 8188 §2").isEqualTo(18);
         assertThat(body).as("an empty payload costs exactly the overhead").hasSize(WebPushEncryptor.BODY_OVERHEAD);
         assertThat(WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES - WebPushEncryptor.BODY_OVERHEAD)
-            .as("RFC 8291 §4: at most 3993 octets of plaintext")
-            .isEqualTo(3993);
+                .as("RFC 8291 §4: at most 3993 octets of plaintext")
+                .isEqualTo(3993);
     }
 }

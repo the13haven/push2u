@@ -9,22 +9,22 @@ import org.junit.jupiter.api.Test;
 class EndpointsTest {
 
     private static final String ENDPOINT =
-        "https://fcm.googleapis.com/fcm/send/dCbWEKuAbCk:APA91bEXAMPLE?auth=secret-token";
+            "https://fcm.googleapis.com/fcm/send/dCbWEKuAbCk:APA91bEXAMPLE?auth=secret-token";
 
     @Test
     void redactKeepsOriginAndFingerprintButNeverThePathOrQuery() {
         String redacted = Endpoints.redact(ENDPOINT);
 
         assertThat(redacted)
-            .startsWith("https://fcm.googleapis.com/…#")
-            .doesNotContain("fcm/send")
-            .doesNotContain("dCbWEKuAbCk")
-            .doesNotContain("APA91bEXAMPLE")
-            .doesNotContain("auth=secret-token");
+                .startsWith("https://fcm.googleapis.com/…#")
+                .doesNotContain("fcm/send")
+                .doesNotContain("dCbWEKuAbCk")
+                .doesNotContain("APA91bEXAMPLE")
+                .doesNotContain("auth=secret-token");
         assertThat(redacted.substring(redacted.indexOf('#') + 1))
-            .as("fingerprint is 16 lowercase hex characters")
-            .hasSize(16)
-            .matches("[0-9a-f]{16}");
+                .as("fingerprint is 16 lowercase hex characters")
+                .hasSize(16)
+                .matches("[0-9a-f]{16}");
     }
 
     @Test
@@ -35,7 +35,7 @@ class EndpointsTest {
     @Test
     void redactPreservesAnExplicitPort() {
         assertThat(Endpoints.redact("https://push.example.net:8443/token-path"))
-            .startsWith("https://push.example.net:8443/…#");
+                .startsWith("https://push.example.net:8443/…#");
     }
 
     @Test
@@ -64,29 +64,24 @@ class EndpointsTest {
 
         String garbage = "ht!tp:// not a uri at all";
         assertThatCode(() -> Endpoints.redact(garbage)).doesNotThrowAnyException();
-        assertThat(Endpoints.redact(garbage))
-            .startsWith("<opaque endpoint>#")
-            .doesNotContain("not a uri");
+        assertThat(Endpoints.redact(garbage)).startsWith("<opaque endpoint>#").doesNotContain("not a uri");
     }
 
     @Test
     void redactTreatsSchemelessOrHostlessUriAsOpaque() {
         assertThat(Endpoints.redact("/relative/path-only"))
-            .startsWith("<opaque endpoint>#")
-            .doesNotContain("relative");
+                .startsWith("<opaque endpoint>#")
+                .doesNotContain("relative");
         assertThat(Endpoints.redact("mailto:someone@example.com"))
-            .startsWith("<opaque endpoint>#")
-            .doesNotContain("someone@example.com");
+                .startsWith("<opaque endpoint>#")
+                .doesNotContain("someone@example.com");
     }
 
     @Test
     void redactNeverEchoesUserinfoCredentials() {
         String redacted = Endpoints.redact("https://user:pass@push.example/p");
 
-        assertThat(redacted)
-            .doesNotContain("user")
-            .doesNotContain("pass")
-            .doesNotContain("/p#");
+        assertThat(redacted).doesNotContain("user").doesNotContain("pass").doesNotContain("/p#");
         assertThat(redacted).startsWith("https://push.example/…#");
     }
 
@@ -95,32 +90,31 @@ class EndpointsTest {
         assertThatCode(() -> Endpoints.redact("")).doesNotThrowAnyException();
         assertThat(Endpoints.redact("")).startsWith("<opaque endpoint>#");
 
-        assertThatThrownBy(() -> Endpoints.requireSecure(""))
-            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> Endpoints.requireSecure("")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void requireSecureAcceptsHttps() {
         assertThatCode(() -> Endpoints.requireSecure("https://push.example.net/subscriber-token"))
-            .doesNotThrowAnyException();
+                .doesNotThrowAnyException();
     }
 
     @Test
     void requireSecureRejectsHttp() {
         assertThatThrownBy(() -> Endpoints.requireSecure("http://push.example.net/subscriber-token"))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("https")
-            .hasMessageNotContaining("subscriber-token");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("https")
+                .hasMessageNotContaining("subscriber-token");
     }
 
     @Test
     void requireSecureRejectsRelativeUriAndUriWithoutHost() {
         assertThatThrownBy(() -> Endpoints.requireSecure("/just/a/path"))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageNotContaining("/just/a/path");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("/just/a/path");
         assertThatThrownBy(() -> Endpoints.requireSecure("https:///no-host-here"))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageNotContaining("no-host-here");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("no-host-here");
     }
 
     @Test
@@ -129,31 +123,31 @@ class EndpointsTest {
         // invalid in a hostname per RFC 1123) and returns getHost() == null, so the null-host
         // check rejects it. Deliberate behavior, pinned here so it does not read as a bug.
         assertThatThrownBy(() -> Endpoints.requireSecure("https://exa_mple.com/subscriber-token"))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("absolute https URL")
-            .hasMessageNotContaining("subscriber-token");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute https URL")
+                .hasMessageNotContaining("subscriber-token");
     }
 
     @Test
     void requireSecureRejectsUnparseableUriWithoutEchoingIt() {
         assertThatThrownBy(() -> Endpoints.requireSecure("http://exa mple.com/secret-path"))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("subscription endpoint is not a valid URI")
-            .hasNoCause();
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("subscription endpoint is not a valid URI")
+                .hasNoCause();
     }
 
     @Test
     void plaintextSeamAllowsHttpAndRestoresStateOnClose() throws Exception {
         try (AutoCloseable seam = Endpoints.allowPlaintextEndpointsForTests()) {
             assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1:8080/push"))
-                .doesNotThrowAnyException();
+                    .doesNotThrowAnyException();
             assertThatThrownBy(() -> Endpoints.requireSecure("/still/not/absolute"))
-                .as("absoluteness and host checks stay active under the seam")
-                .isInstanceOf(IllegalArgumentException.class);
+                    .as("absoluteness and host checks stay active under the seam")
+                    .isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(() -> Endpoints.requireSecure("http://127.0.0.1:8080/push"))
-            .as("http is rejected again after close()")
-            .isInstanceOf(IllegalArgumentException.class);
+                .as("http is rejected again after close()")
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -161,13 +155,13 @@ class EndpointsTest {
         try (AutoCloseable outer = Endpoints.allowPlaintextEndpointsForTests()) {
             try (AutoCloseable inner = Endpoints.allowPlaintextEndpointsForTests()) {
                 assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-                    .doesNotThrowAnyException();
+                        .doesNotThrowAnyException();
             }
             assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-                .as("closing the inner seam keeps the outer one active")
-                .doesNotThrowAnyException();
+                    .as("closing the inner seam keeps the outer one active")
+                    .doesNotThrowAnyException();
         }
         assertThatThrownBy(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-            .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

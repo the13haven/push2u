@@ -1,12 +1,13 @@
 # push2u's own version catalog — this is a standalone composite build (see settings.gradle.kts).
-# Test stack only; zero runtime dependencies is a deliberate design constraint of the library
-# core. Versions verified present on Maven Central.
+# Zero runtime IMPLEMENTATION dependencies is a deliberate design constraint of the library core:
+# apart from JSpecify (annotations only, no code), everything below is test- or build-scoped. Versions verified present on Maven Central.
 [versions]
 junit = "6.1.2"
 assertj = "3.27.7"
 testcontainers = "2.0.5"
 # Spring Boot — only for the push2u-spring-boot-starter module's auto-configuration (the core
-# stays Spring-free / zero runtime-dep). Targets 4.x: push2u is a new library, so its
+# stays Spring-free, with no runtime implementation dependencies). Targets 4.x: push2u is a new
+# library, so its
 # adopters build on the current Spring Boot (legacy 3.x projects are unlikely to swap a working
 # web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
 springBoot = "4.1.0"
@@ -20,6 +21,29 @@ bouncycastle = "1.85"
 # bcprov ship incompatible org.bouncycastle.crypto classes and can never share a classpath.
 # Version verified present on Maven Central.
 bouncycastleFips = "2.1.3"
+
+# JSpecify — the nullness annotations the public API is marked with (@NullMarked / @Nullable), and
+# the contract NullAway verifies. An annotation-only artifact with no code of its own; exposed as
+# `api` so consumers and their tools (NullAway, IntelliJ, the Kotlin compiler) read the same
+# contract. See README "Requirements".
+jspecify = "1.0.0"
+
+# Quality tool engines — the analyser versions the Gradle plugins run (see build-logic's
+# push2u-quality convention plugin). Build-time only: none of these ever reaches a consumer's
+# classpath, so pinning them here does not dent the zero-runtime-dependency constraint.
+checkstyle = "13.9.0"
+pmd = "7.26.0"
+spotbugs = "4.10.3"
+errorprone = "2.50.0"
+nullaway = "0.13.8"
+jacoco = "0.8.15"
+palantir = "2.96.0"
+
+# Quality tool Gradle plugins — resolved by the build-logic included build, never by push2u
+# modules themselves.
+spotbugsPlugin = "6.5.9"
+errorpronePlugin = "5.1.0"
+spotlessPlugin = "8.9.0"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
@@ -46,3 +70,18 @@ bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", ver
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # BC-FIPS test provider (separate artifact line from bcprov, so outside the pin above).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }
+
+jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
+
+# Quality tool libraries. The Checkstyle/PMD/SpotBugs/JaCoCo/Palantir entries exist so the
+# convention plugin can pin the analyser version through the catalog; Error Prone and NullAway are
+# real dependencies of the `errorprone` compiler configuration.
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
+nullaway = { module = "com.uber.nullaway:nullaway", version.ref = "nullaway" }
+
+[plugins]
+# Quality plugins — consumed by build-logic (see build-logic/build.gradle.kts), which turns each
+# alias into its plugin-marker coordinates.
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugsPlugin" }
+errorprone = { id = "net.ltgt.errorprone", version.ref = "errorpronePlugin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotlessPlugin" }

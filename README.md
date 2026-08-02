@@ -1,5 +1,7 @@
 # push2u
 
+[![codecov](https://codecov.io/gh/the13haven/push2u/graph/badge.svg?token=3T4SIZKKLD)](https://codecov.io/gh/the13haven/push2u)
+
 **push2u** (*push events to user*) is a Java library for sending
 [Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
 It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, retries,
@@ -12,7 +14,9 @@ are not published to Maven Central yet. The implemented architecture is describe
 ## Features
 
 - Java 21 baseline.
-- Zero runtime dependencies in `push2u-core`.
+- Zero runtime *implementation* dependencies in `push2u-core`: the only artefact it brings along is
+  [JSpecify](https://jspecify.dev), an annotation-only jar carrying the nullness contract
+  (`@NullMarked` / `@Nullable`) that the API is verified against.
 - RFC 8291 / RFC 8188 payload encryption using JDK cryptography.
 - RFC 8292 VAPID authentication with a local EC key or an external signer.
 - JDK `HttpClient` transport, with a small transport SPI for replacements.
@@ -464,6 +468,49 @@ must be replaced.
 
 The test suite includes RFC 5869, RFC 8291, and RFC 8292 vectors, sender/retry tests, Spring Boot
 auto-configuration tests, and a Vault Transit integration contract.
+
+## Nullness
+
+Every package is [JSpecify](https://jspecify.dev) `@NullMarked`: a reference type in the API is
+non-null unless annotated `@Nullable`. The annotated exceptions are the optional message headers
+(`PushMessage.ttl` / `urgency` / `topic`), the unset builder fields and the Spring properties.
+
+The contract is machine-checked, not just documented — NullAway fails the build on a violation, and
+`RequireExplicitNullMarking` fails it on a package that forgets the mark. Because JSpecify is an
+`api` dependency, the same annotations are visible to consumers' analysers, IntelliJ and the Kotlin
+compiler.
+
+## Quality checks
+
+Static analysis and coverage are wired up as their own lifecycle tasks, so `build` stays compile +
+test only:
+
+```bash
+./gradlew qualityCheck     # local: formats the code, then runs every analyser
+./gradlew qualityCheckCi   # CI: verifies formatting instead of applying it
+```
+
+| Tool                 | What it enforces                                            | Configuration                                |
+|----------------------|-------------------------------------------------------------|----------------------------------------------|
+| Spotless             | Palantir Java Format, import order                           | `build-logic/.../push2u-quality.gradle.kts`  |
+| Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
+| PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
+| SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
+| Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
+| JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
+
+Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
+the test compilations as well, since its checks are about defects rather than style; NullAway runs
+on `main` only, where the API contract lives. Reports land in
+`<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
+`build/reports/jacoco/testCodeCoverageReport/`.
+
+Rule exclusions carry a comment stating why, and a per-file exception is a `@SuppressWarnings`
+("PMD.<Rule>") at the narrowest scope that covers it, next to the reason.
+
+`./gradlew aggregateTestResults` collects the JUnit XML of every module — `push2u-core`'s
+`fipsTest` suite included — into `build/test-results-aggregated/`. CI runs it after the quality
+check and hands that directory, plus the aggregated JaCoCo XML, to Codecov.
 
 ## License
 

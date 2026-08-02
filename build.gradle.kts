@@ -1,7 +1,17 @@
+import java.math.BigDecimal
 import org.gradle.api.plugins.JavaPluginExtension
 
 // Shared configuration for every push2u module. It lives at the standalone build root rather than
 // being duplicated per module.
+
+plugins {
+    // Convention plugin from the build-logic included build; applied to the modules below.
+    id("push2u-quality") apply false
+    // `base` gives the root the lifecycle tasks without pulling in the Java plugin; the
+    // aggregation plugin hosts the cross-module coverage report on top of it.
+    base
+    id("jacoco-report-aggregation")
+}
 
 allprojects {
     group = "io.push2u"
@@ -39,6 +49,10 @@ subprojects {
         this@subprojects.the<JavaPluginExtension>().toolchain {
             languageVersion = JavaLanguageVersion.of(26)
         }
+        // Static analysis + coverage (see build-logic/src/main/kotlin/push2u-quality.gradle.kts).
+        // Applied reactively: the modules declare `java-library` themselves, and the quality plugin
+        // configures tasks the Java plugin must have created first.
+        apply(plugin = "push2u-quality")
     }
 }
 
@@ -67,4 +81,103 @@ subprojects {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Aggregated coverage. Each module produces its own JaCoCo report; the aggregation below merges
+// them so the threshold applies to the library as a whole (a module such as
+// push2u-signer-vault-spring-boot-starter is mostly wiring and would skew a per-module rule).
+// ---------------------------------------------------------------------------------------------
+dependencies {
+    // project(path), not the Project object: passing a Project as a dependency notation is
+    // deprecated and fails in Gradle 10.
+    subprojects.forEach { jacocoAggregation(project(it.path)) }
+}
+
+reporting {
+    reports {
+        register<JacocoCoverageReport>("testCodeCoverageReport") {
+            testSuiteName = "test"
+        }
+    }
+}
+
+val aggregatedCoverageReport = tasks.named<JacocoReport>("testCodeCoverageReport")
+
+// The aggregation plugin collects execution data per JVM Test Suite, and `test` is the only suite
+// here — push2u-core's `fipsTest` is a hand-rolled source set with its own Test task (it needs a
+// bcprov-free classpath, which a suite cannot express). Its coverage would therefore be missing
+// from the aggregate, and the BC-FIPS paths would look untested. Add its execution data explicitly,
+// and depend on every module's Test tasks so the report is never built from a partial set.
+aggregatedCoverageReport {
+    val extraExecutionData = files(subprojects.map { module ->
+        module.layout.buildDirectory.file("jacoco/fipsTest.exec")
+    }).filter { it.exists() }
+
+    executionData(extraExecutionData)
+    subprojects.forEach { dependsOn(it.tasks.withType<Test>()) }
+}
+
+// `register<Type>(name)`, not the `by registering` delegate: the delegated-property syntax is
+// deprecated and scheduled for removal in Gradle 10.
+val testCodeCoverageVerification = tasks.register<JacocoCoverageVerification>("testCodeCoverageVerification") {
+    description = "Verifies aggregated code coverage meets the minimum threshold."
+    group = "verification"
+
+    dependsOn(aggregatedCoverageReport)
+
+    sourceDirectories.from(aggregatedCoverageReport.map { it.sourceDirectories })
+    classDirectories.from(aggregatedCoverageReport.map { it.classDirectories })
+    executionData.from(aggregatedCoverageReport.map { it.executionData })
+
+    violationRules {
+        rule {
+            limit {
+                minimum = BigDecimal("0.80")
+            }
+        }
+    }
+}
+
+// Gradle writes JUnit XML per module and per test task (push2u-core alone has `test` and
+// `fipsTest`). Collect all of it under one directory so a consumer that takes a single path —
+// Codecov's test-results upload, for one — sees every module's results instead of whichever one it
+// was pointed at.
+val aggregateTestResults = tasks.register<Sync>("aggregateTestResults") {
+    description = "Collects the JUnit XML of every module's test tasks into one directory."
+    group = "verification"
+
+    into(layout.buildDirectory.dir("test-results-aggregated"))
+
+    subprojects.forEach { module ->
+        // `*/*.xml` keeps one directory per test task, so push2u-core's `test` and `fipsTest`
+        // results stay apart; `into(module.name)` keeps the modules apart in turn.
+        from(module.layout.buildDirectory.dir("test-results")) {
+            include("*/*.xml")
+            into(module.name)
+        }
+        // mustRunAfter, not dependsOn: this collects whatever the invoked lifecycle task already
+        // ran, and stays usable when the build fails partway (CI calls it with `if: always()`)
+        // instead of forcing the suite to run again.
+        mustRunAfter(module.tasks.withType<Test>())
+    }
+}
+
+// Local entry point: ./gradlew qualityCheck — auto-formats, then runs every analyser.
+tasks.register("qualityCheck") {
+    description = "Runs all quality checks locally (auto-formats code)."
+    group = "verification"
+    subprojects.forEach { dependsOn("${it.path}:qualityCheck") }
+    dependsOn(testCodeCoverageVerification)
+}
+
+// CI entry point: ./gradlew qualityCheckCi --no-build-cache
+// --no-build-cache because Gradle may replay test results cached from an environment without
+// Docker, which would let the Testcontainers-backed Vault test show up as "skipped" instead of
+// running. Docker availability is not part of the cache key, so a stale hit hides real failures.
+tasks.register("qualityCheckCi") {
+    description = "Runs all quality checks in CI (verifies formatting without modifying files)."
+    group = "verification"
+    subprojects.forEach { dependsOn("${it.path}:qualityCheckCi") }
+    dependsOn(testCodeCoverageVerification)
 }

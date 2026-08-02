@@ -5,17 +5,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
+
 import org.junit.jupiter.api.Test;
 
 /**
- * Format matrix for the {@code Retry-After} parser: delta-seconds plus the three HTTP-date
- * forms (IMF-fixdate, RFC 850, asctime) against a pinned "now" (2022-11-06 was a Sunday, so
- * the day-of-week in every date vector is consistent), the RFC 9110 §5.6.7 two-digit-year
- * rule, and leap-second handling. Malformed values must yield empty — never an exception.
+ * Format matrix for the {@code Retry-After} parser: delta-seconds plus the three HTTP-date forms (IMF-fixdate, RFC 850,
+ * asctime) against a pinned "now" (2022-11-06 was a Sunday, so the day-of-week in every date vector is consistent), the
+ * RFC 9110 §5.6.7 two-digit-year rule, and leap-second handling. Malformed values must yield empty — never an
+ * exception.
  *
- * <p>Every weekday in the date vectors was verified against java.time's calendar for the year
- * the vector is expected to resolve to — a wrong weekday fails the formatter's cross-check and
- * would test nothing but the vector's own typo.
+ * <p>Every weekday in the date vectors was verified against java.time's calendar for the year the vector is expected to
+ * resolve to — a wrong weekday fails the formatter's cross-check and would test nothing but the vector's own typo.
  */
 class RetryAfterTest {
 
@@ -31,14 +31,12 @@ class RetryAfterTest {
 
     @Test
     void parsesImfFixdate() {
-        assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:37 GMT", NOW))
-            .contains(Duration.ofSeconds(37));
+        assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:37 GMT", NOW)).contains(Duration.ofSeconds(37));
     }
 
     @Test
     void parsesRfc850DateWithTwoDigitYearInTheCurrentCentury() {
-        assertThat(RetryAfter.parse("Sunday, 06-Nov-22 08:49:37 GMT", NOW))
-            .contains(Duration.ofSeconds(37));
+        assertThat(RetryAfter.parse("Sunday, 06-Nov-22 08:49:37 GMT", NOW)).contains(Duration.ofSeconds(37));
     }
 
     @Test
@@ -47,8 +45,7 @@ class RetryAfterTest {
         // most recent past year ending in 94), not 2094 — 1994-11-06 was a Sunday, so the value
         // parses and, being in the past, yields ZERO. A century pinned at 2000 read it as 2094,
         // a Saturday, and the weekday cross-check discarded the whole header as unparseable.
-        assertThat(RetryAfter.parse("Sunday, 06-Nov-94 08:49:37 GMT", NOW_2026))
-            .contains(Duration.ZERO);
+        assertThat(RetryAfter.parse("Sunday, 06-Nov-94 08:49:37 GMT", NOW_2026)).contains(Duration.ZERO);
     }
 
     @Test
@@ -57,7 +54,7 @@ class RetryAfterTest {
         // the full timestamp, not the year number. Exactly "now" plus 50 calendar years
         // (2076-08-01T00:00:00, a Saturday) is not beyond the limit, so it stays 2076.
         assertThat(RetryAfter.parse("Saturday, 01-Aug-76 00:00:00 GMT", NOW_2026))
-            .contains(Duration.between(NOW_2026, Instant.parse("2076-08-01T00:00:00Z")));
+                .contains(Duration.between(NOW_2026, Instant.parse("2076-08-01T00:00:00Z")));
     }
 
     @Test
@@ -65,8 +62,7 @@ class RetryAfterTest {
         // One second past "now" plus 50 calendar years is "more than 50 years in the future",
         // so the same two-digit year now means 1976 — whose Aug 1 was a Sunday. The past date
         // yields ZERO; empty would mean the century (and weekday) came out wrong.
-        assertThat(RetryAfter.parse("Sunday, 01-Aug-76 00:00:01 GMT", NOW_2026))
-            .contains(Duration.ZERO);
+        assertThat(RetryAfter.parse("Sunday, 01-Aug-76 00:00:01 GMT", NOW_2026)).contains(Duration.ZERO);
     }
 
     @Test
@@ -76,7 +72,7 @@ class RetryAfterTest {
         // Saturday, in the past, hence ZERO. A year-granular window kept 2076 (a Friday) and
         // rejected this correct header on the weekday cross-check.
         assertThat(RetryAfter.parse("Saturday, 06-Nov-76 08:49:37 GMT", NOW_2026))
-            .contains(Duration.ZERO);
+                .contains(Duration.ZERO);
     }
 
     @Test
@@ -91,8 +87,7 @@ class RetryAfterTest {
     void rfc850TwoDigitYearFiftyOneYearsAheadRollsBackACentury() {
         // Low-end guard: "77" reads as 1977 within [1977, 2076] — already in the past, no
         // century shift involved. 1977-11-06 was a Sunday; ZERO, since the date has passed.
-        assertThat(RetryAfter.parse("Sunday, 06-Nov-77 08:49:37 GMT", NOW_2026))
-            .contains(Duration.ZERO);
+        assertThat(RetryAfter.parse("Sunday, 06-Nov-77 08:49:37 GMT", NOW_2026)).contains(Duration.ZERO);
     }
 
     @Test
@@ -100,7 +95,7 @@ class RetryAfterTest {
         // Guards against over-correction: "26" with "now" in 2026 is 2026 itself, still ahead
         // of the pinned now. 2026-11-06 is a Friday.
         assertThat(RetryAfter.parse("Friday, 06-Nov-26 08:49:37 GMT", NOW_2026))
-            .contains(Duration.between(NOW_2026, Instant.parse("2026-11-06T08:49:37Z")));
+                .contains(Duration.between(NOW_2026, Instant.parse("2026-11-06T08:49:37Z")));
     }
 
     @Test
@@ -109,14 +104,14 @@ class RetryAfterTest {
         // "now" rather than to any hard-coded base year.
         String header = "Sunday, 06-Nov-94 08:49:37 GMT";
         assertThat(RetryAfter.parse(header, NOW_2026))
-            .as("in 2026, 94 is 1994 (a Sunday): parseable, in the past")
-            .contains(Duration.ZERO);
+                .as("in 2026, 94 is 1994 (a Sunday): parseable, in the past")
+                .contains(Duration.ZERO);
         assertThat(RetryAfter.parse(header, Instant.parse("2126-08-01T00:00:00Z")))
-            .as("a century later, 94 is 2094 — a Saturday, so the stated Sunday matches only"
-                + " 1994, a reading the rule no longer allows: empty, which also pins that the"
-                + " previous-century fallback stays off while the recent reading is within 50"
-                + " years; a base year frozen at 2026 would still return ZERO")
-            .isEmpty();
+                .as("a century later, 94 is 2094 — a Saturday, so the stated Sunday matches only"
+                        + " 1994, a reading the rule no longer allows: empty, which also pins that the"
+                        + " previous-century fallback stays off while the recent reading is within 50"
+                        + " years; a base year frozen at 2026 would still return ZERO")
+                .isEmpty();
     }
 
     @Test
@@ -129,7 +124,7 @@ class RetryAfterTest {
         // Thursday then failed the weekday cross-check and dropped this correct header.
         Instant nowAtBoundary = Instant.parse("2026-12-31T23:59:59Z");
         assertThat(RetryAfter.parse("Friday, 31-Dec-76 23:59:60 GMT", nowAtBoundary))
-            .contains(Duration.ZERO);
+                .contains(Duration.ZERO);
     }
 
     @Test
@@ -139,7 +134,7 @@ class RetryAfterTest {
         // the century the rule rejects — empty, not a fifty-year delay.
         Instant nowAtBoundary = Instant.parse("2026-12-31T23:59:59Z");
         assertThat(RetryAfter.parse("Thursday, 31-Dec-76 23:59:60 GMT", nowAtBoundary))
-            .isEmpty();
+                .isEmpty();
     }
 
     @Test
@@ -149,13 +144,12 @@ class RetryAfterTest {
         // stands. This pins that the fix moved only the leap-second case.
         Instant nowAtBoundary = Instant.parse("2026-12-31T23:59:59Z");
         assertThat(RetryAfter.parse("Thursday, 31-Dec-76 23:59:59 GMT", nowAtBoundary))
-            .contains(Duration.between(nowAtBoundary, Instant.parse("2076-12-31T23:59:59Z")));
+                .contains(Duration.between(nowAtBoundary, Instant.parse("2076-12-31T23:59:59Z")));
     }
 
     @Test
     void parsesAsctimeDateAsUtc() {
-        assertThat(RetryAfter.parse("Sun Nov  6 08:49:37 2022", NOW))
-            .contains(Duration.ofSeconds(37));
+        assertThat(RetryAfter.parse("Sun Nov  6 08:49:37 2022", NOW)).contains(Duration.ofSeconds(37));
     }
 
     @Test
@@ -163,22 +157,21 @@ class RetryAfterTest {
         // HTTP-date allows a seconds value of 60; NOW is 08:49:00, so :60 (= 08:50:00, one
         // second past the :59 instant) must come out as exactly 60 seconds in every format.
         assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:60 GMT", NOW))
-            .as("IMF-fixdate")
-            .contains(Duration.ofSeconds(60));
+                .as("IMF-fixdate")
+                .contains(Duration.ofSeconds(60));
         assertThat(RetryAfter.parse("Sunday, 06-Nov-22 08:49:60 GMT", NOW))
-            .as("RFC 850")
-            .contains(Duration.ofSeconds(60));
+                .as("RFC 850")
+                .contains(Duration.ofSeconds(60));
         assertThat(RetryAfter.parse("Sun Nov  6 08:49:60 2022", NOW))
-            .as("asctime")
-            .contains(Duration.ofSeconds(60));
+                .as("asctime")
+                .contains(Duration.ofSeconds(60));
     }
 
     @Test
     void nonLeapSecondsValueParsesUnchanged() {
         // Guard against the leap-second normalisation firing on an ordinary value: :59 is 59
         // seconds after NOW, not 60.
-        assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:59 GMT", NOW))
-            .contains(Duration.ofSeconds(59));
+        assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:59 GMT", NOW)).contains(Duration.ofSeconds(59));
     }
 
     @Test
@@ -186,7 +179,7 @@ class RetryAfterTest {
         // A "60" in the year must not be rewritten: the delay to 2060-11-06T08:49:37Z (a
         // Saturday) must be exact, not one second longer.
         assertThat(RetryAfter.parse("Sat, 06 Nov 2060 08:49:37 GMT", NOW))
-            .contains(Duration.between(NOW, Instant.parse("2060-11-06T08:49:37Z")));
+                .contains(Duration.between(NOW, Instant.parse("2060-11-06T08:49:37Z")));
         // A "60" in the minutes field is plain invalid — not a leap second, never normalised.
         assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:60:37 GMT", NOW)).isEmpty();
     }
@@ -199,23 +192,23 @@ class RetryAfterTest {
         // a parser whose contract is to never throw. Only the first group is substituted, and a
         // value with a second time-of-day is malformed anyway, so it must simply come back empty.
         assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:60 08:49:60 GMT", NOW))
-            .as("two time-of-day groups is not a valid HTTP-date")
-            .isEmpty();
+                .as("two time-of-day groups is not a valid HTTP-date")
+                .isEmpty();
 
         String hostile = "Sun, 06 Nov 2022 " + "08:49:60 ".repeat(20_000) + "GMT";
         assertThat(RetryAfter.parse(hostile, NOW))
-            .as("a large adversarial value returns empty rather than throwing")
-            .isEmpty();
+                .as("a large adversarial value returns empty rather than throwing")
+                .isEmpty();
     }
 
     @Test
     void dateAtOrBeforeNowYieldsZero() {
         assertThat(RetryAfter.parse("Sat, 05 Nov 2022 08:49:00 GMT", NOW))
-            .as("date in the past")
-            .contains(Duration.ZERO);
+                .as("date in the past")
+                .contains(Duration.ZERO);
         assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:00 GMT", NOW))
-            .as("date exactly at now")
-            .contains(Duration.ZERO);
+                .as("date exactly at now")
+                .contains(Duration.ZERO);
     }
 
     @Test
@@ -263,14 +256,14 @@ class RetryAfterTest {
         Locale.setDefault(Locale.forLanguageTag("ru-RU"));
         try {
             assertThat(RetryAfter.parse("Sun, 06 Nov 2022 08:49:37 GMT", NOW))
-                .as("IMF-fixdate under ru-RU")
-                .contains(Duration.ofSeconds(37));
+                    .as("IMF-fixdate under ru-RU")
+                    .contains(Duration.ofSeconds(37));
             assertThat(RetryAfter.parse("Sunday, 06-Nov-22 08:49:37 GMT", NOW))
-                .as("RFC 850 under ru-RU")
-                .contains(Duration.ofSeconds(37));
+                    .as("RFC 850 under ru-RU")
+                    .contains(Duration.ofSeconds(37));
             assertThat(RetryAfter.parse("Sun Nov  6 08:49:37 2022", NOW))
-                .as("asctime under ru-RU")
-                .contains(Duration.ofSeconds(37));
+                    .as("asctime under ru-RU")
+                    .contains(Duration.ofSeconds(37));
         } finally {
             Locale.setDefault(previous);
         }

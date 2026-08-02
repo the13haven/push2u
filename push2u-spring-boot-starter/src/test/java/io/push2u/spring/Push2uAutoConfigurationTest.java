@@ -3,14 +3,6 @@ package io.push2u.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.push2u.LocalEcVapidSigner;
-import io.push2u.PushHttpClient;
-import io.push2u.PushMessage;
-import io.push2u.PushResponse;
-import io.push2u.PushResult;
-import io.push2u.PushSender;
-import io.push2u.Subscription;
-import io.push2u.VapidSigner;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -19,18 +11,28 @@ import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.util.Base64;
 import java.util.Map;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import io.push2u.LocalEcVapidSigner;
+import io.push2u.PushHttpClient;
+import io.push2u.PushMessage;
+import io.push2u.PushResponse;
+import io.push2u.PushResult;
+import io.push2u.PushSender;
+import io.push2u.Subscription;
+import io.push2u.VapidSigner;
+
 /**
- * {@link Push2uAutoConfiguration} wires a {@link PushSender} (and an Actuator health indicator)
- * from {@code push2u.*} properties, backing off to application-supplied beans.
+ * {@link Push2uAutoConfiguration} wires a {@link PushSender} (and an Actuator health indicator) from {@code push2u.*}
+ * properties, backing off to application-supplied beans.
  */
 class Push2uAutoConfigurationTest {
 
@@ -42,7 +44,8 @@ class Push2uAutoConfigurationTest {
     private static String subscriptionKeyB64;
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class, Push2uHealthAutoConfiguration.class));
+            .withConfiguration(
+                    AutoConfigurations.of(Push2uAutoConfiguration.class, Push2uHealthAutoConfiguration.class));
 
     @BeforeAll
     static void generateVapidKeys() throws Exception {
@@ -84,20 +87,20 @@ class Push2uAutoConfigurationTest {
         // rather than yield a sender that collects 401/403 on every send. The failure must not
         // print key material.
         runner.withPropertyValues(
-                "push2u.vapid.public-key=" + otherPublicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64,
-                "push2u.vapid.subject=mailto:admin@example.com")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("does not correspond");
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .hasMessageNotContaining(otherPublicKeyB64)
-                    .hasMessageNotContaining(privateKeyB64);
-            });
+                        "push2u.vapid.public-key=" + otherPublicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("does not correspond");
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageNotContaining(otherPublicKeyB64)
+                            .hasMessageNotContaining(privateKeyB64);
+                });
     }
 
     @Test
@@ -105,30 +108,29 @@ class Push2uAutoConfigurationTest {
         // The starter's own pre-flight, not PushSender.Builder's generic "contact is required":
         // the failure must point at the concrete property to set.
         runner.withPropertyValues(
-                "push2u.vapid.public-key=" + publicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64)
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("push2u.vapid.subject");
-            });
+                        "push2u.vapid.public-key=" + publicKeyB64, "push2u.vapid.private-key=" + privateKeyB64)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.vapid.subject");
+                });
     }
 
     @Test
     void blankSubjectFailsTheContextTheSameWayAsAnAbsentOne() {
         runner.withPropertyValues(
-                "push2u.vapid.public-key=" + publicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64,
-                "push2u.vapid.subject=   ")
-            .run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .rootCause()
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("push2u.vapid.subject");
-            });
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=   ")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.vapid.subject");
+                });
     }
 
     @Test
@@ -147,14 +149,13 @@ class Push2uAutoConfigurationTest {
         // signer present, the health indicator has the VapidSigner it needs, so the field runner
         // (which includes Push2uHealthAutoConfiguration) works unmodified.
         runner.withPropertyValues(
-                "push2u.vapid.public-key=" + publicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64)
-            .withUserConfiguration(CustomSenderConfiguration.class)
-            .run(context -> {
-                assertThat(context).hasNotFailed();
-                assertThat(context).hasSingleBean(PushSender.class);
-                assertThat(context.getBean(PushSender.class)).isSameAs(CustomSenderConfiguration.SENDER);
-            });
+                        "push2u.vapid.public-key=" + publicKeyB64, "push2u.vapid.private-key=" + privateKeyB64)
+                .withUserConfiguration(CustomSenderConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    assertThat(context.getBean(PushSender.class)).isSameAs(CustomSenderConfiguration.SENDER);
+                });
     }
 
     @Test
@@ -163,17 +164,18 @@ class Push2uAutoConfigurationTest {
         // dropped by sending a payload that only fits under the raised limits. A stub transport
         // stands in for the network — the point under test is the size precondition, not delivery.
         keyedRunner()
-            .withPropertyValues("push2u.record-size=8192", "push2u.max-encrypted-body-bytes=8192")
-            .withUserConfiguration(StubHttpClientConfiguration.class)
-            .run(context -> {
-                assertThat(context).hasSingleBean(PushSender.class);
-                PushSender sender = context.getBean(PushSender.class);
-                // 4096 plaintext bytes: rejected by the PushSender defaults (rs=4096, body cap
-                // 4096 -> 3993 max plaintext) but accepted once record-size/max-encrypted-body-bytes
-                // are raised, proving the properties actually reached the builder.
-                PushResult result = sender.send(subscription(), PushMessage.builder(new byte[4096]).build());
-                assertThat(result.delivered()).isTrue();
-            });
+                .withPropertyValues("push2u.record-size=8192", "push2u.max-encrypted-body-bytes=8192")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    PushSender sender = context.getBean(PushSender.class);
+                    // 4096 plaintext bytes: rejected by the PushSender defaults (rs=4096, body cap
+                    // 4096 -> 3993 max plaintext) but accepted once record-size/max-encrypted-body-bytes
+                    // are raised, proving the properties actually reached the builder.
+                    PushResult result = sender.send(
+                            subscription(), PushMessage.builder(new byte[4096]).build());
+                    assertThat(result.delivered()).isTrue();
+                });
     }
 
     @Test
@@ -184,9 +186,10 @@ class Push2uAutoConfigurationTest {
         // of the record-size one — hence the assertion on that particular message.
         keyedRunner().run(context -> {
             PushSender sender = context.getBean(PushSender.class);
-            assertThatThrownBy(() -> sender.send(subscription(), PushMessage.builder(new byte[4096]).build()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("exceeding the configured maximum");
+            assertThatThrownBy(() -> sender.send(
+                            subscription(), PushMessage.builder(new byte[4096]).build()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("exceeding the configured maximum");
         });
     }
 
@@ -203,9 +206,9 @@ class Push2uAutoConfigurationTest {
         keyedRunner().withPropertyValues("push2u.record-size=10").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
-                context.getStartupFailure(), IllegalArgumentException.class, "push2u.record-size:"))
-                .hasMessageContaining("push2u.record-size:")
-                .hasMessageContaining("recordSize must be at least");
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.record-size:"))
+                    .hasMessageContaining("push2u.record-size:")
+                    .hasMessageContaining("recordSize must be at least");
         });
     }
 
@@ -214,9 +217,11 @@ class Push2uAutoConfigurationTest {
         keyedRunner().withPropertyValues("push2u.max-encrypted-body-bytes=10").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
-                context.getStartupFailure(), IllegalArgumentException.class, "push2u.max-encrypted-body-bytes:"))
-                .hasMessageContaining("push2u.max-encrypted-body-bytes:")
-                .hasMessageContaining("maxEncryptedBodyBytes must be at least");
+                            context.getStartupFailure(),
+                            IllegalArgumentException.class,
+                            "push2u.max-encrypted-body-bytes:"))
+                    .hasMessageContaining("push2u.max-encrypted-body-bytes:")
+                    .hasMessageContaining("maxEncryptedBodyBytes must be at least");
         });
     }
 
@@ -244,40 +249,54 @@ class Push2uAutoConfigurationTest {
         keyedRunner().withUserConfiguration(FailingSignerConfiguration.class).run(context -> {
             Health health = context.getBean(Push2uHealthIndicator.class).health();
             assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-            assertThat(health.getDetails()).containsKey("error");
+            assertThat(health.getDetails()).containsEntry("error", "signer backend unavailable");
         });
+    }
+
+    @Test
+    void healthIndicatorReportsDownWhenTheSignerFailsWithoutAMessage() {
+        keyedRunner()
+                .withUserConfiguration(MessagelessFailingSignerConfiguration.class)
+                .run(context -> {
+                    // Health.Builder.withDetail rejects a null value, so passing getMessage() through would
+                    // make health() throw instead of reporting the failure it exists to report.
+                    Health health = context.getBean(Push2uHealthIndicator.class).health();
+                    assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+                    assertThat(health.getDetails()).containsEntry("error", IllegalStateException.class.getName());
+                });
     }
 
     private ApplicationContextRunner keyedRunner() {
         return runner.withPropertyValues(
-            "push2u.vapid.public-key=" + publicKeyB64,
-            "push2u.vapid.private-key=" + privateKeyB64,
-            "push2u.vapid.subject=mailto:admin@example.com");
+                "push2u.vapid.public-key=" + publicKeyB64,
+                "push2u.vapid.private-key=" + privateKeyB64,
+                "push2u.vapid.subject=mailto:admin@example.com");
     }
 
     /** A well-formed subscription unrelated to the VAPID key pair under test. */
     private static Subscription subscription() {
         return Subscription.fromBase64(
-            "https://push.example.test/send/abc",
-            subscriptionKeyB64,
-            Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]));
+                "https://push.example.test/send/abc",
+                subscriptionKeyB64,
+                Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]));
     }
 
     /**
-     * The first throwable that is an instance of {@code type} in {@code root}'s cause chain
-     * (inclusive) whose message contains {@code needle} — including subtypes of {@code type}.
-     * Unlike a plain message search, this will not match an outer wrapper (e.g. Spring's
-     * {@code BeanCreationException}) whose own message happens to echo a nested cause's text.
+     * The first throwable that is an instance of {@code type} in {@code root}'s cause chain (inclusive) whose message
+     * contains {@code needle} — including subtypes of {@code type}. Unlike a plain message search, this will not match
+     * an outer wrapper (e.g. Spring's {@code BeanCreationException}) whose own message happens to echo a nested cause's
+     * text.
      */
     private static <T extends Throwable> T firstOfTypeContaining(Throwable root, Class<T> type, String needle) {
         for (Throwable current = root; current != null; current = current.getCause()) {
-            if (type.isInstance(current) && current.getMessage() != null && current.getMessage().contains(needle)) {
+            if (type.isInstance(current)
+                    && current.getMessage() != null
+                    && current.getMessage().contains(needle)) {
                 return type.cast(current);
             }
         }
-        throw new AssertionError(
-            "no " + type.getSimpleName() + " in the cause chain of " + root + " has a message containing \""
-                + needle + "\"");
+        throw new AssertionError("no " + type.getSimpleName() + " in the cause chain of " + root
+                + " has a message containing \"" + needle + "\"");
     }
 
     /** Answers every POST with 201, so size-limit tests never touch the network. */
@@ -294,21 +313,21 @@ class Push2uAutoConfigurationTest {
     static class CustomSenderConfiguration {
 
         static final PushSender SENDER = PushSender.builder()
-            .signer(new VapidSigner() {
-                @Override
-                public byte[] sign(byte[] signingInput) {
-                    return new byte[64];
-                }
+                .signer(new VapidSigner() {
+                    @Override
+                    public byte[] sign(byte[] signingInput) {
+                        return new byte[64];
+                    }
 
-                @Override
-                public byte[] publicKey() {
-                    byte[] key = new byte[65];
-                    key[0] = 0x04;
-                    return key;
-                }
-            })
-            .contact("mailto:ops@example.com")
-            .build();
+                    @Override
+                    public byte[] publicKey() {
+                        byte[] key = new byte[65];
+                        key[0] = 0x04;
+                        return key;
+                    }
+                })
+                .contact("mailto:ops@example.com")
+                .build();
 
         @Bean
         PushSender applicationSender() {
@@ -336,6 +355,29 @@ class Push2uAutoConfigurationTest {
         @Bean
         VapidSigner applicationSigner() {
             return SIGNER;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class MessagelessFailingSignerConfiguration {
+
+        @Bean
+        VapidSigner failingSigner() {
+            return new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    // No message — Health.Builder rejects a null detail value, so the indicator
+                    // must not pass getMessage() through unguarded.
+                    throw new IllegalStateException();
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            };
         }
     }
 

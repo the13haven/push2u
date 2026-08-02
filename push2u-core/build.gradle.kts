@@ -5,7 +5,7 @@ plugins {
     `java-test-fixtures`
 }
 
-description = "push2u-core — zero-dependency JVM Web Push library core " +
+description = "push2u-core — JVM Web Push library core with no runtime implementation dependencies " +
     "(RFC 8030/8291/8292/8188): VAPID-authenticated, end-to-end-encrypted push delivery " +
     "from a Java application server to browser push services."
 
@@ -28,12 +28,18 @@ val fipsTest: SourceSet = sourceSets.create("fipsTest") {
 }
 
 // Toolchain (JDK 26) + `--release 21` + JUnit Platform are configured for every module in the
-// composite-build root build.gradle.kts. Zero runtime dependencies is a deliberate design
-// constraint of the core — the library replaces nl.martijndwars:web-push precisely because it
+// composite-build root build.gradle.kts. Zero runtime IMPLEMENTATION dependencies is a deliberate design
+// constraint of the core (JSpecify, the lone `api` entry below, ships annotations and no code) —
+// the library replaces nl.martijndwars:web-push precisely because it
 // dragged a heavy transitive surface (EOL Apache HttpClient 4.x, plus jose4j and BouncyCastle)
 // and leaked it into its public API. The only declared deps are the test stack (JUnit + AssertJ)
 // from the version catalog.
 dependencies {
+    // JSpecify: annotations only, no code. `api` so the nullness contract travels with the
+    // published API — consumers' analysers read the same @NullMarked/@Nullable the core is built
+    // against. This is the single non-test dependency the core carries.
+    api(libs.jspecify)
+
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
@@ -41,7 +47,7 @@ dependencies {
 
     // Stock BouncyCastle for the ES256 provider-matrix tests: it registers raw-format ECDSA
     // (SHA256withECDSAinP1363Format) and exercises the direct r||s path. Test-scoped only — the
-    // library core keeps zero runtime dependencies. bc-fips must NOT be added here (see the
+    // library core keeps no runtime implementation dependencies. bc-fips must NOT be added here (see the
     // fipsTest source set above).
     testImplementation(libs.bouncycastle.bcprov)
 

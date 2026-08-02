@@ -10,6 +10,7 @@ description = "push2u-signer-vault-spring-boot-starter — Spring Boot auto-conf
 dependencies {
     api(platform(libs.spring.boot.dependencies))
     api(project(":push2u-signer-vault"))
+    api(libs.jspecify)
     api(libs.spring.boot.autoconfigure)
     annotationProcessor(platform(libs.spring.boot.dependencies))
     annotationProcessor(libs.spring.boot.configuration.processor)

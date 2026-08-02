@@ -3,26 +3,27 @@ package io.push2u.signer.vault;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.push2u.PushCryptoException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
+
 import org.junit.jupiter.api.Test;
 
+import io.push2u.PushCryptoException;
+
 /**
- * {@link VaultTransitVapidSigner#sign} against synthetic Transit {@code sign} response bodies, via
- * a stub {@link VaultHttpTransport} — no Vault. Two properties a real dev-mode Vault never
- * exercises:
+ * {@link VaultTransitVapidSigner#sign} against synthetic Transit {@code sign} response bodies, via a stub
+ * {@link VaultHttpTransport} — no Vault. Two properties a real dev-mode Vault never exercises:
  *
  * <ul>
- *   <li><b>Signature shape:</b> a decoded signature that is not the 64-byte ES256 {@code r || s}
- *       pair must fail loudly at the signer — otherwise the malformed blob rides into the VAPID JWT
- *       and surfaces only as an opaque push-service rejection, far from the cause.</li>
- *   <li><b>Anchored extraction:</b> the {@code signature} lookup must bind to the direct member of
- *       {@code data} — a string <em>value</em> that merely equals {@code "signature"}, or a
- *       lookalike member nested deeper, must never hijack it.</li>
+ *   <li><b>Signature shape:</b> a decoded signature that is not the 64-byte ES256 {@code r || s} pair must fail loudly
+ *       at the signer — otherwise the malformed blob rides into the VAPID JWT and surfaces only as an opaque
+ *       push-service rejection, far from the cause.
+ *   <li><b>Anchored extraction:</b> the {@code signature} lookup must bind to the direct member of {@code data} — a
+ *       string <em>value</em> that merely equals {@code "signature"}, or a lookalike member nested deeper, must never
+ *       hijack it.
  * </ul>
  */
 class VaultTransitVapidSignerSignResponseTest {
@@ -46,7 +47,7 @@ class VaultTransitVapidSignerSignResponseTest {
             }
         };
         return new VaultTransitVapidSigner(
-            URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, stub);
+                URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, stub);
     }
 
     private static byte[] sign(String responseBody) {
@@ -80,9 +81,12 @@ class VaultTransitVapidSignerSignResponseTest {
         String padded = Base64.getUrlEncoder().encodeToString(expected);
 
         assertThat(sign("{\"data\":{\"signature\":\"vault:v42:" + BASE64_URL.encodeToString(expected) + "\"}}"))
-            .isEqualTo(expected);
-        assertThat(padded).as("the padded form is what this test means to exercise").endsWith("==");
-        assertThat(sign("{\"data\":{\"signature\":\"vault:v1:" + padded + "\"}}")).isEqualTo(expected);
+                .isEqualTo(expected);
+        assertThat(padded)
+                .as("the padded form is what this test means to exercise")
+                .endsWith("==");
+        assertThat(sign("{\"data\":{\"signature\":\"vault:v1:" + padded + "\"}}"))
+                .isEqualTo(expected);
     }
 
     @Test
@@ -90,12 +94,12 @@ class VaultTransitVapidSignerSignResponseTest {
         // "vault:v1:" with nothing after the prefix decodes to zero bytes — historically that
         // zero-length "signature" went straight into the JWT.
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:\"}}"))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("expected 64 bytes")
-            .hasMessageContaining("got 0")
-            .satisfies(e -> assertThat(e.getMessage())
-                .as("the Vault token never leaks into the error message")
-                .doesNotContain(TOKEN));
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("expected 64 bytes")
+                .hasMessageContaining("got 0")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .as("the Vault token never leaks into the error message")
+                        .doesNotContain(TOKEN));
     }
 
     @Test
@@ -103,12 +107,12 @@ class VaultTransitVapidSignerSignResponseTest {
         String truncated = BASE64_URL.encodeToString(new byte[32]);
 
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:" + truncated + "\"}}"))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("expected 64 bytes")
-            .hasMessageContaining("got 32")
-            .satisfies(e -> assertThat(e.getMessage())
-                .as("the Vault token never leaks into the error message")
-                .doesNotContain(TOKEN));
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("expected 64 bytes")
+                .hasMessageContaining("got 32")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .as("the Vault token never leaks into the error message")
+                        .doesNotContain(TOKEN));
     }
 
     @Test
@@ -116,12 +120,12 @@ class VaultTransitVapidSignerSignResponseTest {
         // Characters outside the base64url alphabet mean the envelope is not a Transit signature at
         // all, which is caught before decoding — and reported without echoing the payload.
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:%%not-base64%%\"}}"))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("expected 'vault:v<version>:<base64url>'")
-            .satisfies(e -> assertThat(e.getMessage())
-                .as("neither the Vault token nor the payload leaks into the error message")
-                .doesNotContain(TOKEN)
-                .doesNotContain("%%not-base64%%"));
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("expected 'vault:v<version>:<base64url>'")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .as("neither the Vault token nor the payload leaks into the error message")
+                        .doesNotContain(TOKEN)
+                        .doesNotContain("%%not-base64%%"));
     }
 
     @Test
@@ -130,9 +134,9 @@ class VaultTransitVapidSignerSignResponseTest {
         // envelope check passes and the decoder's bare IllegalArgumentException must still be
         // converted rather than escaping the library.
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:AAAAA\"}}"))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("not valid base64url")
-            .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("not valid base64url")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
     }
 
     @Test
@@ -142,12 +146,12 @@ class VaultTransitVapidSignerSignResponseTest {
         // of these tails is alphabet-clean and 64 bytes' worth, so a lastIndexOf(':') strip would
         // decode one and sign the VAPID JWT with it.
         String tail = BASE64_URL.encodeToString(wellFormedSignature());
-        for (String value : new String[] {
-            "vault:kv:" + tail, "hvs:v1:" + tail, "vault:v1:v2:" + tail, "wrapped:" + tail, tail}) {
+        for (String value :
+                new String[] {"vault:kv:" + tail, "hvs:v1:" + tail, "vault:v1:v2:" + tail, "wrapped:" + tail, tail}) {
             assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"" + value + "\"}}"))
-                .as("signature: %s", value)
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("expected 'vault:v<version>:<base64url>'");
+                    .as("signature: %s", value)
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("expected 'vault:v<version>:<base64url>'");
         }
     }
 
@@ -158,12 +162,12 @@ class VaultTransitVapidSignerSignResponseTest {
         String filler = "x".repeat(100_000);
 
         assertThatThrownBy(() -> sign("{\"data\":{\"filler\":\"" + filler + "\"}}"))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("no 'signature' field")
-            .hasMessageContaining("[truncated,")
-            .satisfies(e -> assertThat(e.getMessage().length())
-                .as("the echoed body is cut to a few KB")
-                .isLessThan(4096));
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no 'signature' field")
+                .hasMessageContaining("[truncated,")
+                .satisfies(e -> assertThat(e.getMessage().length())
+                        .as("the echoed body is cut to a few KB")
+                        .isLessThan(4096));
     }
 
     @Test
@@ -176,8 +180,8 @@ class VaultTransitVapidSignerSignResponseTest {
         Arrays.fill(impostor, (byte) 0xFF);
         byte[] real = wellFormedSignature();
         String body = "{\"data\":{\"alias\":\"signature\","
-            + "\"next\":\"vault:v9:" + BASE64_URL.encodeToString(impostor) + "\","
-            + "\"signature\":\"vault:v1:" + BASE64_URL.encodeToString(real) + "\"}}";
+                + "\"next\":\"vault:v9:" + BASE64_URL.encodeToString(impostor) + "\","
+                + "\"signature\":\"vault:v1:" + BASE64_URL.encodeToString(real) + "\"}}";
 
         assertThat(sign(body)).isEqualTo(real);
     }
@@ -188,10 +192,10 @@ class VaultTransitVapidSignerSignResponseTest {
         // depth-blind search would happily return. It is not a direct member of data, so the
         // extraction must fail loudly instead.
         String nested = "{\"data\":{\"meta\":{\"signature\":\"vault:v1:"
-            + BASE64_URL.encodeToString(wellFormedSignature()) + "\"}}}";
+                + BASE64_URL.encodeToString(wellFormedSignature()) + "\"}}}";
 
         assertThatThrownBy(() -> sign(nested))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("no 'signature' field");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no 'signature' field");
     }
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!--
+        SpotBugs exclusion filter for push2u.
+        Every exclusion must carry a comment explaining why the finding is a false positive here.
+        See: https://spotbugs.readthedocs.io/en/stable/filter.html
+    -->
+
+    <!--
+        EI_EXPOSE_REP: PushResponse's compact constructor rebuilds the header map with
+        Collectors.toUnmodifiableMap, so the record component the accessor hands back is already
+        immutable. SpotBugs only sees the Map interface and cannot tell.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP"/>
+        <Class name="io.push2u.PushResponse"/>
+        <Field name="headers"/>
+    </Match>
+
+    <!--
+        EI_EXPOSE_REP2: a java.security.Provider is a shared JCA service registry, not data. The
+        caller passes the very instance it wants the crypto to run on — copying it (Provider extends
+        Properties, so it is technically mutable) would defeat the point of the builder method.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="io.push2u.PushSender$Builder"/>
+        <Field name="cryptoProvider"/>
+    </Match>
+</FindBugsFilter>

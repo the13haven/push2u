@@ -14,24 +14,23 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+
 import org.junit.jupiter.api.Test;
 
 /**
- * The signer routes <em>both</em> Vault calls through the supplied {@link VaultHttpTransport}: the
- * fetched mode's {@code transit/keys/<name>} metadata GET and the {@code transit/sign/<name>}
- * POST. Routing both through one transport is a guarantee this module adopted deliberately, not a
- * bug fix: the earlier seam was push2u-core's POST-only {@link io.push2u.PushHttpClient}, so the
- * metadata GET necessarily used a private JDK client, and an application's mTLS/proxy/observability
- * configuration reached only the sign call. This test pins the guarantee — a future refactor must
- * not quietly reintroduce a second client.
+ * The signer routes <em>both</em> Vault calls through the supplied {@link VaultHttpTransport}: the fetched mode's
+ * {@code transit/keys/<name>} metadata GET and the {@code transit/sign/<name>} POST. Routing both through one transport
+ * is a guarantee this module adopted deliberately, not a bug fix: the earlier seam was push2u-core's POST-only
+ * {@link io.push2u.PushHttpClient}, so the metadata GET necessarily used a private JDK client, and an application's
+ * mTLS/proxy/observability configuration reached only the sign call. This test pins the guarantee — a future refactor
+ * must not quietly reintroduce a second client.
  */
 class VaultTransitVapidSignerTransportTest {
 
     private static final String TOKEN = "s.push2u-test-vault-token";
 
     /** One observed transport call: method, URI, and whether the token header was present. */
-    private record Call(String method, URI uri, boolean tokenHeader) {
-    }
+    private record Call(String method, URI uri, boolean tokenHeader) {}
 
     /** Answers GET with Transit key metadata and POST with a well-formed sign response. */
     private static final class RecordingVaultTransport implements VaultHttpTransport {
@@ -62,36 +61,35 @@ class VaultTransitVapidSignerTransportTest {
         KeyPair keyPair = generateP256KeyPair();
         RecordingVaultTransport transport = new RecordingVaultTransport(metadataBody(keyPair));
 
-        VaultTransitVapidSigner signer = new VaultTransitVapidSigner(
-            URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, transport);
+        VaultTransitVapidSigner signer =
+                new VaultTransitVapidSigner(URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, transport);
         byte[] signature = signer.sign("transport probe".getBytes(StandardCharsets.UTF_8));
 
         assertThat(signature).hasSize(64);
         assertThat(signer.publicKey())
-            .as("the fetched public key comes from the transport's metadata response")
-            .isEqualTo(uncompressed((ECPublicKey) keyPair.getPublic()));
+                .as("the fetched public key comes from the transport's metadata response")
+                .isEqualTo(uncompressed((ECPublicKey) keyPair.getPublic()));
         assertThat(transport.calls)
-            .extracting(Call::method, call -> call.uri().getPath())
-            .containsExactly(
-                tuple("GET", "/v1/transit/keys/vapid"),
-                tuple("POST", "/v1/transit/sign/vapid"));
+                .extracting(Call::method, call -> call.uri().getPath())
+                .containsExactly(tuple("GET", "/v1/transit/keys/vapid"), tuple("POST", "/v1/transit/sign/vapid"));
         assertThat(transport.calls)
-            .allSatisfy(call -> assertThat(call.tokenHeader())
-                .as("every Vault call authenticates via X-Vault-Token")
-                .isTrue());
+                .allSatisfy(call -> assertThat(call.tokenHeader())
+                        .as("every Vault call authenticates via X-Vault-Token")
+                        .isTrue());
     }
 
     /**
-     * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. The
-     * {@code type} is part of the minimum: the signer refuses any key not advertised as
-     * {@code ecdsa-p256} (see {@link VaultTransitVapidSignerKeyValidationTest}).
+     * A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. The {@code type} is part
+     * of the minimum: the signer refuses any key not advertised as {@code ecdsa-p256} (see
+     * {@link VaultTransitVapidSignerKeyValidationTest}).
      */
     private static String metadataBody(KeyPair keyPair) {
         String pem = "-----BEGIN PUBLIC KEY-----\n"
-            + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keyPair.getPublic().getEncoded())
-            + "\n-----END PUBLIC KEY-----\n";
+                + Base64.getMimeEncoder(64, new byte[] {'\n'})
+                        .encodeToString(keyPair.getPublic().getEncoded())
+                + "\n-----END PUBLIC KEY-----\n";
         return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
-            + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
+                + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
     }
 
     private static KeyPair generateP256KeyPair() throws Exception {

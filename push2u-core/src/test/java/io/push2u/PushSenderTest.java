@@ -22,13 +22,13 @@ import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end send-pipeline tests: a real {@link PushSender} (real RFC 8291 encryption + RFC 8292
- * VAPID + the JDK HTTP client) against an in-process {@link MockPushReceiver}, asserting the
- * status-code → {@link PushResult} mapping and the retry behaviour. A {@link RecordingSleeper}
- * runs the retry loop without real backoff delays.
+ * End-to-end send-pipeline tests: a real {@link PushSender} (real RFC 8291 encryption + RFC 8292 VAPID + the JDK HTTP
+ * client) against an in-process {@link MockPushReceiver}, asserting the status-code → {@link PushResult} mapping and
+ * the retry behaviour. A {@link RecordingSleeper} runs the retry loop without real backoff delays.
  */
 class PushSenderTest {
 
@@ -38,7 +38,10 @@ class PushSenderTest {
     void deliversOn201AndSendsAWellFormedRequest() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushResult result = pusher().send(
-                subscription(receiver), PushMessage.builder(bytes("hello")).ttl(Duration.ofHours(1)).build());
+                            subscription(receiver),
+                            PushMessage.builder(bytes("hello"))
+                                    .ttl(Duration.ofHours(1))
+                                    .build());
 
             assertThat(result.delivered()).isTrue();
             assertThat(result.statusCode()).isEqualTo(201);
@@ -48,8 +51,8 @@ class PushSenderTest {
             MockPushReceiver.RecordedRequest request = receiver.requests().getFirst();
             assertThat(request.method()).isEqualTo("POST");
             assertThat(request.headers())
-                .containsEntry("content-encoding", "aes128gcm")
-                .containsEntry("ttl", "3600");
+                    .containsEntry("content-encoding", "aes128gcm")
+                    .containsEntry("ttl", "3600");
             assertThat(request.headers().get("authorization")).startsWith("vapid t=");
             // aes128gcm body = 86-byte header + plaintext(5) + delimiter(1) + GCM tag(16)
             assertThat(request.bodyLength()).isEqualTo(86 + 5 + 1 + 16);
@@ -66,24 +69,24 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         Subscription subscription = new Subscription(
-            "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
+                "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
 
         PushResult result = PushSender.builder()
-            .vapid(generateVapidKeys())
-            .contact("mailto:ops@example.com")
-            .httpClient(capturingClient)
-            .build()
-            .send(subscription, PushMessage.of(bytes("x")));
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .httpClient(capturingClient)
+                .build()
+                .send(subscription, PushMessage.of(bytes("x")));
 
         assertThat(result.delivered()).isTrue();
         String authorization = captured.get().get("Authorization");
         String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
-        String claims = new String(Base64Url.decode(jwt.split("\\.")[1]), StandardCharsets.UTF_8);
+        String claims = new String(Base64Url.decode(jwt.split("\\.", -1)[1]), StandardCharsets.UTF_8);
         assertThat(claims)
-            .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
-            .contains("\"aud\":\"https://push.example\"")
-            .doesNotContain("PUSH.Example")
-            .doesNotContain(":443");
+                .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
+                .contains("\"aud\":\"https://push.example\"")
+                .doesNotContain("PUSH.Example")
+                .doesNotContain(":443");
     }
 
     @Test
@@ -93,7 +96,9 @@ class PushSenderTest {
                 receiver.enqueue(status);
                 PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-                assertThat(result.isSubscriptionExpired()).as("status %d", status).isTrue();
+                assertThat(result.isSubscriptionExpired())
+                        .as("status %d", status)
+                        .isTrue();
                 assertThat(result.attempts()).as("no retry on %d", status).isEqualTo(1);
                 assertThat(receiver.requests()).hasSize(1);
             }
@@ -124,8 +129,8 @@ class PushSenderTest {
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(receiver.requests()).hasSize(2);
             assertThat(sleeper.sleeps)
-                .as("one backoff between the two attempts, at the policy's initial value")
-                .containsExactly(RetryPolicy.defaults().initialBackoff());
+                    .as("one backoff between the two attempts, at the policy's initial value")
+                    .containsExactly(RetryPolicy.defaults().initialBackoff());
         }
     }
 
@@ -138,11 +143,13 @@ class PushSenderTest {
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
             assertThat(result.status()).isEqualTo(PushResult.Status.FAILED);
-            assertThat(result.attempts()).as("RetryPolicy.defaults() caps at 3 attempts").isEqualTo(3);
+            assertThat(result.attempts())
+                    .as("RetryPolicy.defaults() caps at 3 attempts")
+                    .isEqualTo(3);
             assertThat(receiver.requests()).hasSize(3);
             assertThat(sleeper.sleeps)
-                .as("no Retry-After on either 5xx — the exponential schedule doubles")
-                .containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(2));
+                    .as("no Retry-After on either 5xx — the exponential schedule doubles")
+                    .containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(2));
         }
     }
 
@@ -178,11 +185,11 @@ class PushSenderTest {
             receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
             receiver.enqueue(201);
             PushSender pusher = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
-                .sleeper(sleeper)
-                .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
-                .build();
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .sleeper(sleeper)
+                    .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
+                    .build();
             PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
             assertThat(result.delivered()).isTrue();
@@ -199,8 +206,8 @@ class PushSenderTest {
 
             assertThat(result.delivered()).isTrue();
             assertThat(sleeper.sleeps)
-                .as("the first retry waits exactly RetryPolicy.defaults().initialBackoff()")
-                .containsExactly(RetryPolicy.defaults().initialBackoff());
+                    .as("the first retry waits exactly RetryPolicy.defaults().initialBackoff()")
+                    .containsExactly(RetryPolicy.defaults().initialBackoff());
         }
     }
 
@@ -214,8 +221,8 @@ class PushSenderTest {
             assertThat(result.delivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(sleeper.sleeps)
-                .as("overflow is treated as unparseable, not propagated")
-                .containsExactly(RetryPolicy.defaults().initialBackoff());
+                    .as("overflow is treated as unparseable, not propagated")
+                    .containsExactly(RetryPolicy.defaults().initialBackoff());
         }
     }
 
@@ -234,9 +241,8 @@ class PushSenderTest {
     @Test
     void sendAsyncCompletesWithTheResult() throws Exception {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = pusher()
-                .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
-                .get(5, TimeUnit.SECONDS);
+            PushResult result = pusher().sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+                    .get(5, TimeUnit.SECONDS);
             assertThat(result.delivered()).isTrue();
         }
     }
@@ -250,21 +256,21 @@ class PushSenderTest {
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushResult result = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
-                .httpClient(capturingClient)
-                .build()
-                .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
-                .get(5, TimeUnit.SECONDS);
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .httpClient(capturingClient)
+                    .build()
+                    .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+                    .get(5, TimeUnit.SECONDS);
 
             assertThat(result.delivered()).isTrue();
             Thread thread = sendThread.get();
             assertThat(thread.isVirtual())
-                .as("the default async executor runs each send on a virtual thread")
-                .isTrue();
+                    .as("the default async executor runs each send on a virtual thread")
+                    .isTrue();
             assertThat(thread)
-                .as("a blocking send must never occupy a common-ForkJoinPool worker")
-                .isNotInstanceOf(ForkJoinWorkerThread.class);
+                    .as("a blocking send must never occupy a common-ForkJoinPool worker")
+                    .isNotInstanceOf(ForkJoinWorkerThread.class);
         }
     }
 
@@ -283,18 +289,18 @@ class PushSenderTest {
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushResult result = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
-                .httpClient(capturingClient)
-                .executor(executor)
-                .build()
-                .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
-                .get(5, TimeUnit.SECONDS);
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .httpClient(capturingClient)
+                    .executor(executor)
+                    .build()
+                    .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+                    .get(5, TimeUnit.SECONDS);
 
             assertThat(result.delivered()).isTrue();
             assertThat(sendThread.get())
-                .as("the send runs on the single thread of the executor passed to .executor(...)")
-                .isSameAs(executorThread.get());
+                    .as("the send runs on the single thread of the executor passed to .executor(...)")
+                    .isSameAs(executorThread.get());
         } finally {
             executor.shutdown();
         }
@@ -310,16 +316,16 @@ class PushSenderTest {
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender pusher = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
-                .executor(rejecting)
-                .build();
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .executor(rejecting)
+                    .build();
             Subscription subscription = subscription(receiver);
             PushMessage message = PushMessage.of(bytes("x"));
 
             assertThatThrownBy(() -> pusher.sendAsync(subscription, message))
-                .isInstanceOf(RejectedExecutionException.class)
-                .hasMessage("saturated");
+                    .isInstanceOf(RejectedExecutionException.class)
+                    .hasMessage("saturated");
         }
     }
 
@@ -327,9 +333,15 @@ class PushSenderTest {
     void externalSignerPathDelivers() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             VapidSigner externalSigner = new LocalEcVapidSigner(generateVapidKeys());
-            PushSender pusher = PushSender.builder().signer(externalSigner).contact("mailto:ops@example.com").sleeper(sleeper).build();
+            PushSender pusher = PushSender.builder()
+                    .signer(externalSigner)
+                    .contact("mailto:ops@example.com")
+                    .sleeper(sleeper)
+                    .build();
 
-            assertThat(pusher.send(subscription(receiver), PushMessage.of(bytes("x"))).delivered()).isTrue();
+            assertThat(pusher.send(subscription(receiver), PushMessage.of(bytes("x")))
+                            .delivered())
+                    .isTrue();
         }
     }
 
@@ -342,15 +354,13 @@ class PushSenderTest {
         VapidKeys keys = generateVapidKeys();
 
         PushSender.Builder noKeySource = PushSender.builder().contact("mailto:ops@example.com");
-        assertThatThrownBy(noKeySource::build)
-            .as("neither vapid nor signer")
-            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(noKeySource::build).as("neither vapid nor signer").isInstanceOf(IllegalStateException.class);
 
         PushSender.Builder bothSources = PushSender.builder()
-            .contact("mailto:ops@example.com").vapid(keys).signer(new LocalEcVapidSigner(keys));
-        assertThatThrownBy(bothSources::build)
-            .as("both vapid and signer")
-            .isInstanceOf(IllegalStateException.class);
+                .contact("mailto:ops@example.com")
+                .vapid(keys)
+                .signer(new LocalEcVapidSigner(keys));
+        assertThatThrownBy(bothSources::build).as("both vapid and signer").isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -364,18 +374,19 @@ class PushSenderTest {
         // A blank contact would still build a JWT carrying an empty/whitespace 'sub' claim, which
         // satisfies push2u's contact contract no better than the omission RFC 8292 §2.1 permits —
         // reject it here rather than ship a claim a push service may or may not refuse.
-        PushSender.Builder blankContact = PushSender.builder().vapid(generateVapidKeys()).contact("   ");
+        PushSender.Builder blankContact =
+                PushSender.builder().vapid(generateVapidKeys()).contact("   ");
         assertThatThrownBy(blankContact::build)
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("contact is required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("contact is required");
     }
 
     private PushSender pusher() {
         return PushSender.builder()
-            .vapid(generateVapidKeys())
-            .contact("mailto:ops@example.com")
-            .sleeper(sleeper)
-            .build();
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .sleeper(sleeper)
+                .build();
     }
 
     private static byte[] bytes(String value) {

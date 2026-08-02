@@ -1,23 +1,22 @@
 package io.push2u;
 
 /**
- * Strict conversion of a DER-encoded P-256 ECDSA signature — {@code SEQUENCE { INTEGER r,
- * INTEGER s }} — into the 64-byte raw {@code r || s} pair JOSE ES256 requires (RFC 7518 §3.4),
- * each coordinate normalised to exactly 32 unsigned big-endian bytes.
+ * Strict conversion of a DER-encoded P-256 ECDSA signature — {@code SEQUENCE { INTEGER r, INTEGER s }} — into the
+ * 64-byte raw {@code r || s} pair JOSE ES256 requires (RFC 7518 §3.4), each coordinate normalised to exactly 32
+ * unsigned big-endian bytes.
  *
- * <p>This is a re-encoding of the signature's <em>representation</em>, not a cryptographic
- * operation: the private key and the ECDSA computation itself stay entirely inside the JCE
- * provider that produced the signature. It exists for providers that register only the standard
- * DER-output ECDSA name (BouncyCastle FIPS among them) and no raw-format variant.
+ * <p>This is a re-encoding of the signature's <em>representation</em>, not a cryptographic operation: the private key
+ * and the ECDSA computation itself stay entirely inside the JCE provider that produced the signature. It exists for
+ * providers that register only the standard DER-output ECDSA name (BouncyCastle FIPS among them) and no raw-format
+ * variant.
  *
- * <p>The parser is deliberately strict and rejects anything but the minimal DER a well-formed
- * P-256 signature can produce: wrong tags, long-form lengths (impossible at P-256 sizes),
- * negative or non-minimally-encoded INTEGERs, coordinates longer than 32 bytes after removing
- * the sign byte, a missing or extra element, and any length/trailing-byte mismatch. One
- * boundary case is accepted on purpose: a minimally-encoded zero INTEGER ({@code 02 01 00}) is
- * well-formed DER and converts to an all-zero coordinate — this converter owns only the
- * representation, and a zero {@code r} or {@code s} can never verify, so rejecting
- * cryptographically impossible values is the verifier's job, not the re-encoder's.
+ * <p>The parser is deliberately strict and rejects anything but the minimal DER a well-formed P-256 signature can
+ * produce: wrong tags, long-form lengths (impossible at P-256 sizes), negative or non-minimally-encoded INTEGERs,
+ * coordinates longer than 32 bytes after removing the sign byte, a missing or extra element, and any
+ * length/trailing-byte mismatch. One boundary case is accepted on purpose: a minimally-encoded zero INTEGER ({@code 02
+ * 01 00}) is well-formed DER and converts to an all-zero coordinate — this converter owns only the representation, and
+ * a zero {@code r} or {@code s} can never verify, so rejecting cryptographically impossible values is the verifier's
+ * job, not the re-encoder's.
  */
 final class EcdsaDer {
 
@@ -25,12 +24,10 @@ final class EcdsaDer {
     private static final byte SEQUENCE_TAG = 0x30;
     private static final byte INTEGER_TAG = 0x02;
 
-    private EcdsaDer() {
-    }
+    private EcdsaDer() {}
 
     /**
-     * Converts a strict DER {@code SEQUENCE { INTEGER r, INTEGER s }} to 64 raw bytes
-     * {@code r || s}.
+     * Converts a strict DER {@code SEQUENCE { INTEGER r, INTEGER s }} to 64 raw bytes {@code r || s}.
      *
      * @param der the DER-encoded ECDSA signature
      * @return the 64-byte P1363 form
@@ -57,9 +54,12 @@ final class EcdsaDer {
     }
 
     /**
-     * Reads one INTEGER at {@code at}, writes its value right-aligned into
-     * {@code out[outOffset .. outOffset+31]}, and returns the offset just past it.
+     * Reads one INTEGER at {@code at}, writes its value right-aligned into {@code out[outOffset .. outOffset+31]}, and
+     * returns the offset just past it.
      */
+    // CyclomaticComplexity: every branch is one malformed-DER case reported with its own message.
+    // Splitting them up would scatter the encoding rules this method exists to state in one place.
+    @SuppressWarnings("PMD.CyclomaticComplexity")
     private static int readCoordinate(byte[] der, int at, byte[] out, int outOffset) {
         if (at + 2 > der.length) {
             throw malformed("missing INTEGER");
@@ -96,8 +96,8 @@ final class EcdsaDer {
     }
 
     /**
-     * Decodes a DER length byte requiring the short form. A P-256 signature is at most 72 bytes,
-     * so a long-form length (high bit set) can never legitimately occur.
+     * Decodes a DER length byte requiring the short form. A P-256 signature is at most 72 bytes, so a long-form length
+     * (high bit set) can never legitimately occur.
      */
     private static int shortFormLength(byte lengthByte, String what) {
         if ((lengthByte & 0x80) != 0) {

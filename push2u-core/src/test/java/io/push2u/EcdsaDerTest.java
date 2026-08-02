@@ -4,12 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Arrays;
+
 import org.junit.jupiter.api.Test;
 
 /**
- * Deterministic vectors for the strict DER → P1363 conversion: short coordinates are
- * right-aligned to 32 bytes, sign-padding bytes are removed, and every deviation from minimal
- * two-INTEGER DER is rejected.
+ * Deterministic vectors for the strict DER → P1363 conversion: short coordinates are right-aligned to 32 bytes,
+ * sign-padding bytes are removed, and every deviation from minimal two-INTEGER DER is rejected.
  */
 class EcdsaDerTest {
 
@@ -31,7 +31,7 @@ class EcdsaDerTest {
 
     @Test
     void exactlyThirtyTwoByteCoordinatesPassThroughUnchanged() {
-        byte[] r = counting(32, (byte) 0x01);           // high bit clear — no sign byte in DER
+        byte[] r = counting(32, (byte) 0x01); // high bit clear — no sign byte in DER
         byte[] s = counting(32, (byte) 0x41);
 
         byte[] out = EcdsaDer.toP1363(sequence(integer(r), integer(s)));
@@ -42,14 +42,16 @@ class EcdsaDerTest {
 
     @Test
     void signPaddingZeroIsStrippedFromAHighBitCoordinate() {
-        byte[] r = counting(32, (byte) 0x91);           // high bit set — DER needs a 0x00 sign byte
+        byte[] r = counting(32, (byte) 0x91); // high bit set — DER needs a 0x00 sign byte
         byte[] s = counting(31, (byte) 0x21);
         byte[] paddedR = new byte[33];
-        System.arraycopy(r, 0, paddedR, 1, 32);         // 0x00 || r — a 33-byte INTEGER body
+        System.arraycopy(r, 0, paddedR, 1, 32); // 0x00 || r — a 33-byte INTEGER body
 
         byte[] out = EcdsaDer.toP1363(sequence(integer(paddedR), integer(s)));
 
-        assertThat(Arrays.copyOfRange(out, 0, 32)).as("sign byte removed, value kept").isEqualTo(r);
+        assertThat(Arrays.copyOfRange(out, 0, 32))
+                .as("sign byte removed, value kept")
+                .isEqualTo(r);
         assertThat(Arrays.copyOfRange(out, 33, 64)).isEqualTo(s);
     }
 
@@ -74,8 +76,8 @@ class EcdsaDerTest {
         der[0] = 0x31;
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("SEQUENCE tag");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("SEQUENCE tag");
     }
 
     @Test
@@ -84,8 +86,8 @@ class EcdsaDerTest {
         byte[] der = concat(new byte[] {0x30, (byte) 0x81, (byte) body.length}, body);
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("long-form");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("long-form");
     }
 
     // The next test and rejectsASequenceLengthShorterThanTheInput below exercise the SAME guard
@@ -95,11 +97,11 @@ class EcdsaDerTest {
     @Test
     void rejectsASequenceLengthLongerThanTheInput() {
         byte[] der = sequence(integer(counting(4, (byte) 1)), integer(counting(4, (byte) 9)));
-        der[1] = (byte) (der[1] + 1);                   // claims one byte more than is present
+        der[1] = (byte) (der[1] + 1); // claims one byte more than is present
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("SEQUENCE length");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("SEQUENCE length");
     }
 
     @Test
@@ -109,8 +111,8 @@ class EcdsaDerTest {
         byte[] der = sequence(longFormInteger, integer(counting(4, (byte) 9)));
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("long-form INTEGER length");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("long-form INTEGER length");
     }
 
     @Test
@@ -118,17 +120,17 @@ class EcdsaDerTest {
         byte[] der = sequence(integer(new byte[0]), integer(counting(4, (byte) 9)));
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("empty INTEGER");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("empty INTEGER");
     }
 
     @Test
     void rejectsANegativeInteger() {
-        byte[] negative = counting(32, (byte) 0x91);    // high bit set, no sign byte → negative
+        byte[] negative = counting(32, (byte) 0x91); // high bit set, no sign byte → negative
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(sequence(integer(negative), integer(counting(4, (byte) 9)))))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("negative INTEGER");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("negative INTEGER");
     }
 
     @Test
@@ -136,34 +138,34 @@ class EcdsaDerTest {
         byte[] nonMinimal = concat(new byte[] {0x00}, counting(4, (byte) 0x01)); // 0x00 before < 0x80
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(sequence(integer(nonMinimal), integer(counting(4, (byte) 9)))))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("non-minimal");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("non-minimal");
     }
 
     @Test
     void rejectsACoordinateLongerThan32Bytes() {
-        byte[] oversized = counting(33, (byte) 0x01);   // 33 value bytes even without a sign byte
+        byte[] oversized = counting(33, (byte) 0x01); // 33 value bytes even without a sign byte
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(sequence(integer(counting(4, (byte) 1)), integer(oversized))))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("longer than 32");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("longer than 32");
     }
 
     @Test
     void rejectsAMissingSecondInteger() {
         assertThatThrownBy(() -> EcdsaDer.toP1363(sequence(integer(counting(4, (byte) 1)))))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("missing INTEGER");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("missing INTEGER");
     }
 
     @Test
     void rejectsAThirdElementAfterS() {
         byte[] der = sequence(
-            integer(counting(4, (byte) 1)), integer(counting(4, (byte) 9)), integer(counting(4, (byte) 17)));
+                integer(counting(4, (byte) 1)), integer(counting(4, (byte) 9)), integer(counting(4, (byte) 17)));
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("trailing bytes");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("trailing bytes");
     }
 
     @Test
@@ -171,18 +173,18 @@ class EcdsaDerTest {
         byte[] der = sequence(integer(counting(4, (byte) 1)), integer(counting(4, (byte) 9)), new byte[] {0x00});
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("trailing bytes");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("trailing bytes");
     }
 
     @Test
     void rejectsASequenceLengthShorterThanTheInput() {
         byte[] valid = sequence(integer(counting(4, (byte) 1)), integer(counting(4, (byte) 9)));
-        byte[] der = concat(valid, new byte[] {0x00});  // SEQUENCE length no longer spans the input
+        byte[] der = concat(valid, new byte[] {0x00}); // SEQUENCE length no longer spans the input
 
         assertThatThrownBy(() -> EcdsaDer.toP1363(der))
-            .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("SEQUENCE length");
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("SEQUENCE length");
     }
 
     // ---- DER building blocks ------------------------------------------------------------------

@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<ruleset name="push2u"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
+                             https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+    <description>
+        PMD ruleset for push2u — best practices, code style, design complexity, error-prone
+        patterns, performance and security.
+
+        Every exclusion below silences a rule that actually fires on this codebase (verified by
+        running the categories unfiltered), and the comment says which code it fires on. The two
+        exceptions are MissingOverride and CompareObjectsWithEquals, kept out because Error Prone
+        already reports them — a violation should have exactly one owner. A rule that never fires
+        here is left enabled rather than pre-emptively excluded.
+    </description>
+
+    <!-- ======================== -->
+    <!-- Best Practices           -->
+    <!-- ======================== -->
+    <rule ref="category/java/bestpractices.xml">
+        <!-- Owned by Error Prone's MissingOverride check -->
+        <exclude name="MissingOverride"/>
+        <!-- The hand-written JSON scanners in push2u-signer-vault advance the loop index across a
+             matched token on purpose; rewriting them around a separate cursor would hide the scan
+             position, which is the one thing those loops are about -->
+        <exclude name="AvoidReassigningLoopVariables"/>
+    </rule>
+
+    <!-- ======================== -->
+    <!-- Code Style               -->
+    <!-- ======================== -->
+    <rule ref="category/java/codestyle.xml">
+        <!-- An explicit private constructor is how a utility class documents that it must not be
+             instantiated (PushSender's DefaultAsyncExecutor holder) -->
+        <exclude name="UnnecessaryConstructor"/>
+        <!-- Constants sit under their own Javadoc after the private constructor, and interface
+             constants after the abstract method they serve — both deliberate -->
+        <exclude name="FieldDeclarationsShouldBeAtStartOfClass"/>
+        <!-- Parentheses that group arithmetic for the reader (EcKeys' right-alignment offsets) are
+             worth more than the character they cost -->
+        <exclude name="UselessParentheses"/>
+        <!-- Declaring a value next to the ones it is derived from reads better than moving it past
+             a block of validation, which is where this fires in the DER/JSON readers -->
+        <exclude name="PrematureDeclaration"/>
+        <!-- Explicit boxing is load-bearing in VaultTransitVapidSigner, where Integer vs int selects
+             the constructor overload that distinguishes "pinned version" from "latest" -->
+        <exclude name="UnnecessaryBoxing"/>
+        <!-- Early returns beat a single exit point — 30 of them in the validation paths -->
+        <exclude name="OnlyOneReturn"/>
+        <!-- Crypto code is full of short, spec-named locals (r, s, ikm, prk, salt) -->
+        <exclude name="ShortVariable"/>
+        <!-- Fires on the descriptive constant names the RFC limits carry
+             (DEFAULT_MAX_ENCRYPTED_BODY_BYTES, PADDING_DELIMITER_LENGTH) -->
+        <exclude name="LongVariable"/>
+        <!-- Hkdf and Jca are the names of what they wrap -->
+        <exclude name="ShortClassName"/>
+        <!-- Factory methods are named of/from by convention -->
+        <exclude name="ShortMethodName"/>
+        <!-- Immutability comes from records and final fields, not from `final` on every local -->
+        <exclude name="LocalVariableCouldBeFinal"/>
+        <exclude name="MethodArgumentCouldBeFinal"/>
+        <!-- Package-private access is intentional: it is how the core keeps its API surface small,
+             and the 71 hits are exactly that -->
+        <exclude name="CommentDefaultAccessModifier"/>
+        <!-- `var` where the initializer names the type (EcKeys' pattern-match bindings) -->
+        <exclude name="UseExplicitTypes"/>
+    </rule>
+
+    <!-- ======================== -->
+    <!-- Design                   -->
+    <!-- ======================== -->
+    <rule ref="category/java/design.xml">
+        <!-- Too strict for fluent builders and the RFC 8291 encryption pipeline -->
+        <exclude name="LawOfDemeter"/>
+        <!-- Builders naturally have one method per option (PushSender.Builder, Jca,
+             VaultTransitVapidSigner) -->
+        <exclude name="TooManyMethods"/>
+        <!-- Fires on the canonical equals() shape (`if (this == other) return true;` followed by the
+             pattern match) in PushMessage and Subscription -->
+        <exclude name="SimplifyBooleanReturns"/>
+        <!-- Excluded so it is not silently dropped: the rule needs a `packages` property naming the
+             packages a module may depend on, and PMD discards it at startup without one ("Removed
+             misconfigured rule: LoosePackageCoupling"). push2u has no such policy to declare — the
+             module boundaries are enforced by the Gradle dependencies instead — so the honest state
+             is off, not on-but-inert. -->
+        <exclude name="LoosePackageCoupling"/>
+    </rule>
+
+    <!-- Protocol code (DER reading, JWT escaping, property binding) branches more than business
+         code: at the default level of 10 this fires on toP1363, jsonEscape and the starter's
+         pushSender factory, none of which is improved by being split up. The class-level default
+         (80) is left alone. -->
+    <rule ref="category/java/design.xml/CyclomaticComplexity">
+        <properties>
+            <property name="methodReportLevel" value="15"/>
+        </properties>
+    </rule>
+
+    <!-- PushSender is the library's facade, so it references most of the core's types; 21 against a
+         default threshold of 20 is that, not a design problem. The rule stays on at a level that
+         would still catch a class growing well past it. -->
+    <rule ref="category/java/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="threshold" value="25"/>
+        </properties>
+    </rule>
+
+    <!-- ======================== -->
+    <!-- Error Prone              -->
+    <!-- ======================== -->
+    <rule ref="category/java/errorprone.xml">
+        <!-- Status codes and byte lengths from the RFCs are the clearest way to express the check -->
+        <exclude name="AvoidLiteralsInIfCondition"/>
+        <!-- The library's exceptions are never serialized; a serialVersionUID on PushCryptoException
+             and friends would be ceremony -->
+        <exclude name="MissingSerialVersionUID"/>
+        <!-- Owned by Error Prone's ReferenceEquality check -->
+        <exclude name="CompareObjectsWithEquals"/>
+        <!-- Record-style accessors: field name matching method name is the point -->
+        <exclude name="AvoidFieldNameMatchingMethodName"/>
+        <!-- The JSON field names Vault returns ("data") repeat by necessity; hoisting protocol
+             literals into constants buys nothing here -->
+        <exclude name="AvoidDuplicateLiterals"/>
+        <!-- Catching RuntimeException is the documented fallback in exactly two places (Origin's
+             IDN conversion, the health indicator): neither may let a defect anywhere below it turn
+             into a failed send or a thrown health check -->
+        <exclude name="AvoidCatchingGenericException"/>
+    </rule>
+
+    <!-- Empty catch blocks stay banned unless a comment explains the swallow — the parse-and-fall-
+         through chains in RetryAfter each carry one -->
+    <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+        <properties>
+            <property name="allowCommentedBlocks" value="true"/>
+        </properties>
+    </rule>
+
+    <!-- ======================== -->
+    <!-- Performance              -->
+    <!-- ======================== -->
+    <rule ref="category/java/performance.xml">
+        <!-- Fires on every per-chunk allocation in the streaming response readers, where the
+             allocation is the work being done -->
+        <exclude name="AvoidInstantiatingObjectsInLoops"/>
+    </rule>
+
+    <!-- ======================== -->
+    <!-- Security                 -->
+    <!-- ======================== -->
+    <rule ref="category/java/security.xml"/>
+
+</ruleset>

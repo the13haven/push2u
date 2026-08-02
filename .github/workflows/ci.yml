@@ -1,6 +1,17 @@
 name: CI
 
 on:
+  workflow_dispatch:
+
+  # main only. A merge is a push event and pull_request does not fire for it, so this is the run that
+  # verifies main and uploads to Codecov. Listing every branch here instead would double-run each
+  # commit pushed to a branch that already has a PR open, since pull_request covers those already.
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -8,27 +19,107 @@ on:
       - '**/*.txt'
 
 permissions:
+  actions: read
   contents: read
 
+# Supersede an in-flight run when new commits land on the same ref. main is exempt: its run is the
+# only one that uploads to Codecov, so cancelling it on a quick second merge would leave the branch
+# without a coverage report.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  build:
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       # Testcontainers' Ryuk container must mount the daemon socket path as seen
       # from inside the runner's Docker VM.
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+      # Codecov uploads run for main and for pull requests raised from this repository. A pull
+      # request from a fork is the one case that cannot: secrets.CODECOV_TOKEN is not exposed to it,
+      # so the upload would fail on a missing token rather than add anything.
+      CODECOV_ELIGIBLE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Codecov resolves the base commit of a pull request from history; a shallow clone
+          # leaves it guessing.
+          fetch-depth: 0
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: 'liberica'
           java-version: 26
-          cache: gradle
 
-      - name: Build and test
-        run: ./gradlew build --no-daemon --stacktrace
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+          # Keep dependency and wrapper caching, but do not restore Gradle's local
+          # build cache: cached JaCoCo reports contain old session timestamps and
+          # Codecov rejects reports older than 12 hours as REPORT_EXPIRED.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      # qualityCheckCi covers `build` (compile + tests, including push2u-core's fipsTest suite) and
+      # adds Spotless verification, Checkstyle, PMD, SpotBugs, Error Prone/NullAway and the
+      # aggregated coverage threshold. Everything the local `./gradlew qualityCheck` runs, minus the
+      # auto-formatting.
+      #
+      # --no-build-cache: Gradle would otherwise be free to replay test results cached from an
+      # environment without Docker, which turns the Testcontainers-backed Vault test into a silent
+      # "skipped". Docker availability is not part of the cache key, so a stale hit hides failures.
+      - name: Quality check
+        run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
+
+      # Every module's JUnit XML (including fipsTest) under one directory — Codecov's test-results
+      # upload takes a single path. Runs even when the build failed: a failed suite is exactly what
+      # test analytics is for.
+      - name: Collect test results
+        if: ${{ !cancelled() }}
+        run: ./gradlew aggregateTestResults --no-daemon
+
+      # main supplies the baseline Codecov reports against; the pull request runs are what make the
+      # patch threshold and the PR comment in codecov.yml work at all. The hashFiles guard skips the
+      # step when a run failed before producing the report, instead of tripping fail_ci_if_error on
+      # a missing file.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: the13haven/push2u
+          # The aggregated report merges all four modules; the per-module reports would double-count.
+          files: build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml
+          disable_search: true
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload test results to Codecov
+        uses: codecov/codecov-action@v7
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: the13haven/push2u
+          report_type: test_results
+          flags: tests
+          directory: build/test-results-aggregated
+          fail_ci_if_error: true
+
+      - name: Upload quality reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-reports
+          path: |
+            **/build/reports/
+            build/test-results-aggregated/

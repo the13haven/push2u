@@ -15,14 +15,16 @@ The library implements:
 - local and Vault Transit VAPID signing;
 - plain Java and Spring Boot integration.
 
-The architecture keeps the protocol core dependency-free and exposes narrow seams only where
+The architecture keeps the protocol core free of runtime implementation dependencies and exposes
+narrow seams only where
 applications have a legitimate reason to replace behavior.
 
 ## 2. Goals and non-goals
 
 ### Goals
 
-- Zero runtime dependencies in `push2u-core`.
+- Zero runtime *implementation* dependencies in `push2u-core` — its one dependency is JSpecify,
+  an annotation-only jar exposed as API metadata (ADR-012).
 - Java 21 runtime baseline.
 - Standards conformance pinned by published RFC test vectors.
 - A small synchronous API with an asynchronous convenience wrapper.
@@ -62,7 +64,8 @@ push2u-signer-vault-spring-boot-starter
 └── Vault signer properties and auto-configuration
 ```
 
-`push2u-core` has no runtime dependencies. The Spring Boot modules and Vault integration are
+`push2u-core` has no runtime implementation dependencies (only JSpecify's annotations, ADR-012).
+The Spring Boot modules and Vault integration are
 opt-in and cannot leak framework types into the core API.
 
 ## 4. Send pipeline
@@ -327,7 +330,9 @@ The project compiles with a newer toolchain and `--release 21`.
 
 ### ADR-002 — Zero-dependency core
 
-The core uses only JDK APIs. Framework and remote-system integrations remain in optional modules.
+The core uses only JDK APIs for its implementation; the single declared dependency is the
+annotation-only JSpecify jar of ADR-012. Framework and remote-system integrations remain in
+optional modules.
 
 ### ADR-003 — Concrete HKDF implementation
 
@@ -376,6 +381,24 @@ The configurable limit is `maxEncryptedBodyBytes`, not a plaintext maximum, beca
 constrains the entity body. The plaintext maximum (3993 bytes at the 4096-byte default) is derived
 from the format's fixed overhead rather than written into the code, and `recordSize` stays an
 independent parameter: raising the body limit does not silently change what the header advertises.
+
+### ADR-012 — Nullness declared with JSpecify
+
+Every package carries JSpecify's `@NullMarked`: a reference type in the public API is non-null
+unless it is annotated `@Nullable`. The optional message headers (`PushMessage.ttl`, `urgency`,
+`topic`), the unset builder fields, and the Spring properties are the annotated exceptions.
+
+JSpecify is declared as an `api` dependency rather than `compileOnly`, so the contract reaches
+consumers: NullAway, IntelliJ and the Kotlin compiler all read the same annotations. It carries
+annotations and no code, so the dependency-light core of ADR-002 is unaffected in substance — a
+published contract that tools can check is worth more than an absolute artefact count. A
+project-local annotation would have been free of any dependency but would mean nothing outside
+NullAway.
+
+The build enforces both halves: NullAway fails on a contract violation, and Error Prone's
+`RequireExplicitNullMarking` fails on a package that forgets `@NullMarked`. NullAway's full
+`JSpecifyMode` (generic nullness) is deliberately not enabled yet — its authors still describe it
+as evolving.
 
 ## 10. Verification
 

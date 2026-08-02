@@ -2,20 +2,22 @@ package io.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.sun.net.httpserver.HttpServer;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
+
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link JdkHttpPushClient} against a live JDK {@link HttpServer}. The scenario the discarding
- * body handler exists for: the endpoint is a capability URL from the (untrusted) subscription, so
- * a hostile push service may answer with an arbitrarily large body. The client must drain it
- * without buffering and still hand the pipeline the status and headers it needs.
+ * {@link JdkHttpPushClient} against a live JDK {@link HttpServer}. The scenario the discarding body handler exists for:
+ * the endpoint is a capability URL from the (untrusted) subscription, so a hostile push service may answer with an
+ * arbitrarily large body. The client must drain it without buffering and still hand the pipeline the status and headers
+ * it needs.
  */
 class JdkHttpPushClientTest {
 
@@ -24,7 +26,7 @@ class JdkHttpPushClientTest {
 
     @Test
     void aHugeResponseBodyIsDiscardedAndTheStatusAndHeadersStillArrive() throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
             byte[] chunk = new byte[64 * 1024];
             server.createContext("/push", exchange -> {
@@ -44,7 +46,7 @@ class JdkHttpPushClientTest {
             URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
 
             PushResponse response = new JdkHttpPushClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
-                .post(endpoint, Map.of("TTL", "60"), new byte[] {1, 2, 3});
+                    .post(endpoint, Map.of("TTL", "60"), new byte[] {1, 2, 3});
 
             assertThat(response.statusCode()).isEqualTo(429);
             assertThat(response.header("Retry-After")).contains("17");

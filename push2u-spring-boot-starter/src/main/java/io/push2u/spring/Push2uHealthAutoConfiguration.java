@@ -1,22 +1,22 @@
 package io.push2u.spring;
 
-import io.push2u.PushSender;
-import io.push2u.VapidSigner;
-import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 
+import io.push2u.PushSender;
+import io.push2u.VapidSigner;
+
 /**
- * Registers a push2u {@link HealthIndicator} when Spring Boot Actuator is on the classpath and a
- * {@link PushSender} has been configured.
+ * Registers a push2u {@link HealthIndicator} when Spring Boot Actuator is on the classpath and a {@link PushSender} has
+ * been configured.
  *
- * <p>A separate autoconfiguration ordered {@link AutoConfiguration#after() after}
- * {@link Push2uAutoConfiguration} so the {@code PushSender} bean already exists when
- * {@link ConditionalOnBean} is evaluated; {@link ConditionalOnClass} keeps the starter usable
- * without Actuator on the classpath.
+ * <p>A separate autoconfiguration ordered {@link AutoConfiguration#after() after} {@link Push2uAutoConfiguration} so
+ * the {@code PushSender} bean already exists when {@link ConditionalOnBean} is evaluated; {@link ConditionalOnClass}
+ * keeps the starter usable without Actuator on the classpath.
  */
 @AutoConfiguration(after = Push2uAutoConfiguration.class)
 @ConditionalOnClass(HealthIndicator.class)

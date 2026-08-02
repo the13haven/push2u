@@ -7,10 +7,11 @@ description = "push2u-spring-boot-starter — Spring Boot auto-configuration for
     "actuator health indicator. Opt-in module on top of push2u-core."
 
 // Toolchain + `--release 21` + JUnit Platform come from the composite-build root build.gradle.kts.
-// This module is NOT zero-dep — it pulls Spring Boot autoconfigure (the core stays Spring-free).
+// This module pulls Spring Boot autoconfigure as a real dependency (the core stays Spring-free).
 dependencies {
     api(platform(libs.spring.boot.dependencies))
     api(project(":push2u-core"))
+    api(libs.jspecify)
     api(libs.spring.boot.autoconfigure)
     // Health lives in the optional spring-boot-health module (Boot 4 split it out of actuator);
     // the indicator is conditional on it being on the classpath.
