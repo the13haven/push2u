@@ -7,10 +7,11 @@ import java.util.regex.Pattern;
 
 /**
  * Serializes the origin of a push endpoint for the VAPID {@code aud} claim. RFC 8292 §2 requires
- * {@code aud} to be the origin of the push resource, and RFC 6454 §6.1 pins down its Unicode
- * serialization: the scheme in lowercase, {@code "://"}, the host with each label converted to
- * Unicode (IDNA A-label → U-label) in lowercase, and the port only when it differs from the
- * scheme's default. {@link java.net.URI} performs none of that normalization — it preserves the
+ * {@code aud} to be the origin of the push resource. RFC 6454 §4 computes that origin with the
+ * scheme and host lowercased, and §6.1 pins down its Unicode serialization: the scheme,
+ * {@code "://"}, the host with each label converted to Unicode (IDNA A-label → U-label), and the
+ * port only when it differs from the scheme's default. {@link java.net.URI} performs none of that
+ * normalization — it preserves the
  * scheme/host case and an explicit default port verbatim — so a push service comparing {@code aud}
  * against its canonical origin would reject an otherwise valid JWT.
  */
@@ -19,8 +20,9 @@ final class Origin {
     /**
      * An IPv4 dotted-quad, which must bypass IDNA: RFC 6454 §6.1 applies the ToUnicode conversion
      * only to registered names, and RFC 5890 excludes address literals from IDNA entirely. The
-     * pattern is deliberately loose about octet ranges — anything URI accepted as a host and that
-     * matches this shape is an address literal for our purposes, not a registered name.
+     * pattern is deliberately loose about octet ranges — anything {@link java.net.URI} accepted as
+     * a host and that matches this shape is an address literal for our purposes, not a registered
+     * name.
      */
     private static final Pattern IPV4_LITERAL = Pattern.compile("\\d{1,3}(\\.\\d{1,3}){3}");
 
@@ -54,7 +56,7 @@ final class Origin {
         return defaultPort ? scheme + "://" + host : scheme + "://" + host + ":" + port;
     }
 
-    /** The host per RFC 6454 §6.1 step 4: lowercased, with A-labels converted to U-labels. */
+    /** The host with A-labels converted to U-labels (RFC 6454 §6.1 step 4), lowercased per §4. */
     private static String unicodeHost(String host) {
         // IDN.toUnicode does not lowercase: it returns non-A-label hosts verbatim ("PUSH.EXAMPLE"
         // stays "PUSH.EXAMPLE") and preserves the case of the ASCII part of a decoded label

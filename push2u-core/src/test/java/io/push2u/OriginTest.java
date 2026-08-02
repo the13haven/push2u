@@ -52,8 +52,8 @@ class OriginTest {
 
     @Test
     void convertsUppercaseALabels() {
-        // An uppercase A-label must come out as a lowercase U-label — RFC 6454 §6.1 serializes
-        // the host both converted to Unicode and lowercased, whatever case the endpoint used.
+        // An uppercase A-label must come out as a lowercase U-label — RFC 6454 §6.1 converts the
+        // host to Unicode and §4 lowercases it, whatever case the endpoint used.
         assertThat(Origin.serialize(URI.create("https://XN--E1AFMKFD.XN--80AKHBYKNJ4F:443/subscriber-token")))
             .isEqualTo("https://пример.испытание");
     }
