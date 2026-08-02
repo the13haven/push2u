@@ -257,8 +257,9 @@ public final class PushSender {
          * RFC 8292 §2.1 makes {@code sub} optional ({@code MAY}) and only recommends ({@code SHOULD}) those
          * two URI forms when it is present; requiring it is push2u's own contract, because a push service
          * that needs to reach the operator about a misbehaving application server has no other channel.
-         * {@link #build()} therefore rejects a {@code null} or blank value — a blank one would still
-         * produce a JWT, only for the push service to reject it.
+         * {@link #build()} therefore rejects a {@code null} or blank value: a blank one satisfies that
+         * contract no better than an absent one, and the JWT it would produce carries a {@code sub} a
+         * push service may well reject, though the RFC obliges no service to.
          *
          * @param contact the contact URI
          * @return this builder

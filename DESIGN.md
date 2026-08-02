@@ -144,10 +144,11 @@ delay at the retry policy's maximum backoff.
 The VAPID contact is required in both modes and must be non-blank. RFC 8292 §2.1 leaves the `sub`
 claim optional; requiring it is a push2u contract, on the grounds that a push service reporting a
 problem with an application server has no other channel to it. A blank value is rejected outright,
-being worse than the omission the RFC permits: it would still produce a JWT, one the push service
-would reject anyway. Optional settings control the HTTP transport, async executor, JCE provider,
-retry policy, JWT expiry, default TTL, RFC 8188 record size, and the maximum encrypted body size.
-The last two are validated when configured: `recordSize` must be at least 18 (RFC 8188 §2) and
+because it satisfies that contract no better than an absent claim while still producing a JWT whose
+`sub` a push service may well reject — the RFC requires neither the claim nor its rejection.
+Optional settings control the HTTP transport, async executor, JCE provider, retry policy, JWT
+expiry, default TTL, RFC 8188 record size, and the maximum encrypted body size. The last two are
+validated when configured: `recordSize` must be at least 18 (RFC 8188 §2) and
 `maxEncryptedBodyBytes` must be at least the fixed 103-byte overhead — the body an empty payload
 produces.
 

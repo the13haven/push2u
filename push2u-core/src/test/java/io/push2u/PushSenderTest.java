@@ -362,8 +362,8 @@ class PushSenderTest {
     @Test
     void builderRejectsABlankContact() {
         // A blank contact would still build a JWT carrying an empty/whitespace 'sub' claim, which
-        // is worse than the omission RFC 8292 §2.1 permits — reject it here rather than let the
-        // push service refuse it later.
+        // satisfies push2u's contact contract no better than the omission RFC 8292 §2.1 permits —
+        // reject it here rather than ship a claim a push service may or may not refuse.
         PushSender.Builder blankContact = PushSender.builder().vapid(generateVapidKeys()).contact("   ");
         assertThatThrownBy(blankContact::build)
             .isInstanceOf(IllegalStateException.class)
