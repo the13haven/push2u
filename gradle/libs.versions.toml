@@ -21,6 +21,23 @@ bouncycastle = "1.85"
 # Version verified present on Maven Central.
 bouncycastleFips = "2.1.3"
 
+# Quality tool engines — the analyser versions the Gradle plugins run (see build-logic's
+# push2u-quality convention plugin). Build-time only: none of these ever reaches a consumer's
+# classpath, so pinning them here does not dent the zero-runtime-dependency constraint.
+checkstyle = "13.4.2"
+pmd = "7.24.0"
+spotbugs = "4.9.8"
+errorprone = "2.49.0"
+nullaway = "0.13.4"
+jacoco = "0.8.14"
+palantir = "2.91.0"
+
+# Quality tool Gradle plugins — resolved by the build-logic included build, never by push2u
+# modules themselves.
+spotbugsPlugin = "6.5.5"
+errorpronePlugin = "5.1.0"
+spotlessPlugin = "8.5.1"
+
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
@@ -46,3 +63,16 @@ bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", ver
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # BC-FIPS test provider (separate artifact line from bcprov, so outside the pin above).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }
+
+# Quality tool libraries. The Checkstyle/PMD/SpotBugs/JaCoCo/Palantir entries exist so the
+# convention plugin can pin the analyser version through the catalog; Error Prone and NullAway are
+# real dependencies of the `errorprone` compiler configuration.
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
+nullaway = { module = "com.uber.nullaway:nullaway", version.ref = "nullaway" }
+
+[plugins]
+# Quality plugins — consumed by build-logic (see build-logic/build.gradle.kts), which turns each
+# alias into its plugin-marker coordinates.
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugsPlugin" }
+errorprone = { id = "net.ltgt.errorprone", version.ref = "errorpronePlugin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotlessPlugin" }

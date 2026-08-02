@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  quality:
     runs-on: ubuntu-latest
 
     env:
@@ -23,6 +23,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -30,5 +33,19 @@ jobs:
           java-version: 26
           cache: gradle
 
-      - name: Build and test
-        run: ./gradlew build --no-daemon --stacktrace
+      # qualityCheckCi covers `build` (compile + tests, including the FIPS suite) and adds
+      # Spotless verification, Checkstyle, PMD, SpotBugs, Error Prone/NullAway and the aggregated
+      # coverage threshold.
+      #
+      # --no-build-cache: Gradle would otherwise be free to replay test results cached from an
+      # environment without Docker, which turns the Testcontainers-backed Vault test into a silent
+      # "skipped". Docker availability is not part of the cache key, so a stale hit hides failures.
+      - name: Quality check
+        run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
+
+      - name: Upload quality reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-reports
+          path: '**/build/reports/'

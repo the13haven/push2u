@@ -465,6 +465,32 @@ must be replaced.
 The test suite includes RFC 5869, RFC 8291, and RFC 8292 vectors, sender/retry tests, Spring Boot
 auto-configuration tests, and a Vault Transit integration contract.
 
+## Quality checks
+
+Static analysis and coverage are wired up as their own lifecycle tasks, so `build` stays compile +
+test only:
+
+```bash
+./gradlew qualityCheck     # local: formats the code, then runs every analyser
+./gradlew qualityCheckCi   # CI: verifies formatting instead of applying it
+```
+
+| Tool                 | What it enforces                                            | Configuration                                |
+|----------------------|-------------------------------------------------------------|----------------------------------------------|
+| Spotless             | Palantir Java Format, import order                           | `build-logic/.../push2u-quality.gradle.kts`  |
+| Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
+| PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
+| SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
+| Error Prone + NullAway | Compiler-attached checks; NullAway reports as warnings     | `build-logic/.../push2u-quality.gradle.kts`  |
+| JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
+
+The analysers run on `main` sources only — test code is exempt. Reports land in
+`<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
+`build/reports/jacoco/testCodeCoverageReport/`.
+
+Rule exclusions carry a comment stating why, and a per-file exception is a `@SuppressWarnings`
+("PMD.<Rule>") at the narrowest scope that covers it, next to the reason.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).

@@ -1,7 +1,17 @@
+import java.math.BigDecimal
 import org.gradle.api.plugins.JavaPluginExtension
 
 // Shared configuration for every push2u module. It lives at the standalone build root rather than
 // being duplicated per module.
+
+plugins {
+    // Convention plugin from the build-logic included build; applied to the modules below.
+    id("push2u-quality") apply false
+    // `base` gives the root the lifecycle tasks without pulling in the Java plugin; the
+    // aggregation plugin hosts the cross-module coverage report on top of it.
+    base
+    id("jacoco-report-aggregation")
+}
 
 allprojects {
     group = "io.push2u"
@@ -39,6 +49,10 @@ subprojects {
         this@subprojects.the<JavaPluginExtension>().toolchain {
             languageVersion = JavaLanguageVersion.of(26)
         }
+        // Static analysis + coverage (see build-logic/src/main/kotlin/push2u-quality.gradle.kts).
+        // Applied reactively: the modules declare `java-library` themselves, and the quality plugin
+        // configures tasks the Java plugin must have created first.
+        apply(plugin = "push2u-quality")
     }
 }
 
@@ -67,4 +81,65 @@ subprojects {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Aggregated coverage. Each module produces its own JaCoCo report; the aggregation below merges
+// them so the threshold applies to the library as a whole (a module such as
+// push2u-signer-vault-spring-boot-starter is mostly wiring and would skew a per-module rule).
+// ---------------------------------------------------------------------------------------------
+dependencies {
+    // project(path), not the Project object: passing a Project as a dependency notation is
+    // deprecated and fails in Gradle 10.
+    subprojects.forEach { jacocoAggregation(project(it.path)) }
+}
+
+reporting {
+    reports {
+        register<JacocoCoverageReport>("testCodeCoverageReport") {
+            testSuiteName = "test"
+        }
+    }
+}
+
+val aggregatedCoverageReport = tasks.named<JacocoReport>("testCodeCoverageReport")
+
+// `register<Type>(name)`, not the `by registering` delegate: the delegated-property syntax is
+// deprecated and scheduled for removal in Gradle 10.
+val testCodeCoverageVerification = tasks.register<JacocoCoverageVerification>("testCodeCoverageVerification") {
+    description = "Verifies aggregated code coverage meets the minimum threshold."
+    group = "verification"
+
+    dependsOn(aggregatedCoverageReport)
+
+    sourceDirectories.from(aggregatedCoverageReport.map { it.sourceDirectories })
+    classDirectories.from(aggregatedCoverageReport.map { it.classDirectories })
+    executionData.from(aggregatedCoverageReport.map { it.executionData })
+
+    violationRules {
+        rule {
+            limit {
+                minimum = BigDecimal("0.80")
+            }
+        }
+    }
+}
+
+// Local entry point: ./gradlew qualityCheck — auto-formats, then runs every analyser.
+tasks.register("qualityCheck") {
+    description = "Runs all quality checks locally (auto-formats code)."
+    group = "verification"
+    subprojects.forEach { dependsOn("${it.path}:qualityCheck") }
+    dependsOn(testCodeCoverageVerification)
+}
+
+// CI entry point: ./gradlew qualityCheckCi --no-build-cache
+// --no-build-cache because Gradle may replay test results cached from an environment without
+// Docker, which would let the Testcontainers-backed Vault test show up as "skipped" instead of
+// running. Docker availability is not part of the cache key, so a stale hit hides real failures.
+tasks.register("qualityCheckCi") {
+    description = "Runs all quality checks in CI (verifies formatting without modifying files)."
+    group = "verification"
+    subprojects.forEach { dependsOn("${it.path}:qualityCheckCi") }
+    dependsOn(testCodeCoverageVerification)
 }
