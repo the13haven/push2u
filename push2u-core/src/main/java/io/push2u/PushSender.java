@@ -85,7 +85,7 @@ public final class PushSender {
                 "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
         }
         String authorization =
-            Vapid.authorizationHeader(signer, origin(endpoint), contact, clock.instant().plus(jwtExpiry));
+            Vapid.authorizationHeader(signer, Origin.serialize(endpoint), contact, clock.instant().plus(jwtExpiry));
         Map<String, String> headers = requestHeaders(authorization, message);
 
         PushResponse response = null;
@@ -190,18 +190,6 @@ public final class PushSender {
 
     private static boolean isRetryable(int code) {
         return code == 429 || (code >= 500 && code < 600);
-    }
-
-    /** The RFC 8292 {@code aud}: the origin (scheme + host + optional port) of the endpoint. */
-    private static String origin(URI endpoint) {
-        String scheme = endpoint.getScheme();
-        String host = endpoint.getHost();
-        if (scheme == null || host == null) {
-            throw new IllegalArgumentException(
-                "subscription endpoint is not an absolute http(s) URL: " + Endpoints.redact(endpoint.toString()));
-        }
-        int port = endpoint.getPort();
-        return port == -1 ? scheme + "://" + host : scheme + "://" + host + ":" + port;
     }
 
     /**

@@ -92,6 +92,11 @@ Status interpretation:
 
 The encrypted body and VAPID token are reused across retries of the same send operation.
 
+The VAPID `aud` claim is the endpoint's origin in the Unicode serialization of RFC 6454 §6.1, as
+RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to their Unicode form,
+and the port omitted when it equals the scheme's default. `java.net.URI` performs none of that
+normalization, so the library serializes the origin itself.
+
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
 builder accepts an application-owned `Executor` when bounded concurrency or a shared execution
