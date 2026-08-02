@@ -249,8 +249,21 @@ class Push2uAutoConfigurationTest {
         keyedRunner().withUserConfiguration(FailingSignerConfiguration.class).run(context -> {
             Health health = context.getBean(Push2uHealthIndicator.class).health();
             assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-            assertThat(health.getDetails()).containsKey("error");
+            assertThat(health.getDetails()).containsEntry("error", "signer backend unavailable");
         });
+    }
+
+    @Test
+    void healthIndicatorReportsDownWhenTheSignerFailsWithoutAMessage() {
+        keyedRunner()
+                .withUserConfiguration(MessagelessFailingSignerConfiguration.class)
+                .run(context -> {
+                    // Health.Builder.withDetail rejects a null value, so passing getMessage() through would
+                    // make health() throw instead of reporting the failure it exists to report.
+                    Health health = context.getBean(Push2uHealthIndicator.class).health();
+                    assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+                    assertThat(health.getDetails()).containsEntry("error", IllegalStateException.class.getName());
+                });
     }
 
     private ApplicationContextRunner keyedRunner() {
@@ -342,6 +355,29 @@ class Push2uAutoConfigurationTest {
         @Bean
         VapidSigner applicationSigner() {
             return SIGNER;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class MessagelessFailingSignerConfiguration {
+
+        @Bean
+        VapidSigner failingSigner() {
+            return new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    // No message — Health.Builder rejects a null detail value, so the indicator
+                    // must not pass getMessage() through unguarded.
+                    throw new IllegalStateException();
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            };
         }
     }
 

@@ -1,6 +1,7 @@
 package io.push2u.spring;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
@@ -48,9 +49,15 @@ public final class Push2uHealthIndicator implements HealthIndicator {
             }
             return Health.up().withDetail(NAME, signerType).build();
         } catch (RuntimeException e) {
+            // Throwable.getMessage() is null for an exception built without one, and
+            // Health.Builder.withDetail rejects a null value with IllegalArgumentException — the
+            // health check would throw instead of reporting DOWN, precisely when the signer is
+            // already broken. Fall back to the exception type, which always names something.
+            String error = Objects.requireNonNullElseGet(
+                    e.getMessage(), () -> e.getClass().getName());
             return Health.down()
                     .withDetail(NAME, signerType)
-                    .withDetail("error", e.getMessage())
+                    .withDetail("error", error)
                     .build();
         }
     }
