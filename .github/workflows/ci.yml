@@ -3,6 +3,15 @@ name: CI
 on:
   workflow_dispatch:
 
+  # Branch pushes keep feature work verified before a PR exists, and — the reason the Codecov steps
+  # below can work at all — produce a run on main after a merge, which no pull_request event does.
+  # The cost is a duplicate run for a commit pushed to a branch that already has a PR open.
+  push:
+    branches: [ "**" ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -13,12 +22,12 @@ permissions:
   actions: read
   contents: read
 
-# Supersede an in-flight run when new commits land on the same pull request. Every run here is a
-# pull_request (or a manual dispatch) — the push trigger was removed because it double-ran each PR
-# commit — so there is no main-branch run to protect from cancellation.
+# Supersede an in-flight run when new commits land on the same ref. main is exempt: its run is the
+# only one that uploads to Codecov, so cancelling it on a quick second merge would leave the branch
+# without a coverage report.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
@@ -29,9 +38,6 @@ jobs:
       # Testcontainers' Ryuk container must mount the daemon socket path as seen
       # from inside the runner's Docker VM.
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
-      # Codecov's secret is unavailable to pull requests from forks, so the upload steps are
-      # skipped there rather than failing on a missing token.
-      CODECOV_ELIGIBLE: ${{ github.event.pull_request.head.repo.fork != true }}
 
     steps:
       - name: Check out repository
@@ -78,9 +84,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./gradlew aggregateTestResults --no-daemon
 
+      # Uploads happen on main only: that is the branch Codecov reports against, and it is also the
+      # only ref whose secret is guaranteed available (a fork's pull request has no token). The
+      # hashFiles guard skips the step when a run failed before producing the report, instead of
+      # tripping fail_ci_if_error on a missing file.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
-        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
+        if: ${{ !cancelled() && github.ref_name == 'main' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: the13haven/push2u
@@ -92,7 +102,7 @@ jobs:
 
       - name: Upload test results to Codecov
         uses: codecov/codecov-action@v7
-        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
+        if: ${{ !cancelled() && github.ref_name == 'main' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: the13haven/push2u
