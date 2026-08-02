@@ -186,7 +186,14 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 
 - **Fetched mode:** reads `latest_version` and that version's public key atomically from one
   `transit/keys/<key>` response at construction, then pins the captured version on every sign.
-  The token needs `read` on the key in addition to signing permission.
+  The token needs `read` on the key in addition to signing permission. The key is validated as
+  P-256 before the signer exists: the advertised `type` must be `ecdsa-p256` (absent `type` is a
+  failure), *and* the parsed public key's domain parameters must match `secp256r1` by value —
+  prime field, curve coefficients, generator, order, cofactor. The two checks are independent
+  because the metadata is only Vault's claim while the curve check inspects the key material, and
+  coordinates are never truncated to fit the 32-byte P-256 fields. Without this, an `ecdsa-p384`
+  key produced a syntactically valid but unusable VAPID key, and the misconfiguration surfaced
+  only as an unexplained push-service rejection on the first send.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The compatibility form
   without a version uses Vault's latest version and is safe only for a key that never rotates.

@@ -255,7 +255,12 @@ the signer reads `latest_version` and that version's public key from one
 `transit/keys/<key>` response, then includes the captured `key_version` in every sign request.
 The advertised public key therefore continues to match the signing key even when Vault creates a
 new latest version. The token needs `update` on `transit/sign/<key>` and `read` on
-`transit/keys/<key>`:
+`transit/keys/<key>`.
+
+The fetched key is validated as P-256 before the signer is created: the response's `type` must be
+`ecdsa-p256` (a missing `type` is a failure too) and the parsed public key must lie on
+`secp256r1`. A key of another type — `ecdsa-p384`, for instance — fails startup with a
+`PushCryptoException` instead of producing a VAPID key that every push service rejects later.
 
 ```java
 VapidSigner signer = new VaultTransitVapidSigner(
@@ -345,7 +350,8 @@ Two extension points, in priority order:
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
 transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
 
-The Vault key must be `ecdsa-p256`. Ordinary Vault rotation is safe for an already-running pinned
+The Vault key must be `ecdsa-p256`; in fetched mode this is verified at construction (see above).
+Ordinary Vault rotation is safe for an already-running pinned
 signer: it continues using the version whose public key it advertises. Raising
 `min_encryption_version` above the pinned version, or removing that version with
 `min_available_version`, makes Vault reject subsequent sign requests. Recover by recreating the
