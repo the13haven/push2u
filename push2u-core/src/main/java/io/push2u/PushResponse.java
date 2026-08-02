@@ -7,22 +7,22 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * The raw HTTP response from a POST: the status code, the response headers, and the body. Header
- * names are stored and looked up case-insensitively, as HTTP requires.
+ * The push service's answer to a POST: the status code and the response headers. Header names are
+ * stored and looked up case-insensitively, as HTTP requires.
  *
  * <p>A {@link PushHttpClient} returns this; the {@link PushSender} reads the status and
- * {@code Retry-After} (it ignores the body), while a remote signer reads the body.
+ * {@code Retry-After}. There is deliberately no body: RFC 8030 push delivery never consumes one,
+ * and materializing it would let a hostile endpoint (the URL comes from the subscription) feed the
+ * sender an arbitrarily large response.
  *
  * @param statusCode the HTTP status code
  * @param headers    the response headers (keys lower-cased); the pipeline reads {@code Retry-After}
- * @param body       the response body decoded as UTF-8 (empty for a push send; JSON for a signer call)
  */
-public record PushResponse(int statusCode, Map<String, String> headers, String body) {
+public record PushResponse(int statusCode, Map<String, String> headers) {
 
     /** Lower-cases the header keys (for case-insensitive lookup) and makes the map immutable. */
     public PushResponse {
         Objects.requireNonNull(headers, "headers");
-        Objects.requireNonNull(body, "body");
         headers = headers.entrySet().stream()
             .collect(Collectors.toUnmodifiableMap(
                 entry -> entry.getKey().toLowerCase(Locale.ROOT),
@@ -31,13 +31,13 @@ public record PushResponse(int statusCode, Map<String, String> headers, String b
     }
 
     /**
-     * A response with the given status code, no headers, and an empty body.
+     * A response with the given status code and no headers.
      *
      * @param statusCode the HTTP status code
      * @return the response
      */
     public static PushResponse of(int statusCode) {
-        return new PushResponse(statusCode, Map.of(), "");
+        return new PushResponse(statusCode, Map.of());
     }
 
     /**
