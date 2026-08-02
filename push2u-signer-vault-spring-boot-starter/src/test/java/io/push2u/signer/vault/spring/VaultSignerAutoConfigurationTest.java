@@ -89,6 +89,19 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void aPublicKeyThatIsNotBase64urlFailsNamingTheProperty() {
+        // Base64's own message ("Illegal base64 character 2c") names neither the property nor the
+        // expected encoding, which leaves the operator guessing which push2u.* value is at fault.
+        vaultRunner()
+            .withPropertyValues("push2u.signer.vault.public-key=not base64url!")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.public-key is not base64url");
+            });
+    }
+
+    @Test
     void keyVersionPinsTheExplicitSigner() {
         // Observe the actual sign request through a recording transport: the wired signer must
         // send the configured key_version to Vault. A bean-type assertion alone would stay green

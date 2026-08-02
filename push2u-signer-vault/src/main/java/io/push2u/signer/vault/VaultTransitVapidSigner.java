@@ -503,7 +503,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         if (end == start) {
             throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json));
         }
-        return Integer.parseInt(json.substring(start, end));
+        try {
+            return Integer.parseInt(json.substring(start, end));
+        } catch (NumberFormatException e) {
+            // A digit run too long for an int. Report it as this module's exception, next to the
+            // cause: the constructor's documented failure mode is PushCryptoException, and a raw
+            // IllegalArgumentException escaping from it would break that contract.
+            throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json), e);
+        }
     }
 
     /**
@@ -725,7 +732,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}).
-     * Call only after {@link #requireP256Curve}: the fixed 32-byte coordinate fields are P-256's
+     * Call only after {@link #requireP256PublicKey}: the fixed 32-byte coordinate fields are P-256's
      * field size, and a coordinate from a larger curve is rejected rather than truncated.
      */
     private static byte[] uncompressedPoint(ECPublicKey key) {

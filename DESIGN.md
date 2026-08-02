@@ -380,6 +380,8 @@ The automated suite covers:
 - RFC 5869 HKDF vectors;
 - the RFC 8291 end-to-end encryption example;
 - RFC 8292 VAPID structure and signature verification;
+- the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
+  non-default ports, address literals, userinfo (`OriginTest`);
 - signer contract tests;
 - the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary

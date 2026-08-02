@@ -89,7 +89,7 @@ public final class VaultSignerAutoConfiguration {
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
-        byte[] point = Base64.getUrlDecoder().decode(publicKey);
+        byte[] point = decodePublicKey(publicKey);
         if (keyVersion == null) {
             return new VaultTransitVapidSigner(
                 properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
@@ -98,6 +98,21 @@ public final class VaultSignerAutoConfiguration {
         return new VaultTransitVapidSigner(
             properties.address(), properties.mount(), properties.keyName(), properties.token(), point,
             keyVersion, resolved);
+    }
+
+    /**
+     * The configured public key, decoded from base64url. {@link Base64}'s own message names neither
+     * the property nor the expected encoding, and a context failure that only says "Illegal base64
+     * character" leaves the operator guessing which of the {@code push2u.*} values is at fault.
+     */
+    private static byte[] decodePublicKey(String publicKey) {
+        try {
+            return Base64.getUrlDecoder().decode(publicKey);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(
+                "push2u.signer.vault.public-key is not base64url: expected the 65-byte uncompressed"
+                    + " P-256 point as base64url (RFC 4648 §5)", e);
+        }
     }
 
     /** Transport priority: {@code VaultHttpTransport} bean > qualified {@code HttpClient} > defaults. */

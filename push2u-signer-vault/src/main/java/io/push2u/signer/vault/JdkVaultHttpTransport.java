@@ -41,6 +41,8 @@ import java.util.concurrent.Flow;
  */
 public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
+    // The Vault signer starter restates these three in @DefaultValue literals (it cannot reference
+    // module-private constants); keep VaultSignerProperties in step when any of them changes.
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
     /** 1 MiB — two orders of magnitude above any Transit sign/keys response, small enough to cap. */

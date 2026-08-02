@@ -36,6 +36,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param maxResponseBytes the Vault response-size cap in raw bytes (default 1048576 = 1 MiB; must
  *                         be positive); an oversized response fails the call instead of being
  *                         truncated
+ *
+ * <p>The three transport defaults restate {@code JdkVaultHttpTransport}'s own
+ * ({@code DEFAULT_REQUEST_TIMEOUT}, {@code DEFAULT_CONNECT_TIMEOUT}, {@code DEFAULT_MAX_RESPONSE_BYTES}):
+ * {@code @DefaultValue} takes literals, and those constants are module-private. Keep the two in
+ * step when either changes.
  */
 @ConfigurationProperties("push2u.signer.vault")
 public record VaultSignerProperties(URI address, @DefaultValue("transit") String mount, String keyName,
