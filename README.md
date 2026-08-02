@@ -203,7 +203,15 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The default is `JdkHttpPushClient`, with a 30-second per-request timeout.
+The default is `JdkHttpPushClient`, with a 30-second per-request timeout. Push delivery never
+reads the response body: `PushResponse` carries only the status code and headers, and
+`JdkHttpPushClient` discards the body without buffering it, because the endpoint is a capability
+URL taken from the (untrusted) subscription and a hostile server must not be able to feed the
+sender an arbitrarily large response. Custom implementations should do the same.
+
+This seam covers push delivery only. The Vault signer module has its own transport seam
+(`VaultHttpTransport`, below) because the Vault API sits in a different trust domain and its
+responses must be read.
 
 ### JCE provider selection
 
@@ -342,6 +350,40 @@ VapidSigner signer = new VaultTransitVapidSigner(
 The explicit constructor/property form without a version is retained for compatibility, but it
 sends no `key_version`; Vault then signs with its latest version. Use that form only when the
 Transit key is guaranteed never to rotate.
+
+### Vault HTTP transport
+
+All Vault calls — the Transit `sign` POST and, in fetched mode, the startup `transit/keys/<key>`
+GET — go through the module's `VaultHttpTransport` seam. The default `JdkVaultHttpTransport`
+(JDK `java.net.http`) enforces a per-request timeout on every call (a Vault that accepts the
+connection but never answers cannot hang application startup) and a fail-closed response-size cap
+counted in raw streamed bytes (an oversized response fails the call; it is never truncated).
+Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB cap.
+
+The starter exposes these as properties:
+
+```yaml
+push2u:
+  signer:
+    vault:
+      # ... address, key-name, token ...
+      request-timeout: 30s      # per-request timeout, every Vault call
+      connect-timeout: 10s      # connect timeout of the default HTTP client
+      max-response-bytes: 1048576
+```
+
+Two extension points, in priority order:
+
+1. A `VaultHttpTransport` bean — full control (custom HTTP stack, observability). The transport
+   properties above are then ignored; the bean owns those concerns.
+2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
+   mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
+   `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
+   owns it).
+3. Otherwise the default transport is built entirely from the properties.
+
+The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
+transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
 
 The Vault key must be `ecdsa-p256`. Ordinary Vault rotation is safe for an already-running pinned
 signer: it continues using the version whose public key it advertises. Raising

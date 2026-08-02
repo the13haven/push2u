@@ -14,6 +14,11 @@ import java.util.Map;
  * <p>Implementations report a push service <em>rejecting</em> the request as a {@link PushResponse}
  * with the status code — only genuine I/O failures (no connection, timeout) throw
  * {@link PushDeliveryException}. The {@link PushSender} owns retry and status interpretation.
+ *
+ * <p>The response body is never consumed by the pipeline — {@link PushResponse} does not carry
+ * one. Because the endpoint is a capability URL supplied by the (untrusted) subscription,
+ * implementations should discard the body without buffering it, as {@link JdkHttpPushClient}
+ * does, rather than materialize a response of attacker-chosen size.
  */
 @FunctionalInterface
 public interface PushHttpClient {

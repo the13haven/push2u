@@ -18,6 +18,9 @@ dependencies {
     testImplementation(libs.spring.boot.test)
     // The core starter, so the composition test can prove the Vault signer outranks the local one.
     testImplementation(project(":push2u-spring-boot-starter"))
+    // RecordingHttpClient, shared from the signer module's test fixtures — proves which HttpClient
+    // instance actually carries the Vault requests.
+    testImplementation(testFixtures(project(":push2u-signer-vault")))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
     testRuntimeOnly(libs.junit.platform.launcher)
