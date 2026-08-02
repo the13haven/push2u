@@ -313,7 +313,7 @@ public final class PushSender {
          * @param cryptoProvider the JCE provider, or {@code null} for the platform default
          * @return this builder
          */
-        public Builder cryptoProvider(Provider cryptoProvider) {
+        public Builder cryptoProvider(@Nullable Provider cryptoProvider) {
             this.cryptoProvider = cryptoProvider;
             return this;
         }

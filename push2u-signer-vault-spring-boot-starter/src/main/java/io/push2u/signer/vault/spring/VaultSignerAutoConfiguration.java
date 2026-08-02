@@ -1,7 +1,9 @@
 package io.push2u.signer.vault.spring;
 
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.Base64;
+import java.util.Objects;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -76,6 +78,12 @@ public final class VaultSignerAutoConfiguration {
             ObjectProvider<VaultHttpTransport> transport,
             @Qualifier("push2uVaultHttpClient") ObjectProvider<HttpClient> vaultHttpClient) {
         VaultHttpTransport resolved = resolveTransport(properties, transport, vaultHttpClient);
+        // @ConditionalOnProperty already gates this bean on all three being set; restated as checks
+        // so the contract holds in the type system too, and so a future change to the condition
+        // fails here naming the property rather than with a NullPointerException.
+        URI address = Objects.requireNonNull(properties.address(), "push2u.signer.vault.address");
+        String keyName = Objects.requireNonNull(properties.keyName(), "push2u.signer.vault.key-name");
+        String token = Objects.requireNonNull(properties.token(), "push2u.signer.vault.token");
         String publicKey = properties.publicKey();
         Integer keyVersion = properties.keyVersion();
         if (publicKey == null || publicKey.isBlank()) {
@@ -87,29 +95,15 @@ public final class VaultSignerAutoConfiguration {
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
             // (the token needs `read` on the key).
-            return new VaultTransitVapidSigner(
-                    properties.address(), properties.mount(), properties.keyName(), properties.token(), resolved);
+            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, resolved);
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
         byte[] point = decodePublicKey(publicKey);
         if (keyVersion == null) {
-            return new VaultTransitVapidSigner(
-                    properties.address(),
-                    properties.mount(),
-                    properties.keyName(),
-                    properties.token(),
-                    point,
-                    resolved);
+            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, resolved);
         }
-        return new VaultTransitVapidSigner(
-                properties.address(),
-                properties.mount(),
-                properties.keyName(),
-                properties.token(),
-                point,
-                keyVersion,
-                resolved);
+        return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, keyVersion, resolved);
     }
 
     /**

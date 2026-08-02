@@ -13,11 +13,12 @@ permissions:
   actions: read
   contents: read
 
-# Supersede an in-flight run when new commits land on the same ref. main is exempt: its runs feed
-# Codecov's baseline, so they are left to finish.
+# Supersede an in-flight run when new commits land on the same pull request. Every run here is a
+# pull_request (or a manual dispatch) — the push trigger was removed because it double-ran each PR
+# commit — so there is no main-branch run to protect from cancellation.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   quality:

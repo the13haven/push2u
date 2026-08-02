@@ -5,7 +5,7 @@ plugins {
     `java-test-fixtures`
 }
 
-description = "push2u-core — zero-dependency JVM Web Push library core " +
+description = "push2u-core — JVM Web Push library core with no runtime implementation dependencies " +
     "(RFC 8030/8291/8292/8188): VAPID-authenticated, end-to-end-encrypted push delivery " +
     "from a Java application server to browser push services."
 

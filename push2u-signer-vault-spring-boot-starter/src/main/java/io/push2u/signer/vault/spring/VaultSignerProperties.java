@@ -3,6 +3,7 @@ package io.push2u.signer.vault.spring;
 import java.net.URI;
 import java.time.Duration;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -36,12 +37,12 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  */
 @ConfigurationProperties("push2u.signer.vault")
 public record VaultSignerProperties(
-        URI address,
+        @Nullable URI address,
         @DefaultValue("transit") String mount,
-        String keyName,
-        String token,
-        String publicKey,
-        Integer keyVersion,
+        @Nullable String keyName,
+        @Nullable String token,
+        @Nullable String publicKey,
+        @Nullable Integer keyVersion,
         @DefaultValue("30s") Duration requestTimeout,
         @DefaultValue("10s") Duration connectTimeout,
         @DefaultValue("1048576") int maxResponseBytes) {

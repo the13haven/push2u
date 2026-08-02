@@ -4,6 +4,8 @@ import java.security.InvalidKeyException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * HKDF (RFC 5869) over HMAC-SHA-256, hand-rolled in ~25 lines so the library keeps zero runtime dependencies. It is
  * deliberately NOT an extension point: the bytes are identical regardless of implementation, and a pluggable seam here
@@ -26,7 +28,7 @@ final class Hkdf {
      * zero octets per RFC 5869 §2.2 — which also sidesteps the JCE "empty key" rejection for a zero-length salt while
      * producing the identical PRK.
      */
-    byte[] extract(byte[] salt, byte[] ikm) {
+    byte[] extract(byte @Nullable [] salt, byte[] ikm) {
         byte[] key = (salt == null || salt.length == 0) ? new byte[HASH_LEN] : salt;
         return hmac(key, ikm);
     }
@@ -35,7 +37,7 @@ final class Hkdf {
      * HKDF-Expand: {@code T(i) = HMAC-SHA-256(PRK, T(i-1) || info || i)}, output truncated to {@code length}. Web Push
      * only ever needs a single block (L ≤ 32), but the full loop keeps this a faithful RFC 5869 implementation.
      */
-    byte[] expand(byte[] prk, byte[] info, int length) {
+    byte[] expand(byte[] prk, byte @Nullable [] info, int length) {
         if (length < 0 || length > 255 * HASH_LEN) {
             throw new IllegalArgumentException("HKDF length out of range: " + length);
         }

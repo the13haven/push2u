@@ -496,12 +496,12 @@ test only:
 | Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
 | PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
 | SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
-| Error Prone + NullAway | Compiler-attached checks; a named set fails the build, NullAway warns | `build-logic/.../push2u-quality.gradle.kts` |
+| Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
 | JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
 
 Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
-the test compilations as well, since its checks are about defects rather than style; NullAway stays
-on `main`. Reports land in
+the test compilations as well, since its checks are about defects rather than style; NullAway runs
+on `main` only, where the API contract lives. Reports land in
 `<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
 `build/reports/jacoco/testCodeCoverageReport/`.
 

@@ -78,7 +78,8 @@ import io.push2u.VapidSigner;
  * never rotated; prefer the {@code keyVersion} overloads otherwise.
  */
 // GodClass / complexity: the bulk of this class is the anchored JSON reader for Vault's responses
-// (see extractSignature). Keeping it here is what lets the module stay dependency-free — pulling a
+// (see extractSignature). Keeping it here is what keeps the module free of an implementation
+// dependency — pulling a
 // JSON library in would trade these metrics for a transitive surface the library exists to avoid.
 @SuppressWarnings({"PMD.GodClass", "PMD.CyclomaticComplexity", "PMD.CognitiveComplexity"})
 public final class VaultTransitVapidSigner implements VapidSigner {
