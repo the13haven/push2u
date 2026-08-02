@@ -224,6 +224,27 @@ class RetryAfterTest {
     }
 
     @Test
+    void aDayOfMonthThatDoesNotExistIsRejectedInEachHttpDateFormat() {
+        // 2023 is not a leap year. Each value states the weekday of 28 Feb 2023 (a Tuesday), which
+        // is precisely what java.time's default SMART resolver clamps 29 Feb to — so the weekday
+        // cross-check passes and SMART returned a delay a day short of the header's own claim. The
+        // HTTP-date grammar admits no such date; STRICT resolution rejects all three.
+        assertThat(RetryAfter.parse("Tue, 29 Feb 2023 08:49:37 GMT", NOW)).isEmpty();
+        assertThat(RetryAfter.parse("Tuesday, 29-Feb-23 08:49:37 GMT", NOW)).isEmpty();
+        assertThat(RetryAfter.parse("Tue Feb 29 08:49:37 2023", NOW)).isEmpty();
+    }
+
+    @Test
+    void aRealLeapDayStillParsesInEachHttpDateFormat() {
+        // The counterpart to the check above: 29 Feb 2024 exists (a Thursday) and STRICT resolution
+        // must not have made the formatters reject valid dates wholesale.
+        Duration untilLeapDay = Duration.between(NOW, Instant.parse("2024-02-29T08:49:37Z"));
+        assertThat(RetryAfter.parse("Thu, 29 Feb 2024 08:49:37 GMT", NOW)).contains(untilLeapDay);
+        assertThat(RetryAfter.parse("Thursday, 29-Feb-24 08:49:37 GMT", NOW)).contains(untilLeapDay);
+        assertThat(RetryAfter.parse("Thu Feb 29 08:49:37 2024", NOW)).contains(untilLeapDay);
+    }
+
+    @Test
     void garbageIsEmpty() {
         assertThat(RetryAfter.parse("soon", NOW)).isEmpty();
         assertThat(RetryAfter.parse("", NOW)).isEmpty();

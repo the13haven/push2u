@@ -100,9 +100,8 @@ public final class PushSender {
             Vapid.authorizationHeader(signer, Origin.serialize(endpoint), contact, clock.instant().plus(jwtExpiry));
         Map<String, String> headers = requestHeaders(authorization, message);
 
-        PushResponse response = null;
         for (int attempt = 1; attempt <= retryPolicy.maxAttempts(); attempt++) {
-            response = httpClient.post(endpoint, headers, body);
+            PushResponse response = httpClient.post(endpoint, headers, body);
             int code = response.statusCode();
             if (isDelivered(code)) {
                 return new PushResult(PushResult.Status.DELIVERED, code, attempt);
@@ -115,9 +114,11 @@ public final class PushSender {
             }
             sleeper.sleep(backoff(attempt, response));
         }
-        // Unreachable: maxAttempts >= 1 guarantees the loop returns.
-        return new PushResult(PushResult.Status.FAILED, response == null ? 0 : response.statusCode(),
-            retryPolicy.maxAttempts());
+        // Unreachable: RetryPolicy enforces maxAttempts >= 1, so the loop body runs at least once
+        // and every path through it returns. Fabricating a PushResult here instead would have to
+        // invent a status code for a POST that never happened.
+        throw new AssertionError("retry loop exited without a result — maxAttempts was "
+            + retryPolicy.maxAttempts());
     }
 
     /**
@@ -195,6 +196,7 @@ public final class PushSender {
         return retryPolicy.backoffFor(attempt);
     }
 
+    /** Any 2xx counts as accepted — see {@link PushResult.Status#DELIVERED} for why, not just 201. */
     private static boolean isDelivered(int code) {
         return code >= 200 && code < 300;
     }

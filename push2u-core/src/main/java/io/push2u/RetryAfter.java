@@ -8,6 +8,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.time.temporal.ChronoField;
 import java.util.Locale;
 import java.util.Map;
@@ -43,16 +44,32 @@ import java.util.regex.Pattern;
  * {@link Optional#empty()}, never an exception, so a malformed header degrades to the caller's
  * computed backoff instead of failing the send.
  *
- * <p>Parsing uses java.time's default {@code SMART} resolver, so a day-of-month that does not
- * exist in the resolved year — {@code 29-Feb} of a non-leap year — is pulled back to the 28th
- * rather than rejected. The header was malformed either way and the effect is bounded to one
- * day, so it is left as the JDK behaves rather than papered over.
+ * <p>All three forms resolve under {@link ResolverStyle#STRICT}, not java.time's default
+ * {@code SMART}: the HTTP-date grammar admits no date that does not exist, so {@code 29-Feb} of a
+ * non-leap year is rejected outright rather than pulled back to the 28th. Under SMART such a header
+ * yielded a delay a day short of what it said whenever the stated weekday happened to match the
+ * clamped date — a value the sender never wrote. Empty is the honest answer, and the caller's
+ * computed backoff is a better estimate than a silently corrected date. STRICT keeps the weekday
+ * cross-check the RFC 850 century logic depends on (see {@link #parseRfc850}).
  */
 final class RetryAfter {
 
-    /** asctime date: space-padded day-of-month, no zone (UTC by convention). */
+    /**
+     * IMF-fixdate, resolved strictly. {@link DateTimeFormatter#RFC_1123_DATE_TIME} is SMART by
+     * default; it parses the proleptic {@code YEAR} field, so STRICT needs no era and only tightens
+     * the day-of-month check.
+     */
+    private static final DateTimeFormatter IMF_FIXDATE =
+        DateTimeFormatter.RFC_1123_DATE_TIME.withResolverStyle(ResolverStyle.STRICT);
+
+    /**
+     * asctime date: space-padded day-of-month, no zone (UTC by convention). The year pattern is
+     * {@code uuuu} (proleptic year), not {@code yyyy} (year-of-era): STRICT resolution of a
+     * year-of-era demands an era field the format does not carry, and every value would fail.
+     */
     static final DateTimeFormatter ASCTIME_DATE =
-        DateTimeFormatter.ofPattern("EEE MMM ppd HH:mm:ss yyyy", Locale.ROOT);
+        DateTimeFormatter.ofPattern("EEE MMM ppd HH:mm:ss uuuu", Locale.ROOT)
+            .withResolverStyle(ResolverStyle.STRICT);
 
     /**
      * A leap second: a {@code 60} in the seconds position of an {@code HH:MM:SS} time-of-day.
@@ -105,7 +122,8 @@ final class RetryAfter {
             .appendPattern(", dd-MMM-")
             .appendValueReduced(ChronoField.YEAR, 2, 2, baseYear)
             .appendPattern(" HH:mm:ss zzz")
-            .toFormatter(Locale.ROOT);
+            .toFormatter(Locale.ROOT)
+            .withResolverStyle(ResolverStyle.STRICT);
     }
 
     /**
@@ -196,7 +214,7 @@ final class RetryAfter {
      */
     private static Optional<Instant> parseTimestamp(String value, Instant now, long leapSecondAdjustment) {
         try {
-            return Optional.of(ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME)
+            return Optional.of(ZonedDateTime.parse(value, IMF_FIXDATE)
                 .toInstant().plusSeconds(leapSecondAdjustment));
         } catch (DateTimeParseException notImfFixdate) {
             // Fall through to the obsolete forms.

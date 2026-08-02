@@ -71,6 +71,21 @@ class VaultTransitVapidSignerSignResponseTest {
     }
 
     @Test
+    void theEnvelopeCheckAcceptsAMultiDigitKeyVersionAndPaddedBase64() {
+        // Two shapes the previous last-colon strip accepted, which the envelope pattern must not
+        // narrow away: a rotated key reaches double-digit versions, and while Vault's jws marshaling
+        // emits unpadded base64url, Base64.getUrlDecoder() accepts padding and nothing in the Vault
+        // contract forbids it.
+        byte[] expected = wellFormedSignature();
+        String padded = Base64.getUrlEncoder().encodeToString(expected);
+
+        assertThat(sign("{\"data\":{\"signature\":\"vault:v42:" + BASE64_URL.encodeToString(expected) + "\"}}"))
+            .isEqualTo(expected);
+        assertThat(padded).as("the padded form is what this test means to exercise").endsWith("==");
+        assertThat(sign("{\"data\":{\"signature\":\"vault:v1:" + padded + "\"}}")).isEqualTo(expected);
+    }
+
+    @Test
     void anEmptySignatureFailsLoudlyInsteadOfSigningTheJwtWithNothing() {
         // "vault:v1:" with nothing after the prefix decodes to zero bytes — historically that
         // zero-length "signature" went straight into the JWT.
@@ -97,16 +112,43 @@ class VaultTransitVapidSignerSignResponseTest {
     }
 
     @Test
-    void garbageBase64FailsAsAPushCryptoExceptionNotARawDecoderError() {
-        // The decoder's bare IllegalArgumentException must not escape the library — a corrupt
-        // payload is a Vault-response failure and reports as such, without echoing the payload.
+    void aPayloadOutsideTheBase64UrlAlphabetIsRejectedOnTheEnvelopeShape() {
+        // Characters outside the base64url alphabet mean the envelope is not a Transit signature at
+        // all, which is caught before decoding — and reported without echoing the payload.
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:%%not-base64%%\"}}"))
             .isInstanceOf(PushCryptoException.class)
-            .hasMessageContaining("not valid base64url")
+            .hasMessageContaining("expected 'vault:v<version>:<base64url>'")
             .satisfies(e -> assertThat(e.getMessage())
                 .as("neither the Vault token nor the payload leaks into the error message")
                 .doesNotContain(TOKEN)
                 .doesNotContain("%%not-base64%%"));
+    }
+
+    @Test
+    void aWellFormedEnvelopeWithAnUndecodablePayloadStillReportsAsADecodeFailure() {
+        // Five base64url characters are alphabet-clean but not a whole number of quanta, so the
+        // envelope check passes and the decoder's bare IllegalArgumentException must still be
+        // converted rather than escaping the library.
+        assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:AAAAA\"}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("not valid base64url")
+            .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+    }
+
+    @Test
+    void aValueThatIsNotATransitSignatureEnvelopeIsRejectedWholeNotCutAtItsLastColon() {
+        // Cutting at the last colon hands whatever followed it to the base64url decoder: a Vault
+        // error envelope, a wrapped token, a value from another API — none of them signatures. Each
+        // of these tails is alphabet-clean and 64 bytes' worth, so a lastIndexOf(':') strip would
+        // decode one and sign the VAPID JWT with it.
+        String tail = BASE64_URL.encodeToString(wellFormedSignature());
+        for (String value : new String[] {
+            "vault:kv:" + tail, "hvs:v1:" + tail, "vault:v1:v2:" + tail, "wrapped:" + tail, tail}) {
+            assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"" + value + "\"}}"))
+                .as("signature: %s", value)
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("expected 'vault:v<version>:<base64url>'");
+        }
     }
 
     @Test
