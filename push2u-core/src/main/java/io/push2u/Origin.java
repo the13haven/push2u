@@ -39,9 +39,11 @@ final class Origin {
     static String serialize(URI endpoint) {
         String scheme = endpoint.getScheme();
         String host = endpoint.getHost();
-        if (scheme == null || host == null) {
+        // Only structure is checked here — an origin needs a scheme and a host. Enforcing https
+        // is Endpoints.requireSecure's job at the Subscription boundary, not this serializer's.
+        if (scheme == null || host == null || host.isEmpty()) {
             throw new IllegalArgumentException(
-                "subscription endpoint is not an absolute http(s) URL: " + Endpoints.redact(endpoint.toString()));
+                "subscription endpoint URI has no scheme or host: " + Endpoints.redact(endpoint.toString()));
         }
         scheme = scheme.toLowerCase(Locale.ROOT);
         host = unicodeHost(host);
@@ -54,14 +56,14 @@ final class Origin {
 
     /** The host per RFC 6454 §6.1 step 4: lowercased, with A-labels converted to U-labels. */
     private static String unicodeHost(String host) {
-        // Lowercase before IDNA: IDN.toUnicode leaves a mixed-case A-label ("XN--..." or
-        // "PUSH.Example") untouched rather than lowercasing it, so the RFC 6454 lowercase step
-        // must happen first for the conversion to see canonical A-labels at all.
+        // IDN.toUnicode does not lowercase: it returns non-A-label hosts verbatim ("PUSH.EXAMPLE"
+        // stays "PUSH.EXAMPLE") and preserves the case of the ASCII part of a decoded label
+        // ("XN--BCHER-KVA" becomes "BüCHER"), so the RFC 6454 §4 lowercase step is ours to do.
         String lowered = host.toLowerCase(Locale.ROOT);
         if (lowered.startsWith("[") || IPV4_LITERAL.matcher(lowered).matches()) {
-            // Address literals are not registered names, so IDNA does not apply (RFC 5890 §2.3.2.1);
-            // URI.getHost() also keeps the RFC 3986 brackets around an IPv6 literal ("[::1]"),
-            // which IDN would mangle as if they were part of a hostname label.
+            // Address literals are not registered names, so IDNA does not apply (RFC 5890 §2.3.2.1).
+            // The current java.net.IDN happens to pass them through unchanged, but that is an
+            // implementation detail, not a contract — bypass it explicitly rather than rely on it.
             return lowered;
         }
         try {

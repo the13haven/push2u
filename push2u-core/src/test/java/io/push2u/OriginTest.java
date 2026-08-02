@@ -1,7 +1,6 @@
 package io.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
@@ -52,9 +51,9 @@ class OriginTest {
     }
 
     @Test
-    void convertsMixedCaseALabelsByLowercasingFirst() {
-        // IDN.toUnicode leaves a non-canonical "XN--" prefix untouched; the RFC 6454 lowercase
-        // step must run first for the conversion to recognize the label at all.
+    void convertsUppercaseALabels() {
+        // An uppercase A-label must come out as a lowercase U-label — RFC 6454 §6.1 serializes
+        // the host both converted to Unicode and lowercased, whatever case the endpoint used.
         assertThat(Origin.serialize(URI.create("https://XN--E1AFMKFD.XN--80AKHBYKNJ4F:443/subscriber-token")))
             .isEqualTo("https://пример.испытание");
     }
@@ -82,17 +81,23 @@ class OriginTest {
     void hostWithATrailingDotDoesNotBreakTheSerialization() {
         // The trailing dot leaves an empty final DNS label, which IDNA processing may reject;
         // the origin must still serialize rather than fail the send.
-        assertThatCode(() -> Origin.serialize(URI.create("https://example.com./subscriber-token")))
-            .doesNotThrowAnyException();
         assertThat(Origin.serialize(URI.create("https://example.com./subscriber-token")))
             .isEqualTo("https://example.com.");
+    }
+
+    @Test
+    void userinfoNeverAppearsInTheOrigin() {
+        // The endpoint is a capability URL; whatever credentials sit in its authority must not
+        // leak into the aud claim — RFC 6454 §6.1 serializes only scheme, host, and port.
+        assertThat(Origin.serialize(URI.create("https://user:pass@push.example/subscriber-token")))
+            .isEqualTo("https://push.example");
     }
 
     @Test
     void schemelessUriIsRejectedWithoutEchoingIt() {
         assertThatThrownBy(() -> Origin.serialize(URI.create("/relative/secret-path")))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("absolute http(s) URL")
+            .hasMessageContaining("no scheme or host")
             .hasMessageNotContaining("secret-path");
     }
 
@@ -100,7 +105,7 @@ class OriginTest {
     void hostlessUriIsRejectedWithoutEchoingIt() {
         assertThatThrownBy(() -> Origin.serialize(URI.create("mailto:someone@example.com")))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("absolute http(s) URL")
+            .hasMessageContaining("no scheme or host")
             .hasMessageNotContaining("someone@example.com");
     }
 
