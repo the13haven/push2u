@@ -1,5 +1,7 @@
 plugins {
     `java-library`
+    // Hosts the RecordingHttpClient test fixture, shared with the Vault starter's tests.
+    `java-test-fixtures`
 }
 
 description = "push2u-signer-vault — a VapidSigner backed by HashiCorp Vault Transit: the private " +
@@ -18,6 +20,8 @@ dependencies {
     testImplementation(libs.assertj.core)
     // The shared VapidSigner conformance contract (published from push2u-core's test fixtures).
     testImplementation(testFixtures(project(":push2u-core")))
+    // This module's own fixture (RecordingHttpClient) for the transport tests.
+    testImplementation(testFixtures(project))
     // A real Vault (dev mode) with a Transit mount for the integration test.
     testImplementation(libs.testcontainers.vault)
     testRuntimeOnly(libs.junit.platform.launcher)

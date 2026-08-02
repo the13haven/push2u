@@ -1,4 +1,4 @@
-package io.push2u.signer.vault.spring;
+package io.push2u.signer.vault;
 
 import java.io.IOException;
 import java.net.Authenticator;
@@ -11,29 +11,48 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 
 /**
  * A delegating {@link HttpClient} that counts synchronous {@link #send} calls — the only way to
  * prove a user-supplied client instance actually carries the transport's requests, since the JDK
- * client has no interceptor hook.
+ * client has no interceptor hook. Shared as a test fixture between this module's transport tests
+ * and the Vault starter's autoconfiguration tests.
  */
-final class RecordingHttpClient extends HttpClient {
+public final class RecordingHttpClient extends HttpClient {
 
-    /** The number of synchronous sends routed through this client. */
-    volatile int sends;
-
+    private final AtomicInteger sends = new AtomicInteger();
     private final HttpClient delegate;
 
-    RecordingHttpClient(HttpClient delegate) {
+    /**
+     * Wraps {@code delegate}, forwarding every call while counting synchronous sends.
+     *
+     * @param delegate the client that actually performs the requests
+     */
+    public RecordingHttpClient(HttpClient delegate) {
         this.delegate = delegate;
+    }
+
+    /**
+     * The number of synchronous sends routed through this client since the last {@link #reset}.
+     *
+     * @return the send count
+     */
+    public int sends() {
+        return sends.get();
+    }
+
+    /** Resets the send count — the fixture instances are static and shared between tests. */
+    public void reset() {
+        sends.set(0);
     }
 
     @Override
     public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler)
         throws IOException, InterruptedException {
-        sends++;
+        sends.incrementAndGet();
         return delegate.send(request, responseBodyHandler);
     }
 

@@ -80,7 +80,9 @@ class JdkVaultHttpTransportTest {
         withServer(200, oversized, true, uri ->
             assertThatThrownBy(() -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
                 .isInstanceOf(PushCryptoException.class)
-                .hasMessage("Vault response exceeded the configured limit of 8 bytes"));
+                .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
+                .hasMessageContaining("GET")
+                .hasMessageContaining("/v1/transit/keys/vapid"));
     }
 
     @Test
@@ -91,7 +93,9 @@ class JdkVaultHttpTransportTest {
         withServer(200, oversized, false, uri ->
             assertThatThrownBy(() -> transport(Duration.ofSeconds(5), 8).get(uri, Map.of()))
                 .isInstanceOf(PushCryptoException.class)
-                .hasMessage("Vault response exceeded the configured limit of 8 bytes"));
+                .hasMessageStartingWith("Vault response exceeded the configured limit of 8 bytes")
+                .hasMessageContaining("GET")
+                .hasMessageContaining("/v1/transit/keys/vapid"));
     }
 
     @Test
@@ -180,7 +184,7 @@ class JdkVaultHttpTransportTest {
             JdkVaultHttpTransport transport = new JdkVaultHttpTransport(recording, Duration.ofSeconds(5), 1024);
             transport.get(uri, Map.of());
             transport.post(uri, Map.of(), body);
-            assertThat(recording.sends).as("both calls went through the supplied client").isEqualTo(2);
+            assertThat(recording.sends()).as("both calls went through the supplied client").isEqualTo(2);
         });
     }
 }

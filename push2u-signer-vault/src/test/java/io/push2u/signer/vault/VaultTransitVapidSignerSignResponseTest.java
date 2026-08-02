@@ -110,6 +110,21 @@ class VaultTransitVapidSignerSignResponseTest {
     }
 
     @Test
+    void aHugeResponseBodyIsTruncatedWhenEchoedIntoTheErrorMessage() {
+        // The default transport caps responses at 1 MiB, but a custom transport holds that cap
+        // only by contract — the error echo must stay a log-safe size regardless.
+        String filler = "x".repeat(100_000);
+
+        assertThatThrownBy(() -> sign("{\"data\":{\"filler\":\"" + filler + "\"}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("no 'signature' field")
+            .hasMessageContaining("[truncated,")
+            .satisfies(e -> assertThat(e.getMessage().length())
+                .as("the echoed body is cut to a few KB")
+                .isLessThan(4096));
+    }
+
+    @Test
     void stringValueEqualToSignatureDoesNotHijackTheLookup() {
         // A member whose string VALUE is "signature", then a member holding a well-formed impostor
         // — both BEFORE the real field. An unanchored search binds to the string value, takes the

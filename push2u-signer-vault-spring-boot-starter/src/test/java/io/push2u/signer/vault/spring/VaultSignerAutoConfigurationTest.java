@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.push2u.PushCryptoException;
 import io.push2u.PushSender;
 import io.push2u.VapidSigner;
+import io.push2u.signer.vault.RecordingHttpClient;
 import io.push2u.signer.vault.VaultHttpResponse;
 import io.push2u.signer.vault.VaultHttpTransport;
 import io.push2u.signer.vault.VaultTransitVapidSigner;
@@ -175,14 +176,14 @@ class VaultSignerAutoConfigurationTest {
         // client must stay untouched — otherwise a user migrating to a full transport would keep
         // silently sending through the leftover client.
         RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
-        QualifiedHttpClientConfiguration.CLIENT.sends = 0;
+        QualifiedHttpClientConfiguration.CLIENT.reset();
         vaultRunner()
             .withUserConfiguration(RecordingTransportConfiguration.class, QualifiedHttpClientConfiguration.class)
             .run(context -> {
                 context.getBean(VapidSigner.class)
                     .sign("starter transport-priority probe".getBytes(StandardCharsets.UTF_8));
                 assertThat(RecordingTransportConfiguration.SIGN_REQUEST_BODIES).hasSize(1);
-                assertThat(QualifiedHttpClientConfiguration.CLIENT.sends)
+                assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
                     .as("the qualified HttpClient is bypassed when a transport bean exists")
                     .isZero();
             });
@@ -192,7 +193,7 @@ class VaultSignerAutoConfigurationTest {
     void theQualifiedHttpClientBacksTheDefaultTransport() throws Exception {
         // No VaultHttpTransport bean: the starter must wrap the push2uVaultHttpClient-qualified
         // client — the mTLS/proxy extension point — and route the sign call through it.
-        QualifiedHttpClientConfiguration.CLIENT.sends = 0;
+        QualifiedHttpClientConfiguration.CLIENT.reset();
         withStubVault(signResponse(), stubAddress ->
             explicitRunner(stubAddress)
                 .withUserConfiguration(QualifiedHttpClientConfiguration.class)
@@ -200,10 +201,49 @@ class VaultSignerAutoConfigurationTest {
                     byte[] signature = context.getBean(VapidSigner.class)
                         .sign("starter qualified-client probe".getBytes(StandardCharsets.UTF_8));
                     assertThat(signature).hasSize(64);
-                    assertThat(QualifiedHttpClientConfiguration.CLIENT.sends)
+                    assertThat(QualifiedHttpClientConfiguration.CLIENT.sends())
                         .as("the sign request went through the qualified HttpClient")
                         .isEqualTo(1);
                 }));
+    }
+
+    @Test
+    void anUnqualifiedHttpClientBeanIsNotPickedUp() throws Exception {
+        // The whole point of the qualifier: an application HttpClient bean meant for something
+        // else (push delivery, arbitrary REST calls) must not be silently drafted into carrying
+        // Vault tokens. Without the qualifier the starter builds its own default client.
+        UnqualifiedHttpClientConfiguration.CLIENT.reset();
+        withStubVault(signResponse(), stubAddress ->
+            explicitRunner(stubAddress)
+                .withUserConfiguration(UnqualifiedHttpClientConfiguration.class)
+                .run(context -> {
+                    byte[] signature = context.getBean(VapidSigner.class)
+                        .sign("starter unqualified-client probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(signature).as("the default transport still signs").hasSize(64);
+                    assertThat(UnqualifiedHttpClientConfiguration.CLIENT.sends())
+                        .as("an HttpClient bean without the push2uVaultHttpClient qualifier is ignored")
+                        .isZero();
+                }));
+    }
+
+    @Test
+    void fetchedModeStartupFailsOnTheRequestTimeoutInsteadOfHanging() throws Exception {
+        // The original regression: the fetched mode's metadata GET used a client without a request
+        // timeout, so a Vault that accepted the connection but never answered blocked context
+        // startup forever. With the bound request-timeout the refresh must fail fast instead.
+        try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            runner.withPropertyValues(
+                    "push2u.signer.vault.address=http://127.0.0.1:" + silent.getLocalPort(),
+                    "push2u.signer.vault.key-name=vapid",
+                    "push2u.signer.vault.token=test-token",
+                    "push2u.signer.vault.request-timeout=500ms")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                        .rootCause()
+                        .hasMessageContaining("timed out");
+                });
+        }
     }
 
     @Test
@@ -345,6 +385,18 @@ class VaultSignerAutoConfigurationTest {
 
         @Bean("push2uVaultHttpClient")
         HttpClient push2uVaultHttpClient() {
+            return CLIENT;
+        }
+    }
+
+    /** An application {@link HttpClient} bean for other purposes — lacking the Vault qualifier. */
+    @Configuration(proxyBeanMethods = false)
+    static class UnqualifiedHttpClientConfiguration {
+
+        static final RecordingHttpClient CLIENT = new RecordingHttpClient(HttpClient.newHttpClient());
+
+        @Bean
+        HttpClient plainHttpClient() {
             return CLIENT;
         }
     }

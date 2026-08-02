@@ -88,12 +88,14 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
     @Override
     public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+        Objects.requireNonNull(body, "body");
         return execute("POST", uri, headers, HttpRequest.BodyPublishers.ofByteArray(body));
     }
 
     private VaultHttpResponse execute(String method, URI uri, Map<String, String> headers,
                                       HttpRequest.BodyPublisher bodyPublisher) {
         Objects.requireNonNull(uri, "uri");
+        Objects.requireNonNull(headers, "headers");
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
             .timeout(requestTimeout)
             .method(method, bodyPublisher);
@@ -107,10 +109,12 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
                 + method + " " + withoutQuery(uri), e);
         } catch (IOException e) {
             // The JDK client surfaces a body-subscriber failure wrapped in IOException — recover
-            // the size-cap violation from the cause chain and report it as what it is.
+            // the size-cap violation from the cause chain and report it as what it is, naming the
+            // call (method + query-less URI) so operators can tell the sign POST from the keys GET.
             ResponseTooLargeException tooLarge = findTooLarge(e);
             if (tooLarge != null) {
-                throw new PushCryptoException(tooLarge.getMessage(), e);
+                throw new PushCryptoException(
+                    tooLarge.getMessage() + ": " + method + " " + withoutQuery(uri), e);
             }
             throw new PushCryptoException("Vault request failed: " + method + " " + withoutQuery(uri), e);
         } catch (InterruptedException e) {

@@ -220,7 +220,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             signUri, Map.of("X-Vault-Token", token), request.getBytes(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
             throw new PushCryptoException(
-                "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + response.body());
+                "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
         }
         String marshalled = extractSignature(response.body());
         byte[] signature;
@@ -264,7 +264,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
         if (response.statusCode() != 200) {
             throw new PushCryptoException(
-                "Vault Transit key read failed: HTTP " + response.statusCode() + " — " + response.body());
+                "Vault Transit key read failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
         }
         String body = response.body();
         int latestVersion = extractLatestVersion(body);
@@ -287,7 +287,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
         int valueStart = directMemberValueStart(json, dataOpen, "signature");
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault response has no 'signature' field: " + json);
+            throw new PushCryptoException("Vault response has no 'signature' field: " + abbreviated(json));
         }
         return stringValueAt(json, valueStart, "signature");
     }
@@ -303,7 +303,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
         int valueStart = directMemberValueStart(json, dataOpen, "latest_version");
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault key response has no 'latest_version' field: " + json);
+            throw new PushCryptoException("Vault key response has no 'latest_version' field: " + abbreviated(json));
         }
         int start = valueStart;
         while (start < json.length() && Character.isWhitespace(json.charAt(start))) {
@@ -314,7 +314,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             end++;
         }
         if (end == start) {
-            throw new PushCryptoException("malformed Vault 'latest_version' field: " + json);
+            throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json));
         }
         return Integer.parseInt(json.substring(start, end));
     }
@@ -336,7 +336,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         int versionValue = directMemberValueStart(json, keysOpen, Integer.toString(version));
         if (versionValue < 0) {
-            throw new PushCryptoException("Vault key response has no entry for key version " + version + ": " + json);
+            throw new PushCryptoException("Vault key response has no entry for key version " + version + ": " + abbreviated(json));
         }
         int versionOpen = versionValue;
         while (versionOpen < json.length() && Character.isWhitespace(json.charAt(versionOpen))) {
@@ -344,14 +344,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         if (versionOpen >= json.length() || json.charAt(versionOpen) != '{') {
             throw new PushCryptoException(
-                "Vault key response entry for key version " + version + " is not an object: " + json);
+                "Vault key response entry for key version " + version + " is not an object: " + abbreviated(json));
         }
         String versionObject = json.substring(versionOpen, matchingCloseBrace(json, versionOpen) + 1);
 
         int pemStart = directMemberValueStart(versionObject, 0, "public_key");
         if (pemStart < 0) {
             throw new PushCryptoException(
-                "Vault key response has no 'public_key' for key version " + version + ": " + json);
+                "Vault key response has no 'public_key' for key version " + version + ": " + abbreviated(json));
         }
         return stringValueAt(versionObject, pemStart, "public_key").replace("\\n", "\n");
     }
@@ -363,7 +363,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             i++;
         }
         if (i >= json.length() || json.charAt(i) != '{') {
-            throw new PushCryptoException("Vault response is not a JSON object: " + json);
+            throw new PushCryptoException("Vault response is not a JSON object: " + abbreviated(json));
         }
         return i;
     }
@@ -376,14 +376,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static int directMemberObjectStart(String json, int objectOpen, String name) {
         int valueStart = directMemberValueStart(json, objectOpen, name);
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault key response has no '" + name + "' object: " + json);
+            throw new PushCryptoException("Vault key response has no '" + name + "' object: " + abbreviated(json));
         }
         int cursor = valueStart;
         while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
             cursor++;
         }
         if (cursor >= json.length() || json.charAt(cursor) != '{') {
-            throw new PushCryptoException("Vault key response '" + name + "' is not an object: " + json);
+            throw new PushCryptoException("Vault key response '" + name + "' is not an object: " + abbreviated(json));
         }
         return cursor;
     }
@@ -448,14 +448,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             open++;
         }
         if (open >= json.length() || json.charAt(open) != '"') {
-            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + json);
+            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + abbreviated(json));
         }
         int close = open + 1;
         while (close < json.length() && json.charAt(close) != '"') {
             close += json.charAt(close) == '\\' ? 2 : 1;
         }
         if (close >= json.length()) {
-            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + json);
+            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + abbreviated(json));
         }
         return json.substring(open + 1, close);
     }
@@ -486,7 +486,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 }
             }
         }
-        throw new PushCryptoException("malformed Vault key response: unterminated object: " + json);
+        throw new PushCryptoException("malformed Vault key response: unterminated object: " + abbreviated(json));
     }
 
     private static ECPublicKey parsePublicKeyPem(String pem) throws GeneralSecurityException {
@@ -516,11 +516,27 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
     }
 
+    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
+    private static final int ERROR_ECHO_LIMIT = 2048;
+
+    /**
+     * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT}
+     * characters with an explicit marker. The default transport caps responses at 1 MiB, but a
+     * megabyte — or whatever a custom {@link VaultHttpTransport} lets through, where the cap holds
+     * only by contract — is far too heavy for a log line.
+     */
+    private static String abbreviated(String text) {
+        if (text.length() <= ERROR_ECHO_LIMIT) {
+            return text;
+        }
+        return text.substring(0, ERROR_ECHO_LIMIT) + "... [truncated, " + text.length() + " chars total]";
+    }
+
     /** {@code vault:v1:<base64url>} → {@code <base64url>}. */
     private static String stripVaultPrefix(String marshalled) {
         int marker = marshalled.lastIndexOf(VAULT_PREFIX_END);
         if (marker < 0) {
-            throw new PushCryptoException("unexpected Vault signature format: " + marshalled);
+            throw new PushCryptoException("unexpected Vault signature format: " + abbreviated(marshalled));
         }
         return marshalled.substring(marker + 1);
     }
