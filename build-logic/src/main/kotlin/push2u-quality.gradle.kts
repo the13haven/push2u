@@ -238,8 +238,18 @@ gradle.taskGraph.whenReady {
     val runQuality = hasTask("${project.path}:qualityCheck") || hasTask("${project.path}:qualityCheckCi")
     val mainOnly = { taskName: String -> runQuality && taskName.endsWith("Main") }
 
-    tasks.withType<Checkstyle>().configureEach { enabled = mainOnly(name) }
-    tasks.withType<Pmd>().configureEach { enabled = mainOnly(name) }
-    tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) }
-    tasks.matching { it.name.startsWith("spotless") }.configureEach { enabled = runQuality }
+    // A tool task named on the command line runs regardless — `./gradlew spotlessApply` is what
+    // Gradle itself tells you to do after a formatting failure, and `./gradlew checkstyleTest` is a
+    // reasonable thing to ask for deliberately. Only the implicit path (a tool task pulled in by
+    // `check`) is suppressed. Spotless is matched by prefix because spotlessApply/spotlessCheck
+    // delegate to per-format tasks (spotlessJavaApply and friends) that carry different names.
+    val requested = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }.toSet()
+    val spotlessRequested = requested.any { it.startsWith("spotless") }
+
+    tasks.withType<Checkstyle>().configureEach { enabled = mainOnly(name) || name in requested }
+    tasks.withType<Pmd>().configureEach { enabled = mainOnly(name) || name in requested }
+    tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) || name in requested }
+    tasks.matching { it.name.startsWith("spotless") }.configureEach {
+        enabled = runQuality || spotlessRequested
+    }
 }
