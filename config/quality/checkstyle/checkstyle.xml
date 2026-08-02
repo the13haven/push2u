@@ -17,11 +17,6 @@
     <property name="severity" value="error"/>
     <property name="charset" value="UTF-8"/>
 
-    <!-- module-info.java: Checkstyle's parser does not fully support module declarations -->
-    <module name="BeforeExecutionExclusionFileFilter">
-        <property name="fileNamePattern" value="module\-info\.java$"/>
-    </module>
-
     <module name="TreeWalker">
 
         <!-- ======================== -->
@@ -85,11 +80,13 @@
             <property name="scope" value="public"/>
         </module>
 
-        <!-- Javadoc on public methods; record accessors and property-style methods may omit tags -->
+        <!--
+            Javadoc on public methods, tags included: the code already documents every @param and
+            @return, so the usual allowMissingParamTags/allowMissingReturnTag escape hatches would
+            only permit a regression.
+        -->
         <module name="JavadocMethod">
             <property name="accessModifiers" value="public"/>
-            <property name="allowMissingParamTags" value="true"/>
-            <property name="allowMissingReturnTag" value="true"/>
         </module>
 
         <!-- Public fields are part of the API surface — document them -->

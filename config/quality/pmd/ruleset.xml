@@ -7,19 +7,20 @@
 
     <description>
         PMD ruleset for push2u — best practices, code style, design complexity, error-prone
-        patterns, performance and security. Style rules that overlap with Spotless (Palantir Java
-        Format) or with Error Prone's compiler checks are excluded so a violation has exactly one
-        owner.
+        patterns, performance and security.
+
+        Every exclusion below silences a rule that actually fires on this codebase (verified by
+        running the categories unfiltered), and the comment says which code it fires on. The two
+        exceptions are MissingOverride and CompareObjectsWithEquals, kept out because Error Prone
+        already reports them — a violation should have exactly one owner. A rule that never fires
+        here is left enabled rather than pre-emptively excluded.
     </description>
 
     <!-- ======================== -->
     <!-- Best Practices           -->
     <!-- ======================== -->
     <rule ref="category/java/bestpractices.xml">
-        <!-- Single-method contracts (VapidSigner, PushHttpClient, Sleeper) are seams, not
-             functional-interface sugar -->
-        <exclude name="ImplicitFunctionalInterface"/>
-        <!-- Handled by Error Prone's MissingOverride check -->
+        <!-- Owned by Error Prone's MissingOverride check -->
         <exclude name="MissingOverride"/>
         <!-- The hand-written JSON scanners in push2u-signer-vault advance the loop index across a
              matched token on purpose; rewriting them around a separate cursor would hide the scan
@@ -31,10 +32,8 @@
     <!-- Code Style               -->
     <!-- ======================== -->
     <rule ref="category/java/codestyle.xml">
-        <!-- Records and utility classes legitimately omit constructors -->
-        <exclude name="AtLeastOneConstructor"/>
-        <!-- The inverse rule: an explicit private constructor is how a utility class documents that
-             it must not be instantiated (Algorithms, Vapid, the DefaultAsyncExecutor holder) -->
+        <!-- An explicit private constructor is how a utility class documents that it must not be
+             instantiated (PushSender's DefaultAsyncExecutor holder) -->
         <exclude name="UnnecessaryConstructor"/>
         <!-- Constants sit under their own Javadoc after the private constructor, and interface
              constants after the abstract method they serve — both deliberate -->
@@ -48,22 +47,24 @@
         <!-- Explicit boxing is load-bearing in VaultTransitVapidSigner, where Integer vs int selects
              the constructor overload that distinguishes "pinned version" from "latest" -->
         <exclude name="UnnecessaryBoxing"/>
-        <!-- Early returns beat a single exit point -->
+        <!-- Early returns beat a single exit point — 30 of them in the validation paths -->
         <exclude name="OnlyOneReturn"/>
-        <exclude name="CallSuperInConstructor"/>
         <!-- Crypto code is full of short, spec-named locals (r, s, ikm, prk, salt) -->
         <exclude name="ShortVariable"/>
+        <!-- Fires on the descriptive constant names the RFC limits carry
+             (DEFAULT_MAX_ENCRYPTED_BODY_BYTES, PADDING_DELIMITER_LENGTH) -->
         <exclude name="LongVariable"/>
+        <!-- Hkdf and Jca are the names of what they wrap -->
         <exclude name="ShortClassName"/>
         <!-- Factory methods are named of/from by convention -->
         <exclude name="ShortMethodName"/>
         <!-- Immutability comes from records and final fields, not from `final` on every local -->
         <exclude name="LocalVariableCouldBeFinal"/>
         <exclude name="MethodArgumentCouldBeFinal"/>
-        <exclude name="UnnecessaryAnnotationValueElement"/>
-        <!-- Package-private access is intentional: it is how the core keeps its API surface small -->
+        <!-- Package-private access is intentional: it is how the core keeps its API surface small,
+             and the 71 hits are exactly that -->
         <exclude name="CommentDefaultAccessModifier"/>
-        <exclude name="ConfusingTernary"/>
+        <!-- `var` where the initializer names the type (EcKeys' pattern-match bindings) -->
         <exclude name="UseExplicitTypes"/>
     </rule>
 
@@ -73,25 +74,30 @@
     <rule ref="category/java/design.xml">
         <!-- Too strict for fluent builders and the RFC 8291 encryption pipeline -->
         <exclude name="LawOfDemeter"/>
-        <exclude name="ExcessiveImports"/>
-        <exclude name="TooManyFields"/>
-        <exclude name="CouplingBetweenObjects"/>
-        <exclude name="AbstractClassWithoutAnyMethod"/>
-        <!-- Builders naturally have one method per option -->
+        <!-- Builders naturally have one method per option (PushSender.Builder, Jca,
+             VaultTransitVapidSigner) -->
         <exclude name="TooManyMethods"/>
-        <exclude name="PublicMemberInNonPublicType"/>
-        <!-- Requires an explicit package list; not applicable -->
-        <exclude name="LoosePackageCoupling"/>
         <!-- Fires on the canonical equals() shape (`if (this == other) return true;` followed by the
-             pattern match) -->
+             pattern match) in PushMessage and Subscription -->
         <exclude name="SimplifyBooleanReturns"/>
     </rule>
 
-    <!-- Protocol code (header parsing, retry classification) branches more than business code -->
+    <!-- Protocol code (DER reading, JWT escaping, property binding) branches more than business
+         code: at the default level of 10 this fires on toP1363, jsonEscape and the starter's
+         pushSender factory, none of which is improved by being split up. The class-level default
+         (80) is left alone. -->
     <rule ref="category/java/design.xml/CyclomaticComplexity">
         <properties>
             <property name="methodReportLevel" value="15"/>
-            <property name="classReportLevel" value="80"/>
+        </properties>
+    </rule>
+
+    <!-- PushSender is the library's facade, so it references most of the core's types; 21 against a
+         default threshold of 20 is that, not a design problem. The rule stays on at a level that
+         would still catch a class growing well past it. -->
+    <rule ref="category/java/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="threshold" value="25"/>
         </properties>
     </rule>
 
@@ -101,9 +107,10 @@
     <rule ref="category/java/errorprone.xml">
         <!-- Status codes and byte lengths from the RFCs are the clearest way to express the check -->
         <exclude name="AvoidLiteralsInIfCondition"/>
-        <!-- Records and sealed types do not need serialVersionUID -->
+        <!-- The library's exceptions are never serialized; a serialVersionUID on PushCryptoException
+             and friends would be ceremony -->
         <exclude name="MissingSerialVersionUID"/>
-        <!-- Handled by Error Prone's ReferenceEquality check -->
+        <!-- Owned by Error Prone's ReferenceEquality check -->
         <exclude name="CompareObjectsWithEquals"/>
         <!-- Record-style accessors: field name matching method name is the point -->
         <exclude name="AvoidFieldNameMatchingMethodName"/>
