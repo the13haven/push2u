@@ -126,7 +126,27 @@ class Push2uAutoConfigurationTest {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
                     .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("push2u.vapid.subject");
+            });
+    }
+
+    @Test
+    void applicationSuppliedSenderStartsWithoutTheSubject() {
+        // The subject pre-flight lives in the pushSender @Bean method, which is
+        // @ConditionalOnMissingBean: an application-supplied PushSender bypasses it entirely, so
+        // push2u.vapid.subject is not required in that case. This is now a contract worth pinning —
+        // it would be easy to break by relocating the check into a property validator instead.
+        // Deliberately just Push2uAutoConfiguration, not the field's runner: the health indicator
+        // (out of scope here) requires its own VapidSigner bean, which this scenario has no reason
+        // to supply.
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+            .withUserConfiguration(CustomSenderConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasSingleBean(PushSender.class);
+                assertThat(context.getBean(PushSender.class)).isSameAs(CustomSenderConfiguration.SENDER);
             });
     }
 
@@ -150,36 +170,64 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void defaultRecordSizeRejectsAPayloadThatOnlyFitsUnderARaisedLimit() {
+    void defaultLimitsRejectAPayloadThatOnlyFitsUnderTheRaisedOnes() {
         // Control for the previous test: without raising the properties, the same 4096-byte
         // payload must be rejected by PushSender's own default limits, before any network call.
+        // At the defaults the body-size precondition (rs=4096, body cap 4096) fires first, ahead
+        // of the record-size one — hence the assertion on that particular message.
         keyedRunner().run(context -> {
             PushSender sender = context.getBean(PushSender.class);
             assertThatThrownBy(() -> sender.send(subscription(), PushMessage.builder(new byte[4096]).build()))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeding the configured maximum");
         });
     }
 
     @Test
-    void invalidRecordSizeFailsTheContextWithTheBuilderMessage() {
+    void invalidRecordSizeFailsTheContextNamingTheProperty() {
+        // The builder's own message names its camelCase parameter ("recordSize"), not the YAML
+        // property — the starter re-throws with push2u.record-size prefixed so the failure is
+        // actionable. That re-thrown IllegalArgumentException wraps the builder's original as its
+        // cause, so rootCause() would find the unprefixed message instead; and Spring's own
+        // BeanCreationException.getMessage() happens to *echo* the wrapped text too, so a plain
+        // "any message in the chain contains the needle" search would match that wrapper instead of
+        // the actual exception. firstOfTypeContaining requires both the exact exception type and
+        // the message, landing on the starter's own IllegalArgumentException specifically.
         keyedRunner().withPropertyValues("push2u.record-size=10").run(context -> {
             assertThat(context).hasFailed();
-            assertThat(context.getStartupFailure())
-                .rootCause()
-                .isInstanceOf(IllegalArgumentException.class)
+            assertThat(firstOfTypeContaining(
+                context.getStartupFailure(), IllegalArgumentException.class, "push2u.record-size:"))
+                .hasMessageContaining("push2u.record-size:")
                 .hasMessageContaining("recordSize must be at least");
         });
     }
 
     @Test
-    void invalidMaxEncryptedBodyBytesFailsTheContextWithTheBuilderMessage() {
+    void invalidMaxEncryptedBodyBytesFailsTheContextNamingTheProperty() {
         keyedRunner().withPropertyValues("push2u.max-encrypted-body-bytes=10").run(context -> {
             assertThat(context).hasFailed();
-            assertThat(context.getStartupFailure())
-                .rootCause()
-                .isInstanceOf(IllegalArgumentException.class)
+            assertThat(firstOfTypeContaining(
+                context.getStartupFailure(), IllegalArgumentException.class, "push2u.max-encrypted-body-bytes:"))
+                .hasMessageContaining("push2u.max-encrypted-body-bytes:")
                 .hasMessageContaining("maxEncryptedBodyBytes must be greater than");
         });
+    }
+
+    /**
+     * The first throwable of exactly {@code type} in {@code root}'s cause chain (inclusive) whose
+     * message contains {@code needle}. Unlike a plain message search, this will not match an outer
+     * wrapper (e.g. Spring's {@code BeanCreationException}) whose own message happens to echo a
+     * nested cause's text.
+     */
+    private static <T extends Throwable> T firstOfTypeContaining(Throwable root, Class<T> type, String needle) {
+        for (Throwable current = root; current != null; current = current.getCause()) {
+            if (type.isInstance(current) && current.getMessage() != null && current.getMessage().contains(needle)) {
+                return type.cast(current);
+            }
+        }
+        throw new AssertionError(
+            "no " + type.getSimpleName() + " in the cause chain of " + root + " has a message containing \""
+                + needle + "\"");
     }
 
     @Test
@@ -232,6 +280,32 @@ class Push2uAutoConfigurationTest {
         @Bean
         PushHttpClient stubHttpClient() {
             return (endpoint, headers, body) -> new PushResponse(201, Map.of());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class CustomSenderConfiguration {
+
+        static final PushSender SENDER = PushSender.builder()
+            .signer(new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    return new byte[64];
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            })
+            .contact("mailto:ops@example.com")
+            .build();
+
+        @Bean
+        PushSender applicationSender() {
+            return SENDER;
         }
     }
 

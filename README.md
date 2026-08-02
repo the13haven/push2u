@@ -258,8 +258,8 @@ push2u:
     subject: "mailto:ops@example.com"
   jwt-expiry: 12h
   default-ttl: 24h
-  record-size: 4096
-  max-encrypted-body-bytes: 4096
+  record-size: 4096                 # defaults, shown for reference
+  max-encrypted-body-bytes: 4096    # defaults, shown for reference
   retry:
     max-attempts: 3
     initial-backoff: 1s
@@ -270,13 +270,16 @@ The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Applica
 same types take precedence. When Spring Boot health support is present, the starter also exposes
 a health indicator that verifies the configured signer can produce a 64-byte ES256 signature.
 
-`push2u.vapid.subject` is required to build a `PushSender` regardless of where the `VapidSigner`
-comes from; leaving it unset fails the context with a message naming the property.
+`push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
+the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
+property. It is not required when the application supplies its own `PushSender` bean — that bean
+bypasses the starter's checks entirely.
 
 `record-size` and `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s
 defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) untouched. Setting
 either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` at or
-below the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message.
+below the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
+prefixed with the YAML property name (the builder itself only names its Java parameter).
 
 ## Vault Transit signer
 
@@ -394,7 +397,7 @@ push2u:
       max-response-bytes: 1048576
 ```
 
-Two extension points, in priority order:
+Resolution order (two extension points, plus the properties-only fallback):
 
 1. A `VaultHttpTransport` bean — full control (custom HTTP stack, observability). The transport
    properties above are then ignored; the bean owns those concerns.
@@ -419,9 +422,11 @@ for the previous application-server key must be replaced.
 
 - Only `aes128gcm` content coding is supported.
 - Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes; `rs`
-  must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4) and at least 18 (RFC 8188 §2).
+  must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4) and at least 18 (RFC 8188 §2)
+  (`push2u.record-size` in the starter).
 - The encrypted body is capped at 4096 bytes by default (RFC 8030 §7.2), which allows 3993 bytes
-  of plaintext. Both `maxEncryptedBodyBytes` and `recordSize` must be raised to send more.
+  of plaintext. Both `maxEncryptedBodyBytes` and `recordSize` must be raised to send more
+  (`push2u.max-encrypted-body-bytes` / `push2u.record-size` in the starter).
 - `PushMessage.topic`, when set, must contain at most 32 URL- and filename-safe base64
   characters as required by RFC 8030.
 - VAPID JWT expiry must be greater than zero and no more than 24 hours.

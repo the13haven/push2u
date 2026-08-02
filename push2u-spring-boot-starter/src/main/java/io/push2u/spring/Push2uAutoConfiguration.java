@@ -60,19 +60,29 @@ public final class Push2uAutoConfiguration {
 
     /**
      * The send facade, wired from the {@link VapidSigner} (local or application-supplied), the
-     * transport, and the properties. Created only once a signer is available.
+     * transport, and the properties. Created only once a signer is available, and only when the
+     * application has not supplied its own {@link PushSender} bean — an application-supplied
+     * {@code PushSender} bypasses this method entirely, so none of the checks below apply to it.
      *
-     * <p>{@code push2u.vapid.subject} is required even when the signer itself comes from another
-     * starter (e.g. the Vault Transit signer starter, which supplies only key custody, not a
-     * contact address): it is checked here, with a message naming the property, so a missing
-     * subject fails with an actionable diagnostic rather than {@link PushSender.Builder#build()}'s
-     * generic {@code "contact is required"}.
+     * <p>{@code push2u.vapid.subject} is required for this autoconfigured sender even when the
+     * signer itself comes from another starter (e.g. the Vault Transit signer starter, which
+     * supplies only key custody, not a contact address): it is checked here, with a message naming
+     * the property, so a missing subject fails with an actionable diagnostic rather than
+     * {@link PushSender.Builder#build()}'s generic {@code "contact is required"}.
+     *
+     * <p>{@code push2u.record-size} / {@code push2u.max-encrypted-body-bytes} failures from
+     * {@link PushSender.Builder#recordSize(int)} / {@link PushSender.Builder#maxEncryptedBodyBytes(int)}
+     * are re-thrown with the property name prefixed, since the builder's own message names its
+     * camelCase parameter, not the YAML property.
      *
      * @param signer     the VAPID signer
      * @param httpClient the HTTP transport
      * @param properties the bound configuration
      * @return the configured sender
-     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank
+     * @throws IllegalStateException    if {@code push2u.vapid.subject} is unset or blank
+     * @throws IllegalArgumentException if {@code push2u.record-size} or
+     *                                  {@code push2u.max-encrypted-body-bytes} is set to a value
+     *                                  the builder rejects
      */
     @Bean
     @ConditionalOnMissingBean
@@ -98,10 +108,18 @@ public final class Push2uAutoConfiguration {
             builder.defaultTtl(properties.defaultTtl());
         }
         if (properties.recordSize() != null) {
-            builder.recordSize(properties.recordSize());
+            try {
+                builder.recordSize(properties.recordSize());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("push2u.record-size: " + e.getMessage(), e);
+            }
         }
         if (properties.maxEncryptedBodyBytes() != null) {
-            builder.maxEncryptedBodyBytes(properties.maxEncryptedBodyBytes());
+            try {
+                builder.maxEncryptedBodyBytes(properties.maxEncryptedBodyBytes());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("push2u.max-encrypted-body-bytes: " + e.getMessage(), e);
+            }
         }
         return builder.build();
     }

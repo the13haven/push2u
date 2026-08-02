@@ -274,22 +274,27 @@ bound properties.
 
 - a local `VapidSigner` when both local keys are configured;
 - a default `JdkHttpPushClient`;
-- a `PushSender` when a signer is available;
+- an autoconfigured `PushSender` when a signer is available and `push2u.vapid.subject` is set;
 - a health indicator when Spring Boot health support is present.
 
-Application beans override these defaults.
+Application beans override these defaults; in particular, an application-supplied `PushSender`
+bean bypasses the `pushSender` factory method entirely, so `push2u.vapid.subject` is not required
+in that case — the requirement below is specific to the *autoconfigured* sender.
 
-`push2u.vapid.subject` (the VAPID `sub` claim) is required whenever a `PushSender` is built,
-including when the `VapidSigner` bean comes from another starter — the Vault Transit signer
-starter supplies only key custody, not a contact address. The `pushSender` bean checks this
+`push2u.vapid.subject` (the VAPID `sub` claim) is required to build the autoconfigured
+`PushSender`, including when the `VapidSigner` bean comes from another starter — the Vault Transit
+signer starter supplies only key custody, not a contact address. The `pushSender` bean checks this
 explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing
 `PushSender.Builder#build()`'s generic `"contact is required"`.
 
 `push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
 pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,
-set forwards the value to `Builder#recordSize(int)` / `Builder#maxEncryptedBodyBytes(int)`, whose
-own validation (RFC 8188 §2's 18-byte floor, and the fixed 103-byte `aes128gcm` overhead) then
-governs context startup — an invalid value fails the context with the builder's message.
+set forwards the value to `Builder#recordSize(int)` / `Builder#maxEncryptedBodyBytes(int)`. Their
+own validation — the RFC 8188 §2 18-byte floor for `recordSize`, checked at startup, separately
+from the RFC 8291 §4 per-payload rule checked on each `send()`; and the fixed 103-byte
+`aes128gcm` overhead for `maxEncryptedBodyBytes` — governs context startup; the starter re-throws
+an invalid value's `IllegalArgumentException` with the YAML property name prefixed, since the
+builder's own message names its camelCase parameter instead.
 
 `push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
 configured, the Vault signer takes precedence over the local signer unless the application
@@ -366,7 +371,10 @@ The automated suite covers:
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`);
 - HTTP delivery, status mapping, and retry behavior;
-- Spring Boot auto-configuration;
+- Spring Boot auto-configuration, including `push2u.vapid.subject`/`push2u.record-size`/
+  `push2u.max-encrypted-body-bytes` wiring and diagnostics, and — reproducing the two Vault
+  Spring Boot YAML examples from the README as property values — that the core and Vault Transit
+  signer starters compose into a working `PushSender` (`VaultSignerAutoConfigurationTest`);
 - Vault Transit integration through Testcontainers.
 
 The standard verification commands are:

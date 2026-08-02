@@ -170,12 +170,24 @@ class VaultSignerAutoConfigurationTest {
             });
     }
 
+    // The next four tests reproduce the two Vault Spring Boot YAML examples from README.md verbatim
+    // (as of the push2u.vapid.subject fix) as property values, since a test cannot literally read
+    // the README. That copy is manual and can silently drift from the document — nothing here
+    // fails if someone edits the README example without touching this file; treat these as a
+    // targeted regression for the reported gap, not as living documentation.
+
     @Test
     void theReadmeExplicitPublicKeyExampleComposesIntoAWorkingSender() {
         // Regression for a README gap: the "Explicit public key" Vault Spring Boot example printed
         // only push2u.signer.vault.* until push2u.vapid.subject was added alongside it. This test
         // reproduces that exact composition (Vault properties + the core starter's subject) and
-        // asserts it actually yields a usable PushSender, not just a VapidSigner bean.
+        // asserts it actually yields a usable PushSender, not just a VapidSigner bean. It covers the
+        // explicit-mode example only; theReadmeFetchedPublicKeyExampleComposesIntoAWorkingSender
+        // below covers the other (recommended, fetched-mode) example — the gap was in both.
+        //
+        // Unlike theVaultSignerOutranksTheCoreLocalSigner above, no push2u.vapid.public-key/
+        // private-key are set: that test's point is precedence between two signers, this one
+        // reproduces the README scenario, where no local VAPID keys exist at all.
         new ApplicationContextRunner()
             .withConfiguration(
                 AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
@@ -188,7 +200,30 @@ class VaultSignerAutoConfigurationTest {
                 "push2u.signer.vault.public-key=" + publicKeyB64,
                 "push2u.signer.vault.key-version=3")
             .run(context -> {
-                assertThat(context).hasNotFailed();
+                assertThat(context).hasSingleBean(VapidSigner.class);
+                assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                assertThat(context).hasSingleBean(PushSender.class);
+            });
+    }
+
+    @Test
+    void theReadmeFetchedPublicKeyExampleComposesIntoAWorkingSender() {
+        // The other half of the same README gap: the "Fetched public key" example is the one README
+        // calls recommended, so it is the one most users copy first. Fetched mode performs a startup
+        // GET against transit/keys/<key>, so a stub VaultHttpTransport (an application transport bean
+        // — first in the starter's transport priority order) answers it with latest_version + a PEM
+        // public key, exactly as the real Vault Transit API would.
+        new ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+            .withPropertyValues(
+                "push2u.vapid.subject=mailto:ops@example.com",
+                "push2u.signer.vault.address=https://vault.example:8200",
+                "push2u.signer.vault.mount=transit",
+                "push2u.signer.vault.key-name=vapid",
+                "push2u.signer.vault.token=test-token")
+            .withUserConfiguration(FetchedMetadataTransportConfiguration.class)
+            .run(context -> {
                 assertThat(context).hasSingleBean(VapidSigner.class);
                 assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
                 assertThat(context).hasSingleBean(PushSender.class);
@@ -197,9 +232,9 @@ class VaultSignerAutoConfigurationTest {
 
     @Test
     void theReadmeVaultExampleWithoutTheCoreSubjectFailsNamingTheProperty() {
-        // Same composition as above, minus push2u.vapid.subject: a user who copies only the
-        // push2u.signer.vault.* block must get a diagnostic that names the missing property, not
-        // PushSender.Builder's generic "contact is required" message.
+        // Same (explicit-mode) composition as above, minus push2u.vapid.subject: a user who copies
+        // only the push2u.signer.vault.* block must get a diagnostic that names the missing
+        // property, not PushSender.Builder's generic "contact is required" message.
         new ApplicationContextRunner()
             .withConfiguration(
                 AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
@@ -423,6 +458,52 @@ class VaultSignerAutoConfigurationTest {
                         "{\"data\":{\"signature\":\"vault:v3:" + signature + "\"}}");
                 }
             };
+        }
+    }
+
+    /**
+     * A {@link VaultHttpTransport} stub for fetched mode: answers the startup
+     * {@code transit/keys/<key>} {@code GET} with {@code latest_version} + a PEM public key (as the
+     * real Vault Transit API does) and the {@code sign} {@code POST} like the recording stub above.
+     */
+    @Configuration(proxyBeanMethods = false)
+    static class FetchedMetadataTransportConfiguration {
+
+        private static final KeyPair KEY_PAIR = generateKeyPair();
+
+        @Bean
+        VaultHttpTransport fetchedMetadataTransport() {
+            return new VaultHttpTransport() {
+                @Override
+                public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                    return new VaultHttpResponse(200, metadataBody(KEY_PAIR));
+                }
+
+                @Override
+                public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                    String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
+                    return new VaultHttpResponse(200, "{\"data\":{\"signature\":\"vault:v1:" + signature + "\"}}");
+                }
+            };
+        }
+
+        private static KeyPair generateKeyPair() {
+            try {
+                KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+                generator.initialize(new ECGenParameterSpec("secp256r1"));
+                return generator.generateKeyPair();
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+        }
+
+        /** A minimal {@code transit/keys/<name>} response advertising the pair's public key as v1. */
+        private static String metadataBody(KeyPair keyPair) {
+            String pem = "-----BEGIN PUBLIC KEY-----\n"
+                + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keyPair.getPublic().getEncoded())
+                + "\n-----END PUBLIC KEY-----\n";
+            return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
+                + "\"}},\"latest_version\":1}}";
         }
     }
 
