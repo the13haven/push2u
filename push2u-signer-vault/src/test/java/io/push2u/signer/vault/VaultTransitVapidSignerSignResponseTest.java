@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.push2u.PushCryptoException;
-import io.push2u.PushHttpClient;
-import io.push2u.PushResponse;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -15,7 +13,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link VaultTransitVapidSigner#sign} against synthetic Transit {@code sign} response bodies, via
- * a stub {@link PushHttpClient} — no Vault. Two properties a real dev-mode Vault never exercises:
+ * a stub {@link VaultHttpTransport} — no Vault. Two properties a real dev-mode Vault never
+ * exercises:
  *
  * <ul>
  *   <li><b>Signature shape:</b> a decoded signature that is not the 64-byte ES256 {@code r || s}
@@ -35,7 +34,17 @@ class VaultTransitVapidSignerSignResponseTest {
     private static VaultTransitVapidSigner signer(String responseBody) {
         byte[] publicKey = new byte[65];
         publicKey[0] = 0x04;
-        PushHttpClient stub = (endpoint, headers, body) -> new PushResponse(200, Map.of(), responseBody);
+        VaultHttpTransport stub = new VaultHttpTransport() {
+            @Override
+            public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                throw new AssertionError("the explicit mode must never read key metadata from Vault");
+            }
+
+            @Override
+            public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                return new VaultHttpResponse(200, responseBody);
+            }
+        };
         return new VaultTransitVapidSigner(
             URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, stub);
     }
@@ -98,6 +107,21 @@ class VaultTransitVapidSignerSignResponseTest {
                 .as("neither the Vault token nor the payload leaks into the error message")
                 .doesNotContain(TOKEN)
                 .doesNotContain("%%not-base64%%"));
+    }
+
+    @Test
+    void aHugeResponseBodyIsTruncatedWhenEchoedIntoTheErrorMessage() {
+        // The default transport caps responses at 1 MiB, but a custom transport holds that cap
+        // only by contract — the error echo must stay a log-safe size regardless.
+        String filler = "x".repeat(100_000);
+
+        assertThatThrownBy(() -> sign("{\"data\":{\"filler\":\"" + filler + "\"}}"))
+            .isInstanceOf(PushCryptoException.class)
+            .hasMessageContaining("no 'signature' field")
+            .hasMessageContaining("[truncated,")
+            .satisfies(e -> assertThat(e.getMessage().length())
+                .as("the echoed body is cut to a few KB")
+                .isLessThan(4096));
     }
 
     @Test

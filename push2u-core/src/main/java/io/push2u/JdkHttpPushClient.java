@@ -2,7 +2,6 @@ package io.push2u;
 
 import java.io.IOException;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -14,8 +13,10 @@ import java.util.Objects;
 
 /**
  * The default {@link PushHttpClient}, over the JDK's {@code java.net.http.HttpClient} — no third
- * party HTTP stack, keeping {@code core} zero-dependency. The response body is read
- * as UTF-8 so remote-signer calls can use it; push sends ignore it.
+ * party HTTP stack, keeping {@code core} zero-dependency. The response body is discarded without
+ * buffering: push delivery (RFC 8030 §5) only needs the status and headers, and the endpoint is a
+ * capability URL taken from the subscription — a hostile server answering with a huge body must
+ * cost the sender nothing. Discarding still drains the stream, so connections stay reusable.
  */
 public final class JdkHttpPushClient implements PushHttpClient {
 
@@ -48,9 +49,9 @@ public final class JdkHttpPushClient implements PushHttpClient {
         headers.forEach(request::header);
 
         try {
-            HttpResponse<String> response =
-                httpClient.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            return new PushResponse(response.statusCode(), firstValues(response.headers().map()), response.body());
+            HttpResponse<Void> response =
+                httpClient.send(request.build(), HttpResponse.BodyHandlers.discarding());
+            return new PushResponse(response.statusCode(), firstValues(response.headers().map()));
         } catch (IOException e) {
             throw new PushDeliveryException(
                 "POST to push endpoint failed: " + Endpoints.redact(endpoint.toString()), e);

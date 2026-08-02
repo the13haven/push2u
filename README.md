@@ -85,7 +85,10 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI.
+The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. RFC 8292
+§2.1 leaves `sub` optional; push2u requires it, because a push service with a problem to report
+about your application server has no other way to reach you. `build()` therefore throws
+`IllegalStateException` for a `null` or whitespace-only contact.
 
 ### Send a message
 
@@ -129,6 +132,49 @@ PushSender sender = PushSender.builder()
 
 The supplied executor remains application-owned; `PushSender` does not shut it down.
 
+### Payload size limits
+
+RFC 8030 §7.2 allows a push service to refuse an entity body larger than 4096 bytes, so
+`PushSender` caps the encrypted body at 4096 bytes by default and rejects an oversized message
+with `IllegalArgumentException` before encrypting it or contacting the push service.
+
+The single-record `aes128gcm` body adds a fixed 103 bytes to the plaintext: the 86-byte RFC 8188
+header (16 salt, 4 `rs`, 1 `idlen`, 65 `keyid`), the padding delimiter (1) and the AES-GCM
+authentication tag (16). The default therefore admits **3993 bytes of plaintext**, the figure
+RFC 8291 §4 derives.
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .maxEncryptedBodyBytes(8192)  // the endpoint is known to accept a larger body
+    .recordSize(8192)             // rs must cover the payload as well
+    .build();
+```
+
+Raise `maxEncryptedBodyBytes` only for endpoints documented or configured to accept more than
+4096 bytes — a self-hosted or intra-organisation push service, for example. RFC 8030 §7.2 only
+requires a push service to accept 4096 bytes; beyond that a service may answer with `413`.
+
+`recordSize` is a separate protocol parameter and is never adjusted to follow the body limit.
+RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the padding delimiter
+(1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is rejected
+with a message naming the minimum `rs` it needs. RFC 8188 §2 makes any `rs` below 18 invalid, and
+the builder rejects such values outright.
+
+**Behaviour change.** These limits reject configurations and payloads that earlier versions
+accepted:
+
+- a payload of 3994–4079 bytes (4079 being the largest the old, off-by-one record-size check
+  admitted at the default `rs`) was previously encrypted and sent as a body of up to 4182 bytes;
+  it now throws `IllegalArgumentException` before the request is built;
+- `recordSize` exactly equal to plaintext + 1 + 16 was previously accepted, in violation of the
+  RFC 8291 §4 `MUST`; it is now rejected;
+- `recordSize(int)` now throws for values below 18 instead of accepting them silently;
+- `.contact("   ")` (or any whitespace-only value) previously built a `PushSender` that would
+  issue a VAPID JWT with a blank `sub` claim; `build()` now rejects it with the same
+  `IllegalStateException` as a missing contact.
+
 ### Retry behavior
 
 The default policy makes up to three attempts. Backoff starts at one second, doubles after each
@@ -163,7 +209,15 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The default is `JdkHttpPushClient`, with a 30-second per-request timeout.
+The default is `JdkHttpPushClient`, with a 30-second per-request timeout. Push delivery never
+reads the response body: `PushResponse` carries only the status code and headers, and
+`JdkHttpPushClient` discards the body without buffering it, because the endpoint is a capability
+URL taken from the (untrusted) subscription and a hostile server must not be able to feed the
+sender an arbitrarily large response. Custom implementations should do the same.
+
+This seam covers push delivery only. The Vault signer module has its own transport seam
+(`VaultHttpTransport`, below) because the Vault API sits in a different trust domain and its
+responses must be read.
 
 ### JCE provider selection
 
@@ -210,6 +264,8 @@ push2u:
     subject: "mailto:ops@example.com"
   jwt-expiry: 12h
   default-ttl: 24h
+  record-size: 4096                 # defaults, shown for reference
+  max-encrypted-body-bytes: 4096    # defaults, shown for reference
   retry:
     max-attempts: 3
     initial-backoff: 1s
@@ -219,6 +275,17 @@ push2u:
 The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
 same types take precedence. When Spring Boot health support is present, the starter also exposes
 a health indicator that verifies the configured signer can produce a 64-byte ES256 signature.
+
+`push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
+the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
+property. It is not required when the application supplies its own `PushSender` bean — that bean
+bypasses the starter's checks entirely.
+
+`record-size` and `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s
+defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) untouched. Setting
+either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` below
+the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
+prefixed with the YAML property name (the builder itself only names its Java parameter).
 
 ## Vault Transit signer
 
@@ -247,7 +314,17 @@ the signer reads `latest_version` and that version's public key from one
 `transit/keys/<key>` response, then includes the captured `key_version` in every sign request.
 The advertised public key therefore continues to match the signing key even when Vault creates a
 new latest version. The token needs `update` on `transit/sign/<key>` and `read` on
-`transit/keys/<key>`:
+`transit/keys/<key>`.
+
+The fetched key is validated as P-256 before the signer is created: the response's `type` must be
+`ecdsa-p256` (a missing `type` is a failure too), the parsed public key must carry P-256's domain
+parameters, and its point must satisfy the curve equation — the JCA checks none of this on its
+own. A key of another type or curve — `ecdsa-p384`, for instance — fails startup with a
+`PushCryptoException` instead of producing a VAPID key that every push service rejects later.
+
+Vault Enterprise reports HSM/KMS-backed keys as `type: managed_key`, which describes the wrapper
+rather than the curve; that value is therefore also accepted and the key is admitted only if the
+curve checks pass. This path has not been exercised against a real Vault Enterprise.
 
 ```java
 VapidSigner signer = new VaultTransitVapidSigner(
@@ -261,6 +338,8 @@ The equivalent Spring Boot configuration is:
 
 ```yaml
 push2u:
+  vapid:
+    subject: "mailto:ops@example.com"
   signer:
     vault:
       address: "https://vault.example:8200"
@@ -268,6 +347,12 @@ push2u:
       key-name: "vapid"
       token: "${VAULT_TOKEN}"
 ```
+
+The Vault signer starter only supplies the `VapidSigner` (key custody); it does not know the
+application's contact address. `push2u.vapid.subject` therefore still comes from the core starter's
+properties — it is the VAPID `sub` claim, which push2u requires even though RFC 8292 §2.1 leaves
+it optional, and `Push2uAutoConfiguration` fails startup with a message naming this property if
+it is left unset.
 
 ### Explicit public key
 
@@ -277,6 +362,8 @@ key:
 
 ```yaml
 push2u:
+  vapid:
+    subject: "mailto:ops@example.com"
   signer:
     vault:
       address: "https://vault.example:8200"
@@ -286,6 +373,9 @@ push2u:
       public-key: "${VAPID_PUBLIC_KEY}"
       key-version: 3
 ```
+
+As above, `push2u.vapid.subject` (the VAPID `sub` claim) comes from the core starter, not the Vault
+signer starter — it must be set here too.
 
 The equivalent plain-Java constructor takes the version after the public key:
 
@@ -303,18 +393,63 @@ The explicit constructor/property form without a version is retained for compati
 sends no `key_version`; Vault then signs with its latest version. Use that form only when the
 Transit key is guaranteed never to rotate.
 
-The Vault key must be `ecdsa-p256`. Ordinary Vault rotation is safe for an already-running pinned
-signer: it continues using the version whose public key it advertises. Raising
-`min_encryption_version` above the pinned version, or removing that version with
-`min_available_version`, makes Vault reject subsequent sign requests. Recover by recreating the
-fetched signer, or by configuring the matching new public key and version in explicit mode.
-Adopting a new VAPID public key is an application-level migration: browser subscriptions created
-for the previous application-server key must be replaced.
+An explicitly supplied `public-key` is checked structurally only — 65 bytes with the `0x04`
+uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is
+the public half of the Transit key being signed with; both remain the caller's responsibility. The
+P-256 validation described under *Fetched public key* applies to that mode alone.
+
+### Vault HTTP transport
+
+All Vault calls — the Transit `sign` POST and, in fetched mode, the startup `transit/keys/<key>`
+GET — go through the module's `VaultHttpTransport` seam. The default `JdkVaultHttpTransport`
+(JDK `java.net.http`) enforces a per-request timeout on every call (a Vault that accepts the
+connection but never answers cannot hang application startup) and a fail-closed response-size cap
+counted in raw streamed bytes (an oversized response fails the call; it is never truncated).
+Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB cap.
+
+The starter exposes these as properties:
+
+```yaml
+push2u:
+  signer:
+    vault:
+      # ... address, key-name, token ...
+      request-timeout: 30s      # per-request timeout, every Vault call
+      connect-timeout: 10s      # connect timeout of the default HTTP client
+      max-response-bytes: 1048576
+```
+
+Resolution order (two extension points, plus the properties-only fallback):
+
+1. A `VaultHttpTransport` bean — full control (custom HTTP stack, observability). The transport
+   properties above are then ignored; the bean owns those concerns.
+2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
+   mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
+   `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
+   owns it).
+3. Otherwise the default transport is built entirely from the properties.
+
+The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
+transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
+
+The Vault key must be `ecdsa-p256`; the fetched mode verifies this at construction (see *Fetched
+public key* above). Ordinary Vault rotation is safe for an already-running pinned signer: it
+continues using the version whose public key it advertises. Raising `min_encryption_version` above
+the pinned version, or removing that version with `min_available_version`, makes Vault reject
+subsequent sign requests. Recover by recreating the fetched signer, or by configuring the matching
+new public key and version in explicit mode. Adopting a new VAPID public key is an
+application-level migration: browser subscriptions created for the previous application-server key
+must be replaced.
 
 ## Protocol limits
 
 - Only `aes128gcm` content coding is supported.
-- Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes.
+- Encryption currently uses one RFC 8188 record. The default record size is 4096 bytes; `rs`
+  must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4) and at least 18 (RFC 8188 §2)
+  (`push2u.record-size` in the starter).
+- The encrypted body is capped at 4096 bytes by default (RFC 8030 §7.2), which allows 3993 bytes
+  of plaintext. Both `maxEncryptedBodyBytes` and `recordSize` must be raised to send more
+  (`push2u.max-encrypted-body-bytes` / `push2u.record-size` in the starter).
 - `PushMessage.topic`, when set, must contain at most 32 URL- and filename-safe base64
   characters as required by RFC 8030.
 - VAPID JWT expiry must be greater than zero and no more than 24 hours.
