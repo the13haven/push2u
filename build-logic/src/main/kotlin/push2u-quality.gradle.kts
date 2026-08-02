@@ -63,11 +63,11 @@ checkstyle {
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
 }
 
-// Transitive override: Checkstyle 13.4.2 pulls in commons-lang3 3.8.1 via doxia-core, which is
-// vulnerable to CVE-2025-48924 (uncontrolled recursion). The jar is loaded only by Gradle's
-// checkstyle task to analyse our own source — no attacker-controlled input — but force the patched
-// version anyway so the dependency graph stays clean. Remove once Checkstyle upstream depends on
-// commons-lang3 >= 3.18.0.
+// Version bump, not a suppression: Checkstyle 13.9.0 — the current release — still pulls
+// commons-lang3 3.8.1 through doxia-core 1.12.0 (and 3.7 through commons-text 1.3), which is
+// vulnerable to CVE-2025-48924 (uncontrolled recursion). The constraint raises it to 3.18.0 on the
+// `checkstyle` configuration, the only classpath that jar ever reaches. Remove once Checkstyle
+// upstream depends on commons-lang3 >= 3.18.0.
 dependencies {
     constraints {
         add("checkstyle", "org.apache.commons:commons-lang3:3.18.0") {
@@ -94,18 +94,8 @@ spotbugs {
     excludeFilter = rootProject.file("config/quality/spotbugs/exclusions.xml")
 }
 
-// Transitive override: SpotBugs pulls in a log4j-core build that Dependabot flags
-// (CVE-2026-34478 / -34477 / -34480, CVE-2025-68161). The vulnerable layouts/appenders are not
-// configured in this build, and the jar never reaches an application classpath — it is confined to
-// the `spotbugs` configuration. Remove once SpotBugs depends on log4j-core >= 2.25.4 itself.
-// log4j-api needs no constraint of its own: it follows log4j-core to the same version.
-dependencies {
-    constraints {
-        add("spotbugs", "org.apache.logging.log4j:log4j-core:2.25.4") {
-            because("CVE-2026-34478 / -34477 / -34480 / CVE-2025-68161")
-        }
-    }
-}
+// No log4j constraint here: SpotBugs 4.10.3 already depends on log4j-core 2.26.1, past the versions
+// CVE-2026-34478 / -34477 / -34480 and CVE-2025-68161 apply to.
 
 // ---------------------------------------------------------------------------------------------
 // Reports — HTML for humans, XML for machines (CI artifacts, IDE and LLM-readable output).

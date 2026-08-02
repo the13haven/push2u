@@ -24,19 +24,19 @@ bouncycastleFips = "2.1.3"
 # Quality tool engines — the analyser versions the Gradle plugins run (see build-logic's
 # push2u-quality convention plugin). Build-time only: none of these ever reaches a consumer's
 # classpath, so pinning them here does not dent the zero-runtime-dependency constraint.
-checkstyle = "13.4.2"
-pmd = "7.24.0"
-spotbugs = "4.9.8"
-errorprone = "2.49.0"
-nullaway = "0.13.4"
-jacoco = "0.8.14"
-palantir = "2.91.0"
+checkstyle = "13.9.0"
+pmd = "7.26.0"
+spotbugs = "4.10.3"
+errorprone = "2.50.0"
+nullaway = "0.13.8"
+jacoco = "0.8.15"
+palantir = "2.96.0"
 
 # Quality tool Gradle plugins — resolved by the build-logic included build, never by push2u
 # modules themselves.
-spotbugsPlugin = "6.5.5"
+spotbugsPlugin = "6.5.9"
 errorpronePlugin = "5.1.0"
-spotlessPlugin = "8.5.1"
+spotlessPlugin = "8.9.0"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }

@@ -186,7 +186,10 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
         @Override
         public CompletionStage<byte[]> getBody() {
-            return result;
+            // minimalCompletionStage, not the future itself: the caller is the HTTP client, which
+            // only ever observes completion. Handing out the CompletableFuture would let it be
+            // completed from outside, past the size accounting this subscriber exists to do.
+            return result.minimalCompletionStage();
         }
 
         @Override
