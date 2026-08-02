@@ -51,7 +51,8 @@ push2u-core
 └── JdkHttpPushClient
 
 push2u-signer-vault
-└── VaultTransitVapidSigner
+├── VaultTransitVapidSigner
+└── VaultHttpTransport / JdkVaultHttpTransport
 
 push2u-spring-boot-starter
 ├── PushSender auto-configuration
@@ -141,6 +142,12 @@ This SPI allows applications to replace the JDK transport for proxy, pooling, or
 requirements. Implementations return every HTTP status as `PushResponse` and throw
 `PushDeliveryException` only for transport failures.
 
+`PushResponse` carries only the status code and headers. Push delivery never consumes a response
+body, and the endpoint is an untrusted capability URL, so the default `JdkHttpPushClient`
+discards the body without buffering it — a hostile push endpoint cannot create memory pressure
+by returning a huge response. This seam is push-delivery only; the Vault module has its own
+transport seam (section 7) because Vault responses must be read.
+
 ### Deliberately concrete components
 
 The RFC 8291 encryptor and HKDF implementation are not public SPIs. Alternative implementations
@@ -197,9 +204,35 @@ requires the new version and its matching public key. Either action changes the 
 identity and must be coordinated with browser re-subscription, because Web Push subscriptions are
 bound to the application-server public key used at subscribe time.
 
+### Vault HTTP transport
+
+The module talks to the Vault API through its own `VaultHttpTransport` seam (`get` + `post`,
+returning `VaultHttpResponse`), deliberately separate from `PushHttpClient`: push delivery POSTs
+to untrusted capability URLs and discards response bodies, while the Vault API is an
+operator-configured service whose JSON responses must be read. Both Vault calls — the Transit
+`sign` POST and the fetched mode's startup metadata GET — go through the same transport, so an
+application's mTLS, proxy, or observability configuration is never bypassed.
+
+The default `JdkVaultHttpTransport` enforces two invariants on every request:
+
+- a per-request timeout (`HttpRequest.timeout`), because a connect timeout alone cannot end an
+  exchange with a Vault that accepts the connection and never answers — in fetched mode that
+  would hang application startup;
+- a response-size cap counted in raw streamed bytes (a declared `Content-Length` above the cap
+  fails early, but the streaming count is authoritative). Exceeding the cap fails the whole call
+  — fail-closed, never truncation, because the targeted JSON extraction could still find a
+  complete-looking `data.signature` before the cut.
+
+Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB response cap. Transport exception
+messages carry the HTTP method and the query-less request URI, never the `X-Vault-Token` header.
+
 The Vault Spring Boot starter exposes the same model through `push2u.signer.vault.*`: omitting
 `public-key` selects fetched mode; providing `public-key` selects explicit mode, where
-`key-version` should also be set whenever the Transit key can rotate.
+`key-version` should also be set whenever the Transit key can rotate. The transport is
+configurable through `request-timeout`, `connect-timeout`, and `max-response-bytes`, and
+replaceable with (in priority order) an application `VaultHttpTransport` bean or a
+`push2uVaultHttpClient`-qualified `java.net.http.HttpClient` bean that the starter wraps with the
+bound properties.
 
 ## 8. Spring Boot integration
 
@@ -237,10 +270,13 @@ an extension point.
 The application owns subscription storage and lifecycle. The library sends to a supplied
 `Subscription` and reports when it has expired.
 
-### ADR-005 — Two public SPIs
+### ADR-005 — Two public SPIs in the core
 
-Only key custody (`VapidSigner`) and HTTP transport (`PushHttpClient`) are replaceable.
-Cryptographic protocol steps stay internal.
+Only key custody (`VapidSigner`) and push HTTP transport (`PushHttpClient`) are replaceable in
+`push2u-core`. Cryptographic protocol steps stay internal. The Vault module adds its own
+transport SPI (`VaultHttpTransport`) rather than reusing `PushHttpClient`: the two seams face
+opposite trust domains — push delivery must not read response bodies from untrusted capability
+URLs, while the Vault API's responses must be read, bounded and under a request timeout.
 
 ### ADR-006 — `aes128gcm` only
 
