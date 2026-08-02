@@ -15,7 +15,8 @@ The library implements:
 - local and Vault Transit VAPID signing;
 - plain Java and Spring Boot integration.
 
-The architecture keeps the protocol core dependency-free and exposes narrow seams only where
+The architecture keeps the protocol core free of runtime implementation dependencies and exposes
+narrow seams only where
 applications have a legitimate reason to replace behavior.
 
 ## 2. Goals and non-goals
@@ -63,7 +64,8 @@ push2u-signer-vault-spring-boot-starter
 └── Vault signer properties and auto-configuration
 ```
 
-`push2u-core` has no runtime dependencies. The Spring Boot modules and Vault integration are
+`push2u-core` has no runtime implementation dependencies (only JSpecify's annotations, ADR-012).
+The Spring Boot modules and Vault integration are
 opt-in and cannot leak framework types into the core API.
 
 ## 4. Send pipeline
@@ -388,7 +390,7 @@ unless it is annotated `@Nullable`. The optional message headers (`PushMessage.t
 
 JSpecify is declared as an `api` dependency rather than `compileOnly`, so the contract reaches
 consumers: NullAway, IntelliJ and the Kotlin compiler all read the same annotations. It carries
-annotations and no code, so the "zero-dependency core" of ADR-002 is unaffected in substance — a
+annotations and no code, so the dependency-light core of ADR-002 is unaffected in substance — a
 published contract that tools can check is worth more than an absolute artefact count. A
 project-local annotation would have been free of any dependency but would mean nothing outside
 NullAway.

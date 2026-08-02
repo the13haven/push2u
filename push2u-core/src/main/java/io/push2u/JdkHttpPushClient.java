@@ -13,10 +13,10 @@ import java.util.Objects;
 
 /**
  * The default {@link PushHttpClient}, over the JDK's {@code java.net.http.HttpClient} — no third party HTTP stack,
- * keeping {@code core} zero-dependency. The response body is discarded without buffering: push delivery (RFC 8030 §5)
- * only needs the status and headers, and the endpoint is a capability URL taken from the subscription — a hostile
- * server answering with a huge body must cost the sender nothing. Discarding still drains the stream, so connections
- * stay reusable.
+ * keeping {@code core} free of runtime implementation dependencies. The response body is discarded without buffering:
+ * push delivery (RFC 8030 §5) only needs the status and headers, and the endpoint is a capability URL taken from the
+ * subscription — a hostile server answering with a huge body must cost the sender nothing. Discarding still drains the
+ * stream, so connections stay reusable.
  */
 public final class JdkHttpPushClient implements PushHttpClient {
 

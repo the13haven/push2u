@@ -47,7 +47,7 @@ dependencies {
 
     // Stock BouncyCastle for the ES256 provider-matrix tests: it registers raw-format ECDSA
     // (SHA256withECDSAinP1363Format) and exercises the direct r||s path. Test-scoped only — the
-    // library core keeps zero runtime dependencies. bc-fips must NOT be added here (see the
+    // library core keeps no runtime implementation dependencies. bc-fips must NOT be added here (see the
     // fipsTest source set above).
     testImplementation(libs.bouncycastle.bcprov)
 

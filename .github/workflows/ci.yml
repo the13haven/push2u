@@ -38,6 +38,10 @@ jobs:
       # Testcontainers' Ryuk container must mount the daemon socket path as seen
       # from inside the runner's Docker VM.
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+      # Codecov uploads run for main and for pull requests raised from this repository. A pull
+      # request from a fork is the one case that cannot: secrets.CODECOV_TOKEN is not exposed to it,
+      # so the upload would fail on a missing token rather than add anything.
+      CODECOV_ELIGIBLE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
     steps:
       - name: Check out repository
@@ -84,13 +88,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./gradlew aggregateTestResults --no-daemon
 
-      # Uploads happen on main only: that is the branch Codecov reports against, and it is also the
-      # only ref whose secret is guaranteed available (a fork's pull request has no token). The
-      # hashFiles guard skips the step when a run failed before producing the report, instead of
-      # tripping fail_ci_if_error on a missing file.
+      # main supplies the baseline Codecov reports against; the pull request runs are what make the
+      # patch threshold and the PR comment in codecov.yml work at all. The hashFiles guard skips the
+      # step when a run failed before producing the report, instead of tripping fail_ci_if_error on
+      # a missing file.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
-        if: ${{ !cancelled() && github.ref_name == 'main' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: the13haven/push2u
@@ -102,7 +106,7 @@ jobs:
 
       - name: Upload test results to Codecov
         uses: codecov/codecov-action@v7
-        if: ${{ !cancelled() && github.ref_name == 'main' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
+        if: ${{ !cancelled() && env.CODECOV_ELIGIBLE == 'true' && hashFiles('build/test-results-aggregated/**/*.xml') != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: the13haven/push2u

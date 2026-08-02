@@ -6,7 +6,8 @@ junit = "6.1.2"
 assertj = "3.27.7"
 testcontainers = "2.0.5"
 # Spring Boot — only for the push2u-spring-boot-starter module's auto-configuration (the core
-# stays Spring-free / zero runtime-dep). Targets 4.x: push2u is a new library, so its
+# stays Spring-free, with no runtime implementation dependencies). Targets 4.x: push2u is a new
+# library, so its
 # adopters build on the current Spring Boot (legacy 3.x projects are unlikely to swap a working
 # web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
 springBoot = "4.1.0"

@@ -52,10 +52,10 @@ public final class LocalEcVapidSigner implements VapidSigner {
      * One-time self-test that the advertised public key belongs to the private scalar: sign a fixed probe with the
      * private key, then verify that signature against the decoded public key. Deriving the public point directly
      * ({@code d * G}) is not an option — the JDK exposes no public EC point-arithmetic API and this module deliberately
-     * carries zero runtime dependencies — and sign+verify additionally proves the configured provider can actually sign
-     * with this key. Both {@link Signature} instances come from the same {@link Jca#es256()} resolution, so the probe
-     * signature is verified exactly as the provider produced it — do not convert it with {@code EcdsaDer.toP1363} here,
-     * even on a DER-only provider.
+     * carries no runtime implementation dependencies — and sign+verify additionally proves the configured provider can
+     * actually sign with this key. Both {@link Signature} instances come from the same {@link Jca#es256()} resolution,
+     * so the probe signature is verified exactly as the provider produced it — do not convert it with
+     * {@code EcdsaDer.toP1363} here, even on a DER-only provider.
      *
      * <p>A public key that is well-formed but not a point on P-256 is rejected too, by whichever check fires first: a
      * provider that validates the point on import fails the decode with {@link PushCryptoException}, while one that
