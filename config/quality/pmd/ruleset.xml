@@ -80,6 +80,12 @@
         <!-- Fires on the canonical equals() shape (`if (this == other) return true;` followed by the
              pattern match) in PushMessage and Subscription -->
         <exclude name="SimplifyBooleanReturns"/>
+        <!-- Excluded so it is not silently dropped: the rule needs a `packages` property naming the
+             packages a module may depend on, and PMD discards it at startup without one ("Removed
+             misconfigured rule: LoosePackageCoupling"). push2u has no such policy to declare — the
+             module boundaries are enforced by the Gradle dependencies instead — so the honest state
+             is off, not on-but-inert. -->
+        <exclude name="LoosePackageCoupling"/>
     </rule>
 
     <!-- Protocol code (DER reading, JWT escaping, property binding) branches more than business
