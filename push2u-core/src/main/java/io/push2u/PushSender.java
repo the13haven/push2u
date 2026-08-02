@@ -2,13 +2,15 @@ package io.push2u;
 
 import java.net.URI;
 import java.security.Provider;
+import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * The send facade: encrypts a {@link PushMessage} for a {@link Subscription} (RFC 8291), signs
@@ -33,6 +35,8 @@ public final class PushSender {
     private final Duration defaultTtl;
     private final int recordSize;
     private final Sleeper sleeper;
+    private final Clock clock;
+    private final Executor executor;
 
     private PushSender(Builder builder) {
         Jca jca = builder.cryptoProvider == null ? Jca.platform() : Jca.using(builder.cryptoProvider);
@@ -45,6 +49,8 @@ public final class PushSender {
         this.defaultTtl = builder.defaultTtl;
         this.recordSize = builder.recordSize;
         this.sleeper = builder.sleeper;
+        this.clock = builder.clock;
+        this.executor = builder.executor;
     }
 
     /**
@@ -79,7 +85,7 @@ public final class PushSender {
                 "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
         }
         String authorization =
-            Vapid.authorizationHeader(signer, origin(endpoint), contact, Instant.now().plus(jwtExpiry));
+            Vapid.authorizationHeader(signer, origin(endpoint), contact, clock.instant().plus(jwtExpiry));
         Map<String, String> headers = requestHeaders(authorization, message);
 
         PushResponse response = null;
@@ -95,7 +101,7 @@ public final class PushSender {
             if (!isRetryable(code) || attempt == retryPolicy.maxAttempts()) {
                 return new PushResult(PushResult.Status.FAILED, code, attempt);
             }
-            sleeper.sleep(backoff(attempt, code, response));
+            sleeper.sleep(backoff(attempt, response));
         }
         // Unreachable: maxAttempts >= 1 guarantees the loop returns.
         return new PushResult(PushResult.Status.FAILED, response == null ? 0 : response.statusCode(),
@@ -103,14 +109,44 @@ public final class PushSender {
     }
 
     /**
-     * {@link #send} on the common ForkJoinPool.
+     * {@link #send} on the executor configured via {@link Builder#executor(Executor)} — by
+     * default a library-owned virtual-thread-per-task executor, never the common ForkJoinPool.
+     * Each async send blocks its thread for the whole exchange (synchronous HTTP plus the
+     * backoff sleeps between retries), which a virtual thread absorbs by parking without
+     * pinning a carrier thread.
+     *
+     * <p>This governs the send itself. Async continuations the caller chains onto the returned
+     * future ({@code thenApplyAsync} and friends without an explicit executor) still use
+     * {@link CompletableFuture}'s default — the common ForkJoinPool; pass an executor there too
+     * if a continuation blocks.
+     *
+     * <p>If a caller-supplied executor rejects the task, its
+     * {@link java.util.concurrent.RejectedExecutionException} propagates from this call rather
+     * than completing the returned future exceptionally.
      *
      * @param subscription the target subscription
      * @param message      the message to send
      * @return a future completing with the send result
      */
     public CompletableFuture<PushResult> sendAsync(Subscription subscription, PushMessage message) {
-        return CompletableFuture.supplyAsync(() -> send(subscription, message));
+        Executor target = executor != null ? executor : DefaultAsyncExecutor.INSTANCE;
+        return CompletableFuture.supplyAsync(() -> send(subscription, message), target);
+    }
+
+    /**
+     * The default {@code sendAsync} executor, created lazily via the holder-class idiom: building
+     * a sender that only ever calls the synchronous {@link #send} never touches this class, so no
+     * executor is created. A virtual-thread-per-task executor is the right default for a workload
+     * of blocking HTTP calls and backoff sleeps — virtual threads park without pinning a carrier
+     * thread, and the executor holds no OS threads when idle. The library never shuts it down,
+     * which is safe: idle it holds no resources, and its threads are daemons, so it cannot keep
+     * the JVM alive.
+     */
+    private static final class DefaultAsyncExecutor {
+        static final Executor INSTANCE = Executors.newVirtualThreadPerTaskExecutor();
+
+        private DefaultAsyncExecutor() {
+        }
     }
 
     private Map<String, String> requestHeaders(String authorization, PushMessage message) {
@@ -128,22 +164,20 @@ public final class PushSender {
         return headers;
     }
 
-    private Duration backoff(int attempt, int code, PushResponse response) {
-        if (code == 429) {
-            Optional<Duration> retryAfter = parseRetryAfter(response);
-            if (retryAfter.isPresent()) {
-                Duration delay = retryAfter.get();
-                return delay.compareTo(retryPolicy.maxBackoff()) > 0 ? retryPolicy.maxBackoff() : delay;
-            }
+    /**
+     * Backoff before the retry that follows {@code attempt}. Only called for retryable statuses
+     * (429, 5xx) — RFC 9110 §10.2.3 allows {@code Retry-After} on any of them, so an intelligible
+     * header always wins over the computed backoff, capped at {@link RetryPolicy#maxBackoff()};
+     * an absent or unparseable header falls back to the exponential schedule.
+     */
+    private Duration backoff(int attempt, PushResponse response) {
+        Optional<Duration> retryAfter = response.header("Retry-After")
+            .flatMap(value -> RetryAfter.parse(value, clock.instant()));
+        if (retryAfter.isPresent()) {
+            Duration delay = retryAfter.get();
+            return delay.compareTo(retryPolicy.maxBackoff()) > 0 ? retryPolicy.maxBackoff() : delay;
         }
         return retryPolicy.backoffFor(attempt);
-    }
-
-    private static Optional<Duration> parseRetryAfter(PushResponse response) {
-        return response.header("Retry-After")
-            .map(String::trim)
-            .filter(value -> !value.isEmpty() && value.chars().allMatch(Character::isDigit))
-            .map(seconds -> Duration.ofSeconds(Long.parseLong(seconds)));
     }
 
     private static boolean isDelivered(int code) {
@@ -186,6 +220,8 @@ public final class PushSender {
         private Duration defaultTtl = Duration.ofDays(1);
         private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
         private Sleeper sleeper = Sleeper.REAL;
+        private Clock clock = Clock.systemUTC();
+        private Executor executor;
 
         private Builder() {
         }
@@ -305,9 +341,31 @@ public final class PushSender {
             return this;
         }
 
+        /**
+         * The executor {@link PushSender#sendAsync} runs sends on. Each queued send blocks its
+         * thread for the whole exchange — the synchronous HTTP call plus any backoff sleeps
+         * between retries (up to {@link RetryPolicy#maxBackoff()} each) — so the executor must
+         * tolerate long-blocking tasks. Defaults to a library-owned virtual-thread-per-task
+         * executor, created lazily on the first async send; a caller-supplied executor stays
+         * caller-owned — the library never shuts it down.
+         *
+         * @param executor the executor for async sends
+         * @return this builder
+         */
+        public Builder executor(Executor executor) {
+            this.executor = Objects.requireNonNull(executor, "executor");
+            return this;
+        }
+
         // Package-private test seam: run the retry loop without real backoff sleeps.
         Builder sleeper(Sleeper sleeper) {
             this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
+            return this;
+        }
+
+        // Package-private test seam: pin "now" for Retry-After dates and the VAPID expiry.
+        Builder clock(Clock clock) {
+            this.clock = Objects.requireNonNull(clock, "clock");
             return this;
         }
 

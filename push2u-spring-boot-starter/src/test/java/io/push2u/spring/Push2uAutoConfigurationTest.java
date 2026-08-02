@@ -29,6 +29,8 @@ class Push2uAutoConfigurationTest {
 
     private static String publicKeyB64;
     private static String privateKeyB64;
+    /** The public half of an unrelated pair, for the mismatch case. */
+    private static String otherPublicKeyB64;
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class, Push2uHealthAutoConfiguration.class));
@@ -41,6 +43,9 @@ class Push2uAutoConfigurationTest {
         Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
         publicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) keyPair.getPublic()));
         privateKeyB64 = base64Url.encodeToString(toFixed32(((ECPrivateKey) keyPair.getPrivate()).getS()));
+
+        KeyPair otherPair = generator.generateKeyPair();
+        otherPublicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) otherPair.getPublic()));
     }
 
     @Test
@@ -58,6 +63,29 @@ class Push2uAutoConfigurationTest {
             assertThat(context).doesNotHaveBean(PushSender.class);
             assertThat(context).doesNotHaveBean(VapidSigner.class);
         });
+    }
+
+    @Test
+    void mismatchedConfiguredKeyPairFailsTheContextInsteadOfEverySend() {
+        // Operators meet this contract here, not in core: the signer is an eager @Bean, so a
+        // public key that does not belong to the configured private key must break startup
+        // rather than yield a sender that collects 401/403 on every send. The failure must not
+        // print key material.
+        runner.withPropertyValues(
+                "push2u.vapid.public-key=" + otherPublicKeyB64,
+                "push2u.vapid.private-key=" + privateKeyB64,
+                "push2u.vapid.subject=mailto:admin@example.com")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("does not correspond");
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .hasMessageNotContaining(otherPublicKeyB64)
+                    .hasMessageNotContaining(privateKeyB64);
+            });
     }
 
     @Test

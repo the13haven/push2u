@@ -14,7 +14,7 @@ interface Sleeper {
     /** The production sleeper — {@link Thread#sleep}, translating interruption into a delivery failure. */
     Sleeper REAL = duration -> {
         try {
-            Thread.sleep(duration.toMillis());
+            Thread.sleep(duration);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PushDeliveryException("Interrupted during retry backoff", e);
