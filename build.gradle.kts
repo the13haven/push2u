@@ -104,6 +104,20 @@ reporting {
 
 val aggregatedCoverageReport = tasks.named<JacocoReport>("testCodeCoverageReport")
 
+// The aggregation plugin collects execution data per JVM Test Suite, and `test` is the only suite
+// here — push2u-core's `fipsTest` is a hand-rolled source set with its own Test task (it needs a
+// bcprov-free classpath, which a suite cannot express). Its coverage would therefore be missing
+// from the aggregate, and the BC-FIPS paths would look untested. Add its execution data explicitly,
+// and depend on every module's Test tasks so the report is never built from a partial set.
+aggregatedCoverageReport {
+    val extraExecutionData = files(subprojects.map { module ->
+        module.layout.buildDirectory.file("jacoco/fipsTest.exec")
+    }).filter { it.exists() }
+
+    executionData(extraExecutionData)
+    subprojects.forEach { dependsOn(it.tasks.withType<Test>()) }
+}
+
 // `register<Type>(name)`, not the `by registering` delegate: the delegated-property syntax is
 // deprecated and scheduled for removal in Gradle 10.
 val testCodeCoverageVerification = tasks.register<JacocoCoverageVerification>("testCodeCoverageVerification") {
