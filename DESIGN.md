@@ -92,8 +92,15 @@ Status interpretation:
 
 The encrypted body and VAPID token are reused across retries of the same send operation.
 
-`sendAsync` currently runs the synchronous pipeline through `CompletableFuture.supplyAsync`,
-using the common `ForkJoinPool`; the HTTP transport itself remains synchronous.
+`sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
+uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
+builder accepts an application-owned `Executor` when bounded concurrency or a shared execution
+policy is required. The HTTP transport itself remains synchronous.
+
+For retryable responses (`429`, `5xx`), `Retry-After` overrides the exponential schedule when it
+contains either delta-seconds or a valid HTTP-date. The parser accepts the three HTTP-date forms
+required by RFC 9110, including RFC 850's two-digit-year rule and leap seconds, and caps the final
+delay at the retry policy's maximum backoff.
 
 ## 5. Public API and extension points
 
@@ -104,8 +111,8 @@ using the common `ForkJoinPool`; the HTTP transport itself remains synchronous.
 - `vapid(VapidKeys)` creates `LocalEcVapidSigner`; or
 - `signer(VapidSigner)` delegates signing and public-key publication.
 
-The VAPID contact is required in both modes. Optional settings control the HTTP transport, JCE
-provider, retry policy, JWT expiry, default TTL, and RFC 8188 record size.
+The VAPID contact is required in both modes. Optional settings control the HTTP transport, async
+executor, JCE provider, retry policy, JWT expiry, default TTL, and RFC 8188 record size.
 
 ### VapidSigner
 
@@ -116,6 +123,10 @@ byte[] publicKey();
 
 This SPI represents key custody. The default signer holds a private scalar in process. Vault,
 KMS, or HSM implementations can keep private material outside the JVM.
+
+`LocalEcVapidSigner` verifies its configured public/private key correspondence once at
+construction by signing and verifying a fixed probe. A mismatched pair therefore fails before the
+first delivery attempt.
 
 The contract requires a raw 64-byte P-256 `r || s` ES256 signature and a 65-byte uncompressed
 P-256 public point.

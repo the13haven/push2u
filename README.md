@@ -108,17 +108,34 @@ if (result.delivered()) {
 }
 ```
 
+When present, `topic` is validated locally before transport: it must contain 1–32 characters
+from the URL-safe Base64 alphabet (`A-Z`, `a-z`, `0-9`, `-`, `_`) required by RFC 8030.
+
 `404` and `410` are returned as `SUBSCRIPTION_EXPIRED`, not as exceptions. Transport failures
 throw `PushDeliveryException`; cryptographic failures throw `PushCryptoException`.
 
-`sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The current
-implementation runs the blocking send pipeline on the common `ForkJoinPool`.
+`sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The blocking send
+pipeline runs on a library-owned virtual-thread-per-task executor by default, never on the common
+`ForkJoinPool`. Applications that need admission control or a shared execution policy can provide
+their own executor:
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .executor(pushExecutor)
+    .build();
+```
+
+The supplied executor remains application-owned; `PushSender` does not shut it down.
 
 ### Retry behavior
 
 The default policy makes up to three attempts. Backoff starts at one second, doubles after each
-retry, and is capped at 60 seconds. A numeric `Retry-After` value on a `429` response overrides
-the computed delay.
+retry, and is capped at 60 seconds. On retryable responses (`429` and `5xx`), a valid
+`Retry-After` value overrides the computed delay and is capped by the same maximum. Both
+delta-seconds and all HTTP-date forms required by RFC 9110 are accepted; malformed or overflowing
+values fall back to the exponential schedule.
 
 ```java
 PushSender sender = PushSender.builder()
@@ -168,6 +185,10 @@ signature form when `LocalEcVapidSigner` is used. The library prefers
 `SHA256withECDSA` (as BC-FIPS does), it signs with that algorithm on the same provider and strictly
 re-encodes the result to JOSE's 64-byte `r || s` form. The fallback never widens provider lookup.
 An external `VapidSigner` controls its own signing provider.
+
+`LocalEcVapidSigner` also performs a one-time sign-and-verify self-test when it is constructed.
+A public key that does not correspond to the configured private scalar is therefore rejected at
+startup instead of producing repeated `401`/`403` responses at send time.
 
 ## Spring Boot
 

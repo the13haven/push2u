@@ -7,10 +7,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinWorkerThread;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -82,7 +91,9 @@ class PushSenderTest {
             assertThat(result.delivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(receiver.requests()).hasSize(2);
-            assertThat(sleeper.sleeps).as("one backoff between the two attempts").hasSize(1);
+            assertThat(sleeper.sleeps)
+                .as("one backoff between the two attempts, at the policy's initial value")
+                .containsExactly(RetryPolicy.defaults().initialBackoff());
         }
     }
 
@@ -97,7 +108,9 @@ class PushSenderTest {
             assertThat(result.status()).isEqualTo(PushResult.Status.FAILED);
             assertThat(result.attempts()).as("RetryPolicy.defaults() caps at 3 attempts").isEqualTo(3);
             assertThat(receiver.requests()).hasSize(3);
-            assertThat(sleeper.sleeps).hasSize(2);
+            assertThat(sleeper.sleeps)
+                .as("no Retry-After on either 5xx — the exponential schedule doubles")
+                .containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(2));
         }
     }
 
@@ -115,12 +128,166 @@ class PushSenderTest {
     }
 
     @Test
+    void honoursRetryAfterOn503() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(503, "3");
+            receiver.enqueue(201);
+            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(result.attempts()).isEqualTo(2);
+            assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(3));
+        }
+    }
+
+    @Test
+    void honoursHttpDateRetryAfterAgainstThePinnedClock() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
+            receiver.enqueue(201);
+            PushSender pusher = PushSender.builder()
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .sleeper(sleeper)
+                .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
+                .build();
+            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(30));
+        }
+    }
+
+    @Test
+    void unparseableRetryAfterFallsBackToTheExponentialBackoff() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(429, "soon");
+            receiver.enqueue(201);
+            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(sleeper.sleeps)
+                .as("the first retry waits exactly RetryPolicy.defaults().initialBackoff()")
+                .containsExactly(RetryPolicy.defaults().initialBackoff());
+        }
+    }
+
+    @Test
+    void overflowingRetryAfterDoesNotFailTheSend() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(429, "99999999999999999999");
+            receiver.enqueue(201);
+            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(result.attempts()).isEqualTo(2);
+            assertThat(sleeper.sleeps)
+                .as("overflow is treated as unparseable, not propagated")
+                .containsExactly(RetryPolicy.defaults().initialBackoff());
+        }
+    }
+
+    @Test
+    void capsRetryAfterAtMaxBackoff() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(429, "3600");
+            receiver.enqueue(201);
+            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(sleeper.sleeps).containsExactly(RetryPolicy.defaults().maxBackoff());
+        }
+    }
+
+    @Test
     void sendAsyncCompletesWithTheResult() throws Exception {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushResult result = pusher()
                 .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                 .get(5, TimeUnit.SECONDS);
             assertThat(result.delivered()).isTrue();
+        }
+    }
+
+    @Test
+    void sendAsyncDefaultRunsOnAVirtualThreadNotTheCommonPool() throws Exception {
+        AtomicReference<Thread> sendThread = new AtomicReference<>();
+        PushHttpClient capturingClient = (endpoint, headers, body) -> {
+            sendThread.set(Thread.currentThread());
+            return PushResponse.of(201);
+        };
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            PushResult result = PushSender.builder()
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .httpClient(capturingClient)
+                .build()
+                .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.delivered()).isTrue();
+            Thread thread = sendThread.get();
+            assertThat(thread.isVirtual())
+                .as("the default async executor runs each send on a virtual thread")
+                .isTrue();
+            assertThat(thread)
+                .as("a blocking send must never occupy a common-ForkJoinPool worker")
+                .isNotInstanceOf(ForkJoinWorkerThread.class);
+        }
+    }
+
+    @Test
+    void sendAsyncRunsOnTheConfiguredExecutor() throws Exception {
+        AtomicReference<Thread> executorThread = new AtomicReference<>();
+        ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "push2u-configured-executor");
+            executorThread.set(thread);
+            return thread;
+        });
+        AtomicReference<Thread> sendThread = new AtomicReference<>();
+        PushHttpClient capturingClient = (endpoint, headers, body) -> {
+            sendThread.set(Thread.currentThread());
+            return PushResponse.of(201);
+        };
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            PushResult result = PushSender.builder()
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .httpClient(capturingClient)
+                .executor(executor)
+                .build()
+                .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.delivered()).isTrue();
+            assertThat(sendThread.get())
+                .as("the send runs on the single thread of the executor passed to .executor(...)")
+                .isSameAs(executorThread.get());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    void sendAsyncPropagatesAnExecutorRejectionSynchronously() throws IOException {
+        // CompletableFuture.supplyAsync calls execute() inline, so a rejecting executor throws
+        // out of sendAsync rather than completing the returned future exceptionally — callers
+        // that only attach an exception handler to the future would otherwise miss it.
+        Executor rejecting = runnable -> {
+            throw new RejectedExecutionException("saturated");
+        };
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            PushSender pusher = PushSender.builder()
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .executor(rejecting)
+                .build();
+            Subscription subscription = subscription(receiver);
+            PushMessage message = PushMessage.of(bytes("x"));
+
+            assertThatThrownBy(() -> pusher.sendAsync(subscription, message))
+                .isInstanceOf(RejectedExecutionException.class)
+                .hasMessage("saturated");
         }
     }
 

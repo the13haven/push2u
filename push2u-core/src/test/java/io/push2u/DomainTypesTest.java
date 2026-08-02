@@ -116,6 +116,61 @@ class DomainTypesTest {
     }
 
     @Test
+    void pushMessageAcceptsRfc8030CompliantTopics() {
+        String fullAlphabet32 = "AZaz09-_AZaz09-_AZaz09-_AZaz09-_";
+        assertThat(fullAlphabet32).hasSize(32);
+
+        PushMessage message = new PushMessage(new byte[] {1}, null, null, fullAlphabet32);
+        assertThat(message.topic()).isEqualTo(fullAlphabet32);
+
+        assertThat(PushMessage.of(new byte[] {1}).topic()).as("null topic stays unset").isNull();
+    }
+
+    @Test
+    void pushMessageRejectsTopicsOutsideRfc8030Shape() {
+        String[] badTopics = {
+            "a".repeat(33),                    // over the 32-character limit
+            "",                                // empty
+            "orders+refunds",                  // '+' is standard-Base64, not URL-safe
+            "orders/refunds",                  // '/' is standard-Base64, not URL-safe
+            "orders=",                         // padding character
+            "two words",                       // space
+            "evil\r\nX-Injected: 1",           // CR/LF header injection attempt
+        };
+        for (String badTopic : badTopics) {
+            assertThatThrownBy(() -> new PushMessage(new byte[] {1}, null, null, badTopic))
+                .as("topic %s", badTopic.isEmpty() ? "<empty>" : badTopic)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("URL-safe Base64 alphabet");
+        }
+
+        assertThatThrownBy(() -> new PushMessage(new byte[] {1}, null, null, "orders+refunds"))
+            .as("the offending value is named in the message — a topic is not secret material")
+            .hasMessageContaining("orders+refunds");
+    }
+
+    @Test
+    void rejectedTopicIsEchoedSafelyForLogging() {
+        assertThatThrownBy(() -> new PushMessage(new byte[] {1}, null, null, "evil\r\nX-Injected: 1"))
+            .as("a rejected topic must not carry its CR/LF into the log line that reports it")
+            .hasMessageNotContaining("\r")
+            .hasMessageNotContaining("\n")
+            .hasMessageContaining("evil\\u000d\\u000aX-Injected: 1");
+
+        String oversized = "x".repeat(5000);
+        assertThatThrownBy(() -> new PushMessage(new byte[] {1}, null, null, oversized))
+            .as("an oversized topic is truncated in the message but its real length is reported")
+            .hasMessageContaining("5000 characters")
+            .satisfies(e -> assertThat(e.getMessage()).hasSizeLessThan(200));
+    }
+
+    @Test
+    void pushMessageBuilderRejectsInvalidTopicAtBuild() {
+        PushMessage.Builder badTopic = PushMessage.builder(new byte[] {1}).topic("a".repeat(33));
+        assertThatThrownBy(badTopic::build).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void urgencyHeaderValuesMatchRfc8030Tokens() {
         assertThat(Urgency.VERY_LOW.headerValue()).isEqualTo("very-low");
         assertThat(Urgency.NORMAL.headerValue()).isEqualTo("normal");

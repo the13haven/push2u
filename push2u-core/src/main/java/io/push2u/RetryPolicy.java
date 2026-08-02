@@ -5,8 +5,9 @@ import java.util.Objects;
 
 /**
  * Retry configuration for {@link PushSender}: the maximum number of POST attempts and the
- * exponential-backoff bounds used between retryable failures (429, 5xx). A {@code 429} carrying
- * a {@code Retry-After} overrides the computed backoff (capped at {@link #maxBackoff()}).
+ * exponential-backoff bounds used between retryable failures (429, 5xx). Any retryable response
+ * carrying a parseable {@code Retry-After} (delta-seconds or an HTTP-date) overrides the
+ * computed backoff (capped at {@link #maxBackoff()}).
  *
  * @param maxAttempts    the maximum number of POSTs, including the first (≥ 1)
  * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry
