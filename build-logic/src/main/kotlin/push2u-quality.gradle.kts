@@ -29,10 +29,12 @@ fun toolVersion(alias: String): String =
 fun toolLibrary(alias: String): Provider<MinimalExternalModuleDependency> =
     libs.findLibrary(alias).orElseThrow { IllegalStateException("missing catalog library: $alias") }
 
-// Analysis runs on production code only — see the task-graph hook at the bottom. Test sources
-// (including push2u-core's `fipsTest` source set and the published `testFixtures`) are exempt:
-// Javadoc/naming rules, complexity limits and SpotBugs' mutability heuristics all fire constantly
-// on test code without finding real defects.
+// Checkstyle, PMD and SpotBugs analyse production code only — see the task-graph hook at the
+// bottom. Measured on the current tree, running them over the test sources (`test`, `fipsTest` and
+// the published `testFixtures`) reports 210 Checkstyle and 191 PMD violations — Javadoc, naming and
+// complexity rules that test code is not written to satisfy — and 0 from SpotBugs, which alone
+// costs ~17s of the ~37s CI run. Error Prone is the exception and does cover the test compilations;
+// see its section below.
 
 // ---------------------------------------------------------------------------------------------
 // Spotless — Palantir Java Format. Authoritative for everything layout-related.
@@ -43,9 +45,13 @@ spotless {
             .formatJavadoc(true)
             .style("PALANTIR")
 
+        // "java" matches by prefix, so javax.* lands in the first group with the JDK packages —
+        // config/quality/checkstyle/checkstyle.xml verifies the same grouping.
+        //
+        // No targetExclude for build/**: Spotless targets the source sets, and nothing generated
+        // under build/ is part of one (verified with a deliberately misformatted file there).
         importOrder("java", "", "io.push2u")
         removeUnusedImports()
-        targetExclude("build/**")
     }
 }
 
@@ -92,13 +98,11 @@ spotbugs {
 // (CVE-2026-34478 / -34477 / -34480, CVE-2025-68161). The vulnerable layouts/appenders are not
 // configured in this build, and the jar never reaches an application classpath — it is confined to
 // the `spotbugs` configuration. Remove once SpotBugs depends on log4j-core >= 2.25.4 itself.
+// log4j-api needs no constraint of its own: it follows log4j-core to the same version.
 dependencies {
     constraints {
         add("spotbugs", "org.apache.logging.log4j:log4j-core:2.25.4") {
             because("CVE-2026-34478 / -34477 / -34480 / CVE-2025-68161")
-        }
-        add("spotbugs", "org.apache.logging.log4j:log4j-api:2.25.4") {
-            because("aligned with log4j-core override")
         }
     }
 }
@@ -145,6 +149,11 @@ tasks.named<JacocoReport>("jacocoTestReport") {
 // ---------------------------------------------------------------------------------------------
 // Error Prone + NullAway — compiler-attached checks. Only active when a quality lifecycle task is
 // in the graph, so a plain `./gradlew build` compiles at full speed.
+//
+// Unlike Checkstyle/PMD/SpotBugs, Error Prone runs on the test compilations too: its checks are
+// about defects, not style, and they catch real ones there (a `return` inside a `finally`, a
+// String.split call with surprising trailing-empty behaviour). NullAway is the exception — without
+// annotations it reports every builder field, which on test sources is noise and nothing else.
 // ---------------------------------------------------------------------------------------------
 dependencies {
     add("errorprone", toolLibrary("errorprone-core"))
@@ -152,19 +161,21 @@ dependencies {
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    val analysedCompile = name == "compileJava"
+    val productionCompile = name == "compileJava"
     options.errorprone {
         enabled = provider {
-            analysedCompile && (
-                gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||
-                    gradle.taskGraph.hasTask("${project.path}:qualityCheckCi")
-                )
+            gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||
+                gradle.taskGraph.hasTask("${project.path}:qualityCheckCi")
         }
-        // NullAway runs as a warning: push2u carries no nullability annotations yet (the core is
-        // zero-dependency, so even an annotations-only jar is a deliberate decision). Promote to
-        // error() once the public API is annotated.
-        warn("NullAway")
-        option("NullAway:AnnotatedPackages", "io.push2u")
+        if (productionCompile) {
+            // NullAway runs as a warning: push2u carries no nullability annotations yet (the core
+            // is zero-dependency, so even an annotations-only jar is a deliberate decision).
+            // Promote to error() once the public API is annotated.
+            warn("NullAway")
+            option("NullAway:AnnotatedPackages", "io.push2u")
+        } else {
+            disable("NullAway")
+        }
     }
 }
 
