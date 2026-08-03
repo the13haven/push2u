@@ -26,7 +26,7 @@ bouncycastleFips = "2.1.3"
 # the contract NullAway verifies. An annotation-only artifact with no code of its own; exposed as
 # `api` so consumers and their tools (NullAway, IntelliJ, the Kotlin compiler) read the same
 # contract. See README "Requirements".
-jspecify = "1.0.0"
+jspecify = "1.0.1"
 
 # Quality tool engines — the analyser versions the Gradle plugins run (see build-logic's
 # push2u-quality convention plugin). Build-time only: none of these ever reaches a consumer's
