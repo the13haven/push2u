@@ -104,7 +104,7 @@
 
         <!--
             Verifies the order Spotless produces:
-            java.* / javax.* → blank line → third-party → blank line → io.push2u.*
+            java.* / javax.* → blank line → third-party → blank line → com.the13haven.push2u.*
 
             Spotless is authoritative; Checkstyle only proves the result is what we expect.
             javax.* belongs to the first group because Spotless's "java" import-order entry matches
@@ -115,7 +115,7 @@
             <property name="customImportOrderRules"
                       value="STANDARD_JAVA_PACKAGE###THIRD_PARTY_PACKAGE###SPECIAL_IMPORTS"/>
             <property name="standardPackageRegExp" value="^javax?\."/>
-            <property name="specialImportsRegExp" value="^io\.push2u\."/>
+            <property name="specialImportsRegExp" value="^com\.the13haven\.push2u\."/>
             <property name="sortImportsInGroupAlphabetically" value="true"/>
             <property name="separateLineBetweenGroups" value="true"/>
         </module>

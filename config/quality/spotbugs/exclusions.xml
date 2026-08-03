@@ -13,7 +13,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP"/>
-        <Class name="io.push2u.PushResponse"/>
+        <Class name="com.the13haven.push2u.PushResponse"/>
         <Field name="headers"/>
     </Match>
 
@@ -24,7 +24,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP2"/>
-        <Class name="io.push2u.PushSender$Builder"/>
+        <Class name="com.the13haven.push2u.PushSender$Builder"/>
         <Field name="cryptoProvider"/>
     </Match>
 </FindBugsFilter>

@@ -1,1 +1,1 @@
-io.push2u.signer.vault.spring.VaultSignerAutoConfiguration
+com.the13haven.push2u.signer.vault.spring.VaultSignerAutoConfiguration
