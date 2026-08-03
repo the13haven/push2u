@@ -72,6 +72,27 @@ gpg --armor --export-secret-keys <KEYID>
 Store the full armored block (including the `BEGIN`/`END PGP PRIVATE KEY BLOCK` lines) as
 `SIGNING_KEY`, and the key's passphrase as `SIGNING_PASSWORD`.
 
+#### Check the key before it is needed
+
+Signing runs inside Gradle: the `signing` plugin's `useInMemoryPgpKeys` uses the BouncyCastle
+implementation shipped in the Gradle distribution, so no `gpg` binary, keyring or agent is
+involved — on a developer machine or on a CI runner alike. The build reads the key from
+`SIGNING_KEY` / `SIGNING_PASSWORD`, which means the exact release-time signing path can be
+exercised locally before the first release, when a bad key still costs nothing:
+
+```bash
+export SIGNING_KEY="$(gpg --armor --export-secret-keys <KEYID>)"
+export SIGNING_PASSWORD='<passphrase>'
+./gradlew nmcpZipAggregation
+unzip -l build/nmcp/zip/aggregation.zip | grep -c '\.asc$'   # expect one per artifact
+```
+
+If this fails to decrypt the key, the two usual causes are the export format of a recent GnuPG
+and a key whose signing capability sits on a *subkey* rather than on the primary key. In the
+latter case the two-argument `useInMemoryPgpKeys(key, password)` call in
+`build-logic/src/main/kotlin/push2u-publish.gradle.kts` picks the wrong key and has to become
+the three-argument form that names the key ID.
+
 ### 4. Generate the release bot's SSH deploy key
 
 The release workflows push tags back to the repository. `GITHUB_TOKEN` cannot be handed to
