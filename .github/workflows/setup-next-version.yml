@@ -19,6 +19,20 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # Same guard as the Release workflow, and for a sharper reason. The marker is a tag, and
+      # useHighestVersion resolves the version from the tags reachable in HEAD's history — so a
+      # marker placed from a feature branch does not change main right away. It changes it the
+      # moment that branch is merged, which makes the version of a later release depend on an
+      # unrelated pull request. The tag also stays in the repository for good. Refuse up front.
+      - name: Verify the marker is placed on main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Version markers belong on main only; this run was dispatched on $REF." >&2
+            exit 1
+          fi
+
       # axion pushes the version marker tag back to origin, and GITHUB_TOKEN cannot be handed to
       # its JGit transport, so the push goes over SSH with a dedicated deploy key instead.
       # known_hosts is pinned explicitly rather than populated with ssh-keyscan at run time:
@@ -40,6 +54,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          # Stated rather than inherited from github.ref. The guard above already restricts this
+          # to main, so the two agree — but the branch the marker lands on is the whole point of
+          # this workflow, and it should not be readable only by tracing what the dispatch UI
+          # happened to pass in.
+          ref: main
           # axion needs the full tag history to know where the current version stands before it
           # places the next-version marker.
           fetch-depth: 0

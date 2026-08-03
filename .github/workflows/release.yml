@@ -80,6 +80,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          # Stated rather than inherited from github.ref — the guard above already restricts this
+          # to main, and naming the branch keeps the two release workflows symmetric.
+          ref: main
           # axion derives the version from git tag history; a shallow clone hides the tags and the
           # plugin would fall back to its default 0.1.0-SNAPSHOT.
           fetch-depth: 0
