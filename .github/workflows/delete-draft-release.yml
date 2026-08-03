@@ -1,16 +1,24 @@
 name: Delete Draft Release
 
-# Abandons a release that was tagged but never made it to Maven Central — the case where the fix
-# is not "finish this release" (that is the Publish Existing Tag workflow) but "this version is
-# not happening". Deletes the draft GitHub Release and, optionally, the tag itself so the number
-# can be reused.
+# Cleans up after a release that was tagged but never reached Maven Central — the case where the
+# fix is not "finish this release" (that is the Publish Existing Tag workflow) but "these notes
+# should not sit there half-written".
 #
-# Two guards make this safe to expose as a button:
-#   * it refuses to touch a release that is not a draft, so a published release cannot be removed
-#     by picking the wrong tag from the dropdown;
-#   * before deleting a tag it checks whether the version is already on Maven Central, where
-#     nothing can ever be taken back — reusing such a number would mean two different trees
-#     claiming one immutable version.
+# It deletes the DRAFT GitHub Release and nothing else. The tag stays.
+#
+# Deleting the tag is deliberately NOT offered here, because reusing a version number cannot be
+# made safe from a workflow. The authority on whether a version reached Central is the deployment
+# state in the Central Portal API, which is only addressable by deployment id — an id this run
+# does not have, since the upload happened in a different run and nmcp does not surface it. The
+# Portal has no endpoint answering "is namespace:name:version published". The remaining signal,
+# a 404 from repo1.maven.org, proves nothing: it lags behind a deployment that may be sitting in
+# PUBLISHING right now, and treating it as proof is precisely the fail-open reading that would
+# let a workflow free a version number Central had already taken. Made fail-closed instead, the
+# check would never let a deletion through, so there would be no feature left either way.
+#
+# Losing a version number costs nothing — release the next patch instead. If a number really must
+# be reclaimed, RELEASING.md documents doing it by hand, after checking the Portal's Deployments
+# page with human eyes.
 
 on:
   workflow_dispatch:
@@ -19,17 +27,12 @@ on:
         description: 'Tag whose DRAFT release should be deleted (e.g. v0.1.0)'
         required: true
         type: string
-      deleteTag:
-        description: 'Also delete the git tag, freeing the version number for reuse'
-        required: false
-        default: false
-        type: boolean
 
-# Deleting a release and a tag both write to repository contents.
+# Deleting a release writes to repository contents.
 permissions:
   contents: write
 
-# Same group as the other release-management workflows — this one mutates the tag state they read.
+# Same group as the other release-management workflows — this one reads the state they write.
 concurrency:
   group: push2u-release-management
   cancel-in-progress: false
@@ -53,7 +56,8 @@ jobs:
           fi
 
       # The load-bearing guard. `gh release view --json isDraft` is the authority on whether this
-      # release was ever visible to anyone; anything already published is off limits here.
+      # release was ever visible to anyone; anything already published is off limits here, since a
+      # published release corresponds to artifacts that reached Central.
       - name: Verify the release is still a draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,54 +74,19 @@ jobs:
             exit 1
           fi
 
-      # Checked before the tag goes, not before the release: a stray draft is harmless, a reused
-      # version number is not. repo1 can lag a few minutes behind a successful deployment, so a
-      # 404 here is "probably not published" rather than proof — the Central Portal itself remains
-      # the last line of defence, since it rejects a version it has already accepted.
-      - name: Verify the version never reached Maven Central
-        if: ${{ inputs.deleteTag }}
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          version="${TAG#v}"
-          url="https://repo1.maven.org/maven2/com/the13haven/push2u-core/$version/"
-          status=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-          echo "$url -> HTTP $status"
-          if [ "$status" = "200" ]; then
-            echo "Version $version is already on Maven Central and cannot be reused." >&2
-            echo "Release the next version instead; Maven Central is immutable." >&2
-            exit 1
-          fi
-
+      # --cleanup-tag is deliberately not passed: see the note at the top of this file.
       - name: Delete the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
-        # --cleanup-tag is deliberately not used: tag deletion is a separate, opt-in decision
-        # gated on the Maven Central check above.
         run: gh release delete "$TAG" --yes
-
-      # Through the API with GITHUB_TOKEN rather than over SSH with the deploy key: this workflow
-      # never needs to write commits, so it does not need ACTIONS_WRITE_KEY at all.
-      - name: Delete the tag
-        if: ${{ inputs.deleteTag }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$TAG"
-          echo "Tag $TAG deleted; the version number is free again."
 
       - name: Summary
         env:
           TAG: ${{ inputs.tag }}
-          DELETED_TAG: ${{ inputs.deleteTag }}
         run: |
           echo "Draft release $TAG deleted."
-          if [ "$DELETED_TAG" = "true" ]; then
-            echo "Tag $TAG deleted as well."
-            echo "Note: the release commit produced by axion is still on main." >&2
-          else
-            echo "Tag $TAG kept. Run Publish Existing Tag to finish this release later."
-          fi
+          echo "The tag $TAG and the release commit on main are untouched."
+          echo "The next release will therefore take the following version number."
+          echo "To finish this release after all, run the Publish Existing Tag workflow."

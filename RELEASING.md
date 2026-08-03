@@ -221,13 +221,11 @@ draft release live. It also covers the narrower case where the upload succeeded 
 step did not, leaving artifacts on Central and a draft on GitHub. Safe to repeat: a version
 Central already holds is rejected as a duplicate rather than replaced.
 
-**Abandon this release** — *Actions → Delete Draft Release*, entering the tag, and ticking
-`deleteTag` if the version number should become reusable. It refuses to delete a release that is
-not a draft, and refuses to delete a tag whose version is already on Maven Central. Note that the
-release commit axion made on `main` (the README coordinate bump) stays; drop it separately if it
-matters.
+**Abandon this release** — *Actions → Delete Draft Release*, entering the tag. It removes the
+draft release and refuses to touch one that is already published. The tag and the release commit
+axion made on `main` stay, so the next release simply takes the following version number.
 
-Both are equivalent to doing it by hand, if you would rather:
+Either is equivalent to doing it by hand:
 
 ```bash
 # finish
@@ -240,8 +238,31 @@ gh release edit v0.1.0 --draft=false
 
 # abandon
 gh release delete v0.1.0 --yes
+```
+
+### Reusing a version number
+
+The workflows never delete a tag, so a failed release consumes its version number and the next one
+moves on. That is the cheap and correct default: version numbers are free, and a gap in the
+sequence costs nothing.
+
+Reclaiming a number is a manual operation on purpose, because no automated check can establish
+that a version did *not* reach Central. The Portal's API reports deployment state by deployment
+id, which a later workflow run does not have, and offers no endpoint answering "is this version
+published"; a 404 from `repo1.maven.org` proves nothing, since the repository lags behind a
+deployment that may still be in `PUBLISHING`.
+
+So verify with your own eyes first — open *Publish → Deployments* in the
+[Central Portal](https://central.sonatype.com/publishing) and confirm there is no deployment for
+that version in any state other than `FAILED`. Only then:
+
+```bash
 git push --delete origin v0.1.0
 ```
+
+If you get this wrong, the outcome is two different trees claiming one immutable version. Central
+will refuse the second upload, which limits the damage — but the repository is then lying about
+what `v0.1.0` was.
 
 ### A published version is wrong
 
