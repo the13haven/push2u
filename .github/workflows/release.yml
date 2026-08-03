@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+# The tag itself is pushed over SSH with the deploy key, but `gh release create` at the end
+# authenticates with GITHUB_TOKEN, and creating a GitHub Release requires contents: write.
+permissions:
+  contents: write
+
+# One tag-writing workflow at a time. The group is a literal shared with Setup Next Version rather
+# than ${{ github.workflow }}: both push tags that the other reads back, so a marker landing midway
+# through a release would change the version under it. A concurrency group is repository-scoped, so
+# naming the same string in both files is what serialises them.
+#
+# cancel-in-progress stays false on purpose: killing a release halfway can leave a tag pushed with
+# no artifacts in Maven Central, which is worse than making the second click wait in the queue.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # workflow_dispatch lets the caller pick any branch in the UI, but the build only releases
+      # from a release branch (scmVersion.releaseOnlyOnReleaseBranches, whose default set is
+      # main/master). Off main, axion silently declines to tag and reports a branch-qualified
+      # snapshot version instead — which would then be handed to `gh release create` as a tag that
+      # does not exist. Refuse up front rather than half-execute.
+      - name: Verify the release runs from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Releases are cut from main only; this run was dispatched on $REF." >&2
+            exit 1
+          fi
+
+      # Fail before anything is tagged or uploaded if a publishing secret is missing. The order of
+      # steps below makes this necessary: `release` pushes the tag first and only then does the
+      # publish step run, so a missing SIGNING_KEY would otherwise surface as an unsigned bundle
+      # rejected by the Central Portal — with the tag already pushed and the version burnt. A
+      # secret that is absent expands to the empty string, which is exactly what this checks.
+      - name: Verify release secrets are configured
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          missing=""
+          for name in ACTIONS_WRITE_KEY SIGNING_KEY SIGNING_PASSWORD \
+                      MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "See RELEASING.md for how each one is obtained." >&2
+            exit 1
+          fi
+
+      # axion pushes the release tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
+      # transport, so the push goes over SSH with a dedicated deploy key instead. known_hosts is
+      # pinned explicitly rather than populated with ssh-keyscan at run time: scanning would
+      # trust whatever answers on the network, which defeats host verification entirely.
+      - name: Set up SSH key
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$ACTIONS_WRITE_KEY" > ~/.ssh/deploy_key_rsa
+          chmod 600 ~/.ssh/deploy_key_rsa
+          # Official GitHub Ed25519 host key:
+          # https://docs.github.com/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+          cat > ~/.ssh/known_hosts <<'EOF'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          EOF
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # Stated rather than inherited from github.ref — the guard above already restricts this
+          # to main, and naming the branch keeps the two release workflows symmetric.
+          ref: main
+          # axion derives the version from git tag history; a shallow clone hides the tags and the
+          # plugin would fall back to its default 0.1.0-SNAPSHOT.
+          fetch-depth: 0
+
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
+      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      - name: Set git to use SSH
+        run: |
+          git config --global user.name "release-bot"
+          git config --global user.email "release-bot@noreply.the13haven.com"
+          git remote set-url origin git@github.com:the13haven/push2u.git
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # Same gate as CI, run again right before the tag is cut: qualityCheckCi covers compilation,
+      # all test suites (including push2u-core's fipsTest and the Testcontainers-backed Vault test),
+      # static analysis and the aggregated coverage threshold. --no-build-cache for the same reason
+      # as in ci.yml: a cached test result recorded without Docker would silently skip the
+      # Testcontainers test, and Docker availability is not part of the cache key.
+      - name: Quality check
+        env:
+          # Testcontainers' Ryuk container must mount the daemon socket path as seen
+          # from inside the runner's Docker VM.
+          TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+        run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
+
+      # Builds and signs the deployment bundle without uploading it — the last check that can still
+      # fail cheaply. Everything after this point mutates state outside the runner: `release`
+      # pushes a tag and a commit, and Maven Central is immutable. A SIGNING_KEY that cannot be
+      # decrypted would otherwise surface in the publish step, with the version already burnt.
+      # The bundle built here is thrown away; the publish step rebuilds it from the tagged version.
+      - name: Verify the signing key produces a complete bundle
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          ./gradlew nmcpZipAggregation --no-daemon
+          bundle=build/nmcp/zip/aggregation.zip
+          artifacts=$(unzip -l "$bundle" | grep -cE '\.(jar|pom|module)$')
+          signatures=$(unzip -l "$bundle" | grep -c '\.asc$')
+          echo "artifacts: $artifacts, signatures: $signatures"
+          if [ "$artifacts" -eq 0 ] || [ "$artifacts" -ne "$signatures" ]; then
+            echo "Expected exactly one .asc per artifact — the signing key is not usable." >&2
+            exit 1
+          fi
+
+      # Creates the release tag (v<version>) and pushes it to origin over SSH. The step id matters:
+      # axion publishes the resolved version as the `released-version` GitHub Actions output, which
+      # the GitHub Release step below reads.
+      # https://axion-release-plugin.readthedocs.io/en/latest/configuration/ci_servers/
+      - name: Perform release
+        id: release
+        run: |
+          ./gradlew release --no-daemon \
+            -Prelease.customKeyFile="$HOME/.ssh/deploy_key_rsa" \
+            -Prelease.customKeyPassword=""
+
+      # Created BEFORE the upload, and as a draft. Maven Central is immutable while a GitHub Release
+      # is not, so the reversible half goes first: if note generation fails, nothing has been
+      # published yet and the tag can simply be deleted. A draft rather than a live release, so the
+      # notes do not point at artifacts that are not on Central yet.
+      #
+      # Idempotent on purpose — re-running the job must not fail on an existing release.
+      - name: Create the draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.release.outputs.released-version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it untouched."
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+          fi
+
+      # The point of no return. Deliberately a separate Gradle invocation, not chained after
+      # `release` in one command: axion resolves the project version once, at configuration time,
+      # before the `release` task has created the tag — so a combined run would sign and upload a
+      # -SNAPSHOT version. A fresh invocation starts after the tag exists and resolves the clean
+      # release version.
+      #
+      # Secrets travel as environment variables rather than -P flags on the command line so they
+      # never appear in process listings or Gradle's own logging of the invocation.
+      #
+      # If this step fails, the draft above is the recovery handle: fix the cause and run the
+      # "Publish Existing Tag" workflow for the same tag. Do NOT re-run Release — axion would move
+      # on to the next version number and publish the same code twice.
+      - name: Publish to Maven Central
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon
+
+      # Only now, with the artifacts actually on Central, do the notes become visible. Editing an
+      # already-published release to --draft=false is a no-op, so this is safe to repeat.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.release.outputs.released-version }}
+        run: gh release edit "$TAG" --draft=false

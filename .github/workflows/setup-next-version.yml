@@ -1,0 +1,114 @@
+name: Setup Next Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      nextVersion:
+        description: 'Enter next version (e.g. 1.2.0)'
+        required: true
+        type: string
+
+# markNextVersion pushes its marker tag over SSH with the deploy key, not with GITHUB_TOKEN, so the
+# workflow token itself only needs to read the repository for checkout.
+permissions:
+  contents: read
+
+# Shared with the Release workflow — the same literal string, so the two serialise against each
+# other rather than only against themselves. Both write tags that the other resolves the version
+# from: a marker pushed while a release is between its tag and its upload would leave the two
+# disagreeing about what was just published.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
+jobs:
+  mark-next-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Same guard as the Release workflow, and for a sharper reason. The marker is a tag, and
+      # useHighestVersion resolves the version from the tags reachable in HEAD's history — so a
+      # marker placed from a feature branch does not change main right away. It changes it the
+      # moment that branch is merged, which makes the version of a later release depend on an
+      # unrelated pull request. The tag also stays in the repository for good. Refuse up front.
+      - name: Verify the marker is placed on main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Version markers belong on main only; this run was dispatched on $REF." >&2
+            exit 1
+          fi
+
+      # axion pushes the version marker tag back to origin, and GITHUB_TOKEN cannot be handed to
+      # its JGit transport, so the push goes over SSH with a dedicated deploy key instead.
+      # known_hosts is pinned explicitly rather than populated with ssh-keyscan at run time:
+      # scanning would trust whatever answers on the network, which defeats host verification.
+      - name: Set up SSH key
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$ACTIONS_WRITE_KEY" > ~/.ssh/deploy_key_rsa
+          chmod 600 ~/.ssh/deploy_key_rsa
+          # Official GitHub Ed25519 host key:
+          # https://docs.github.com/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+          cat > ~/.ssh/known_hosts <<'EOF'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          EOF
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # Stated rather than inherited from github.ref. The guard above already restricts this
+          # to main, so the two agree — but the branch the marker lands on is the whole point of
+          # this workflow, and it should not be readable only by tracing what the dispatch UI
+          # happened to pass in.
+          ref: main
+          # axion needs the full tag history to know where the current version stands before it
+          # places the next-version marker.
+          fetch-depth: 0
+
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
+      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      - name: Set git to use SSH
+        run: |
+          git config --global user.name "release-bot"
+          git config --global user.email "release-bot@noreply.the13haven.com"
+          git remote set-url origin git@github.com:the13haven/push2u.git
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # The input is validated against SemVer before Gradle ever sees it: a typo here would
+      # otherwise be pushed as a permanent marker tag that every future build derives its version
+      # from. The value reaches the shell through env, not string interpolation into the script,
+      # so a crafted input cannot inject commands.
+      - name: Set next version marker
+        env:
+          NEXT_VERSION: ${{ inputs.nextVersion }}
+        run: |
+          # The official SemVer 2.0.0 regex from semver.org, translated to POSIX ERE for bash's
+          # [[ =~ ]]: \d becomes [0-9] and the non-capturing (?:...) groups become plain ones.
+          # Written out rather than simplified — a hand-rolled approximation is what let 01.2.3
+          # and 1.2.3-01 through before, and both would have become permanent marker tags.
+          version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if [[ ! "$NEXT_VERSION" =~ $version_pattern ]]; then
+            echo "Invalid version format: '$NEXT_VERSION' (expected SemVer, e.g. 1.2.0)"
+            exit 1
+          fi
+
+          ./gradlew markNextVersion --no-daemon \
+            "-Prelease.version=$NEXT_VERSION" \
+            -Prelease.customKeyFile="$HOME/.ssh/deploy_key_rsa" \
+            -Prelease.customKeyPassword=""

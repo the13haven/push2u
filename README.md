@@ -1,15 +1,18 @@
 # push2u
 
 [![codecov](https://codecov.io/gh/the13haven/push2u/graph/badge.svg?token=3T4SIZKKLD)](https://codecov.io/gh/the13haven/push2u)
+[![Maven Central](https://img.shields.io/maven-central/v/com.the13haven/push2u-core)](https://central.sonatype.com/artifact/com.the13haven/push2u-core)
 
 **push2u** (*push events to user*) is a Java library for sending
 [Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
 It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, retries,
 and Spring Boot auto-configuration.
 
-The project is under active development. The current version is `0.1.0-SNAPSHOT` and artifacts
-are not published to Maven Central yet. The implemented architecture is described in
-[`DESIGN.md`](DESIGN.md).
+Releases are published to Maven Central under the `com.the13haven` group ID. The version is
+derived from git tags of the form `vX.Y.Z`; between releases the build identifies itself as the
+next `X.Y.Z-SNAPSHOT`. The first release has not been tagged yet — until it appears on Maven
+Central, use the [composite build](#developing-against-unpublished-changes) described below. The
+implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 
 ## Features
 
@@ -43,22 +46,31 @@ are not published to Maven Central yet. The implemented architecture is describe
 
 The build uses a JDK 26 toolchain with `--release 21`. Run it with the included Gradle wrapper.
 
-## Using the snapshot from source
+## Installation
 
-Until artifacts are published, include this repository as a Gradle composite build:
+Add the core module from Maven Central:
+
+```kotlin
+dependencies {
+    implementation("com.the13haven:push2u-core:0.1.0")
+}
+```
+
+The Spring Boot starters and the Vault signer module use the same group ID and version; the
+sections below show which module each integration needs.
+
+### Developing against unpublished changes
+
+To build against changes that have not been released yet, include this repository as a Gradle
+composite build:
 
 ```kotlin
 // settings.gradle.kts
 includeBuild("../push2u")
 ```
 
-Then use the normal module coordinate:
-
-```kotlin
-dependencies {
-    implementation("io.push2u:push2u-core:0.1.0-SNAPSHOT")
-}
-```
+The dependency declarations stay exactly as above — Gradle substitutes the included build for
+the published Maven Central artifact.
 
 ## Core usage
 
@@ -254,7 +266,7 @@ Add the core starter:
 
 ```kotlin
 dependencies {
-    implementation("io.push2u:push2u-spring-boot-starter:0.1.0-SNAPSHOT")
+    implementation("com.the13haven:push2u-spring-boot-starter:0.1.0")
 }
 ```
 
@@ -297,7 +309,7 @@ For plain Java, add the signer module:
 
 ```kotlin
 dependencies {
-    implementation("io.push2u:push2u-signer-vault:0.1.0-SNAPSHOT")
+    implementation("com.the13haven:push2u-signer-vault:0.1.0")
 }
 ```
 
@@ -306,8 +318,8 @@ brings in `push2u-signer-vault`:
 
 ```kotlin
 dependencies {
-    implementation("io.push2u:push2u-spring-boot-starter:0.1.0-SNAPSHOT")
-    implementation("io.push2u:push2u-signer-vault-spring-boot-starter:0.1.0-SNAPSHOT")
+    implementation("com.the13haven:push2u-spring-boot-starter:0.1.0")
+    implementation("com.the13haven:push2u-signer-vault-spring-boot-starter:0.1.0")
 }
 ```
 
@@ -511,6 +523,14 @@ Rule exclusions carry a comment stating why, and a per-file exception is a `@Sup
 `./gradlew aggregateTestResults` collects the JUnit XML of every module — `push2u-core`'s
 `fipsTest` suite included — into `build/test-results-aggregated/`. CI runs it after the quality
 check and hands that directory, plus the aggregated JaCoCo XML, to Codecov.
+
+## Releases
+
+Releases are cut manually from GitHub Actions: the *Release* workflow runs the full quality
+gate, tags the version, publishes signed artifacts to Maven Central through the Central Portal,
+and creates a GitHub Release with generated notes. The step-by-step procedure, the required
+repository secrets, and the one-time publishing setup are documented in
+[`RELEASING.md`](RELEASING.md).
 
 ## License
 

@@ -45,6 +45,14 @@ spotbugsPlugin = "6.5.9"
 errorpronePlugin = "5.1.0"
 spotlessPlugin = "8.9.0"
 
+# Release & publishing plugins — build-time only, like the quality stack above: they run in the
+# build's own classpath and never reach a consumer's, so the zero-runtime-dependency constraint of
+# the library stays intact. axion derives the project version from git tags (the tag is the single
+# source of truth — no version constant to bump and forget); nmcp uploads the aggregated artifacts
+# to Maven Central through the Central Portal publisher API. Versions verified present.
+axion = "1.21.2"
+nmcp = "1.6.1"
+
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
@@ -85,3 +93,12 @@ nullaway = { module = "com.uber.nullaway:nullaway", version.ref = "nullaway" }
 spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugsPlugin" }
 errorprone = { id = "net.ltgt.errorprone", version.ref = "errorpronePlugin" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotlessPlugin" }
+
+# Release/publishing plugins. axion-release and nmcp-aggregation are applied at the root only —
+# versioning and the Central upload are whole-build concerns (Central validates one bundle with all
+# four modules together, so publishing cannot end half-done). Plain nmcp is applied per module by
+# the push2u-publish convention plugin (via build-logic), where it exposes that module's
+# publication to the root's aggregation.
+axion-release = { id = "pl.allegro.tech.build.axion-release", version.ref = "axion" }
+nmcp = { id = "com.gradleup.nmcp", version.ref = "nmcp" }
+nmcp-aggregation = { id = "com.gradleup.nmcp.aggregation", version.ref = "nmcp" }

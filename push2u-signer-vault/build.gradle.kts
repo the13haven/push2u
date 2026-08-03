@@ -29,3 +29,15 @@ dependencies {
     testImplementation(libs.testcontainers.vault)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
+
+// java-test-fixtures wires the fixture variants into the `java` component, so the publication
+// (see build-logic's push2u-publish convention plugin) would ship them by default. That default
+// is right for push2u-core — its fixtures are the published VapidSigner conformance kit — but
+// this module's fixture (RecordingHttpClient) is internal test scaffolding shared with the Vault
+// starter inside this build only, and publishing it would freeze an accidental API. Skip the
+// variants via the documented AdhocComponentWithVariants mechanism; this removes them from the
+// PUBLICATION only — the testFixtures(...) dependencies above keep working unchanged.
+(components["java"] as AdhocComponentWithVariants).apply {
+    withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+    withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
+}

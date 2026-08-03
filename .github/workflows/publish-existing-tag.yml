@@ -1,0 +1,174 @@
+name: Publish Existing Tag
+
+# Recovery path for a release that got as far as its tag but not all the way to Maven Central.
+# The Release workflow pushes the tag and creates a draft GitHub Release before it uploads, so a
+# failure in the upload — or in the step that publishes the release notes — leaves the tag, the
+# draft, and nothing on Central. This workflow finishes that release for an existing tag.
+#
+# It must NOT be answered by re-running Release: axion would see the tag, move on to the next
+# version number, and publish the same code twice under different coordinates. Actions can only
+# re-run whole jobs, never individual steps, so there is no way to skip ahead there either.
+#
+# The upload is skipped when the version is already on Maven Central, so the narrower failure —
+# artifacts published, GitHub Release left as a draft — is recoverable by the same button. Without
+# that, Central would reject the duplicate, Gradle would fail, and the run would never reach the
+# step that takes the release live.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish (e.g. v0.1.0)'
+        required: true
+        type: string
+      skipCentralUpload:
+        description: >-
+          Skip the Maven Central upload and only finish the GitHub Release. Tick this ONLY when
+          the Portal shows the deployment as PUBLISHED and repo1.maven.org has not mirrored it
+          yet. Never on PUBLISHING: that deployment is still in flight and can still end FAILED.
+        required: false
+        default: false
+        type: boolean
+
+# Editing the GitHub Release from draft to published needs write access to repository contents.
+permissions:
+  contents: write
+
+# Same group as Release and Setup Next Version: this workflow reads the tag state those two write.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # No ACTIONS_WRITE_KEY here — unlike the other two workflows this one never pushes a tag, so
+      # the deploy key is not needed and is deliberately not requested.
+      - name: Verify publishing secrets are configured
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          missing=""
+          for name in SIGNING_KEY SIGNING_PASSWORD \
+                      MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "See RELEASING.md for how each one is obtained." >&2
+            exit 1
+          fi
+
+      # Validated before checkout so a typo fails here rather than as a confusing "ref not found".
+      - name: Validate the tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # The `v` prefix axion puts on release tags, followed by the official SemVer 2.0.0 regex
+          # from semver.org in POSIX ERE form — the same pattern Setup Next Version validates its
+          # input against, so the two workflows agree on what a version is.
+          tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if [[ ! "$TAG" =~ $tag_pattern ]]; then
+            echo "Expected a release tag such as v0.1.0, got '$TAG'." >&2
+            exit 1
+          fi
+
+      - name: Check out the tag
+        uses: actions/checkout@v7
+        with:
+          # The tag itself, not a branch: axion resolves the version from where HEAD sits, and
+          # this is what makes the upload carry the released version rather than a snapshot.
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # A checkout that landed somewhere unexpected would otherwise be discovered by the Central
+      # Portal, which rejects snapshots — but only after the bundle has been built and uploaded.
+      # Compare here instead, where the failure is cheap and the message is clear.
+      - name: Verify the resolved version matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version=$(./gradlew properties -q --no-daemon --console=plain | awk '/^version:/ {print $2}')
+          echo "Resolved version: $version"
+          if [ "v$version" != "$TAG" ]; then
+            echo "Resolved version 'v$version' does not match the requested tag '$TAG'." >&2
+            exit 1
+          fi
+
+      # Reads in the opposite direction to the check that used to gate tag deletion, and that is
+      # what makes it defensible here. It acts on POSITIVE evidence: an HTTP 200 for the POM means
+      # the artifacts are demonstrably on Central, and skipping the upload is then correct. Every
+      # other answer — 404, a 5xx, a timeout — falls through to attempting the upload, where the
+      # Central Portal itself adjudicates: a duplicate is rejected and the run fails loudly. So an
+      # inconclusive answer costs a failed run, never a wrong publication.
+      #
+      # It does not cover the window between Central accepting a deployment and repo1 mirroring
+      # it; that is what the skipCentralUpload input is for, with the Portal's Deployments page as
+      # the authority a human reads. PUBLISHED is the only terminal success state there —
+      # PUBLISHING is still in flight and can still end FAILED, so taking the GitHub Release live
+      # on the strength of it would announce artifacts that may never arrive.
+      - name: Check whether the version is already on Maven Central
+        id: central
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          url="https://repo1.maven.org/maven2/com/the13haven/push2u-core/$version/push2u-core-$version.pom"
+          status=$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo 000)
+          echo "$url -> HTTP $status"
+          case "$status" in
+            200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "Inconclusive ($status); will attempt the upload and let the Portal decide."
+                 echo "published=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Publish to Maven Central
+        if: ${{ !inputs.skipCentralUpload && steps.central.outputs.published != 'true' }}
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon
+
+      - name: Report a skipped upload
+        if: ${{ inputs.skipCentralUpload || steps.central.outputs.published == 'true' }}
+        env:
+          SKIPPED_BY_INPUT: ${{ inputs.skipCentralUpload }}
+        run: |
+          if [ "$SKIPPED_BY_INPUT" = "true" ]; then
+            echo "Upload skipped on request; finishing the GitHub Release only."
+          else
+            echo "Version already present on Maven Central; finishing the GitHub Release only."
+          fi
+
+      # Covers both ways the original run could have stopped short: no release at all (it failed
+      # before creating the draft) and a draft that was never published.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi

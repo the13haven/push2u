@@ -1,0 +1,92 @@
+name: Delete Draft Release
+
+# Cleans up after a release that was tagged but never reached Maven Central — the case where the
+# fix is not "finish this release" (that is the Publish Existing Tag workflow) but "these notes
+# should not sit there half-written".
+#
+# It deletes the DRAFT GitHub Release and nothing else. The tag stays.
+#
+# Deleting the tag is deliberately NOT offered here, because reusing a version number cannot be
+# made safe from a workflow. The authority on whether a version reached Central is the deployment
+# state in the Central Portal API, which is only addressable by deployment id — an id this run
+# does not have, since the upload happened in a different run and nmcp does not surface it. The
+# Portal has no endpoint answering "is namespace:name:version published". The remaining signal,
+# a 404 from repo1.maven.org, proves nothing: it lags behind a deployment that may be sitting in
+# PUBLISHING right now, and treating it as proof is precisely the fail-open reading that would
+# let a workflow free a version number Central had already taken. Made fail-closed instead, the
+# check would never let a deletion through, so there would be no feature left either way.
+#
+# Losing a version number costs nothing — release the next patch instead. If a number really must
+# be reclaimed, RELEASING.md documents doing it by hand, after checking the Portal's Deployments
+# page with human eyes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag whose DRAFT release should be deleted (e.g. v0.1.0)'
+        required: true
+        type: string
+
+# Deleting a release writes to repository contents.
+permissions:
+  contents: write
+
+# Same group as the other release-management workflows — this one reads the state they write.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Validate the tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # Same pattern as Publish Existing Tag: the `v` prefix plus the official SemVer 2.0.0
+          # regex from semver.org in POSIX ERE form.
+          tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if [[ ! "$TAG" =~ $tag_pattern ]]; then
+            echo "Expected a release tag such as v0.1.0, got '$TAG'." >&2
+            exit 1
+          fi
+
+      # The load-bearing guard. `gh release view --json isDraft` is the authority on whether this
+      # release was ever visible to anyone; anything already published is off limits here, since a
+      # published release corresponds to artifacts that reached Central.
+      - name: Verify the release is still a draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "No GitHub Release exists for $TAG; nothing to delete." >&2
+            exit 1
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != "true" ]; then
+            echo "Release $TAG is published, not a draft — refusing to delete it." >&2
+            echo "A published release corresponds to artifacts already on Maven Central." >&2
+            exit 1
+          fi
+
+      # --cleanup-tag is deliberately not passed: see the note at the top of this file.
+      - name: Delete the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: gh release delete "$TAG" --yes
+
+      - name: Summary
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          echo "Draft release $TAG deleted."
+          echo "The tag $TAG and the release commit on main are untouched."
+          echo "The next release will therefore take the following version number."
+          echo "To finish this release after all, run the Publish Existing Tag workflow."
