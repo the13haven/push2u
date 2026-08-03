@@ -1,5 +1,3 @@
-# push2u
-
 ![push2u banner](https://raw.githubusercontent.com/the13haven/push2u/main/.github/banner.png)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=flat-square&logo=github)](https://github.com/the13haven/push2u/blob/main/LICENSE)
@@ -7,6 +5,8 @@
 [![CodeQL](https://github.com/the13haven/push2u/actions/workflows/codeql.yml/badge.svg)](https://github.com/the13haven/push2u/actions/workflows/codeql.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/com.the13haven/push2u-core)](https://central.sonatype.com/artifact/com.the13haven/push2u-core)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fthe13haven%2Fpush2u.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fthe13haven%2Fpush2u?ref=badge_shield)
+
+# push2u
 
 **push2u** (*push events to user*) is a Java library for sending
 [Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
