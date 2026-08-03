@@ -8,11 +8,15 @@ on:
 permissions:
   contents: write
 
-# Only one release may run at a time. cancel-in-progress stays false on purpose: killing a release
-# halfway can leave a tag pushed with no artifacts in Maven Central, which is worse than making the
-# second click wait in the queue.
+# One tag-writing workflow at a time. The group is a literal shared with Setup Next Version rather
+# than ${{ github.workflow }}: both push tags that the other reads back, so a marker landing midway
+# through a release would change the version under it. A concurrency group is repository-scoped, so
+# naming the same string in both files is what serialises them.
+#
+# cancel-in-progress stays false on purpose: killing a release halfway can leave a tag pushed with
+# no artifacts in Maven Central, which is worse than making the second click wait in the queue.
 concurrency:
-  group: ${{ github.workflow }}
+  group: push2u-release-management
   cancel-in-progress: false
 
 jobs:

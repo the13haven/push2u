@@ -13,6 +13,14 @@ on:
 permissions:
   contents: read
 
+# Shared with the Release workflow — the same literal string, so the two serialise against each
+# other rather than only against themselves. Both write tags that the other resolves the version
+# from: a marker pushed while a release is between its tag and its upload would leave the two
+# disagreeing about what was just published.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
 jobs:
   mark-next-version:
     runs-on: ubuntu-latest
