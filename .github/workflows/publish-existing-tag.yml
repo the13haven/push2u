@@ -60,7 +60,11 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+          # The `v` prefix axion puts on release tags, followed by the official SemVer 2.0.0 regex
+          # from semver.org in POSIX ERE form — the same pattern Setup Next Version validates its
+          # input against, so the two workflows agree on what a version is.
+          tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if [[ ! "$TAG" =~ $tag_pattern ]]; then
             echo "Expected a release tag such as v0.1.0, got '$TAG'." >&2
             exit 1
           fi
