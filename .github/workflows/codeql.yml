@@ -6,6 +6,10 @@ name: CodeQL
 # HKDF and ECDSA and parses HTTP responses from a push service.
 
 on:
+  # The scan is otherwise only ever triggered by someone changing code; this is how it gets run
+  # against code nobody is currently touching, without waiting for Monday.
+  workflow_dispatch:
+
   push:
     branches: [ main ]
     paths-ignore:
