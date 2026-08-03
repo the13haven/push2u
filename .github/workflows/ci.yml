@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@v6.2.0
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -61,7 +61,7 @@ jobs:
           java-version: 26
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v6.2.0
         with:
           gradle-version: wrapper
           # Keep dependency and wrapper caching, but do not restore Gradle's local

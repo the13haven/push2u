@@ -100,7 +100,7 @@ jobs:
           git remote set-url origin git@github.com:the13haven/push2u.git
 
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@v6.2.0
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -109,7 +109,7 @@ jobs:
           java-version: 26
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v6.2.0
         with:
           gradle-version: wrapper
 
