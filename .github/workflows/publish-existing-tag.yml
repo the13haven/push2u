@@ -23,8 +23,9 @@ on:
         type: string
       skipCentralUpload:
         description: >-
-          Skip the Maven Central upload and only finish the GitHub Release. Use when the Portal
-          shows the deployment as PUBLISHING or PUBLISHED but repo1.maven.org has not caught up.
+          Skip the Maven Central upload and only finish the GitHub Release. Tick this ONLY when
+          the Portal shows the deployment as PUBLISHED and repo1.maven.org has not mirrored it
+          yet. Never on PUBLISHING: that deployment is still in flight and can still end FAILED.
         required: false
         default: false
         type: boolean
@@ -118,9 +119,11 @@ jobs:
       # Central Portal itself adjudicates: a duplicate is rejected and the run fails loudly. So an
       # inconclusive answer costs a failed run, never a wrong publication.
       #
-      # It does not cover a deployment still in PUBLISHING, which repo1 cannot see yet; that is
-      # what the skipCentralUpload input is for, with the Portal's Deployments page as the
-      # authority a human reads.
+      # It does not cover the window between Central accepting a deployment and repo1 mirroring
+      # it; that is what the skipCentralUpload input is for, with the Portal's Deployments page as
+      # the authority a human reads. PUBLISHED is the only terminal success state there —
+      # PUBLISHING is still in flight and can still end FAILED, so taking the GitHub Release live
+      # on the strength of it would announce artifacts that may never arrive.
       - name: Check whether the version is already on Maven Central
         id: central
         env:

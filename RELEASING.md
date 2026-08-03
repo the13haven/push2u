@@ -224,10 +224,20 @@ draft: before uploading it asks `repo1.maven.org` whether the version is already
 the upload if it is, so the run reaches the step that takes the release live instead of dying on
 a duplicate rejection.
 
-That check cannot see a deployment that Central has accepted but not yet mirrored — state
-`PUBLISHING`. If the Portal's *Deployments* page shows the version as `PUBLISHING` or `PUBLISHED`
-while the workflow still tries to upload, re-run it with **`skipCentralUpload`** ticked; it will
-then only finish the GitHub Release.
+That check cannot see a deployment Central has accepted but not yet mirrored. If the workflow
+still tries to upload, read the Portal's *Deployments* page and go by the deployment state:
+
+| State | What to do |
+|---|---|
+| `PENDING`, `VALIDATING`, `VALIDATED`, `PUBLISHING` | **Wait.** The deployment is still in flight and can still end `FAILED`. |
+| `PUBLISHED` | Re-run with **`skipCentralUpload`** ticked; it will only finish the GitHub Release. |
+| `FAILED` | Fix the cause and re-run normally — nothing was published. |
+
+`PUBLISHED` is the only terminal success state. Taking the GitHub Release live while a deployment
+is `PUBLISHING` would announce artifacts that may never arrive, which is why the input is not a
+shortcut for "probably fine". Once the state reaches `PUBLISHED`, repo1 usually catches up within
+minutes, and a plain re-run without the tick works too — the 200 check then finds the version by
+itself.
 
 **Abandon this release** — *Actions → Delete Draft Release*, entering the tag. It removes the
 draft release and refuses to touch one that is already published. The tag and the release commit
