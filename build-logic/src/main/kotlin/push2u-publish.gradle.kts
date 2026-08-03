@@ -52,6 +52,10 @@ publishing {
                 name = provider { project.name }
                 description = provider { project.description }
                 url = "https://github.com/the13haven/push2u"
+                // No `packaging` element on purpose, though Central's example POM shows one: `jar`
+                // is the Maven default, and Gradle drops the element whenever it matches that
+                // default — assigning it here changes nothing in the generated file. Consumers
+                // resolve the artifact identically, and Central validates the metadata above.
 
                 licenses {
                     license {
@@ -62,8 +66,15 @@ publishing {
 
                 developers {
                     developer {
+                        // Central's requirements page names all four of these: name, email,
+                        // organization and organizationUrl. They are also the only contact route
+                        // a consumer has once the artifact is on Central, since a published
+                        // version is immutable and can never be corrected.
                         id = "the13haven"
                         name = "Sergej Sidorov"
+                        email = "ssidorov@the13haven.com"
+                        organization = "the13haven"
+                        organizationUrl = "https://github.com/the13haven"
                         url = "https://github.com/the13haven"
                     }
                 }
