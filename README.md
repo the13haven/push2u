@@ -1,6 +1,6 @@
 # push2u
 
-![push2u banner](https://repository-images.githubusercontent.com/1314272959/dbc91c9c-d133-42a1-a798-887010eff6d2)
+![push2u banner](https://raw.githubusercontent.com/the13haven/push2u/main/.github/banner.png)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=flat-square&logo=github)](https://github.com/the13haven/push2u/blob/main/LICENSE)
 [![codecov](https://codecov.io/gh/the13haven/push2u/graph/badge.svg?token=3T4SIZKKLD)](https://codecov.io/gh/the13haven/push2u)
