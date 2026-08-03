@@ -19,25 +19,76 @@ import org.junit.jupiter.api.Test;
  */
 class JcaProviderBindingTest {
 
+    /**
+     * Every primitive is asked of the bound provider. Asserted through a provider that records its own lookups rather
+     * than by comparing {@code getProvider()} against a stock provider: the stock providers are also what the platform
+     * search order returns first, so {@code assertThat(...getProvider()).isSameAs(SunEC)} would stay green even if the
+     * binding were dropped entirely and the lookup fell through to the platform.
+     *
+     * <p>The sentinel delegates the actual service to the stock providers, so the primitives really work — what is
+     * being proved is only that the request passed through the provider that was handed in.
+     */
     @Test
-    void anExplicitProviderIsTheOneThatServesEveryPrimitive() {
-        Provider sunJce = Security.getProvider("SunJCE");
-        Provider sunEc = Security.getProvider("SunEC");
-        assertThat(sunJce).as("stock JRE provider").isNotNull();
-        assertThat(sunEc).as("stock JRE provider").isNotNull();
-
-        assertThat(Jca.using(sunJce).hmacSha256().getProvider()).isSameAs(sunJce);
-        assertThat(Jca.using(sunJce).aesGcm().getProvider()).isSameAs(sunJce);
-        assertThat(Jca.using(sunEc).ecdh().getProvider()).isSameAs(sunEc);
-        assertThat(Jca.using(sunEc).ecKeyFactory().getProvider()).isSameAs(sunEc);
-        assertThat(Jca.using(sunEc).ecKeyPairGenerator().getProvider()).isSameAs(sunEc);
-        assertThat(Jca.using(sunEc).es256().delegate().getProvider()).isSameAs(sunEc);
+    void everyPrimitiveIsRequestedFromTheBoundProviderRatherThanTheSearchOrder() {
+        assertThat(lookupsFor(Jca::hmacSha256)).containsExactly("Mac/HmacSHA256");
+        assertThat(lookupsFor(Jca::aesGcm)).containsExactly("Cipher/" + Algorithms.AES_GCM_NO_PADDING);
+        assertThat(lookupsFor(Jca::ecdh)).containsExactly("KeyAgreement/ECDH");
+        assertThat(lookupsFor(Jca::ecKeyFactory)).containsExactly("KeyFactory/EC");
+        assertThat(lookupsFor(Jca::ecKeyPairGenerator)).containsExactly("KeyPairGenerator/EC");
+        assertThat(lookupsFor(Jca::p256Parameters)).containsExactly("AlgorithmParameters/EC");
+        assertThat(lookupsFor(Jca::es256)).containsExactly("Signature/" + Algorithms.ES256_P1363);
     }
 
+    /**
+     * The negative half of the same statement: the platform instance must NOT consult a provider it was never given.
+     * Together with the test above this pins the binding in both directions — one instance uses the provider, the other
+     * cannot reach it.
+     */
     @Test
-    void theP256ParametersComeFromTheBoundProviderToo() {
-        assertThat(Jca.using(Security.getProvider("SunEC")).p256Parameters().getCurve())
-                .isEqualTo(Jca.platform().p256Parameters().getCurve());
+    void thePlatformInstanceDoesNotConsultAnUninstalledProvider() {
+        SentinelProvider sentinel = new SentinelProvider();
+
+        Jca.platform().hmacSha256();
+        Jca.platform().ecdh();
+        Jca.platform().p256Parameters();
+
+        assertThat(sentinel.lookups()).isEmpty();
+    }
+
+    /** Runs one primitive against a recording provider and returns the service lookups it made. */
+    private static java.util.Set<String> lookupsFor(java.util.function.Consumer<Jca> primitive) {
+        SentinelProvider sentinel = new SentinelProvider();
+        primitive.accept(Jca.using(sentinel));
+        return sentinel.lookups();
+    }
+
+    /**
+     * Records every {@code type/algorithm} it is asked for and delegates the work to the stock providers. Not installed
+     * in {@link Security}, so nothing can reach it except through an explicit {@code Jca.using(...)}.
+     */
+    private static final class SentinelProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        private final transient java.util.Set<String> lookups = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        SentinelProvider() {
+            super("push2u-sentinel", "1.0", "records lookups, delegates the work");
+        }
+
+        @Override
+        public Service getService(String type, String algorithm) {
+            lookups.add(type + "/" + algorithm);
+            Provider source = "Mac".equals(type) || "Cipher".equals(type)
+                    ? Security.getProvider("SunJCE")
+                    : Security.getProvider("SunEC");
+            return source.getService(type, algorithm);
+        }
+
+        java.util.Set<String> lookups() {
+            return java.util.Set.copyOf(lookups);
+        }
     }
 
     /**

@@ -48,7 +48,9 @@ class EcKeysUntrustedInputTest {
         assertThatThrownBy(() -> agreeWith(offCurve))
                 .as("an off-curve point is the entry ticket for an invalid-curve attack")
                 .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("ECDH key agreement failed");
+                .satisfies(thrown -> assertThat(thrown.getMessage())
+                        .as("either refusal point satisfies the contract; which one is the provider's choice")
+                        .containsAnyOf("Invalid P-256 public key", "ECDH key agreement failed"));
     }
 
     @Test
@@ -107,7 +109,7 @@ class EcKeysUntrustedInputTest {
                     // If the import itself is permissive, the failure must still arrive before anything is signed.
                     EcKeys.ecdh(key, EcKeys.decodeP256PublicKey(b64(TestVectors.UA_PUBLIC), jca), jca);
                 })
-                .isInstanceOf(RuntimeException.class);
+                .isInstanceOf(PushCryptoException.class);
     }
 
     // ---- a provider that cannot do the job ------------------------------------------------------
