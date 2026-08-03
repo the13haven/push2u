@@ -1,0 +1,83 @@
+name: Setup Next Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      nextVersion:
+        description: 'Enter next version (e.g. 1.2.0)'
+        required: true
+        type: string
+
+# markNextVersion pushes its marker tag over SSH with the deploy key, not with GITHUB_TOKEN, so the
+# workflow token itself only needs to read the repository for checkout.
+permissions:
+  contents: read
+
+jobs:
+  mark-next-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # axion pushes the version marker tag back to origin, and GITHUB_TOKEN cannot be handed to
+      # its JGit transport, so the push goes over SSH with a dedicated deploy key instead.
+      # known_hosts is pinned explicitly rather than populated with ssh-keyscan at run time:
+      # scanning would trust whatever answers on the network, which defeats host verification.
+      - name: Set up SSH key
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$ACTIONS_WRITE_KEY" > ~/.ssh/deploy_key_rsa
+          chmod 600 ~/.ssh/deploy_key_rsa
+          # Official GitHub Ed25519 host key:
+          # https://docs.github.com/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+          cat > ~/.ssh/known_hosts <<'EOF'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          EOF
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # axion needs the full tag history to know where the current version stands before it
+          # places the next-version marker.
+          fetch-depth: 0
+
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
+      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      - name: Set git to use SSH
+        run: |
+          git config --global user.name "release-bot"
+          git config --global user.email "release-bot@noreply.the13haven.com"
+          git remote set-url origin git@github.com:the13haven/push2u.git
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # The input is validated against SemVer before Gradle ever sees it: a typo here would
+      # otherwise be pushed as a permanent marker tag that every future build derives its version
+      # from. The value reaches the shell through env, not string interpolation into the script,
+      # so a crafted input cannot inject commands.
+      - name: Set next version marker
+        env:
+          NEXT_VERSION: ${{ inputs.nextVersion }}
+        run: |
+          version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          if [[ ! "$NEXT_VERSION" =~ $version_pattern ]]; then
+            echo "Invalid version format: '$NEXT_VERSION' (expected SemVer, e.g. 1.2.0)"
+            exit 1
+          fi
+
+          ./gradlew markNextVersion --no-daemon \
+            "-Prelease.version=$NEXT_VERSION" \
+            -Prelease.customKeyFile="$HOME/.ssh/deploy_key_rsa" \
+            -Prelease.customKeyPassword=""

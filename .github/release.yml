@@ -1,0 +1,43 @@
+# Configuration for the release notes that `gh release create --generate-notes` (the last step of
+# .github/workflows/release.yml) builds from merged pull requests.
+# Schema: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+#
+# Categories are matched top to bottom and a pull request lands in the first one whose label it
+# carries, so the order below is a priority order: a PR labeled both `breaking-change` and
+# `enhancement` is a breaking change first.
+changelog:
+  exclude:
+    labels:
+      # An explicit opt-out for housekeeping PRs that would only add noise to the changelog.
+      - ignore-for-release
+  categories:
+    - title: "Breaking Changes"
+      labels:
+        - breaking-change
+        - semver-major
+    - title: "New Features"
+      labels:
+        - enhancement
+        - feature
+    - title: "Bug Fixes"
+      labels:
+        - bug
+        - bugfix
+    - title: "Security"
+      labels:
+        - security
+    # Dependency bumps get their own section instead of being excluded outright: for a library the
+    # dependency set is part of the public surface, so silently dropping dependabot's PRs from the
+    # changelog would hide exactly the changes downstream users may need to know about. Dependabot
+    # applies the `dependencies` label to its PRs by default, which routes them here.
+    - title: "Dependencies"
+      labels:
+        - dependencies
+    - title: "Documentation"
+      labels:
+        - documentation
+    # Catch-all, required by the schema to be the label of the last category so that PRs without
+    # any of the labels above still show up instead of vanishing from the notes.
+    - title: "Other Changes"
+      labels:
+        - "*"

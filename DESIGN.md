@@ -2,8 +2,9 @@
 
 ## 1. Status and scope
 
-push2u is an implemented, standalone Java library for server-side Web Push delivery. The current
-version is `0.1.0-SNAPSHOT`; artifacts are not yet published to Maven Central.
+push2u is an implemented, standalone Java library for server-side Web Push delivery. Artifacts
+are released to Maven Central under the `com.the13haven` group ID; the version is derived from
+git tags rather than stored in the build (ADR-013). Java packages remain `io.push2u.*`.
 
 The library implements:
 
@@ -399,6 +400,39 @@ The build enforces both halves: NullAway fails on a contract violation, and Erro
 `RequireExplicitNullMarking` fails on a package that forgets `@NullMarked`. NullAway's full
 `JSpecifyMode` (generic nullness) is deliberately not enabled yet — its authors still describe it
 as evolving.
+
+### ADR-013 — Release and publication process
+
+The version is derived from git tags of the form `vX.Y.Z` by the axion-release plugin rather
+than written into a build file. A tag records the release where releases actually happen — in
+git history — so the build cannot disagree with it, and between releases every checkout
+identifies itself as the next `X.Y.Z-SNAPSHOT` without anyone editing a version line. The
+rejected alternative, a hard-coded version bumped by a "release commit", turns every release
+into a source change, invites merge conflicts on that line, and lets the tag and the declared
+version drift apart.
+
+Publication goes to Maven Central through the Central Portal, with the nmcp plugin layered on
+top of the standard `maven-publish` and `signing` plugins: nmcp only aggregates what
+`maven-publish` produces and uploads the bundle to the Portal
+(`publishAggregationToCentralPortal`, publishing mode AUTOMATIC — after the Portal's validation
+passes, the deployment proceeds to Central without a manual step). The rejected alternative, an
+all-in-one publishing plugin such as vanniktech's gradle-maven-publish-plugin, generates the
+publications and POM from its own conventions; keeping them in the build's `maven-publish`
+configuration leaves the POM content, the artifact set (jar, `-sources`, `-javadoc`) and the
+signing step explicit and under the build's control.
+
+The Maven group ID is `com.the13haven`, although the Java packages remain `io.push2u.*`. Central
+verifies namespace ownership with a DNS TXT record on the exact domain, and `push2u.io` does not
+belong to the project — `the13haven.com` does. The rejected alternative, registering `push2u.io`
+solely to claim the matching coordinate, ties a permanent, immutable namespace to a recurring
+registration fee and an expiry risk. Group ID and package name answer to different authorities —
+Central's ownership verification and Java's package naming — and nothing requires them to match.
+
+Releases are triggered manually through `workflow_dispatch`, never by a push to `main`. A
+published Maven Central version is immutable — it cannot be deleted or replaced — so the
+decision "this state becomes a release" deserves an explicit human action rather than being
+implied by a merge. The rejected alternative, releasing on every merge to `main`, couples review
+cadence to release cadence and turns any accidental merge into a permanent artifact.
 
 ## 10. Verification
 

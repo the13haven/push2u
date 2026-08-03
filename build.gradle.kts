@@ -1,21 +1,107 @@
 import java.math.BigDecimal
 import org.gradle.api.plugins.JavaPluginExtension
+import pl.allegro.tech.build.axion.release.domain.hooks.HookContext
+import pl.allegro.tech.build.axion.release.domain.preRelease
 
 // Shared configuration for every push2u module. It lives at the standalone build root rather than
 // being duplicated per module.
 
 plugins {
-    // Convention plugin from the build-logic included build; applied to the modules below.
+    // Convention plugins from the build-logic included build; applied to the modules below.
     id("push2u-quality") apply false
+    id("push2u-publish") apply false
     // `base` gives the root the lifecycle tasks without pulling in the Java plugin; the
     // aggregation plugin hosts the cross-module coverage report on top of it.
     base
     id("jacoco-report-aggregation")
+    // Versioning from git tags (axion) + the Central Portal upload (nmcp aggregation) are
+    // whole-build concerns and live at the root only; the per-module publishing half is the
+    // push2u-publish convention plugin above.
+    alias(libs.plugins.axion.release)
+    alias(libs.plugins.nmcp.aggregation)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Versioning — the git tag is the single source of truth; there is no version constant to bump
+// (and forget) in this file. On a `vX.Y.Z` tag axion reports X.Y.Z; on any commit past the last
+// tag it reports the next patch as X.Y.Z-SNAPSHOT. `./gradlew currentVersion` prints it,
+// `./gradlew release` tags (and pushes) the next one.
+// ---------------------------------------------------------------------------------------------
+scmVersion {
+    // Consult the remote, don't trust the local clone alone: a release must not mint a version
+    // that ignores tags pushed from elsewhere (another machine, the CI runner).
+    localOnly.set(false)
+    // Highest tag overall, not the nearest reachable one — keeps the version monotonic even if
+    // release and maintenance branches diverge.
+    useHighestVersion.set(true)
+    versionIncrementer("incrementPatch")
+    releaseOnlyOnReleaseBranches = true
+
+    tag {
+        prefix.set("v")
+        // No tags yet -> 0.0.0, so the first derived snapshot is 0.0.1-SNAPSHOT and the first
+        // actual release is v0.0.1.
+        initialVersion { _, _ -> "0.0.0" }
+    }
+
+    repository {
+        type.set("git")
+    }
+
+    nextVersion {
+        suffix.set("SNAPSHOT")
+        separator.set("-")
+    }
+
+    // All three release preconditions on: a dirty tree, an unpushed branch or a SNAPSHOT
+    // dependency each abort `release` before a tag is created.
+    checks {
+        uncommittedChanges.set(true)
+        aheadOfRemote.set(true)
+        snapshotDependencies.set(true)
+    }
+
+    hooks {
+        preRelease {
+            // Keep the Maven coordinates in the README's examples on the released version. The
+            // README states them strictly as `com.the13haven:<module>:X.Y.Z`. axion's fileUpdate
+            // pattern is a regex (multiline), but capture groups in the replacement are not a
+            // documented feature — so instead of one clever regex there is one fileUpdate hook
+            // per module with a fully literal (Regex.escape'd) pattern. Boring and robust.
+            listOf(
+                "push2u-core",
+                "push2u-signer-vault",
+                "push2u-spring-boot-starter",
+                "push2u-signer-vault-spring-boot-starter",
+            ).forEach { module ->
+                fileUpdate {
+                    encoding = "utf-8"
+                    file("README.md")
+                    pattern = { previousVersion: String, _: HookContext ->
+                        Regex.escape("com.the13haven:$module:$previousVersion")
+                    }
+                    replacement = { currentVersion: String, _: HookContext ->
+                        "com.the13haven:$module:$currentVersion"
+                    }
+                }
+            }
+            // Commits whatever the fileUpdate hooks changed, before the tag is placed.
+            commit { releaseVersion, _ -> "Release v${releaseVersion}" }
+        }
+    }
+}
+
+// Resolve the version ONCE here and hand the plain string to every project below: scmVersion is
+// an extension of the root project only, so subprojects cannot query it themselves — and each
+// query would re-run the git inspection anyway.
+val scmDerivedVersion: String = scmVersion.version
+
 allprojects {
-    group = "io.push2u"
-    version = "0.1.0-SNAPSHOT"
+    // Maven groupId (the verified Central namespace). The Java packages stay io.push2u.* on
+    // purpose: Central namespace verification binds the groupId, not package names, and renaming
+    // packages would break every early adopter for zero gain.
+    group = "com.the13haven"
+    version = scmDerivedVersion
 
     repositories {
         mavenCentral()
@@ -53,6 +139,9 @@ subprojects {
         // Applied reactively: the modules declare `java-library` themselves, and the quality plugin
         // configures tasks the Java plugin must have created first.
         apply(plugin = "push2u-quality")
+        // Maven Central publishing, same reactive pattern (see
+        // build-logic/src/main/kotlin/push2u-publish.gradle.kts): every java module is published.
+        apply(plugin = "push2u-publish")
     }
 }
 
@@ -180,4 +269,30 @@ tasks.register("qualityCheckCi") {
     group = "verification"
     subprojects.forEach { dependsOn("${it.path}:qualityCheckCi") }
     dependsOn(testCodeCoverageVerification)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Maven Central upload — the aggregation half of publishing (the per-module half is the
+// push2u-publish convention plugin). nmcp gathers every module's publication and uploads ONE
+// bundle to the Central Portal, which validates the whole set together — a half-published
+// release cannot happen. Entry point: ./gradlew publishAggregationToCentralPortal.
+// ---------------------------------------------------------------------------------------------
+dependencies {
+    // project(path), not the Project object: passing a Project as a dependency notation is
+    // deprecated and fails in Gradle 10. All four subprojects are published modules; if one ever
+    // stops applying nmcp, the aggregation simply ignores it.
+    subprojects.forEach { nmcpAggregation(project(it.path)) }
+}
+
+nmcpAggregation {
+    centralPortal {
+        // Publisher API token from https://central.sonatype.com/account — injected by the release
+        // workflow as secrets, never stored in the repository or in gradle.properties.
+        username = providers.environmentVariable("MAVEN_CENTRAL_USERNAME")
+        password = providers.environmentVariable("MAVEN_CENTRAL_PASSWORD")
+        // AUTOMATIC: a bundle that passes Central's validation goes live without a manual click
+        // in the portal UI — the release pipeline is hands-off end to end. The safety net is the
+        // validation itself plus axion's pre-release checks, not a human in the loop.
+        publishingType = "AUTOMATIC"
+    }
 }

@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+# The tag itself is pushed over SSH with the deploy key, but `gh release create` at the end
+# authenticates with GITHUB_TOKEN, and creating a GitHub Release requires contents: write.
+permissions:
+  contents: write
+
+# Only one release may run at a time. cancel-in-progress stays false on purpose: killing a release
+# halfway can leave a tag pushed with no artifacts in Maven Central, which is worse than making the
+# second click wait in the queue.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # workflow_dispatch lets the caller pick any branch in the UI, but the build only releases
+      # from a release branch (scmVersion.releaseOnlyOnReleaseBranches, whose default set is
+      # main/master). Off main, axion silently declines to tag and reports a branch-qualified
+      # snapshot version instead — which would then be handed to `gh release create` as a tag that
+      # does not exist. Refuse up front rather than half-execute.
+      - name: Verify the release runs from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Releases are cut from main only; this run was dispatched on $REF." >&2
+            exit 1
+          fi
+
+      # Fail before anything is tagged or uploaded if a publishing secret is missing. The order of
+      # steps below makes this necessary: `release` pushes the tag first and only then does the
+      # publish step run, so a missing SIGNING_KEY would otherwise surface as an unsigned bundle
+      # rejected by the Central Portal — with the tag already pushed and the version burnt. A
+      # secret that is absent expands to the empty string, which is exactly what this checks.
+      - name: Verify release secrets are configured
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          missing=""
+          for name in ACTIONS_WRITE_KEY SIGNING_KEY SIGNING_PASSWORD \
+                      MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "See RELEASING.md for how each one is obtained." >&2
+            exit 1
+          fi
+
+      # axion pushes the release tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
+      # transport, so the push goes over SSH with a dedicated deploy key instead. known_hosts is
+      # pinned explicitly rather than populated with ssh-keyscan at run time: scanning would
+      # trust whatever answers on the network, which defeats host verification entirely.
+      - name: Set up SSH key
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$ACTIONS_WRITE_KEY" > ~/.ssh/deploy_key_rsa
+          chmod 600 ~/.ssh/deploy_key_rsa
+          # Official GitHub Ed25519 host key:
+          # https://docs.github.com/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+          cat > ~/.ssh/known_hosts <<'EOF'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          EOF
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # axion derives the version from git tag history; a shallow clone hides the tags and the
+          # plugin would fall back to its default 0.1.0-SNAPSHOT.
+          fetch-depth: 0
+
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
+      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      - name: Set git to use SSH
+        run: |
+          git config --global user.name "release-bot"
+          git config --global user.email "release-bot@noreply.the13haven.com"
+          git remote set-url origin git@github.com:the13haven/push2u.git
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # Same gate as CI, run again right before the tag is cut: qualityCheckCi covers compilation,
+      # all test suites (including push2u-core's fipsTest and the Testcontainers-backed Vault test),
+      # static analysis and the aggregated coverage threshold. --no-build-cache for the same reason
+      # as in ci.yml: a cached test result recorded without Docker would silently skip the
+      # Testcontainers test, and Docker availability is not part of the cache key.
+      - name: Quality check
+        env:
+          # Testcontainers' Ryuk container must mount the daemon socket path as seen
+          # from inside the runner's Docker VM.
+          TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+        run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
+
+      # Creates the release tag (v<version>) and pushes it to origin over SSH. The step id matters:
+      # axion publishes the resolved version as the `released-version` GitHub Actions output, which
+      # the GitHub Release step below reads.
+      # https://axion-release-plugin.readthedocs.io/en/latest/configuration/ci_servers/
+      - name: Perform release
+        id: release
+        run: |
+          ./gradlew release --no-daemon \
+            -Prelease.customKeyFile="$HOME/.ssh/deploy_key_rsa" \
+            -Prelease.customKeyPassword=""
+
+      # Deliberately a separate Gradle invocation, not chained after `release` in one command:
+      # axion resolves the project version once, at configuration time, before the `release` task
+      # has created the tag — so a combined run would sign and upload a -SNAPSHOT version. A fresh
+      # invocation starts after the tag exists and resolves the clean release version.
+      #
+      # Secrets travel as environment variables rather than -P flags on the command line so they
+      # never appear in process listings or Gradle's own logging of the invocation.
+      - name: Publish to Maven Central
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon
+
+      # Turns the freshly pushed tag into a GitHub Release. --generate-notes builds the changelog
+      # from merged pull requests according to .github/release.yml.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASED_VERSION: ${{ steps.release.outputs.released-version }}
+        run: |
+          gh release create "v$RELEASED_VERSION" \
+            --title "v$RELEASED_VERSION" \
+            --generate-notes
