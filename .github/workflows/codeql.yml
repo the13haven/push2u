@@ -1,0 +1,80 @@
+name: CodeQL
+
+# Static security analysis of the code itself, complementing the analysers in the quality gate.
+# SpotBugs and Error Prone reason about one method or one file at a time; CodeQL follows data
+# across the whole program, which is the class of question worth asking of code that does AES-GCM,
+# HKDF and ECDSA and parses HTTP responses from a push service.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
+  # CodeQL's query packs keep growing, so unchanged code can become newly-flagged code. Without a
+  # schedule those findings would only surface the next time someone happened to touch the file.
+  schedule:
+    - cron: '0 5 * * 1'
+
+permissions:
+  # Uploading the SARIF results.
+  security-events: write
+  # Fetching CodeQL packs.
+  packages: read
+  actions: read
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The workflows themselves. Worth its own entry here: five of them handle the GPG signing
+          # key and the Central Portal token, and a mistake in one of those is not something the
+          # Java analysis would ever see.
+          - language: actions
+            build-mode: none
+          # build-mode: none — CodeQL analyses the sources without building them.
+          #
+          # The alternative, autobuild, would give the extractor resolved types for external
+          # libraries, and would tie this scan to the build toolchain (JDK 26 with `--release 21`).
+          # What it would buy is small here: push2u-core carries no runtime dependency other than
+          # an annotations-only jar, and the starters add one Spring artifact. Switching is a
+          # one-line change if the extra fidelity ever proves worth the coupling.
+          #
+          # Kotlin caveat: this repository's only Kotlin is its Gradle build scripts, which
+          # build-mode none does not analyse — CodeQL reports that as a warning, not a failure.
+          # Build logic is not the attack surface this scan is for.
+          - language: java-kotlin
+            build-mode: none
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
