@@ -173,12 +173,18 @@ still be deleted. **Step 6 is the point of no return** — everything reversible
 
 ## Setting the next version
 
-Axion derives the next version on its own. The build pins its starting point to `0.0.0`
-(`scmVersion.tag.initialVersion` in the root `build.gradle.kts`), and after every release it
-increments the **patch** number — so with no tags at all the first release would be `v0.0.1`,
-and after `v0.1.0` the build becomes `0.1.1-SNAPSHOT` and the next release `0.1.1`. When the
-next release should be a different number — a minor or major bump, or **the very first release,
-which is meant to be `0.1.0` rather than the derived `0.0.1`** — set the version explicitly:
+Axion derives the next version on its own, once a tag exists: it increments the **patch** number,
+so after `v0.1.0` the build reports `0.1.1-SNAPSHOT` and the next release is `0.1.1`.
+
+Before the first tag it behaves differently. `scmVersion.tag.initialVersion` in the root
+`build.gradle.kts` is pinned to `0.0.0`, and that is the version *released first* rather than a
+base the incrementer starts from: an untagged repository reports `0.0.0-SNAPSHOT`, and `release`
+would create the tag `v0.0.0`. The patch incrementer only engages afterwards.
+
+**This is why the first release needs an explicit version.** The README documents `0.1.0`, so run
+Setup Next Version with `0.1.0` before the first Release — otherwise the library's first published
+artifact is `0.0.0`. The same applies whenever the next release should be a minor or major bump
+rather than a patch:
 
 *Actions → Setup Next Version → Run workflow*, entering the intended version as `nextVersion`
 in `X.Y.Z` form (e.g. `0.2.0`).

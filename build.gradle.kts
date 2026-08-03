@@ -39,8 +39,13 @@ scmVersion {
 
     tag {
         prefix.set("v")
-        // No tags yet -> 0.0.0, so the first derived snapshot is 0.0.1-SNAPSHOT and the first
-        // actual release is v0.0.1.
+        // The version RELEASED first, not a base the incrementer starts from. With no tags at
+        // all the build reports 0.0.0-SNAPSHOT and `release` creates the tag v0.0.0;
+        // incrementPatch only takes effect once a tag exists (v0.0.0 -> 0.0.1-SNAPSHOT ->
+        // v0.0.1). Verified by simulating an empty repository against this configuration.
+        //
+        // So the first release is not 0.1.0 by itself: run the Setup Next Version workflow with
+        // 0.1.0 before the first Release. See RELEASING.md, "Setting the next version".
         initialVersion { _, _ -> "0.0.0" }
     }
 
