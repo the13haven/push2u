@@ -102,9 +102,9 @@ scmVersion {
 val scmDerivedVersion: String = scmVersion.version
 
 allprojects {
-    // Maven groupId (the verified Central namespace). The Java packages stay io.push2u.* on
-    // purpose: Central namespace verification binds the groupId, not package names, and renaming
-    // packages would break every early adopter for zero gain.
+    // Maven groupId — the namespace verified on the Central Portal, and the same reversed domain
+    // the Java packages are built on (com.the13haven.push2u.*). Nothing requires the two to match,
+    // but both are meant to be anchored on a domain the project owns, and the13haven.com is it.
     group = "com.the13haven"
     version = scmDerivedVersion
 

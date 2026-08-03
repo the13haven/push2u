@@ -4,7 +4,7 @@
 
 push2u is an implemented, standalone Java library for server-side Web Push delivery. Artifacts
 are released to Maven Central under the `com.the13haven` group ID; the version is derived from
-git tags rather than stored in the build (ADR-013). Java packages remain `io.push2u.*`.
+git tags rather than stored in the build (ADR-013). Java packages are `com.the13haven.push2u.*`.
 
 The library implements:
 
@@ -421,12 +421,21 @@ publications and POM from its own conventions; keeping them in the build's `mave
 configuration leaves the POM content, the artifact set (jar, `-sources`, `-javadoc`) and the
 signing step explicit and under the build's control.
 
-The Maven group ID is `com.the13haven`, although the Java packages remain `io.push2u.*`. Central
-verifies namespace ownership with a DNS TXT record on the exact domain, and `push2u.io` does not
-belong to the project — `the13haven.com` does. The rejected alternative, registering `push2u.io`
-solely to claim the matching coordinate, ties a permanent, immutable namespace to a recurring
-registration fee and an expiry risk. Group ID and package name answer to different authorities —
-Central's ownership verification and Java's package naming — and nothing requires them to match.
+The Maven group ID is `com.the13haven` and the Java packages are `com.the13haven.push2u.*`. Both
+are anchored on `the13haven.com`, the domain the project actually owns, and each has its own
+reason to be. Central verifies namespace ownership with a DNS TXT record on the exact domain the
+group ID reverses to, and `push2u.io` does not belong to the project. The package name is a
+separate matter — the JLS recommends a reversed domain name one owns, for the same purpose of
+guaranteed uniqueness — but the original `io.push2u.*` was anchored on that same unowned domain,
+which is the part that made it a squat rather than a convention.
+
+Two alternatives were rejected. Registering `push2u.io` solely to legitimise the shorter name
+ties a permanent, immutable namespace to a recurring registration fee and an expiry risk. Keeping
+`io.push2u.*` alongside a `com.the13haven` group ID would also have been defensible — nothing
+requires the two to match, and Guava (`com.google.guava` → `com.google.common`) and OkHttp
+(`com.squareup.okhttp3` → `okhttp3`) both diverge — but it leaves the package name resting on a
+domain someone else may register, and the only moment to change a package name for free is before
+the first release: afterwards it is a breaking change for every adopter.
 
 Releases are triggered manually through `workflow_dispatch`, never by a push to `main`. A
 published Maven Central version is immutable — it cannot be deleted or replaced — so the

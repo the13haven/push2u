@@ -1,2 +1,2 @@
-io.push2u.spring.Push2uAutoConfiguration
-io.push2u.spring.Push2uHealthAutoConfiguration
+com.the13haven.push2u.spring.Push2uAutoConfiguration
+com.the13haven.push2u.spring.Push2uHealthAutoConfiguration

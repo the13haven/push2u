@@ -50,7 +50,7 @@ spotless {
         //
         // No targetExclude for build/**: Spotless targets the source sets, and nothing generated
         // under build/ is part of one (verified with a deliberately misformatted file there).
-        importOrder("java", "", "io.push2u")
+        importOrder("java", "", "com.the13haven.push2u")
         removeUnusedImports()
     }
 }
