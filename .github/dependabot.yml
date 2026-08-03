@@ -13,3 +13,20 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Every action here is referenced by its major tag (@v6, @v7). That is not a version range —
+    # GitHub Actions resolves a plain git ref — but the maintainers repoint that tag at each
+    # release within the major, so a minor or patch release already reaches the workflows without
+    # a commit. A pull request proposing @v6 -> @v6.2.0 would not deliver an update; it would
+    # convert a moving ref into a fixed one, which is a policy change disguised as a bump.
+    #
+    # Majors still come through: those genuinely require editing the ref, and a major is where the
+    # breaking change lives.
+    #
+    # NOT applied to the gradle ecosystem above, where the same rule would be actively harmful —
+    # there a patch release is typically the security fix (see the commons-lang3 and BouncyCastle
+    # pins in the build), and suppressing it defeats the point of running Dependabot at all.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
