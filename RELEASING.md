@@ -77,8 +77,12 @@ Store the full armored block (including the `BEGIN`/`END PGP PRIVATE KEY BLOCK` 
 Signing runs inside Gradle: the `signing` plugin's `useInMemoryPgpKeys` uses the BouncyCastle
 implementation shipped in the Gradle distribution, so no `gpg` binary, keyring or agent is
 involved — on a developer machine or on a CI runner alike. The build reads the key from
-`SIGNING_KEY` / `SIGNING_PASSWORD`, which means the exact release-time signing path can be
-exercised locally before the first release, when a bad key still costs nothing:
+`SIGNING_KEY` / `SIGNING_PASSWORD`, so the exact release-time signing path can be exercised
+anywhere those two variables are set.
+
+The Release workflow already runs this check on the runner before it pushes a tag, so a broken
+key stops the release rather than stranding a version. Running it locally is therefore optional
+— useful when a key is being replaced and the round trip through GitHub is not worth it:
 
 ```bash
 export SIGNING_KEY="$(gpg --armor --export-secret-keys <KEYID>)"
@@ -136,19 +140,22 @@ every merged PR carries the right label:
 
 *Actions → Release → Run workflow* (on `main`). The workflow then:
 
-0. refuses to run on any branch other than `main`, and verifies that all five secrets below are
-   present — both checks happen before anything is tagged or uploaded;
-
-1. runs the full quality gate (`qualityCheckCi`: compilation, all test suites including
+1. refuses to run on any branch other than `main`, and verifies that all five secrets below are
+   present;
+2. runs the full quality gate (`qualityCheckCi`: compilation, all test suites including
    `fipsTest` and the Testcontainers-backed Vault test, static analysis, coverage threshold);
-2. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
+3. builds and signs the deployment bundle **without uploading it**, and fails unless every
+   artifact carries a signature — the last step that can still fail without consequences;
+4. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
    with the deploy key;
-3. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
+5. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
    builds each module's `jar`, `-sources.jar` and `-javadoc.jar`, signs everything with the GPG
    key, and uploads the bundle to the Central Portal via `publishAggregationToCentralPortal`.
    The publishing mode is AUTOMATIC: once the Portal's validation passes, the deployment is
    released to Maven Central without any manual step;
-4. creates a GitHub Release for the tag with auto-generated release notes.
+6. creates a GitHub Release for the tag with auto-generated release notes.
+
+Steps 1–3 run entirely on the runner: up to that point a failed release leaves nothing behind.
 
 ### 3. Verify the result
 
