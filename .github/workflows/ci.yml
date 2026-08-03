@@ -72,12 +72,18 @@ jobs:
           echo "Changed files:"
           echo "${changed}"
 
-          # Pattern matching rather than grep: the same two suffixes the `on:` filter used to list,
-          # and no dependency on which grep dialect the runner image ships.
+          # Prose and the images prose embeds. The suffix list started as the two the `on:` filter
+          # used to carry, which was written before the repository contained any images at all —
+          # adding the README banner then spent three minutes of the quality gate on a PNG. Nothing
+          # here reaches a compiler, a test or an analyser.
+          #
+          # Pattern matching rather than grep, so the answer does not depend on which grep dialect
+          # the runner image ships.
           code=false
           while IFS= read -r file; do
             case "${file}" in
               '' | *.md | *.txt) ;;
+              *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
               *) code=true; break ;;
             esac
           done <<< "${changed}"
