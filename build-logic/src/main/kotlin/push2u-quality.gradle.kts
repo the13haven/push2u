@@ -63,15 +63,25 @@ checkstyle {
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
 }
 
-// Version bump, not a suppression: Checkstyle 13.9.0 — the current release — still pulls
-// commons-lang3 3.8.1 through doxia-core 1.12.0 (and 3.7 through commons-text 1.3), which is
-// vulnerable to CVE-2025-48924 (uncontrolled recursion). The constraint raises it to 3.18.0 on the
-// `checkstyle` configuration, the only classpath that jar ever reaches. Remove once Checkstyle
-// upstream depends on commons-lang3 >= 3.18.0.
+// Version bumps, not suppressions. Both artefacts reach the `checkstyle` configuration only — the
+// tool classpath — and neither is a dependency of the published library.
+//
+// commons-lang3: Checkstyle 13.9.0 — the current release — still pulls 3.8.1 through doxia-core
+// 1.12.0 (and 3.7 through commons-text 1.3), vulnerable to CVE-2025-48924 (uncontrolled recursion).
+//
+// plexus-utils: the same doxia-core chain, via plexus-container-default 2.1.0, resolves 3.3.0.
+// GHSA-6fmv-xxpf-w3cw is fixed in 3.6.1, the last release of the 3.x line, so the pin stays within
+// the major the tool was built against.
+//
+// Both come off the same unmaintained doxia 1.12.0 branch; remove each once Checkstyle upstream
+// depends on a patched version.
 dependencies {
     constraints {
         add("checkstyle", "org.apache.commons:commons-lang3:3.18.0") {
             because("CVE-2025-48924")
+        }
+        add("checkstyle", "org.codehaus.plexus:plexus-utils:3.6.1") {
+            because("GHSA-6fmv-xxpf-w3cw")
         }
     }
 }
