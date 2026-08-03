@@ -118,6 +118,26 @@ jobs:
           TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
         run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
 
+      # Builds and signs the deployment bundle without uploading it — the last check that can still
+      # fail cheaply. Everything after this point mutates state outside the runner: `release`
+      # pushes a tag and a commit, and Maven Central is immutable. A SIGNING_KEY that cannot be
+      # decrypted would otherwise surface in the publish step, with the version already burnt.
+      # The bundle built here is thrown away; the publish step rebuilds it from the tagged version.
+      - name: Verify the signing key produces a complete bundle
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          ./gradlew nmcpZipAggregation --no-daemon
+          bundle=build/nmcp/zip/aggregation.zip
+          artifacts=$(unzip -l "$bundle" | grep -cE '\.(jar|pom|module)$')
+          signatures=$(unzip -l "$bundle" | grep -c '\.asc$')
+          echo "artifacts: $artifacts, signatures: $signatures"
+          if [ "$artifacts" -eq 0 ] || [ "$artifacts" -ne "$signatures" ]; then
+            echo "Expected exactly one .asc per artifact — the signing key is not usable." >&2
+            exit 1
+          fi
+
       # Creates the release tag (v<version>) and pushes it to origin over SSH. The step id matters:
       # axion publishes the resolved version as the `released-version` GitHub Actions output, which
       # the GitHub Release step below reads.
