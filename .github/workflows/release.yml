@@ -156,13 +156,35 @@ jobs:
             -Prelease.customKeyFile="$HOME/.ssh/deploy_key_rsa" \
             -Prelease.customKeyPassword=""
 
-      # Deliberately a separate Gradle invocation, not chained after `release` in one command:
-      # axion resolves the project version once, at configuration time, before the `release` task
-      # has created the tag — so a combined run would sign and upload a -SNAPSHOT version. A fresh
-      # invocation starts after the tag exists and resolves the clean release version.
+      # Created BEFORE the upload, and as a draft. Maven Central is immutable while a GitHub Release
+      # is not, so the reversible half goes first: if note generation fails, nothing has been
+      # published yet and the tag can simply be deleted. A draft rather than a live release, so the
+      # notes do not point at artifacts that are not on Central yet.
+      #
+      # Idempotent on purpose — re-running the job must not fail on an existing release.
+      - name: Create the draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.release.outputs.released-version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it untouched."
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+          fi
+
+      # The point of no return. Deliberately a separate Gradle invocation, not chained after
+      # `release` in one command: axion resolves the project version once, at configuration time,
+      # before the `release` task has created the tag — so a combined run would sign and upload a
+      # -SNAPSHOT version. A fresh invocation starts after the tag exists and resolves the clean
+      # release version.
       #
       # Secrets travel as environment variables rather than -P flags on the command line so they
       # never appear in process listings or Gradle's own logging of the invocation.
+      #
+      # If this step fails, the draft above is the recovery handle: fix the cause and run the
+      # "Publish Existing Tag" workflow for the same tag. Do NOT re-run Release — axion would move
+      # on to the next version number and publish the same code twice.
       - name: Publish to Maven Central
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
@@ -171,13 +193,10 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: ./gradlew publishAggregationToCentralPortal --no-daemon
 
-      # Turns the freshly pushed tag into a GitHub Release. --generate-notes builds the changelog
-      # from merged pull requests according to .github/release.yml.
-      - name: Create GitHub release
+      # Only now, with the artifacts actually on Central, do the notes become visible. Editing an
+      # already-published release to --draft=false is a no-op, so this is safe to repeat.
+      - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASED_VERSION: ${{ steps.release.outputs.released-version }}
-        run: |
-          gh release create "v$RELEASED_VERSION" \
-            --title "v$RELEASED_VERSION" \
-            --generate-notes
+          TAG: v${{ steps.release.outputs.released-version }}
+        run: gh release edit "$TAG" --draft=false

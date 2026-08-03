@@ -148,14 +148,18 @@ every merged PR carries the right label:
    artifact carries a signature — the last step that can still fail without consequences;
 4. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
    with the deploy key;
-5. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
+5. creates a **draft** GitHub Release for the tag, with notes generated from the merged pull
+   requests;
+6. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
    builds each module's `jar`, `-sources.jar` and `-javadoc.jar`, signs everything with the GPG
    key, and uploads the bundle to the Central Portal via `publishAggregationToCentralPortal`.
    The publishing mode is AUTOMATIC: once the Portal's validation passes, the deployment is
    released to Maven Central without any manual step;
-6. creates a GitHub Release for the tag with auto-generated release notes.
+7. takes the GitHub Release out of draft, now that the artifacts it describes actually exist.
 
-Steps 1–3 run entirely on the runner: up to that point a failed release leaves nothing behind.
+The order is deliberate. Steps 1–3 run entirely on the runner, so a failure there leaves nothing
+behind at all. Step 4 pushes a tag, which can still be deleted. Step 5 creates a draft, which can
+still be deleted. **Step 6 is the point of no return** — everything reversible happens before it.
 
 ### 3. Verify the result
 
@@ -196,11 +200,42 @@ signature, or a signing key that cannot be found on a public keyserver — re-ch
 one-time setup in that case.
 
 Because the publishing mode is AUTOMATIC, a failed validation means **nothing was released**:
-Maven Central is unchanged. The release tag, however, has already been pushed by the previous
-workflow step. After fixing the cause, either publish that same tag manually (check out the
-tag, export the four publishing secrets as environment variables, and run
-`./gradlew publishAggregationToCentralPortal`), or delete the tag — safe only because nothing
-reached Central under that version — and run the *Release* workflow again.
+Maven Central is unchanged. The tag and the draft release, however, already exist.
+
+> **Do not re-run the Release workflow to recover.** axion would see the tag, move on to the next
+> version number, and publish the same tree twice under different coordinates. GitHub's "re-run
+> failed jobs" is no help either: Actions re-runs whole jobs, never individual steps, so it would
+> repeat the tagging as well. Use one of the two workflows below instead.
+
+Pick by what you want to happen to the version:
+
+**Finish this release** — *Actions → Publish Existing Tag*, entering the tag (e.g. `v0.1.0`). It
+checks out that tag, verifies the resolved version matches it, uploads to Central, and takes the
+draft release live. It also covers the narrower case where the upload succeeded but the final
+step did not, leaving artifacts on Central and a draft on GitHub. Safe to repeat: a version
+Central already holds is rejected as a duplicate rather than replaced.
+
+**Abandon this release** — *Actions → Delete Draft Release*, entering the tag, and ticking
+`deleteTag` if the version number should become reusable. It refuses to delete a release that is
+not a draft, and refuses to delete a tag whose version is already on Maven Central. Note that the
+release commit axion made on `main` (the README coordinate bump) stays; drop it separately if it
+matters.
+
+Both are equivalent to doing it by hand, if you would rather:
+
+```bash
+# finish
+git checkout v0.1.0
+export SIGNING_KEY="$(gpg --armor --export-secret-keys <KEYID>)"
+read -rs -p "GPG passphrase: " SIGNING_PASSWORD && export SIGNING_PASSWORD
+export MAVEN_CENTRAL_USERNAME=... MAVEN_CENTRAL_PASSWORD=...
+./gradlew publishAggregationToCentralPortal --no-daemon
+gh release edit v0.1.0 --draft=false
+
+# abandon
+gh release delete v0.1.0 --yes
+git push --delete origin v0.1.0
+```
 
 ### A published version is wrong
 

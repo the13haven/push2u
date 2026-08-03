@@ -1,0 +1,120 @@
+name: Publish Existing Tag
+
+# Recovery path for a release that got as far as its tag but not all the way to Maven Central.
+# The Release workflow pushes the tag and creates a draft GitHub Release before it uploads, so a
+# failure in the upload — or in the step that publishes the release notes — leaves the tag, the
+# draft, and nothing on Central. This workflow finishes that release for an existing tag.
+#
+# It must NOT be answered by re-running Release: axion would see the tag, move on to the next
+# version number, and publish the same code twice under different coordinates. Actions can only
+# re-run whole jobs, never individual steps, so there is no way to skip ahead there either.
+#
+# Safe to run more than once. If Central already holds the version, the portal rejects the
+# duplicate rather than replacing anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish (e.g. v0.1.0)'
+        required: true
+        type: string
+
+# Editing the GitHub Release from draft to published needs write access to repository contents.
+permissions:
+  contents: write
+
+# Same group as Release and Setup Next Version: this workflow reads the tag state those two write.
+concurrency:
+  group: push2u-release-management
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # No ACTIONS_WRITE_KEY here — unlike the other two workflows this one never pushes a tag, so
+      # the deploy key is not needed and is deliberately not requested.
+      - name: Verify publishing secrets are configured
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          missing=""
+          for name in SIGNING_KEY SIGNING_PASSWORD \
+                      MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "See RELEASING.md for how each one is obtained." >&2
+            exit 1
+          fi
+
+      # Validated before checkout so a typo fails here rather than as a confusing "ref not found".
+      - name: Validate the tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "Expected a release tag such as v0.1.0, got '$TAG'." >&2
+            exit 1
+          fi
+
+      - name: Check out the tag
+        uses: actions/checkout@v7
+        with:
+          # The tag itself, not a branch: axion resolves the version from where HEAD sits, and
+          # this is what makes the upload carry the released version rather than a snapshot.
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # A checkout that landed somewhere unexpected would otherwise be discovered by the Central
+      # Portal, which rejects snapshots — but only after the bundle has been built and uploaded.
+      # Compare here instead, where the failure is cheap and the message is clear.
+      - name: Verify the resolved version matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version=$(./gradlew properties -q --no-daemon --console=plain | awk '/^version:/ {print $2}')
+          echo "Resolved version: $version"
+          if [ "v$version" != "$TAG" ]; then
+            echo "Resolved version 'v$version' does not match the requested tag '$TAG'." >&2
+            exit 1
+          fi
+
+      - name: Publish to Maven Central
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon
+
+      # Covers both ways the original run could have stopped short: no release at all (it failed
+      # before creating the draft) and a draft that was never published.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
