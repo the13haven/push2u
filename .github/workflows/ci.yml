@@ -38,10 +38,24 @@ jobs:
       # Testcontainers' Ryuk container must mount the daemon socket path as seen
       # from inside the runner's Docker VM.
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
-      # Codecov uploads run for main and for pull requests raised from this repository. A pull
-      # request from a fork is the one case that cannot: secrets.CODECOV_TOKEN is not exposed to it,
-      # so the upload would fail on a missing token rather than add anything.
-      CODECOV_ELIGIBLE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
+      # Codecov uploads run for main and for pull requests raised from this repository. Two cases
+      # cannot, both because secrets.CODECOV_TOKEN expands to an empty string and the upload then
+      # fails on a missing token instead of adding anything:
+      #
+      #   * a pull request from a fork — secrets are not exposed to it at all;
+      #   * anything Dependabot opened. Its runs read from a SEPARATE secret store (Settings →
+      #     Secrets → Dependabot), so a repository Actions secret is not visible even though the
+      #     branch lives in this repository and is therefore not a fork. Nothing is lost by
+      #     skipping: a dependency bump changes no source lines, so Codecov's patch analysis has
+      #     nothing to report on it.
+      #
+      # The alternative — copying CODECOV_TOKEN into the Dependabot secret store — was rejected:
+      # it widens where that token is readable to buy a coverage report for a diff with no code
+      # in it.
+      CODECOV_ELIGIBLE: >-
+        ${{ github.actor != 'dependabot[bot]'
+            && (github.event_name != 'pull_request'
+                || github.event.pull_request.head.repo.fork != true) }}
 
     steps:
       - name: Check out repository
