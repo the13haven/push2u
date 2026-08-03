@@ -1,0 +1,56 @@
+name: Dependency Submission
+
+# Fills GitHub's dependency graph for this build.
+#
+# GitHub reads a pom.xml on its own, but it does not read a Gradle build — for Gradle the graph is
+# only ever populated through the dependency submission API. Left unsubmitted the graph is empty,
+# and Dependabot ALERTS are generated from the graph, so vulnerability notifications simply never
+# fire. Dependabot version updates are a separate mechanism that parses manifests directly and
+# works either way, which is exactly what makes this gap easy to miss: the bump pull requests keep
+# arriving and look like proof that everything is wired up.
+#
+# It matters here specifically: push2u pins BouncyCastle and commons-lang3 through dependency
+# constraints because of CVEs (see the root build and the quality convention plugin), and the graph
+# is what would tell us the next one.
+
+on:
+  workflow_dispatch:
+
+  # main only. The graph describes the state of the project, not a proposal sitting in a branch —
+  # submitting from a pull request would overwrite it with dependencies that may never be merged.
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.gradle.kts'
+      - '**/*.toml'
+      - 'gradle/wrapper/gradle-wrapper.properties'
+
+# Submitting a snapshot of the graph is a write to the repository's dependency data.
+permissions:
+  contents: write
+
+# A stale submission overwriting a newer one would misreport what main depends on; the newest run
+# is the only one whose answer is still true.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      # Resolves every configuration and uploads the result. No separate Gradle setup step: the
+      # action runs the wrapper itself.
+      - name: Generate and submit dependency graph
+        uses: gradle/actions/dependency-submission@v6
