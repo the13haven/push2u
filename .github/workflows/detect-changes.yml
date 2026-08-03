@@ -1,0 +1,82 @@
+name: Detect changes
+
+# Answers one question for the workflows that gate a merge: does this change contain anything an
+# analyser would look at?
+#
+# It exists as a reusable workflow rather than as a `paths-ignore` filter under `on:` because of how
+# GitHub treats required status checks. `quality` and the two CodeQL `Analyze` jobs are required in
+# the "Protected main" ruleset, and a workflow that never starts leaves its check Pending rather
+# than absent — a documentation-only pull request could not be merged at all. There is no
+# path-based exemption to reach for: branch protection does not have one, and a ruleset can only
+# exclude refs. A job skipped by an `if` condition does report Success, so the filter has to live in
+# a job, and both gating workflows call this one to avoid keeping two copies of it in step.
+
+on:
+  workflow_call:
+    outputs:
+      code:
+        description: >-
+          "true" when the change touches anything other than documentation, or when the comparison
+          could not be made at all. Callers gate their real work on it.
+        value: ${{ jobs.detect.outputs.code }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # The comparison below needs both endpoints and their merge base.
+          fetch-depth: 0
+
+      # Fail open, always: a manual dispatch, a schedule, a force push, a first push of a branch
+      # (github.event.before is all zeroes) or any range git cannot resolve answers "code changed"
+      # and runs the full gate. The failure mode to avoid is a broken comparison quietly waving a
+      # real change through as if it were a typo fix.
+      - name: Detect non-documentation changes
+        id: filter
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null || ! git cat-file -e "${HEAD}^{commit}" 2>/dev/null; then
+            echo "Cannot resolve ${BASE}...${HEAD} — treating this as a code change."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "${BASE}...${HEAD}")
+          echo "Changed files:"
+          echo "${changed}"
+
+          # Prose and the images prose embeds. The suffix list started as the two the `on:` filter
+          # used to carry, which was written before the repository contained any images at all —
+          # adding the README banner then spent three minutes of the quality gate on a PNG. Nothing
+          # here reaches a compiler, a test or an analyser.
+          #
+          # Pattern matching rather than grep, so the answer does not depend on which grep dialect
+          # the runner image ships.
+          code=false
+          while IFS= read -r file; do
+            case "${file}" in
+              '' | *.md | *.txt) ;;
+              *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
+              *) code=true; break ;;
+            esac
+          done <<< "${changed}"
+
+          if [ "${code}" = false ]; then
+            echo "Documentation only — the calling workflow's jobs will be skipped (and reported as passed)."
+          fi
+          echo "code=${code}" >> "$GITHUB_OUTPUT"

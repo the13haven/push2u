@@ -10,17 +10,13 @@ on:
   # against code nobody is currently touching, without waiting for Monday.
   workflow_dispatch:
 
+  # No paths-ignore on either trigger — the Analyze jobs are required status checks, and a workflow
+  # skipped by a path filter never reports one. The filter lives in the `changes` job below instead.
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**/*.md'
-      - '**/*.txt'
 
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - '**/*.md'
-      - '**/*.txt'
 
   # CodeQL's query packs keep growing, so unchanged code can become newly-flagged code. Without a
   # schedule those findings would only surface the next time someone happened to touch the file.
@@ -40,7 +36,15 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Same filter as the quality gate, same reason — see .github/workflows/detect-changes.yml. On a
+  # schedule or a manual dispatch there is no range to compare, and it answers "code changed", so
+  # the weekly scan runs whatever it is asked to.
+  changes:
+    uses: ./.github/workflows/detect-changes.yml
+
   analyze:
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 30

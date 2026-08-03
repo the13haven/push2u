@@ -26,72 +26,12 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Decides whether the quality gate has anything to look at.
-  #
-  # This used to be a paths-ignore filter under `on:`, which was wrong in a way that only shows up
-  # at merge time. `quality` is a required status check in the "Protected main" ruleset, and a
-  # workflow that never starts leaves its check in Pending forever — a documentation-only pull
-  # request could not be merged at all. GitHub offers no path-based exemption for required checks,
-  # neither in branch protection nor in rulesets; a ruleset can only exclude refs.
-  #
-  # A job skipped by an `if` condition, on the other hand, reports Success and satisfies the check.
-  # So the filter has to sit here rather than under `on:`.
+  # Does this change contain anything the quality gate would look at? See
+  # .github/workflows/detect-changes.yml — the filter lives in a job rather than under `on:`
+  # because `quality` is a required status check, and a workflow that never starts leaves its
+  # check Pending forever.
   changes:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          # The comparison below needs both endpoints and their merge base.
-          fetch-depth: 0
-
-      # Anything that is not documentation counts as code. Fail open, always: a manual dispatch, a
-      # force push, a first push of a branch (github.event.before is all zeroes) or any range git
-      # cannot resolve answers "code changed" and runs the full gate. The failure mode to avoid is
-      # a broken comparison quietly waving a real change through as if it were a typo fix.
-      - name: Detect non-documentation changes
-        id: filter
-        env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-
-          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null || ! git cat-file -e "${HEAD}^{commit}" 2>/dev/null; then
-            echo "Cannot resolve ${BASE}...${HEAD} — running the quality gate."
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          changed=$(git diff --name-only "${BASE}...${HEAD}")
-          echo "Changed files:"
-          echo "${changed}"
-
-          # Prose and the images prose embeds. The suffix list started as the two the `on:` filter
-          # used to carry, which was written before the repository contained any images at all —
-          # adding the README banner then spent three minutes of the quality gate on a PNG. Nothing
-          # here reaches a compiler, a test or an analyser.
-          #
-          # Pattern matching rather than grep, so the answer does not depend on which grep dialect
-          # the runner image ships.
-          code=false
-          while IFS= read -r file; do
-            case "${file}" in
-              '' | *.md | *.txt) ;;
-              *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
-              *) code=true; break ;;
-            esac
-          done <<< "${changed}"
-
-          if [ "${code}" = false ]; then
-            echo "Documentation only — the quality gate will be skipped (and reported as passed)."
-          fi
-          echo "code=${code}" >> "$GITHUB_OUTPUT"
+    uses: ./.github/workflows/detect-changes.yml
 
   quality:
     needs: changes
