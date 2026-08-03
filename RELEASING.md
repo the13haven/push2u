@@ -217,9 +217,17 @@ Pick by what you want to happen to the version:
 
 **Finish this release** — *Actions → Publish Existing Tag*, entering the tag (e.g. `v0.1.0`). It
 checks out that tag, verifies the resolved version matches it, uploads to Central, and takes the
-draft release live. It also covers the narrower case where the upload succeeded but the final
-step did not, leaving artifacts on Central and a draft on GitHub. Safe to repeat: a version
-Central already holds is rejected as a duplicate rather than replaced.
+draft release live.
+
+It also covers the narrower failure where the upload succeeded but the release was left as a
+draft: before uploading it asks `repo1.maven.org` whether the version is already there and skips
+the upload if it is, so the run reaches the step that takes the release live instead of dying on
+a duplicate rejection.
+
+That check cannot see a deployment that Central has accepted but not yet mirrored — state
+`PUBLISHING`. If the Portal's *Deployments* page shows the version as `PUBLISHING` or `PUBLISHED`
+while the workflow still tries to upload, re-run it with **`skipCentralUpload`** ticked; it will
+then only finish the GitHub Release.
 
 **Abandon this release** — *Actions → Delete Draft Release*, entering the tag. It removes the
 draft release and refuses to touch one that is already published. The tag and the release commit

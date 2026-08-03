@@ -9,8 +9,10 @@ name: Publish Existing Tag
 # version number, and publish the same code twice under different coordinates. Actions can only
 # re-run whole jobs, never individual steps, so there is no way to skip ahead there either.
 #
-# Safe to run more than once. If Central already holds the version, the portal rejects the
-# duplicate rather than replacing anything.
+# The upload is skipped when the version is already on Maven Central, so the narrower failure —
+# artifacts published, GitHub Release left as a draft — is recoverable by the same button. Without
+# that, Central would reject the duplicate, Gradle would fail, and the run would never reach the
+# step that takes the release live.
 
 on:
   workflow_dispatch:
@@ -19,6 +21,13 @@ on:
         description: 'Existing release tag to publish (e.g. v0.1.0)'
         required: true
         type: string
+      skipCentralUpload:
+        description: >-
+          Skip the Maven Central upload and only finish the GitHub Release. Use when the Portal
+          shows the deployment as PUBLISHING or PUBLISHED but repo1.maven.org has not caught up.
+        required: false
+        default: false
+        type: boolean
 
 # Editing the GitHub Release from draft to published needs write access to repository contents.
 permissions:
@@ -102,13 +111,51 @@ jobs:
             exit 1
           fi
 
+      # Reads in the opposite direction to the check that used to gate tag deletion, and that is
+      # what makes it defensible here. It acts on POSITIVE evidence: an HTTP 200 for the POM means
+      # the artifacts are demonstrably on Central, and skipping the upload is then correct. Every
+      # other answer — 404, a 5xx, a timeout — falls through to attempting the upload, where the
+      # Central Portal itself adjudicates: a duplicate is rejected and the run fails loudly. So an
+      # inconclusive answer costs a failed run, never a wrong publication.
+      #
+      # It does not cover a deployment still in PUBLISHING, which repo1 cannot see yet; that is
+      # what the skipCentralUpload input is for, with the Portal's Deployments page as the
+      # authority a human reads.
+      - name: Check whether the version is already on Maven Central
+        id: central
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          url="https://repo1.maven.org/maven2/com/the13haven/push2u-core/$version/push2u-core-$version.pom"
+          status=$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo 000)
+          echo "$url -> HTTP $status"
+          case "$status" in
+            200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "Inconclusive ($status); will attempt the upload and let the Portal decide."
+                 echo "published=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Publish to Maven Central
+        if: ${{ !inputs.skipCentralUpload && steps.central.outputs.published != 'true' }}
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: ./gradlew publishAggregationToCentralPortal --no-daemon
+
+      - name: Report a skipped upload
+        if: ${{ inputs.skipCentralUpload || steps.central.outputs.published == 'true' }}
+        env:
+          SKIPPED_BY_INPUT: ${{ inputs.skipCentralUpload }}
+        run: |
+          if [ "$SKIPPED_BY_INPUT" = "true" ]; then
+            echo "Upload skipped on request; finishing the GitHub Release only."
+          else
+            echo "Version already present on Maven Central; finishing the GitHub Release only."
+          fi
 
       # Covers both ways the original run could have stopped short: no release at all (it failed
       # before creating the draft) and a draft that was never published.
