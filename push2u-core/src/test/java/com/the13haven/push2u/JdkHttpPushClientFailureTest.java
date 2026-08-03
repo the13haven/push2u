@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -51,7 +52,7 @@ class JdkHttpPushClientFailureTest {
     void interruptionDuringASendBecomesADeliveryFailureWithTheFlagRestored() throws Exception {
         CountDownLatch requestArrived = new CountDownLatch(1);
         CountDownLatch releaseServer = new CountDownLatch(1);
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/push", exchange -> {
             requestArrived.countDown();
             try {

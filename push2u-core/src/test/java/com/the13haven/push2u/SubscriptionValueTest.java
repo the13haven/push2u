@@ -30,8 +30,8 @@ class SubscriptionValueTest {
         Subscription first = new Subscription(ENDPOINT, key(), auth());
         Subscription second = new Subscription(ENDPOINT, key(), auth());
 
+        assertThat(first.equals(first)).as("equals is reflexive").isTrue();
         assertThat(first)
-                .isEqualTo(first)
                 .isEqualTo(second)
                 .hasSameHashCodeAs(second)
                 .isNotEqualTo(null)

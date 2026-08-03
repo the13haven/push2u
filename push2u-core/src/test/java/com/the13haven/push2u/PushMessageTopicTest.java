@@ -84,7 +84,8 @@ class PushMessageTopicTest {
                 .topic("topic")
                 .build();
 
-        assertThat(base).isEqualTo(base).isEqualTo(same).hasSameHashCodeAs(same);
+        assertThat(base.equals(base)).as("equals is reflexive").isTrue();
+        assertThat(base).isEqualTo(same).hasSameHashCodeAs(same);
         assertThat(base).isNotEqualTo(null).isNotEqualTo("not a message");
 
         assertThat(base)
