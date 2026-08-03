@@ -6,6 +6,53 @@ import pl.allegro.tech.build.axion.release.domain.preRelease
 // Shared configuration for every push2u module. It lives at the standalone build root rather than
 // being duplicated per module.
 
+// BouncyCastle on the BUILDSCRIPT classpath — the plugins that build this library, not the library.
+//
+// axion-release reads the version from git tags through JGit, and JGit's optional
+// org.eclipse.jgit.gpg.bc module (signed-tag support) depends on BouncyCastle 1.81, whose range
+// dependencies then resolve bcprov to 1.82. That combination carries five open advisories, one of
+// them critical (GHSA-574f-3g2m-x479, GOST 28147 CTR keystream reuse — not a code path this build
+// takes, but the version is the version). axion-release 1.21.2 is the current release and still
+// ships that JGit, so there is no upgrade to wait for.
+//
+// CONSTRAINTS rather than resolutionStrategy.force, for the same reason the subproject pin below
+// uses them: force also records the originally requested version in the submitted dependency graph,
+// and Dependabot alerts on that phantom node even though only the resolved version is ever used.
+//
+// The repositories block is required — plugins arrive through settings.gradle.kts pluginManagement,
+// so the buildscript itself declares none, and raising a version means fetching an artifact.
+//
+// The version is read from the catalog rather than repeated here: `libs` accessors do not exist yet
+// inside buildscript {}, which is evaluated before the plugins block. A missing key fails the build
+// at configuration time rather than silently dropping the pin.
+buildscript {
+    val bouncycastle = file("gradle/libs.versions.toml").readLines()
+        .first { it.startsWith("bouncycastle = ") }
+        .substringAfter('"')
+        .substringBefore('"')
+
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+
+    dependencies {
+        constraints {
+            classpath("org.bouncycastle:bcpg-jdk18on:$bouncycastle") {
+                because("GHSA-cj8j-37rh-8475")
+            }
+            classpath("org.bouncycastle:bcprov-jdk18on:$bouncycastle") {
+                because("GHSA-574f-3g2m-x479, GHSA-p93r-85wp-75v3, GHSA-c3fc-8qff-9hwx")
+            }
+            classpath("org.bouncycastle:bcpkix-jdk18on:$bouncycastle") {
+                because("GHSA-wg6q-6289-32hp")
+            }
+            // No advisory of its own; pinned so the four BouncyCastle artefacts stay version-aligned.
+            classpath("org.bouncycastle:bcutil-jdk18on:$bouncycastle")
+        }
+    }
+}
+
 plugins {
     // Convention plugins from the build-logic included build; applied to the modules below.
     id("push2u-quality") apply false
