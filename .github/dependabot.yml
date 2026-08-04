@@ -13,20 +13,26 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # Every action here is referenced by its major tag (@v6, @v7). That is not a version range —
-    # GitHub Actions resolves a plain git ref — but the maintainers repoint that tag at each
-    # release within the major, so a minor or patch release already reaches the workflows without
-    # a commit. A pull request proposing @v6 -> @v6.2.0 would not deliver an update; it would
-    # convert a moving ref into a fixed one, which is a policy change disguised as a bump.
+    # Every third-party action is pinned to a full 40-character commit SHA, with a trailing
+    # `# vX.Y.Z` comment naming the release it corresponds to. Three of these workflows hold the
+    # GPG signing key and the Central Portal token, and publishing is AUTOMATIC — no human sits
+    # between upload and general availability on Maven Central — so whoever controls a mutable tag
+    # like @v6 controls code running next to those secrets (the tj-actions/changed-files pattern,
+    # March 2025). Pinning is repo-wide, not release-only: even where secrets only reach a later
+    # Gradle step, a compromised action earlier in the job can modify the workspace, the wrapper
+    # or the build scripts that then receive them — and this file cannot express different
+    # policies per workflow anyway, so one policy is simpler and more reliable than a documented
+    # exception.
     #
-    # Majors still come through: those genuinely require editing the ref, and a major is where the
-    # breaking change lives.
+    # This section used to ignore minor and patch updates, on the reasoning that a
+    # @v6 -> @v6.2.0 PR would convert a moving ref into a fixed one — a policy change disguised
+    # as a bump. That was sound for tags and is obsolete for SHAs: a pinned ref receives NO
+    # updates unless Dependabot proposes one, so every update type must now flow. Dependabot
+    # rewrites both the SHA and the version comment in its PRs.
     #
-    # NOT applied to the gradle ecosystem above, where the same rule would be actively harmful —
-    # there a patch release is typically the security fix (see the commons-lang3 and BouncyCastle
-    # pins in the build), and suppressing it defeats the point of running Dependabot at all.
-    ignore:
-      - dependency-name: "*"
-        update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+    # One PR per round instead of one per action: the review act is the same for all of them
+    # (does the new SHA match the tag it claims?), so batching costs nothing and cuts the noise.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
