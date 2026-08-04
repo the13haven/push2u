@@ -562,12 +562,22 @@ checkable rather than merely asserted.
 Both qualifiers carry weight. `java.net.http` is `transitive` because `HttpClient` is not an
 implementation detail behind the default client — it is a parameter of the public
 `JdkHttpPushClient(HttpClient, Duration)`, and of `JdkVaultHttpTransport` in the Vault module, so a
-consumer configuring their own client would otherwise have to require the JDK module themselves;
-`javac -Xlint:exports` names exactly this. `requires static org.jspecify` means nothing resolves the
-JSpecify jar at runtime. Note the reason is not annotation retention — JSpecify's annotations are
-`RUNTIME`-retained — but that the JVM ignores an annotation whose type it cannot resolve. Verified
-running a module-path consumer with the jar absent, reflecting over every annotated member: empty
-annotation arrays, no exception.
+consumer configuring their own client would otherwise have to require the JDK module themselves.
+`javac -Xlint:exports` flagged both constructors before the qualifier was added.
+
+`requires static org.jspecify` means nothing resolves the JSpecify jar at runtime. The reason is not
+annotation retention — JSpecify's annotations are `RUNTIME`-retained — but that the JVM ignores an
+annotation whose type it cannot resolve. Verified by running a module-path consumer with the jar
+absent, reflecting over every annotated member: empty annotation arrays, no exception.
+
+**The eleven `[exports]` warnings that lint still reports on the core are accepted, not overlooked.**
+Every one of them is `class Nullable in module org.jspecify is not indirectly exported`, and the
+change lint asks for — `requires static transitive org.jspecify` — silences all eleven and breaks
+every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
+mandatory at the consumer's compile time, and such a consumer fails with `module not found:
+org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
+are metadata for analysers, not types a caller must name, so the warning describes a problem this
+API does not have. Do not "fix" it.
 
 The two Spring Boot starters stay **automatic** modules with a fixed `Automatic-Module-Name`. Boot's
 own artifacts are automatic modules, and auto-configuration works by reflecting over classes named

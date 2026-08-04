@@ -30,7 +30,15 @@ While iterating, run the narrowest thing that answers your question:
 ```
 
 Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
-package and unused imports, do not spend attention hand-checking them. Write the code, run the gate.
+package in `main` and unused imports, do not spend attention hand-checking them. Write the code, run
+the gate.
+
+Two things the gate does **not** catch, both because the checks behind them are `main`-only. A new
+package under `testFixtures` needs its `@NullMarked` written by hand — NullAway never looks there,
+and `push2u-core`'s fixtures are published. And a new public package in `push2u-core` or
+`push2u-signer-vault` needs an `exports` line in that module's `module-info.java`: the tests run on
+the class path, so a missing one is invisible until a module-path consumer hits "package … is not
+visible" after the release.
 
 The same goes for the Apache-2.0 SPDX licence header every `.java` file carries: `qualityCheck`
 writes it into a new file with the current year, and leaves the year alone from then on. The one

@@ -52,7 +52,8 @@ spotless {
         // LicenseHeaderStep skips package-info.java and module-info.java by name — their leading
         // Javadoc would otherwise be treated as the old header and replaced. Those files carry the
         // header by hand, and Checkstyle's RegexpHeader is what verifies it there: checkstyle.xml
-        // on `main`, the `checkstyleLicenseHeader` task below on every other source set.
+        // covers main's package-info.java, and the `checkstyleLicenseHeader` task below covers
+        // every other source set plus main's module-info.java, which checkstyleMain cannot parse.
         licenseHeaderFile(rootProject.file("config/quality/license/header.txt"))
 
         palantirJavaFormat(toolVersion("palantir"))
@@ -404,11 +405,16 @@ gradle.taskGraph.whenReady {
         val expected = nonMain + mainDescriptors
         val missing = expected - checkstyleLicenseHeader.get().source.files
 
+        // `nonMain`, not `expected`: a module carrying a module-info.java has a non-empty `expected`
+        // from that one file alone, so testing the union would leave this tripwire alive only in
+        // the modules without a descriptor — and silent in push2u-core, which holds the published
+        // conformance kit and most of the non-main sources.
+        //
         // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
         // here and every module that does has test sources. Nothing to check therefore means
         // either the source-set read stopped being lazy, or a module was added before its tests —
         // both worth stopping for rather than passing silently.
-        if (expected.isEmpty()) {
+        if (nonMain.isEmpty()) {
             error("$licenseHeaderTask found no non-main sources — module without tests, or a read that is no longer lazy?")
         }
         if (missing.isNotEmpty()) {

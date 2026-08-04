@@ -96,8 +96,7 @@ the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a c
 vector fail, the change is wrong until proven otherwise.
 
 Every `VapidSigner` implementation extends the published conformance kit
-`com.the13haven.push2u.testkit.VapidSignerContractTest`,
-kit from `push2u-core`'s test fixtures. `push2u-core` also has a separate `fipsTest` source set on
+`com.the13haven.push2u.testkit.VapidSignerContractTest`, from `push2u-core`'s test fixtures. `push2u-core` also has a separate `fipsTest` source set on
 a bcprov-free classpath — `bc-fips` and stock `bcprov` ship incompatible `org.bouncycastle.crypto`
 classes and can never share one. Add BC-FIPS tests there, never to `test`.
 

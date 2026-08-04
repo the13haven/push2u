@@ -53,9 +53,11 @@ module com.example.app {
 
 The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
 its own configured `HttpClient` to `JdkHttpPushClient` does not have to require it as well. JSpecify
-is a `requires static`: nothing resolves that jar at runtime, so the module stays dependency-free on
-the module path exactly as it is on the class path. Put it on the path if your analysers read the
-nullness annotations; leave it off and everything works the same.
+is a `requires static`, so nothing resolves that jar at runtime and the module stays dependency-free
+on the module path exactly as it is on the class path. You do not need JSpecify to compile against
+push2u — the nullness annotations are readable from the class files either way. You need it only if
+something reads them reflectively at runtime, and then the module has to be added explicitly
+(`--add-modules org.jspecify`), because a `static` requires is not resolved on its own.
 
 The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
 Boot's own artifacts are automatic modules and its auto-configuration is reflective. The published
