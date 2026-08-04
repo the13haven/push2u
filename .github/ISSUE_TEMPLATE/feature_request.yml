@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a capability or an API change.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        push2u keeps a deliberately small surface. Before writing, it is worth checking
+        [DESIGN.md](https://github.com/the13haven/push2u/blob/main/DESIGN.md) — §2 lists the
+        non-goals and §9 the decisions already settled as ADRs. A proposal that reverses one is
+        still welcome; it just needs to argue against that ADR rather than around it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What are you trying to do that the library makes hard or impossible today? Describe the
+        situation, not the solution — the shape of the fix follows from it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: >-
+        What you would add or change. If it touches the public API, sketch the signatures: anything
+        published to Maven Central is a long-term commitment.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: >-
+        The existing seams — `VapidSigner`, `PushHttpClient`, `EndpointPolicy`, a custom
+        `VaultHttpTransport` — solve more than they look like they do. If one of them almost works,
+        say where it falls short.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this proposal respects
+      description: >-
+        Not a formality — these two shape whether a change can be accepted at all. Leave a box
+        unchecked and explain above if your proposal deliberately challenges it.
+      options:
+        - label: >-
+            It adds no runtime dependency to `push2u-core` (ADR-002); framework and remote-system
+            integrations belong in the optional modules.
+        - label: >-
+            It does not turn a concrete protocol step (encryption, HKDF, origin serialization) into
+            an extension point (ADR-005).
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - "Yes, if the design is agreed first"
+        - "Maybe, with guidance"
+        - "No, proposing only"
+    validations:
+      required: true

@@ -1,0 +1,16 @@
+# Blank issues are off so that every report arrives through one of the forms below — or, for a
+# vulnerability, through the private advisory channel rather than a public issue.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/the13haven/push2u/security/advisories/new
+    about: >-
+      Never report a security problem in a public issue. This opens a private advisory visible
+      only to you and the maintainers. See SECURITY.md for scope and what to expect.
+
+  - name: Usage and configuration
+    url: https://github.com/the13haven/push2u#readme
+    about: >-
+      The README documents the API, the Spring Boot properties, the Vault Transit signer and the
+      protocol limits. DESIGN.md explains why the library behaves the way it does.
