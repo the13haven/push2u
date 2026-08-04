@@ -9,6 +9,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -163,6 +164,36 @@ class VaultTransitVapidSignerParserFuzzTest {
     }
 
     /**
+     * The overshoot the string scanners' post-loop bounds checks exist for, pinned by fixed bodies as well as by the
+     * truncation-plus-trailing-backslash mutants in the systematic sweeps: while locating a value's closing quote the
+     * scanner steps two characters over a backslash, so a string that is unterminated <em>and</em> ends in a backslash
+     * at the final index pushes the cursor past the end of the input. Only the bounds check after the scan loop turns
+     * that into {@link PushCryptoException} — deleting it (in {@code stringValueAt}) makes {@code sign()} on the first
+     * body below throw a raw {@code StringIndexOutOfBoundsException}, which this test must catch. The string has to be
+     * one the extractor actually scans for a terminator: the earlier {@code KEYS_BODY + "\\"} mutants never reach that
+     * code because every string a lookup walks through has already terminated by then.
+     */
+    @Test
+    void anUnterminatedStringEndingInABackslashFailsInsideTheContract() {
+        sweep(
+                List.of(
+                        new Mutant(
+                                "sign body whose signature value is unterminated and ends in a backslash",
+                                "{\"data\":{\"key_version\":2,\"signature\":\"abc\\"),
+                        new Mutant(
+                                "keys body whose type value is unterminated and ends in a backslash",
+                                "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"x\"}},\"latest_version\":1,"
+                                        + "\"type\":\"ecdsa\\"),
+                        new Mutant(
+                                "keys body whose public_key value is unterminated and ends in a backslash",
+                                "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"-----BEGIN\\"),
+                        new Mutant(
+                                "sign body whose signature value ends in an escaped-quote-then-backslash tail",
+                                "{\"data\":{\"signature\":\"abc\\\"\\")),
+                "");
+    }
+
+    /**
      * The production echo cap ({@code ERROR_ECHO_LIMIT}) holds only if <em>every</em> throw site routes the body
      * through {@code abbreviated}. A sentinel planted ~30k characters in must never surface anywhere in the throwable
      * chain, and no message may exceed the cap plus headroom — for the pristine body and for its mutants alike.
@@ -288,7 +319,10 @@ class VaultTransitVapidSignerParserFuzzTest {
                 }
             });
         } catch (AssertionError e) {
-            if (String.valueOf(e.getMessage()).contains("timed out")) {
+            // Failures raised by exercise() always START with the case description, so only JUnit's
+            // own timeout error can match this prefix — a case description merely containing the
+            // words must not be relabelled as a hang.
+            if (String.valueOf(e.getMessage()).startsWith("execution timed out")) {
                 throw new AssertionError("the parser hung while fuzzing case: " + current.get(), e);
             }
             throw e;
@@ -362,6 +396,14 @@ class VaultTransitVapidSignerParserFuzzTest {
         List<Mutant> mutants = new ArrayList<>();
         for (int i = 0; i < body.length(); i += stride) {
             mutants.add(new Mutant(name + " truncated to " + i + " chars", body.substring(0, i)));
+            // The plain truncations can never end in a backslash the string scanners must skip over
+            // (the sign body has none; the keys body's PEM backslashes sit where the version-entry
+            // brace matching fails first), yet a backslash at the FINAL index of an unterminated,
+            // actually-scanned string is precisely what makes the escape skip step past the end —
+            // the overshoot only the scanners' post-loop bounds checks turn into the module's own
+            // exception. Emit that shape at every truncation point.
+            mutants.add(new Mutant(
+                    name + " truncated to " + i + " chars + trailing backslash", body.substring(0, i) + "\\"));
             mutants.add(new Mutant(
                     name + " with char deleted at index " + i, body.substring(0, i) + body.substring(i + 1)));
         }
@@ -461,7 +503,7 @@ class VaultTransitVapidSignerParserFuzzTest {
     /** A well-formed envelope whose payload differs from {@link #realSignature} in every byte. */
     private static String impostorEnvelope() {
         byte[] impostor = new byte[64];
-        java.util.Arrays.fill(impostor, (byte) 0x55);
+        Arrays.fill(impostor, (byte) 0x55);
         return "vault:v1:" + BASE64_URL.encodeToString(impostor);
     }
 
