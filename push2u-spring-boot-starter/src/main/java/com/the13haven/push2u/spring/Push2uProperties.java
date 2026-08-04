@@ -1,6 +1,7 @@
 package com.the13haven.push2u.spring;
 
 import java.time.Duration;
+import java.util.List;
 
 import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -21,6 +22,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body; {@code null} keeps the {@code PushSender}
  *     default (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the
  *     fixed 103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
+ * @param allowedOrigins the push-service origins the sender may POST to (e.g. {@code https://fcm.googleapis.com}),
+ *     enforced as {@code EndpointPolicies.allowedOrigins}; {@code null} keeps the {@code PushSender} default of no
+ *     endpoint policy — any https endpoint is sent to, which for client-registered subscriptions is a blind-SSRF
+ *     surface. Malformed entries (and an explicitly empty list) are rejected at startup. Mutually exclusive with an
+ *     application-supplied {@code EndpointPolicy} bean
  * @param retry the retry policy
  */
 @ConfigurationProperties("push2u")
@@ -30,7 +36,18 @@ public record Push2uProperties(
         @Nullable Duration defaultTtl,
         @Nullable Integer recordSize,
         @Nullable Integer maxEncryptedBodyBytes,
+        @Nullable List<String> allowedOrigins,
         @DefaultValue Retry retry) {
+
+    /**
+     * Snapshots {@code allowedOrigins} into an unmodifiable copy (when set), so the bound configuration cannot drift
+     * from the policy the {@code PushSender} was built with.
+     */
+    public Push2uProperties {
+        if (allowedOrigins != null) {
+            allowedOrigins = List.copyOf(allowedOrigins);
+        }
+    }
 
     /**
      * The VAPID application-server identity (RFC 8292).

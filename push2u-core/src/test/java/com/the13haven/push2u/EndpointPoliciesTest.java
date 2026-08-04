@@ -96,7 +96,7 @@ class EndpointPoliciesTest {
     }
 
     @Test
-    void ipv6LiteralMatchesWithDefaultPortNormalization() {
+    void ipv6LiteralsMatchByExactTextualFormWithPortNormalization() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://[::1]:8443", "https://[::1]:443");
 
         assertThatCode(() -> policy.validate(URI.create("https://[::1]:8443/subscriber-token")))
@@ -104,6 +104,44 @@ class EndpointPoliciesTest {
         assertThatCode(() -> policy.validate(URI.create("https://[::1]/subscriber-token")))
                 .as("the configured :443 and the endpoint's implicit port are the same origin")
                 .doesNotThrowAnyException();
+        // The serialization lowercases but does NOT canonicalize IPv6 textual forms: the expanded
+        // spelling of the same address is a different origin string and fails to match. That is
+        // the fail-closed direction — a spelling variant can be denied, never admitted.
+        assertThatThrownBy(() -> policy.validate(URI.create("https://[0:0:0:0:0:0:0:1]:8443/subscriber-token")))
+                .isInstanceOf(EndpointRejectedException.class);
+        assertThatThrownBy(() -> policy.validate(URI.create("https://[::2]:8443/subscriber-token")))
+                .as("a genuinely different literal is rejected")
+                .isInstanceOf(EndpointRejectedException.class);
+    }
+
+    @Test
+    void rejectsAnEndpointWhoseUserinfoImpersonatesAnAllowedOrigin() {
+        // https://fcm.googleapis.com@evil.example/x — java.net.URI resolves the real host
+        // (evil.example), so the comparison would reject it anyway; the policy additionally
+        // rejects ANY endpoint userinfo outright, because no push service issues it and a custom
+        // transport re-parsing the raw string could split the authority differently.
+        EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
+
+        assertThatThrownBy(
+                        () -> policy.validate(URI.create("https://fcm.googleapis.com@evil.example/subscriber-token")))
+                .isInstanceOf(EndpointRejectedException.class)
+                .hasMessageContaining("userinfo");
+        assertThatThrownBy(() -> policy.validate(URI.create("https://user:pass@fcm.googleapis.com/subscriber-token")))
+                .as("userinfo is rejected even when the real host IS allowed")
+                .isInstanceOf(EndpointRejectedException.class)
+                .hasMessageContaining("userinfo");
+    }
+
+    @Test
+    void anEndpointWithoutAnOriginIsRejectedWithThePromisedType() {
+        // Unreachable through PushSender (Subscription enforces scheme+host first), but validate()
+        // is public API promising EndpointRejectedException — a direct caller must not get the
+        // plain IllegalArgumentException Origin.serialize would throw.
+        EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
+
+        assertThatThrownBy(() -> policy.validate(URI.create("mailto:someone@example.com")))
+                .isInstanceOf(EndpointRejectedException.class)
+                .hasMessageContaining("no scheme or host");
     }
 
     @Test

@@ -21,6 +21,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.the13haven.push2u.EndpointPolicy;
+import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
@@ -226,6 +228,80 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void allowedOriginsPropertyEnforcesThePolicyOnTheWiredSender() {
+        // Positive and negative halves of the same property: the allowlisted origin delivers
+        // (through the stub transport), a foreign one is rejected before any transport call —
+        // proving push2u.allowed-origins actually reached the builder rather than being dropped.
+        keyedRunner()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    PushResult result = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(result.delivered()).isTrue();
+                });
+        keyedRunner()
+                .withPropertyValues("push2u.allowed-origins=https://other.example")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    assertThatThrownBy(() -> sender.send(
+                                    subscription(),
+                                    PushMessage.builder(new byte[1]).build()))
+                            .isInstanceOf(EndpointRejectedException.class);
+                });
+    }
+
+    @Test
+    void malformedAllowedOriginFailsTheContextNamingTheProperty() {
+        // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
+        // property name, not misbehave at send time.
+        keyedRunner()
+                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-origins:"))
+                            .hasMessageContaining("push2u.allowed-origins:")
+                            .hasMessageContaining("must be https");
+                });
+    }
+
+    @Test
+    void anApplicationEndpointPolicyBeanReachesTheWiredSender() {
+        keyedRunner()
+                .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    assertThatThrownBy(() -> sender.send(
+                                    subscription(),
+                                    PushMessage.builder(new byte[1]).build()))
+                            .isInstanceOf(EndpointRejectedException.class)
+                            .hasMessageContaining("application policy");
+                });
+    }
+
+    @Test
+    void allowedOriginsPropertyPlusPolicyBeanFailsTheContext() {
+        // Both configured is ambiguous for a security control: silently preferring either would
+        // leave the operator believing the ignored one is in force. The context must fail naming
+        // both sources.
+        keyedRunner()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                            .hasMessageContaining("EndpointPolicy bean")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
     void anApplicationSignerOverridesTheLocalOne() {
         keyedRunner().withUserConfiguration(CustomSignerConfiguration.class).run(context -> {
             assertThat(context).hasSingleBean(VapidSigner.class);
@@ -297,6 +373,18 @@ class Push2uAutoConfigurationTest {
         }
         throw new AssertionError("no " + type.getSimpleName() + " in the cause chain of " + root
                 + " has a message containing \"" + needle + "\"");
+    }
+
+    /** An application-supplied policy that rejects everything, distinguishable by its message. */
+    @Configuration(proxyBeanMethods = false)
+    static class RejectingPolicyConfiguration {
+
+        @Bean
+        EndpointPolicy rejectingPolicy() {
+            return endpoint -> {
+                throw new EndpointRejectedException("application policy rejects all endpoints");
+            };
+        }
     }
 
     /** Answers every POST with 201, so size-limit tests never touch the network. */

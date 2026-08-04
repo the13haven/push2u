@@ -16,7 +16,9 @@ import java.net.URI;
  * {@link Endpoints#requireSecure} deliberately checks only the RFC 8030 contract (absolute {@code https} URL with a
  * host); which hosts a deployment may talk to is deployment policy, and this interface is where that policy lives. Most
  * deployments want the origin allowlist in {@link EndpointPolicies#allowedOrigins}; a functional interface is kept as
- * the seam so corporate egress rules, per-tenant rules or custom DNS checks can be expressed too.
+ * the seam so corporate egress rules or custom DNS checks can be expressed too. Note the shape of the seam: the policy
+ * is fixed when the sender is built and {@link #validate} receives only the endpoint URI, no request or tenant context
+ * — a rule that varies by tenant therefore means building one sender per tenant.
  *
  * <p><b>What a URI-level check cannot do.</b> The policy sees a {@link URI}, so it can enforce name and origin rules
  * but not what the name resolves to when the connection is made: DNS rebinding (a hostname resolving to an acceptable

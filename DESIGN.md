@@ -75,6 +75,7 @@ opt-in and cannot leak framework types into the core API.
 PushSender.send(subscription, message)
     │
     ├─ Check the payload against the body limit and the record size
+    ├─ Validate the endpoint against the configured EndpointPolicy (no policy by default)
     ├─ Decode the subscription P-256 public key
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
@@ -95,8 +96,14 @@ Status interpretation:
 | Retryable response after attempts are exhausted | `FAILED` |
 | Transport failure | `PushDeliveryException` |
 | Cryptographic failure | `PushCryptoException` |
+| Endpoint policy rejection | `EndpointRejectedException` |
 
 The encrypted body and VAPID token are reused across retries of the same send operation.
+
+The endpoint policy runs after the size preconditions and before everything else — encryption,
+the VAPID signature (a remote Vault/KMS call under an external signer) and the POST — so a
+rejected endpoint costs no cryptography and no I/O. `sendAsync` runs the same pipeline, so the
+policy cannot be bypassed on the async path.
 
 The VAPID `aud` claim is the endpoint's origin in the Unicode serialization of RFC 6454 §6.1, as
 RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to their Unicode form,
@@ -151,10 +158,12 @@ problem with an application server has no other channel to it. A blank value is 
 because it satisfies that contract no better than an absent claim while still producing a JWT whose
 `sub` a push service may well reject — the RFC requires neither the claim nor its rejection.
 Optional settings control the HTTP transport, async executor, JCE provider, retry policy, JWT
-expiry, default TTL, RFC 8188 record size, and the maximum encrypted body size. The last two are
-validated when configured: `recordSize` must be at least 18 (RFC 8188 §2) and
-`maxEncryptedBodyBytes` must be at least the fixed 103-byte overhead — the body an empty payload
-produces.
+expiry, default TTL, RFC 8188 record size, the maximum encrypted body size, and the endpoint
+policy. The record size and body size are validated when configured: `recordSize` must be at
+least 18 (RFC 8188 §2) and `maxEncryptedBodyBytes` must be at least the fixed 103-byte overhead —
+the body an empty payload produces. The endpoint policy is off by default (backward
+compatibility: with no policy, any endpoint satisfying `Endpoints.requireSecure` is sent to) and
+is described under its SPI below.
 
 ### VapidSigner
 
@@ -188,6 +197,34 @@ body, and the endpoint is an untrusted capability URL, so the default `JdkHttpPu
 discards the body without buffering it — a hostile push endpoint cannot create memory pressure
 by returning a huge response. This seam is push-delivery only; the Vault module has its own
 transport seam (section 7) because Vault responses must be read.
+
+### EndpointPolicy
+
+```java
+void validate(URI endpoint);
+```
+
+This SPI represents deployment egress policy for push endpoints. The endpoint in a
+`Subscription` is attacker-influenced (a public registration endpoint accepts the browser's
+`PushSubscription` JSON verbatim), so without a policy every send is a POST from inside the
+network to an address of the subscription's choosing — a blind SSRF oracle via
+`PushResult.statusCode()`, `PushDeliveryException` and timing. `Endpoints.requireSecure` stays a
+protocol check (absolute `https` URL with a host); which hosts a deployment may contact is
+policy, and lives here.
+
+`EndpointPolicies.allowedOrigins` is the standard implementation: an origin allowlist compared
+on the same RFC 6454 §6.1 serialization the `aud` claim uses (`Origin.serialize` normalizes both
+sides, so case, default ports and IDNA form can never disagree). Malformed allowlist entries
+fail at construction; endpoint-side userinfo is rejected outright. A rejection throws
+`EndpointRejectedException` — extending `RuntimeException`, not `IllegalArgumentException`,
+because the argument is well-formed (configuration refuses it), and because web frameworks
+commonly map IAE to a 400 response that would echo the redacted-but-fingerprinted message to
+the caller who registered the subscription. Rejection messages never carry the capability
+path/query (`Endpoints.redact`).
+
+A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and
+redirect behaviour belongs to the transport (the default JDK client never follows them). Strict
+guarantees require resolution/egress pinning inside a `PushHttpClient` implementation.
 
 ### Deliberately concrete components
 
@@ -318,6 +355,13 @@ from the RFC 8291 §4 per-payload rule checked on each `send()`; and the fixed 1
 an invalid value's `IllegalArgumentException` with the YAML property name prefixed, since the
 builder's own message names its camelCase parameter instead.
 
+`push2u.allowed-origins` binds to `EndpointPolicies.allowedOrigins` and follows the same
+fail-at-startup pattern: a malformed entry's `IllegalArgumentException` is re-thrown with the
+property name prefixed. Alternatively an application `EndpointPolicy` bean is picked up by the
+autoconfigured sender; configuring both fails the context rather than silently preferring one,
+because they express the same security control and the ignored one would be believed active.
+Configuring neither keeps the core default of no endpoint policy.
+
 `push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
 configured, the Vault signer takes precedence over the local signer unless the application
 provides its own `VapidSigner`.
@@ -352,6 +396,11 @@ Only key custody (`VapidSigner`) and push HTTP transport (`PushHttpClient`) are 
 transport SPI (`VaultHttpTransport`) rather than reusing `PushHttpClient`: the two seams face
 opposite trust domains — push delivery must not read response bodies from untrusted capability
 URLs, while the Vault API's responses must be read, bounded and under a request timeout.
+
+*Amended:* a third seam, `EndpointPolicy` (deployment egress policy for push endpoints), was
+added later under the same test — an articulable difference the library cannot decide for the
+deployment. Which hosts an application may POST to is deployment security policy, not protocol;
+see section 5.
 
 ### ADR-006 — `aes128gcm` only
 

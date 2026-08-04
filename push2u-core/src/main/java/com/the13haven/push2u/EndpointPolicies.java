@@ -12,8 +12,10 @@ import java.util.Set;
  * Standard {@link EndpointPolicy} implementations. Currently one — an origin allowlist — because that is the rule
  * nearly every deployment actually wants: the set of browser push services an application's users can arrive from is
  * small and known (FCM, Mozilla autopush, WNS, APNs web push), so "only these origins" closes the attacker-supplied
- * endpoint hole with configuration a reviewer can read. Anything more situational (egress-proxy rules, per-tenant
- * allowlists, custom DNS checks) belongs in the deployment's own {@link EndpointPolicy} lambda, not in this class.
+ * endpoint hole with configuration a reviewer can read. Anything more situational (egress-proxy rules, custom DNS
+ * checks) belongs in the deployment's own {@link EndpointPolicy} lambda, not in this class — noting that a policy is
+ * fixed per sender at {@code build()} and {@code validate} receives only the URI, so a rule that varies by tenant means
+ * one sender per tenant, not one policy consulting request context.
  */
 public final class EndpointPolicies {
 
@@ -48,6 +50,14 @@ public final class EndpointPolicies {
      * worse, silently admit) sends later. A lone trailing {@code "/"} is tolerated, since browsers and RFC 6454 both
      * print origins without one but humans often paste one.
      *
+     * <p>On the endpoint side, a URI carrying userinfo ({@code https://allowed.example@evil.example/…}) is rejected
+     * outright, before the origin comparison. The comparison itself is not fooled — {@code java.net.URI} resolves the
+     * real host, and RFC 6454 excludes userinfo from the origin — but no real push service issues endpoints with
+     * userinfo, so its only plausible purpose is to impersonate an allowed origin to <em>some</em> parser: rejecting
+     * the shape entirely also protects any custom transport that re-parses the URL string differently. A URI with no
+     * scheme or host has no origin to compare and is likewise rejected (reachable only by calling
+     * {@link EndpointPolicy#validate} directly — {@link PushSender} never gets that far with one).
+     *
      * @param origins the allowed origins, e.g. {@code "https://fcm.googleapis.com"}
      * @return a policy that rejects any endpoint whose origin is not in the set
      * @throws IllegalArgumentException if no origin is given, or any entry is not a well-formed https origin
@@ -63,12 +73,29 @@ public final class EndpointPolicies {
             normalized.add(normalize(origin));
         }
         Set<String> allowed = Set.copyOf(normalized);
-        return endpoint -> {
-            if (!allowed.contains(Origin.serialize(endpoint))) {
-                throw new EndpointRejectedException(
-                        "push endpoint origin is not in the allowed set: " + Endpoints.redact(endpoint.toString()));
-            }
-        };
+        return endpoint -> check(allowed, endpoint);
+    }
+
+    /** The per-send check behind the policy {@link #allowedOrigins(Collection)} returns. */
+    private static void check(Set<String> allowed, URI endpoint) {
+        Objects.requireNonNull(endpoint, "endpoint");
+        if (endpoint.getRawUserInfo() != null) {
+            // Real push services never put userinfo in an endpoint; its only plausible purpose is
+            // impersonating an allowed origin to a parser that splits the authority differently.
+            throw new EndpointRejectedException("push endpoint carries userinfo, which no push service issues: "
+                    + Endpoints.redact(endpoint.toString()));
+        }
+        String host = endpoint.getHost();
+        if (endpoint.getScheme() == null || host == null || host.isEmpty()) {
+            // Origin.serialize would throw plain IllegalArgumentException here; validate() promises
+            // EndpointRejectedException, and "no origin at all" is certainly not an allowed one.
+            throw new EndpointRejectedException("push endpoint has no scheme or host, so no origin to compare: "
+                    + Endpoints.redact(endpoint.toString()));
+        }
+        if (!allowed.contains(Origin.serialize(endpoint))) {
+            throw new EndpointRejectedException(
+                    "push endpoint origin is not in the allowed set: " + Endpoints.redact(endpoint.toString()));
+        }
     }
 
     /**

@@ -165,7 +165,7 @@ public final class PushSender {
      * the configured {@link Builder#endpointPolicy(EndpointPolicy) endpoint policy} rejects — completes the returned
      * future exceptionally ({@link IllegalArgumentException}, {@link EndpointRejectedException}) instead of throwing
      * from this call. The async path runs through the same {@link #send} pipeline, so the policy guards it identically:
-     * there is no way to reach the network that bypasses the policy.
+     * no send through this sender reaches the network without passing the policy.
      *
      * @param subscription the target subscription
      * @param message the message to send

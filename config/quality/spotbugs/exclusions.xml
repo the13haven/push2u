@@ -27,4 +27,19 @@
         <Class name="com.the13haven.push2u.PushSender$Builder"/>
         <Field name="cryptoProvider"/>
     </Match>
+
+    <!--
+        EI_EXPOSE_REP / EI_EXPOSE_REP2: Push2uProperties' compact constructor snapshots
+        allowedOrigins with List.copyOf, so the stored component is already an unmodifiable copy
+        and the accessor hands back that immutable list. SpotBugs only sees the List interface
+        and cannot tell — the same false-positive shape as PushResponse.headers above.
+    -->
+    <Match>
+        <Or>
+            <Bug pattern="EI_EXPOSE_REP"/>
+            <Bug pattern="EI_EXPOSE_REP2"/>
+        </Or>
+        <Class name="com.the13haven.push2u.spring.Push2uProperties"/>
+        <Field name="allowedOrigins"/>
+    </Match>
 </FindBugsFilter>

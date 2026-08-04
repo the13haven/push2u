@@ -1,8 +1,11 @@
 package com.the13haven.push2u.spring;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -10,6 +13,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
+import com.the13haven.push2u.EndpointPolicies;
+import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.JdkHttpPushClient;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
@@ -83,18 +88,29 @@ public final class Push2uAutoConfiguration {
      * with the property name prefixed, since the builder's own message names its camelCase parameter, not the YAML
      * property.
      *
+     * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
+     * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
+     * fails the context: the two express a security control, and silently letting one win could leave the operator
+     * believing the ignored one is in force. Configuring neither keeps {@link PushSender}'s default of no policy.
+     *
      * @param signer the VAPID signer
      * @param httpClient the HTTP transport
+     * @param endpointPolicy an application-supplied endpoint policy, if any
      * @param properties the bound configuration
      * @return the configured sender
-     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank
-     * @throws IllegalArgumentException if {@code push2u.record-size} or {@code push2u.max-encrypted-body-bytes} is set
-     *     to a value the builder rejects
+     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both
+     *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured
+     * @throws IllegalArgumentException if {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes} or
+     *     {@code push2u.allowed-origins} is set to a value the builder or the policy factory rejects
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnBean(VapidSigner.class)
-    public PushSender pushSender(VapidSigner signer, PushHttpClient httpClient, Push2uProperties properties) {
+    public PushSender pushSender(
+            VapidSigner signer,
+            PushHttpClient httpClient,
+            ObjectProvider<EndpointPolicy> endpointPolicy,
+            Push2uProperties properties) {
         String subject = properties.vapid().subject();
         if (subject == null || subject.isBlank()) {
             throw new IllegalStateException(
@@ -135,6 +151,38 @@ public final class Push2uAutoConfiguration {
                 throw new IllegalArgumentException("push2u.max-encrypted-body-bytes: " + e.getMessage(), e);
             }
         }
+        EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, properties.allowedOrigins());
+        if (policy != null) {
+            builder.endpointPolicy(policy);
+        }
         return builder.build();
+    }
+
+    /**
+     * Resolves the endpoint policy from its two possible sources — the {@code push2u.allowed-origins} property and an
+     * application-supplied {@link EndpointPolicy} bean — or {@code null} for none (the {@link PushSender} default).
+     * Both at once fails: they express the same security control, and silently preferring one would leave the operator
+     * believing the ignored one is in force.
+     */
+    @Nullable
+    private static EndpointPolicy resolveEndpointPolicy(
+            ObjectProvider<EndpointPolicy> endpointPolicy, @Nullable List<String> allowedOrigins) {
+        EndpointPolicy applicationPolicy = endpointPolicy.getIfAvailable();
+        if (allowedOrigins != null && applicationPolicy != null) {
+            throw new IllegalStateException("push2u.allowed-origins and an application-supplied EndpointPolicy bean"
+                    + " are both configured — they express the same security control, and silently preferring one"
+                    + " would leave the other believed-active but ignored. Configure exactly one.");
+        }
+        if (applicationPolicy != null) {
+            return applicationPolicy;
+        }
+        if (allowedOrigins == null) {
+            return null;
+        }
+        try {
+            return EndpointPolicies.allowedOrigins(allowedOrigins);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("push2u.allowed-origins: " + e.getMessage(), e);
+        }
     }
 }

@@ -12,6 +12,15 @@ import java.util.regex.Pattern;
  * U-label), and the port only when it differs from the scheme's default. {@link java.net.URI} performs none of that
  * normalization — it preserves the scheme/host case and an explicit default port verbatim — so a push service comparing
  * {@code aud} against its canonical origin would reject an otherwise valid JWT.
+ *
+ * <p><b>Security note:</b> {@link #serialize} is also load-bearing for {@link EndpointPolicies#allowedOrigins}, which
+ * compares the allowlist and the endpoint on this method's output. Two properties of the serialization are relied on
+ * and pinned in {@code OriginTest}: userinfo never reaches the output (the comparison must see the real host, not an
+ * {@code allowed.example@evil.example} impersonation — switching to {@code getAuthority()} would break this), and the
+ * {@code unicodeHost} error fallback stays fail-closed for the allowlist (it returns a plain lowercased host, which at
+ * worst fails to match and rejects the send — it can never fabricate a host that matches an entry the endpoint's real
+ * host would not). An {@code aud}-motivated edit here must keep both, or {@code EndpointPolicies} needs its own
+ * normalizer first.
  */
 final class Origin {
 

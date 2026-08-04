@@ -95,6 +95,16 @@ class OriginTest {
     }
 
     @Test
+    void userinfoShapedLikeAnAllowedHostCannotDisplaceTheRealHost() {
+        // Security-load-bearing beyond the aud claim (see the class Javadoc): EndpointPolicies
+        // compares allowlist entries against this output, so an endpoint whose userinfo spells an
+        // allowed host must still serialize to the REAL host. Rewriting serialize() around
+        // URI.getAuthority() — which includes userinfo — would fail here before it ships.
+        assertThat(Origin.serialize(URI.create("https://fcm.googleapis.com@evil.example/subscriber-token")))
+                .isEqualTo("https://evil.example");
+    }
+
+    @Test
     void schemelessUriIsRejectedWithoutEchoingIt() {
         assertThatThrownBy(() -> Origin.serialize(URI.create("/relative/secret-path")))
                 .isInstanceOf(IllegalArgumentException.class)
