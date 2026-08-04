@@ -24,6 +24,8 @@ class Push2uPropertiesTest {
                 null,
                 null,
                 null,
+                // allowedOrigins: unset, i.e. the PushSender default of no endpoint policy.
+                null,
                 new Push2uProperties.Retry(3, null, null),
                 // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
                 new Push2uProperties.Health(true, Duration.ofSeconds(30)));

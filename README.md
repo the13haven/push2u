@@ -240,6 +240,64 @@ This seam covers push delivery only. The Vault signer module has its own transpo
 (`VaultHttpTransport`, below) because the Vault API sits in a different trust domain and its
 responses must be read.
 
+### Endpoint policy (SSRF hardening)
+
+The endpoint inside a `Subscription` is attacker-influenced data: a typical integration accepts
+the browser's `PushSubscription` JSON at a public registration endpoint, and nothing stops a
+client from posting a hand-crafted subscription whose endpoint points into your own network — a
+loopback port, a private-range address, a cloud metadata service. Every later send then POSTs to
+that address from inside your network, and the visible outcome (`PushResult.statusCode()` versus
+`PushDeliveryException`, plus timing) is a blind SSRF oracle for internal host and port
+existence.
+
+Restrict where a sender may POST with an endpoint policy — for almost every deployment, an
+origin allowlist naming the browser push services its users can actually arrive from:
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .endpointPolicy(EndpointPolicies.allowedOrigins(
+        "https://fcm.googleapis.com",           // Chrome
+        "https://updates.push.services.mozilla.com", // Firefox
+        "https://web.push.apple.com"))          // Safari
+    .build();
+```
+
+The policy runs on every send — `sendAsync` included, it goes through the same pipeline —
+before encryption, before the VAPID signature (a remote Vault/KMS call under an external
+signer), and before any network I/O. A rejected endpoint throws `EndpointRejectedException`
+and costs none of them. The exception extends `RuntimeException` directly (deliberately not
+`IllegalArgumentException`, which web frameworks commonly map to a 400 response echoing the
+message), so a loop over stored subscriptions can tell "this subscription violates policy —
+flag or remove it" apart from a retryable transport failure (`PushDeliveryException`); its
+message never contains the endpoint's path or query, because a push endpoint is a capability
+URL.
+
+Origins compare after RFC 6454 normalization on both sides — lowercase scheme and host, IDNA
+A-labels decoded, the default `:443` dropped — so `https://PUSH.Example:443` in the
+configuration matches an endpoint on `https://push.example`. Matching is exact and fail-closed:
+subdomains of an allowed origin are not allowed, a host with a trailing dot (`push.example.`) is
+a different origin from `push.example` and is rejected, and an endpoint carrying userinfo
+(`https://allowed.example@evil.example/…`) is rejected outright — no push service issues such
+endpoints, and rejecting the shape also protects custom transports that re-parse the URL string
+differently. A malformed allowlist entry (unparseable, non-`https`, hostless, or carrying a
+path/query/fragment/userinfo) fails at construction, so a misconfigured allowlist fails
+deployment startup instead of misbehaving at send time.
+
+`EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
+egress rules or custom DNS checks can be expressed directly. The policy is fixed when the sender
+is built and receives only the URI — a rule that varies by tenant means one sender per tenant.
+
+With no policy configured, behaviour is unchanged: any absolute `https` endpoint accepted by
+`Subscription` is sent to. Know the limits either way: a URI-level check cannot close DNS
+rebinding, and it cannot see what happens after the connection. Redirects are not followed by
+the default transport (the JDK client's policy is `NEVER`), but a custom `PushHttpClient` must
+preserve that itself. Strict guarantees require pinning resolution and egress in the transport
+layer — see the
+[OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html).
+The policy is a coarse filter, not a sandbox.
+
 ### JCE provider selection
 
 By default, cryptographic primitives resolve through the JVM provider chain. Passing a provider
@@ -287,6 +345,10 @@ push2u:
   default-ttl: 24h
   record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
+  allowed-origins:                  # optional but recommended — see Endpoint policy above
+    - "https://fcm.googleapis.com"
+    - "https://updates.push.services.mozilla.com"
+    - "https://web.push.apple.com"
   retry:
     max-attempts: 3
     initial-backoff: 1s
@@ -335,6 +397,20 @@ defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) u
 either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` below
 the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
 prefixed with the YAML property name (the builder itself only names its Java parameter).
+
+`allowed-origins` binds to `EndpointPolicies.allowedOrigins` — see
+[Endpoint policy (SSRF hardening)](#endpoint-policy-ssrf-hardening). Unset, it leaves the
+`PushSender` default of no endpoint policy. A malformed entry fails the context with the message
+prefixed by the property name, like the size properties. Alternatively, supply an
+`EndpointPolicy` bean, which the autoconfigured sender picks up; configuring *both* the property
+and a bean fails the context, naming the property and the bean — they express the same security
+control, and silently preferring one would leave the other believed-active but ignored.
+
+One escape hatch: a service that *inherits* `push2u.allowed-origins` from a shared configuration
+it does not own cannot unset the property, so setting it to an explicitly **empty** value beside
+a bean means "deliberately not using the property here" and the bean wins. An empty value on its
+own still fails the context (`requires at least one origin`), so the control cannot be disabled
+by accident.
 
 ## Vault Transit signer
 

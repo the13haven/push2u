@@ -42,6 +42,11 @@ public final class PushSender {
     /** {@code null} selects the library-owned virtual-thread executor; see {@link #sendAsync}. */
     @Nullable
     private final Executor executor;
+    /**
+     * {@code null} means no policy — the historical any-https-endpoint behaviour; see {@link Builder#endpointPolicy}.
+     */
+    @Nullable
+    private final EndpointPolicy endpointPolicy;
 
     private PushSender(Builder builder) {
         Jca jca = builder.cryptoProvider == null ? Jca.platform() : Jca.using(builder.cryptoProvider);
@@ -62,6 +67,7 @@ public final class PushSender {
         this.sleeper = builder.sleeper;
         this.clock = builder.clock;
         this.executor = builder.executor;
+        this.endpointPolicy = builder.endpointPolicy;
     }
 
     /**
@@ -78,13 +84,17 @@ public final class PushSender {
      *
      * <p>The payload is size-checked first, before any cryptography or network I/O, against both
      * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; an oversized payload throws
-     * {@link IllegalArgumentException} rather than being sent for the push service to reject with {@code 413}.
+     * {@link IllegalArgumentException} rather than being sent for the push service to reject with {@code 413}. The
+     * {@link Builder#endpointPolicy(EndpointPolicy) endpoint policy}, when one is configured, runs next — still ahead
+     * of the encryption, the VAPID signature (which under an external {@link VapidSigner} is a remote Vault/KMS
+     * operation) and the HTTP request, so a rejected endpoint costs none of them.
      *
      * @param subscription the target subscription
      * @param message the message to send
      * @return the send result
      * @throws IllegalArgumentException if the payload does not fit the configured body limit, or if the configured
      *     record size is too small for it
+     * @throws EndpointRejectedException if the configured endpoint policy rejects the subscription's endpoint
      */
     // PreserveStackTrace / AvoidThrowingNewInstanceOfSameException: URI.create's own
     // IllegalArgumentException carries the raw capability URL, so it is replaced by one built from
@@ -97,7 +107,6 @@ public final class PushSender {
         byte[] payload = message.payload();
         WebPushEncryptor.checkPayloadFits(payload.length, recordSize, maxEncryptedBodyBytes);
 
-        byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         URI endpoint;
         try {
             endpoint = URI.create(subscription.endpoint());
@@ -108,6 +117,14 @@ public final class PushSender {
             throw new IllegalArgumentException(
                     "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
         }
+        if (endpointPolicy != null) {
+            // Before the encryption as well as the signature and the POST: a policy rejection is a
+            // verdict on the subscription, and reaching it must not depend on — or pay for — any
+            // per-send cryptography. The sender holds no mutable state, so a policy that throws
+            // (a rejection or its own defect) leaves nothing to corrupt for later sends.
+            endpointPolicy.validate(endpoint);
+        }
+        byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         String authorization = Vapid.authorizationHeader(
                 signer, Origin.serialize(endpoint), contact, clock.instant().plus(jwtExpiry));
         Map<String, String> headers = requestHeaders(authorization, message);
@@ -143,9 +160,12 @@ public final class PushSender {
      * the common ForkJoinPool; pass an executor there too if a continuation blocks.
      *
      * <p>If a caller-supplied executor rejects the task, its {@link java.util.concurrent.RejectedExecutionException}
-     * propagates from this call rather than completing the returned future exceptionally. The size preconditions
-     * {@link #send} checks go the other way: they run inside the queued task, so an oversized payload completes the
-     * returned future exceptionally with {@link IllegalArgumentException} instead of throwing from this call.
+     * propagates from this call rather than completing the returned future exceptionally. The preconditions
+     * {@link #send} checks go the other way: they run inside the queued task, so an oversized payload — or an endpoint
+     * the configured {@link Builder#endpointPolicy(EndpointPolicy) endpoint policy} rejects — completes the returned
+     * future exceptionally ({@link IllegalArgumentException}, {@link EndpointRejectedException}) instead of throwing
+     * from this call. The async path runs through the same {@link #send} pipeline, so the policy guards it identically:
+     * no send through this sender reaches the network without passing the policy.
      *
      * @param subscription the target subscription
      * @param message the message to send
@@ -249,6 +269,9 @@ public final class PushSender {
 
         @Nullable
         private Executor executor;
+
+        @Nullable
+        private EndpointPolicy endpointPolicy;
 
         private Builder() {}
 
@@ -426,6 +449,26 @@ public final class PushSender {
          */
         public Builder executor(Executor executor) {
             this.executor = Objects.requireNonNull(executor, "executor");
+            return this;
+        }
+
+        /**
+         * The policy deciding which push endpoints this sender may contact, run on every send (and every
+         * {@link PushSender#sendAsync} — the async path goes through the same pipeline) before encryption, before the
+         * VAPID signature and before any network I/O; a rejected endpoint throws {@link EndpointRejectedException} and
+         * costs none of them.
+         *
+         * <p>Off by default, for backward compatibility: with no policy configured the sender keeps its historical
+         * contract and POSTs to any endpoint satisfying {@link Endpoints#requireSecure} — including loopback,
+         * private-range and cloud-metadata addresses. Any integration whose subscriptions arrive from clients should
+         * configure one, typically {@link EndpointPolicies#allowedOrigins}; {@link EndpointPolicy} documents the threat
+         * model and the limits of a URI-level check.
+         *
+         * @param endpointPolicy the policy to validate each endpoint against
+         * @return this builder
+         */
+        public Builder endpointPolicy(EndpointPolicy endpointPolicy) {
+            this.endpointPolicy = Objects.requireNonNull(endpointPolicy, "endpointPolicy");
             return this;
         }
 
