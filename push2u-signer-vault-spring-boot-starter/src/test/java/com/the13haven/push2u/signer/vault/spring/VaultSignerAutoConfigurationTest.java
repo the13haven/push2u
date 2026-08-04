@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeAll;
@@ -343,6 +344,47 @@ class VaultSignerAutoConfigurationTest {
                             .isInstanceOf(IllegalArgumentException.class)
                             .hasMessageContaining("redirect");
                 });
+    }
+
+    @Test
+    void theClientTheStarterBuildsItselfDoesNotFollowRedirects() throws Exception {
+        // The other branch of resolveTransport: with no qualified HttpClient bean the starter
+        // builds the client, and that one has to carry Redirect.NEVER as deliberately as
+        // JdkVaultHttpTransport's own no-argument constructor does. A followed 307 would replay
+        // X-Vault-Token against whatever host the Location names, so the sign call must come back
+        // with the redirect as its status and the target must stay untouched.
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        AtomicInteger redirectTargetHits = new AtomicInteger();
+        try {
+            server.createContext("/v1", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().add("Location", "/stolen");
+                exchange.sendResponseHeaders(307, -1);
+                exchange.close();
+            });
+            server.createContext("/stolen", exchange -> {
+                redirectTargetHits.incrementAndGet();
+                exchange.getRequestBody().readAllBytes();
+                byte[] body = signResponse().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(body);
+                }
+            });
+            server.start();
+
+            explicitRunner("http://127.0.0.1:" + server.getAddress().getPort()).run(context -> {
+                assertThatThrownBy(() -> context.getBean(VapidSigner.class)
+                                .sign("starter redirect probe".getBytes(StandardCharsets.UTF_8)))
+                        .isInstanceOf(PushCryptoException.class)
+                        .hasMessageContaining("HTTP 307");
+                assertThat(redirectTargetHits)
+                        .as("the redirect target never saw the request")
+                        .hasValue(0);
+            });
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
