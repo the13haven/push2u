@@ -22,7 +22,9 @@ this file but not the skill list, so read the matching one directly when the tas
 **A vulnerability never goes in a public issue, pull request or commit message.** It is reported
 through GitHub's private advisory channel (`SECURITY.md`), because the repository is public and a
 description of a defect in the encryption, the VAPID signature or the endpoint policy discloses it
-before a fix exists. This applies to anything you would file on the user's behalf.
+before a fix exists. This applies to anything you would file on the user's behalf. When one is
+reported here and has to be fixed, `.claude/skills/push2u-advisory/SKILL.md` carries the procedure —
+the ordinary branch-push-PR habit publishes the defect and cannot be undone.
 
 ## Commands
 
