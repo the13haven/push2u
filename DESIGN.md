@@ -51,7 +51,7 @@ push2u-core
 ├── VAPID JWT construction
 ├── retry and response interpretation
 ├── LocalEcVapidSigner
-└── JdkHttpPushClient
+└── JdkPushHttpClient
 
 push2u-signer-vault
 ├── VaultTransitVapidSigner
@@ -205,7 +205,7 @@ requirements. Implementations return every HTTP status as `PushResponse` and thr
 `PushDeliveryException` only for transport failures.
 
 `PushResponse` carries only the status code and headers. Push delivery never consumes a response
-body, and the endpoint is an untrusted capability URL, so the default `JdkHttpPushClient`
+body, and the endpoint is an untrusted capability URL, so the default `JdkPushHttpClient`
 discards the body without buffering it — a hostile push endpoint cannot create memory pressure
 by returning a huge response. This seam is push-delivery only; the Vault module has its own
 transport seam (section 7) because Vault responses must be read.
@@ -344,7 +344,7 @@ bound properties.
 `push2u-spring-boot-starter` binds `push2u.*` properties and conditionally creates:
 
 - a local `VapidSigner` when both local keys are configured;
-- a default `JdkHttpPushClient`;
+- a default `JdkPushHttpClient`;
 - an autoconfigured `PushSender` when a signer is available and `push2u.vapid.subject` is set;
 - a health indicator when Spring Boot health support is present.
 
@@ -569,7 +569,7 @@ checkable rather than merely asserted.
 
 Both qualifiers carry weight. `java.net.http` is `transitive` because `HttpClient` is not an
 implementation detail behind the default client — it is a parameter of the public
-`JdkHttpPushClient(HttpClient, Duration)`, and of `JdkVaultHttpTransport` in the Vault module, so a
+`JdkPushHttpClient(HttpClient, Duration)`, and of `JdkVaultHttpTransport` in the Vault module, so a
 consumer configuring their own client would otherwise have to require the JDK module themselves.
 `javac -Xlint:exports` flagged both constructors before the qualifier was added.
 

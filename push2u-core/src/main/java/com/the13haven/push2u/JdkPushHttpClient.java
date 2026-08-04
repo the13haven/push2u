@@ -23,7 +23,7 @@ import java.util.Objects;
  * subscription — a hostile server answering with a huge body must cost the sender nothing. Discarding still drains the
  * stream, so connections stay reusable.
  */
-public final class JdkHttpPushClient implements PushHttpClient {
+public final class JdkPushHttpClient implements PushHttpClient {
 
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -31,7 +31,7 @@ public final class JdkHttpPushClient implements PushHttpClient {
     private final Duration requestTimeout;
 
     /** Uses a fresh default {@link HttpClient} and a 30-second per-request timeout. */
-    public JdkHttpPushClient() {
+    public JdkPushHttpClient() {
         this(HttpClient.newHttpClient(), DEFAULT_REQUEST_TIMEOUT);
     }
 
@@ -41,7 +41,7 @@ public final class JdkHttpPushClient implements PushHttpClient {
      * @param httpClient the HTTP client to send requests with
      * @param requestTimeout the per-request timeout
      */
-    public JdkHttpPushClient(HttpClient httpClient, Duration requestTimeout) {
+    public JdkPushHttpClient(HttpClient httpClient, Duration requestTimeout) {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
     }

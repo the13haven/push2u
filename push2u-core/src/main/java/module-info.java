@@ -10,8 +10,8 @@
  * that reads this artifact from the module path (ADR-014).
  */
 module com.the13haven.push2u {
-    // `transitive`, because HttpClient is not merely behind JdkHttpPushClient — it is in its public
-    // constructor, `JdkHttpPushClient(HttpClient, Duration)`, which is the documented way to supply
+    // `transitive`, because HttpClient is not merely behind JdkPushHttpClient — it is in its public
+    // constructor, `JdkPushHttpClient(HttpClient, Duration)`, which is the documented way to supply
     // a configured client. Without it a consumer calling that constructor gets "package
     // java.net.http is not visible" until they add the requires themselves. Everything else the
     // core uses — java.security, javax.crypto, java.util.Base64 — is in java.base.

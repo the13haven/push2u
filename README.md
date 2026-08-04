@@ -52,7 +52,7 @@ module com.example.app {
 ```
 
 The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
-its own configured `HttpClient` to `JdkHttpPushClient` does not have to require it as well. JSpecify
+its own configured `HttpClient` to `JdkPushHttpClient` does not have to require it as well. JSpecify
 is a `requires static`, so nothing resolves that jar at runtime and the module stays dependency-free
 on the module path exactly as it is on the class path. You do not need JSpecify to compile against
 push2u — the nullness annotations are readable from the class files either way. You need it only if
@@ -251,9 +251,9 @@ PushSender sender = PushSender.builder()
     .build();
 ```
 
-The default is `JdkHttpPushClient`, with a 30-second per-request timeout. Push delivery never
+The default is `JdkPushHttpClient`, with a 30-second per-request timeout. Push delivery never
 reads the response body: `PushResponse` carries only the status code and headers, and
-`JdkHttpPushClient` discards the body without buffering it, because the endpoint is a capability
+`JdkPushHttpClient` discards the body without buffering it, because the endpoint is a capability
 URL taken from the (untrusted) subscription and a hostile server must not be able to feed the
 sender an arbitrarily large response. Custom implementations should do the same.
 
