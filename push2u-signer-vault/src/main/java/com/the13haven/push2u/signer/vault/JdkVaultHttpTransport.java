@@ -36,8 +36,18 @@ import com.the13haven.push2u.PushCryptoException;
  *       treat a mangled response as valid.
  * </ul>
  *
+ * <p>A third guarantee holds at construction: <b>the client must not follow redirects.</b> The JDK client re-sends
+ * custom headers such as {@code X-Vault-Token} to the redirect target — including a cross-origin one — so a Vault
+ * address that resolves to an attacker (DNS hijack, squatted typo host, compromised reverse proxy) could answer 307 and
+ * receive the token. A supplied client whose {@link HttpClient#followRedirects()} is not
+ * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way.
+ *
  * <p>Exception messages carry the HTTP method and the request URI without its query (a Vault query can name secrets),
- * and never any request header — the Vault token travels in {@code X-Vault-Token} and must not leak into logs.
+ * and never any request header — the Vault token travels in {@code X-Vault-Token} and must not leak into logs. That
+ * includes a header the JDK client itself refuses (e.g. a token with a trailing newline, illegal in an HTTP field
+ * value): the client's {@code IllegalArgumentException} spells out the whole value, so it is reported as a
+ * {@link PushCryptoException} without the value — and without the original as its cause, whose message would leak into
+ * any logged stack trace just the same.
  */
 public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
@@ -67,13 +77,23 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
      * Uses the given {@link HttpClient} (bring your own mTLS, proxy, or executor configuration) with the given
      * per-request timeout and response-size cap.
      *
-     * @param httpClient the HTTP client to send requests with
+     * @param httpClient the HTTP client to send requests with; must be built with {@link HttpClient.Redirect#NEVER}
      * @param requestTimeout the per-request timeout, applied to every request; must be positive
      * @param maxResponseBytes the response-size cap in raw bytes; must be positive
-     * @throws IllegalArgumentException if the timeout or the cap is not positive
+     * @throws IllegalArgumentException if the client follows redirects, or the timeout or the cap is not positive
      */
     public JdkVaultHttpTransport(HttpClient httpClient, Duration requestTimeout, int maxResponseBytes) {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+        if (httpClient.followRedirects() != HttpClient.Redirect.NEVER) {
+            // The JDK client re-sends custom headers — X-Vault-Token included — to a redirect
+            // target, cross-origin ones too. Any Vault address that can be made to answer 3xx
+            // (DNS hijack, squatted typo host, compromised reverse proxy) would then be handed
+            // the live token, so a redirect-following client is a misconfiguration, not a choice.
+            throw new IllegalArgumentException("httpClient must not follow redirects (followRedirects() is "
+                    + httpClient.followRedirects() + "): the JDK client re-sends X-Vault-Token to the redirect"
+                    + " target, handing the token to whatever host a redirecting Vault address names."
+                    + " Build the client with followRedirects(HttpClient.Redirect.NEVER)");
+        }
         Objects.requireNonNull(requestTimeout, "requestTimeout");
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("requestTimeout must be positive, got " + requestTimeout);
@@ -102,10 +122,21 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         Objects.requireNonNull(headers, "headers");
         HttpRequest.Builder request =
                 HttpRequest.newBuilder(uri).timeout(requestTimeout).method(method, bodyPublisher);
-        headers.forEach(request::header);
         try {
+            // Inside the try on purpose: header() rejects a value carrying a character illegal
+            // in an HTTP field — with THE WHOLE VALUE in its message. Outside, that exception
+            // (holding the Vault token, e.g. one that arrived with a trailing newline from a
+            // file-sourced secret) would bypass the sanitising below and land verbatim in logs.
+            headers.forEach(request::header);
             HttpResponse<byte[]> response = httpClient.send(request.build(), this::boundedBody);
             return new VaultHttpResponse(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException e) {
+            // Deliberately NOT attached as the cause: the original's message spells out the
+            // rejected header value, and a cause's message rides into every logged stack trace
+            // just the same as the top-level one.
+            throw new PushCryptoException("Vault request was not sent: a request header carries a character that"
+                    + " is illegal in an HTTP header value (a token sourced from a file or a YAML block scalar"
+                    + " commonly ends with a newline): " + method + " " + withoutQuery(uri));
         } catch (HttpTimeoutException e) {
             throw new PushCryptoException(
                     "Vault request timed out after " + requestTimeout + ": " + method + " " + withoutQuery(uri), e);

@@ -246,10 +246,15 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void healthIndicatorReportsDownWhenTheSignerFails() {
+        // The details carry a fixed reason and the exception TYPE — never the message, whose
+        // content is the signer's own diagnostic and belongs in the log, not the health payload
+        // (see healthIndicatorNeverRepublishesTheSignerExceptionMessage below).
         keyedRunner().withUserConfiguration(FailingSignerConfiguration.class).run(context -> {
             Health health = context.getBean(Push2uHealthIndicator.class).health();
             assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-            assertThat(health.getDetails()).containsEntry("error", "signer backend unavailable");
+            assertThat(health.getDetails())
+                    .containsEntry("reason", "signer probe failed")
+                    .containsEntry("error", "IllegalStateException");
         });
     }
 
@@ -258,12 +263,31 @@ class Push2uAutoConfigurationTest {
         keyedRunner()
                 .withUserConfiguration(MessagelessFailingSignerConfiguration.class)
                 .run(context -> {
-                    // Health.Builder.withDetail rejects a null value, so passing getMessage() through would
-                    // make health() throw instead of reporting the failure it exists to report.
+                    // The details are built from the exception type alone, so a messageless
+                    // exception must report exactly like one with a message — this pins that no
+                    // code path reaches for getMessage(), whose null Health.Builder.withDetail
+                    // would reject, making health() throw precisely when the signer is broken.
                     Health health = context.getBean(Push2uHealthIndicator.class).health();
                     assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-                    assertThat(health.getDetails()).containsEntry("error", IllegalStateException.class.getName());
+                    assertThat(health.getDetails()).containsEntry("error", "IllegalStateException");
                 });
+    }
+
+    @Test
+    void healthIndicatorNeverRepublishesTheSignerExceptionMessage() {
+        // Signer exception messages embed internal detail by design — the Vault address, mount
+        // and key name, and up to 2 KiB of Vault response body. Health details are served to
+        // whoever can reach the endpoint once show-details is opened up (show-details: always
+        // is common), so the message must never enter the payload — only a fixed reason and
+        // the exception type.
+        keyedRunner().withUserConfiguration(LeakingSignerConfiguration.class).run(context -> {
+            Health health = context.getBean(Push2uHealthIndicator.class).health();
+            assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+            assertThat(health.getDetails().values())
+                    .allSatisfy(value -> assertThat(String.valueOf(value))
+                            .doesNotContain("hvs.SECRET-TOKEN-MARKER")
+                            .doesNotContain("vault.internal"));
+        });
     }
 
     private ApplicationContextRunner keyedRunner() {
@@ -369,6 +393,30 @@ class Push2uAutoConfigurationTest {
                     // No message — Health.Builder rejects a null detail value, so the indicator
                     // must not pass getMessage() through unguarded.
                     throw new IllegalStateException();
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            };
+        }
+    }
+
+    /** A signer whose failure message carries the internals a remote signer's genuinely would. */
+    @Configuration(proxyBeanMethods = false)
+    static class LeakingSignerConfiguration {
+
+        @Bean
+        VapidSigner leakingSigner() {
+            return new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    throw new IllegalStateException("Vault Transit sign failed: HTTP 403 — "
+                            + "POST http://vault.internal:8200/v1/transit/sign/vapid "
+                            + "(token hvs.SECRET-TOKEN-MARKER)");
                 }
 
                 @Override

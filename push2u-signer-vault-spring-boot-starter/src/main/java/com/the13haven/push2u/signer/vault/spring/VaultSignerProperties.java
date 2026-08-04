@@ -65,4 +65,24 @@ public record VaultSignerProperties(
                     "push2u.signer.vault.max-response-bytes must be positive, got " + maxResponseBytes);
         }
     }
+
+    /**
+     * The record-generated {@code toString()} prints every component, {@code token} included — and while push2u never
+     * stringifies this record and the actuator env/configprops endpoints mask values by default, the consuming
+     * application is one accidental {@code log.info("{}", properties)} or debugger dump away from its live Vault token
+     * in a log line. The token renders as {@code ***} when set (and as {@code null} when not, so the mask never reads
+     * as "a token is configured"); everything else keeps the generated shape.
+     */
+    @Override
+    public String toString() {
+        return "VaultSignerProperties[address=" + address
+                + ", mount=" + mount
+                + ", keyName=" + keyName
+                + ", token=" + (token == null ? null : "***")
+                + ", publicKey=" + publicKey
+                + ", keyVersion=" + keyVersion
+                + ", requestTimeout=" + requestTimeout
+                + ", connectTimeout=" + connectTimeout
+                + ", maxResponseBytes=" + maxResponseBytes + "]";
+    }
 }

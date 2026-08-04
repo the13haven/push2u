@@ -443,11 +443,15 @@ push2u:
 Resolution order (two extension points, plus the properties-only fallback):
 
 1. A `VaultHttpTransport` bean — full control (custom HTTP stack, observability). The transport
-   properties above are then ignored; the bean owns those concerns.
+   properties above are then ignored; the bean owns those concerns. Implementations must honour
+   the interface contract: a response-size cap, a per-request timeout, no redirect following, and
+   no request headers in exception messages.
 2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
-   owns it).
+   owns it). The client must not follow redirects (the builder default): the JDK client re-sends
+   `X-Vault-Token` to a redirect target, so a client built with `followRedirects` other than
+   `NEVER` is rejected at startup.
 3. Otherwise the default transport is built entirely from the properties.
 
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push

@@ -189,6 +189,81 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
+    void aTokenTheHttpClientWouldRejectNeverReachesTheExceptionOrItsCauses() {
+        // The malformed-token path the timeout-based test above cannot reach: a token with a
+        // trailing newline — exactly how it arrives from `kubectl create secret --from-file`, a
+        // Vault Agent sidecar file, or a YAML block scalar — is illegal in an HTTP field value,
+        // and HttpRequest.Builder.header() rejects it with THE WHOLE VALUE in the exception
+        // message. That exception must neither escape the transport nor ride along as a cause:
+        // in fetched mode it would surface in the constructor, putting the live token into the
+        // application's startup stack trace. Port 9 (discard): header validation fires before
+        // any connection is attempted.
+        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("GET")
+                .hasMessageContaining("/v1/transit/keys/vapid")
+                .hasNoCause()
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain(TOKEN)
+                        .doesNotContain("secret-query")
+                        .doesNotContain("marker"));
+    }
+
+    @Test
+    void aRedirectFollowingClientIsRejectedAtConstruction() {
+        // The JDK client does NOT strip custom headers such as X-Vault-Token across a
+        // cross-origin redirect, so a Vault address resolving to an attacker (DNS hijack,
+        // squatted typo host, compromised reverse proxy) could answer 307 and receive the
+        // token. A client that follows redirects must be refused up front, not trusted.
+        for (HttpClient.Redirect policy :
+                new HttpClient.Redirect[] {HttpClient.Redirect.ALWAYS, HttpClient.Redirect.NORMAL}) {
+            HttpClient following =
+                    HttpClient.newBuilder().followRedirects(policy).build();
+
+            assertThatThrownBy(() -> new JdkVaultHttpTransport(following, Duration.ofSeconds(5), 1024))
+                    .as("followRedirects %s", policy)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("redirect")
+                    .hasMessageContaining("X-Vault-Token");
+        }
+    }
+
+    @Test
+    void theDefaultTransportReturnsARedirectInsteadOfFollowingIt() throws Exception {
+        // Pins the safe default: the transport must hand a 3xx back to the caller (where it
+        // fails as an unexpected status) rather than chase the Location — following it would
+        // replay X-Vault-Token against whatever host the redirect names.
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        try {
+            server.createContext("/v1", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().add("Location", "/stolen");
+                exchange.sendResponseHeaders(307, -1);
+                exchange.close();
+            });
+            server.createContext("/stolen", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                byte[] leaked = "leaked".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, leaked.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(leaked);
+                }
+            });
+            server.start();
+            URI uri = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1/transit/keys/vapid");
+
+            VaultHttpResponse response = new JdkVaultHttpTransport().get(uri, Map.of("X-Vault-Token", TOKEN));
+
+            assertThat(response.statusCode()).isEqualTo(307);
+            assertThat(response.body()).doesNotContain("leaked");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void theSuppliedHttpClientCarriesTheRequests() throws Exception {
         RecordingHttpClient recording = new RecordingHttpClient(HttpClient.newHttpClient());
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);

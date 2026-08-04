@@ -234,6 +234,28 @@ class VaultTransitVapidSignerExtractionTest {
     }
 
     @Test
+    void anImplausiblyLongLatestVersionDigitRunIsNotEchoedThroughTheCause() {
+        // A digit run too long for an int used to reach Integer.parseInt, whose
+        // NumberFormatException message carries the WHOLE run — and attaching it as the cause
+        // put a 10k-character message into every logged stack trace, defeating the
+        // ERROR_ECHO_LIMIT the module's own messages honour. The failure must stay log-safe
+        // along the entire chain.
+        String digits = "1".repeat(10_000);
+        String body = "{\"data\":{\"latest_version\":" + digits + ",\"keys\":{" + entry(1) + "}}}";
+
+        assertThatThrownBy(() -> VaultTransitVapidSigner.extractLatestVersion(body))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("latest_version")
+                .satisfies(e -> {
+                    for (Throwable link = e; link != null; link = link.getCause()) {
+                        assertThat(String.valueOf(link.getMessage()).length())
+                                .as("no message in the chain may carry the full digit run")
+                                .isLessThan(4096);
+                    }
+                });
+    }
+
+    @Test
     void latestVersionRejectsNonAsciiDigits() {
         // Character.isDigit accepts Arabic-Indic digits and Integer.parseInt converts them, so a
         // response carrying them would silently yield a version number nothing in it spells out.
