@@ -65,11 +65,18 @@ jobs:
           # adding the README banner then spent three minutes of the quality gate on a PNG. Nothing
           # here reaches a compiler, a test or an analyser.
           #
+          # config/ is matched FIRST and always counts as code, whatever the suffix: everything
+          # under it configures an analyser. config/quality/license/header-regex.txt is a .txt file
+          # that decides whether Checkstyle accepts the licence header on every source file in the
+          # repository — classifying it as prose would let a change that breaks the gate for the
+          # whole tree merge with the gate reported green, having never run.
+          #
           # Pattern matching rather than grep, so the answer does not depend on which grep dialect
-          # the runner image ships.
+          # the runner image ships. `*` matches `/` in a case pattern, so `config/*` is recursive.
           code=false
           while IFS= read -r file; do
             case "${file}" in
+              config/*) code=true; break ;;
               '' | *.md | *.txt) ;;
               *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
               *) code=true; break ;;

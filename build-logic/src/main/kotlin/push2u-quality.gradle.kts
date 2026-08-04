@@ -1,4 +1,5 @@
 import com.github.spotbugs.snom.SpotBugsTask
+import java.util.concurrent.Callable
 import net.ltgt.gradle.errorprone.errorprone
 
 // Convention plugin bundling every static-analysis tool push2u runs: Spotless (formatting),
@@ -76,10 +77,14 @@ checkstyle {
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
 
     // `config/quality`, not the directory holding checkstyle.xml: this is what `${config_loc}`
-    // resolves to inside the config, and RegexpHeader reads its pattern from
+    // resolves to inside the config, and both configurations read the header pattern from
     // `${config_loc}/license/header-regex.txt`. Gradle tracks the whole directory as a task input,
     // so editing the header pattern re-runs Checkstyle — a path escaping it with `..` would not
     // be tracked, and a changed pattern would silently replay a stale UP-TO-DATE result.
+    //
+    // An IDE Checkstyle plugin resolving `${config_loc}` on its own will point it at the directory
+    // holding the config file; set it to `config/quality` there too, or the header pattern will
+    // not be found.
     configDirectory = rootProject.layout.projectDirectory.dir("config/quality")
 }
 
@@ -104,6 +109,35 @@ dependencies {
             because("GHSA-6fmv-xxpf-w3cw")
         }
     }
+}
+
+// The one Checkstyle task that is not main-only. Checkstyle skips the test source sets because the
+// full ruleset does not apply to them, and Spotless — which does cover every source set — skips
+// package-info.java and module-info.java by name (LicenseHeaderStep would eat their leading
+// Javadoc). The overlap of the two exclusions is a file nothing checks, and push2u-core's
+// testFixtures are PUBLISHED, so such a file would ship to Maven Central without a licence header.
+// This task closes that gap with a configuration holding RegexpHeader and nothing else.
+// Resolved here, against the project: inside the task-configuration lambda below, `extensions`
+// would be the task's own and `SourceSetContainer` is not among them.
+val javaSourceSets = extensions.getByType<SourceSetContainer>()
+
+val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeader") {
+    description = "Verifies the licence header on the source sets checkstyleMain does not cover."
+    group = "verification"
+
+    configFile = rootProject.file("config/quality/checkstyle/checkstyle-header.xml")
+
+    // A Callable, so the container is read when the task's inputs are resolved rather than when
+    // this plugin is applied — push2u-core creates `fipsTest` in its own build script, which runs
+    // later, and a list built here and now would miss it.
+    setSource(
+        Callable {
+            javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs }
+        })
+    include("**/*.java")
+
+    // Checkstyle parses source, not bytecode; the property is mandatory but nothing here reads it.
+    classpath = files()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -234,7 +268,7 @@ tasks.withType<JavaCompile>().configureEach {
 // ---------------------------------------------------------------------------------------------
 // Lifecycle tasks
 // ---------------------------------------------------------------------------------------------
-val analysisTasks = listOf("checkstyleMain", "pmdMain", "spotbugsMain")
+val analysisTasks = listOf("checkstyleMain", checkstyleLicenseHeader.name, "pmdMain", "spotbugsMain")
 
 tasks.register("qualityCheck") {
     description = "Runs all quality checks locally (auto-formats code)."
@@ -265,6 +299,7 @@ val formattingTasks = listOf("spotlessApply", "spotlessCheck")
 
 tasks.withType<JavaCompile>().configureEach { mustRunAfter(formattingTasks) }
 tasks.named("checkstyleMain") { mustRunAfter(formattingTasks) }
+checkstyleLicenseHeader.configure { mustRunAfter(formattingTasks) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
 tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }
@@ -284,7 +319,11 @@ gradle.taskGraph.whenReady {
     val requested = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }.toSet()
     val spotlessRequested = requested.any { it.startsWith("spotless") }
 
-    tasks.withType<Checkstyle>().configureEach { enabled = mainOnly(name) || name in requested }
+    // checkstyleLicenseHeader is the exception to "main-only": it exists precisely for the source
+    // sets the name-based rule excludes, so it is enabled by the quality gate on its own name.
+    tasks.withType<Checkstyle>().configureEach {
+        enabled = mainOnly(name) || (runQuality && name == checkstyleLicenseHeader.name) || name in requested
+    }
     tasks.withType<Pmd>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.matching { it.name.startsWith("spotless") }.configureEach {

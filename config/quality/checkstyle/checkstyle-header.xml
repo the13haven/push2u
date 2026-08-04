@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Licence header only, for the source sets checkstyle.xml deliberately does not analyse.
+
+    Checkstyle runs on `main` alone: over `test`, `fipsTest` and `testFixtures` the full
+    configuration reports hundreds of Javadoc, naming and complexity violations that test code is
+    not written to satisfy. But the licence header is required everywhere, and Spotless — which
+    covers every source set — skips package-info.java and module-info.java by name. Without this
+    configuration such a file outside `main` would be checked by nothing at all, and push2u-core's
+    testFixtures are published, so it would reach Maven Central without a header.
+
+    The rule and the pattern file are the same ones checkstyle.xml uses; only the surrounding
+    ruleset differs.
+-->
+<module name="Checker">
+    <property name="severity" value="error"/>
+    <property name="charset" value="UTF-8"/>
+
+    <module name="RegexpHeader">
+        <property name="headerFile" value="${config_loc}/license/header-regex.txt"/>
+        <property name="fileExtensions" value="java"/>
+    </module>
+</module>
