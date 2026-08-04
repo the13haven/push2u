@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 The 13 Haven
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.the13haven.push2u.spring;
 
 import java.time.Duration;

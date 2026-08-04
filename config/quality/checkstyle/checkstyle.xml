@@ -7,8 +7,8 @@
     Checkstyle configuration for push2u.
 
     Enforces what formatting cannot: naming conventions, Javadoc completeness on the public API,
-    and import order. Layout rules (indentation, whitespace, braces, line wrapping) belong to
-    Spotless (Palantir Java Format) and must NOT be duplicated here.
+    import order and the licence header. Layout rules (indentation, whitespace, braces, line
+    wrapping) belong to Spotless (Palantir Java Format) and must NOT be duplicated here.
 
     push2u is a published library, so Javadoc on public types and methods is a hard requirement —
     it is the API documentation consumers see.
@@ -16,6 +16,26 @@
 <module name="Checker">
     <property name="severity" value="error"/>
     <property name="charset" value="UTF-8"/>
+
+    <!-- ======================== -->
+    <!-- Licence header           -->
+    <!-- ======================== -->
+
+    <!--
+        Every Java file opens with the Apache-2.0 SPDX header (ADR-008). Spotless writes and
+        verifies it across all source sets, but skips package-info.java and module-info.java by
+        name — there the header is written by hand and this rule is the only thing checking it.
+        Checkstyle analyses main sources only, which is exactly where those two file kinds live.
+
+        The year is `\d{4}` rather than a literal: a file keeps the year it was created in and is
+        never rewritten, so the tree holds a spread of years by design.
+
+        RegexpHeader sits on Checker, not TreeWalker: it reads lines, not the parsed AST.
+    -->
+    <module name="RegexpHeader">
+        <property name="headerFile" value="${config_loc}/license/header-regex.txt"/>
+        <property name="fileExtensions" value="java"/>
+    </module>
 
     <module name="TreeWalker">
 

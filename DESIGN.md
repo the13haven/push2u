@@ -419,6 +419,35 @@ exception-driven control flow.
 
 The project is licensed under Apache License 2.0, including its explicit patent grant.
 
+Every Java source file carries the licence in its header, in the SPDX short form the licence's own
+appendix asks for:
+
+```java
+/*
+ * Copyright <year> The 13 Haven
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+```
+
+`LICENSE` and the POM's `licenses` element already cover the distribution, so the header is not what
+makes the licence apply. It is what survives a single file being copied out of the repository, and
+what per-file scanners (ScanCode, FOSSA, ORT) read — without it they classify the file as
+`unknown licence`, which is friction for exactly the enterprise consumer this library targets. The
+short SPDX identifier is machine-readable and is preferred here to the full boilerplate, which would
+repeat `LICENSE` in 100+ files.
+
+The year is the year the file was created, and is never advanced: a maintained copyright range
+means re-touching every file each January for no legal effect, since the notice is evidence of
+authorship at a date rather than a term that lapses. Spotless writes the current year into a new
+file and preserves whatever it finds afterwards.
+
+Enforcement is split because Spotless's `LicenseHeaderStep` skips `package-info.java` and
+`module-info.java` by name — their leading Javadoc would otherwise be read as a stale header and
+replaced. Spotless therefore owns every other file in every source set, and Checkstyle's
+`RegexpHeader` verifies the header's exact shape across `main` sources, which is where those two
+file kinds live.
+
 ### ADR-009 — Standalone repository
 
 push2u is maintained as an independent Gradle multi-project build and has no application-specific

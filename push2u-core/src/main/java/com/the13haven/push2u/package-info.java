@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 The 13 Haven
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 /**
  * push2u — a JVM library for the Web Push protocol (RFC 8030 / 8291 / 8292 / 8188), carrying no runtime implementation
  * dependencies (only JSpecify's annotations): VAPID-authenticated, end-to-end-encrypted delivery of push messages to

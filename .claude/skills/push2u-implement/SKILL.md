@@ -32,6 +32,12 @@ While iterating, run the narrowest thing that answers your question:
 Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
 package and unused imports, do not spend attention hand-checking them. Write the code, run the gate.
 
+The same goes for the Apache-2.0 SPDX licence header every `.java` file carries: `qualityCheck`
+writes it into a new file with the current year, and leaves the year alone from then on. The one
+thing the gate cannot do for you is `package-info.java` and `module-info.java` — Spotless skips both
+by name so it cannot swallow their Javadoc, so a new package means copying the header in by hand.
+Checkstyle fails the build if you forget.
+
 ## Changing encryption, VAPID or protocol behaviour
 
 **Start from the clause, not from the code.** Find the RFC paragraph that governs what you are

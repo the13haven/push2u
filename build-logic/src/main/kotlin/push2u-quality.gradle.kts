@@ -41,6 +41,19 @@ fun toolLibrary(alias: String): Provider<MinimalExternalModuleDependency> =
 // ---------------------------------------------------------------------------------------------
 spotless {
     java {
+        // The Apache-2.0 SPDX header, on every Java file of every source set — Spotless both
+        // applies it (qualityCheck) and verifies it (qualityCheckCi).
+        //
+        // $YEAR is resolved once, when the header is first written to a file, and preserved on
+        // every later run (Spotless's PRESERVE year mode, the default without `ratchetFrom`): a
+        // file keeps the year it was created in, and nothing rewrites every file each January.
+        //
+        // LicenseHeaderStep skips package-info.java and module-info.java by name — their leading
+        // Javadoc would otherwise be treated as the old header and replaced. Those files carry the
+        // header by hand, and checkstyle.xml's RegexpHeader is what verifies it there; it re-checks
+        // the shape on all main sources anyway, the way it already re-checks the import grouping.
+        licenseHeaderFile(rootProject.file("config/quality/license/header.txt"))
+
         palantirJavaFormat(toolVersion("palantir"))
             .formatJavadoc(true)
             .style("PALANTIR")
@@ -61,6 +74,13 @@ spotless {
 checkstyle {
     toolVersion = toolVersion("checkstyle")
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
+
+    // `config/quality`, not the directory holding checkstyle.xml: this is what `${config_loc}`
+    // resolves to inside the config, and RegexpHeader reads its pattern from
+    // `${config_loc}/license/header-regex.txt`. Gradle tracks the whole directory as a task input,
+    // so editing the header pattern re-runs Checkstyle — a path escaping it with `..` would not
+    // be tracked, and a changed pattern would silently replay a stale UP-TO-DATE result.
+    configDirectory = rootProject.layout.projectDirectory.dir("config/quality")
 }
 
 // Version bumps, not suppressions. Both artefacts reach the `checkstyle` configuration only — the
