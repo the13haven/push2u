@@ -508,6 +508,14 @@ The build enforces both halves: NullAway fails on a contract violation, and Erro
 `JSpecifyMode` (generic nullness) is deliberately not enabled yet — its authors still describe it
 as evolving.
 
+Both run over `main` **and** `testFixtures`, and stop there. `push2u-core`'s fixtures are the
+published conformance kit, so their nullness contract reaches consumers exactly as the library's
+does; `test` and `fipsTest` stay out, where NullAway over unannotated code reports every builder
+field and nothing worth reading. The gap was not theoretical: moving the kit to its own package
+(ADR-014) left it outside any `@NullMarked` and nothing failed, because a `package-info.java`
+carrying no annotation does not compile to a class file at all — the omission is invisible in the
+published jar rather than merely unchecked.
+
 ### ADR-013 — Release and publication process
 
 The version is derived from git tags of the form `vX.Y.Z` by the axion-release plugin rather

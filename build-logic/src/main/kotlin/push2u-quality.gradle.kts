@@ -262,7 +262,14 @@ val blockingChecks = listOf(
 )
 
 tasks.withType<JavaCompile>().configureEach {
-    val productionCompile = name == "compileJava"
+    // testFixtures counts as production for the nullness contract, `test` and `fipsTest` do not.
+    // push2u-core's fixtures are the PUBLISHED conformance kit (ADR-012 applies to them exactly as
+    // it does to the library), and the failure this catches has already happened once: moving the
+    // kit into its own package left it outside any @NullMarked, and nothing said so — a
+    // package-info.java carrying no annotation does not even compile to a class file, so the loss
+    // is invisible in the jar. The reason `test` and `fipsTest` stay out is unchanged: NullAway
+    // over unannotated test code reports every builder field and nothing useful.
+    val productionCompile = name == "compileJava" || name == "compileTestFixturesJava"
     options.errorprone {
         enabled = provider {
             gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||

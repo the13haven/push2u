@@ -123,8 +123,9 @@ starter is ordered before the core starter and outranks the local signer.
 
 - **Nullness:** every package's `package-info.java` carries JSpecify `@NullMarked`. NullAway plus
   `RequireExplicitNullMarking` fail the build on a violation or a new unmarked package — a new
-  package needs its `package-info.java` with the mark. Both checks are `main`-only, so a new package
-  in `testFixtures` needs the mark written by hand: those fixtures are published (ADR-012).
+  package needs its `package-info.java` with the mark. Both checks cover `main` and `testFixtures`
+  — `push2u-core`'s fixtures are published, so the contract has to hold there too — and stop at
+  `test`/`fipsTest`, where NullAway without annotations is noise.
 - **A new public package in `push2u-core` or `push2u-signer-vault` needs an `exports` line** in that
   module's `module-info.java` (ADR-014). Nothing fails without it — tests run on the class path —
   but every module-path consumer gets "package … is not visible" once the version is published.
