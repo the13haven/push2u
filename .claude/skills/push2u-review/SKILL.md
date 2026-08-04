@@ -133,7 +133,7 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
 - **The push transport must not read the response body**, so a hostile service cannot create memory
   pressure by answering with a huge one. Redirects are not followed either — but that rests on
   `HttpClient.newHttpClient()` defaulting to `Redirect.NEVER`, not on an explicit setting, so an
-  application-supplied client (the two-argument `JdkHttpPushClient` constructor) can lose the
+  application-supplied client (the two-argument `JdkPushHttpClient` constructor) can lose the
   property without this class changing at all. Code that builds an `HttpClient` anywhere in the
   library should set the policy explicitly rather than inherit it.
 - **The Vault transport faces the opposite way** and must read responses — bounded and timed. The

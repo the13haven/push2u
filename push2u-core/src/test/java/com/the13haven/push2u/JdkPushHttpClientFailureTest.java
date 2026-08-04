@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Timeout;
  * <p>The endpoint is redacted in the message on both paths: a push endpoint carries the subscription identifier, which
  * is a bearer credential for that subscription, and exception messages reach logs.
  */
-class JdkHttpPushClientFailureTest {
+class JdkPushHttpClientFailureTest {
 
     private static final byte[] BODY = new byte[] {1, 2, 3};
 
@@ -42,7 +42,7 @@ class JdkHttpPushClientFailureTest {
     void aRefusedConnectionBecomesADeliveryFailureWithTheEndpointRedacted() throws IOException {
         URI unreachable = URI.create("https://127.0.0.1:" + closedPort() + "/wpush/v1/AAAA-secret-token");
 
-        assertThatThrownBy(() -> new JdkHttpPushClient(HttpClient.newHttpClient(), Duration.ofSeconds(2))
+        assertThatThrownBy(() -> new JdkPushHttpClient(HttpClient.newHttpClient(), Duration.ofSeconds(2))
                         .post(unreachable, Map.of(), BODY))
                 .isInstanceOf(PushDeliveryException.class)
                 .hasMessageContaining("POST to push endpoint failed")
@@ -77,7 +77,7 @@ class JdkHttpPushClientFailureTest {
         try {
             Thread sender = new Thread(() -> {
                 try {
-                    new JdkHttpPushClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
+                    new JdkPushHttpClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
                             .post(endpoint, Map.of(), BODY);
                 } catch (RuntimeException e) {
                     thrown.set(e);

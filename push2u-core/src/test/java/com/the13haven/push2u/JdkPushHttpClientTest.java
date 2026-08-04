@@ -19,12 +19,12 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link JdkHttpPushClient} against a live JDK {@link HttpServer}. The scenario the discarding body handler exists for:
+ * {@link JdkPushHttpClient} against a live JDK {@link HttpServer}. The scenario the discarding body handler exists for:
  * the endpoint is a capability URL from the (untrusted) subscription, so a hostile push service may answer with an
  * arbitrarily large body. The client must drain it without buffering and still hand the pipeline the status and headers
  * it needs.
  */
-class JdkHttpPushClientTest {
+class JdkPushHttpClientTest {
 
     /** Big enough that buffering it per send would be a real memory hit; streamed by the server. */
     private static final long HUGE_BODY_BYTES = 64L * 1024 * 1024;
@@ -50,7 +50,7 @@ class JdkHttpPushClientTest {
             server.start();
             URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
 
-            PushResponse response = new JdkHttpPushClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
+            PushResponse response = new JdkPushHttpClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
                     .post(endpoint, Map.of("TTL", "60"), new byte[] {1, 2, 3});
 
             assertThat(response.statusCode()).isEqualTo(429);

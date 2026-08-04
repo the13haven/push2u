@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Bean;
 
 import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
-import com.the13haven.push2u.JdkHttpPushClient;
+import com.the13haven.push2u.JdkPushHttpClient;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushSender;
@@ -68,14 +68,14 @@ public final class Push2uAutoConfiguration {
     }
 
     /**
-     * The HTTP transport; defaults to {@link JdkHttpPushClient}, overridable by an application bean.
+     * The HTTP transport; defaults to {@link JdkPushHttpClient}, overridable by an application bean.
      *
      * @return the transport
      */
     @Bean
     @ConditionalOnMissingBean
     public PushHttpClient push2uPushHttpClient() {
-        return new JdkHttpPushClient();
+        return new JdkPushHttpClient();
     }
 
     /**

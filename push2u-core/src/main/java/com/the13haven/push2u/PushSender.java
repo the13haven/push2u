@@ -63,7 +63,7 @@ public final class PushSender {
                 : new LocalEcVapidSigner(Objects.requireNonNull(builder.vapidKeys, "vapidKeys"), jca);
         this.contact = Objects.requireNonNull(builder.contact, "contact");
         this.encryptor = new WebPushEncryptor(jca);
-        this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkHttpPushClient();
+        this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkPushHttpClient();
         this.retryPolicy = builder.retryPolicy;
         this.jwtExpiry = builder.jwtExpiry;
         this.defaultTtl = builder.defaultTtl;
@@ -319,7 +319,7 @@ public final class PushSender {
         }
 
         /**
-         * The HTTP transport; defaults to {@link JdkHttpPushClient}.
+         * The HTTP transport; defaults to {@link JdkPushHttpClient}.
          *
          * @param httpClient the transport
          * @return this builder
