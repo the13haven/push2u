@@ -1,0 +1,179 @@
+---
+name: push2u-implement
+description: How to implement a change in the push2u Web Push library — the recurring procedures that span several files and are easy to get half-right. Use this when writing or changing code here — adding or changing encryption, VAPID or protocol behaviour; adding a configuration option (which spans the core builder, the Spring starter, validation, docs and tests); writing a new VapidSigner or transport; solving something without adding a dependency to the zero-dependency core; pinning a vulnerable transitive dependency; or adding a test that involves a specific JCE provider or BC-FIPS.
+---
+
+# Implementing a change in push2u
+
+This is how work gets done in this repository — the procedures that span more than one file and are
+easy to complete only halfway. It does not restate what is already written elsewhere: `CLAUDE.md`
+carries the facts that are always true, `DESIGN.md` §9 the settled decisions, and the
+`push2u-review` skill what a reviewer will check when you are finished.
+
+## The working loop
+
+`./gradlew build` compiles and tests; it does **not** run the analysers. The real gate is
+`./gradlew qualityCheck`, which also formats your code. Run it before you commit, not after — then
+the formatter's changes are part of your commit instead of a follow-up that muddies the diff.
+
+While iterating, run the narrowest thing that answers your question:
+
+```bash
+./gradlew :push2u-core:test --tests "com.the13haven.push2u.WebPushEncryptorTest"
+./gradlew :push2u-core:fipsTest
+./gradlew :push2u-signer-vault:test        # needs Docker — Testcontainers starts a Vault
+```
+
+Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
+package and unused imports, do not spend attention hand-checking them. Write the code, run the gate.
+
+## Changing encryption, VAPID or protocol behaviour
+
+**Start from the clause, not from the code.** Find the RFC paragraph that governs what you are
+changing and cite it in the code comment or the test name. Every existing rule here does this, and
+it is what makes the next reader able to tell a deliberate choice from an accident.
+
+**Then start from the vector.** `push2u-core/src/test/java/com/the13haven/push2u/TestVectors.java`
+holds the published vectors transcribed verbatim — the RFC 8291 §5 worked example, the RFC 8292 §2.4
+example, RFC 5869 HKDF. They are the specification: if your change alters output, the vectors are
+what decide whether the new output is right. Extend them when you cover a new case; never adjust one
+to match what the code now produces. A vector that moves because code moved has stopped being
+evidence of anything.
+
+Write the failing test before the fix — specifically the test that would have caught the bug. For
+security-relevant behaviour, aim the test at the bad outcome being impossible, not at the good path
+still working; the second passes for reasons that have nothing to do with your change.
+
+Two habits particular to this code:
+
+- **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, in
+  `WebPushEncryptor.checkRecordSize`, and both the pre-flight check and the encryptor call it. When
+  you find yourself writing a second copy of a protocol rule, put it where the first one lives.
+- **Size arithmetic in `long`.** A payload above `Integer.MAX_VALUE - 103` wraps negative in `int`
+  and passes any limit check. If you touch the size path, keep the sums wide and keep the boundary
+  test.
+
+## Adding a configuration option
+
+This is the procedure most often left half-finished, because the useful part works after step 1.
+
+1. **Core builder.** Add the setter on `PushSender.Builder`, validate the value where it is set (not
+   at send time), and document the unit and the default in Javadoc. Validation belongs here because
+   this is where the constraint is known — the builder rejects a `recordSize` below the RFC 8188 §2
+   floor of 18 regardless of who is calling.
+
+2. **Starter property.** Add the component to `Push2uProperties`. Leave it nullable and let `null`
+   mean "keep the builder default" — that is the pattern `jwt-expiry`, `default-ttl`,
+   `record-size` and `max-encrypted-body-bytes` all follow, and it keeps the default in one place
+   instead of two.
+
+3. **Wire it, and translate the error.** In `Push2uAutoConfiguration`, forward the value only when
+   it is set, and re-throw a rejection with the YAML property name in front:
+
+   ```java
+   Integer recordSize = properties.recordSize();
+   if (recordSize != null) {
+       try {
+           builder.recordSize(recordSize);
+       } catch (IllegalArgumentException e) {
+           throw new IllegalArgumentException("push2u.record-size: " + e.getMessage(), e);
+       }
+   }
+   ```
+
+   The builder's own message names its camelCase parameter, which is not what the operator wrote in
+   their YAML. Keep the cause — the original message carries the actual constraint.
+
+4. **Document it.** The README property table, and the protocol-limits section if the option changes
+   a limit. `DESIGN.md` too if it changes the pipeline's contract rather than a number.
+
+5. **Test all three levels.** The builder's validation in `push2u-core`, the binding in
+   `Push2uPropertiesTest`, and the wiring in `Push2uAutoConfigurationTest` — including the failure
+   case, asserting that the message names the YAML property. That assertion is the only thing
+   keeping step 3 from silently regressing.
+
+## Writing a new VapidSigner
+
+The contract is narrow and unforgiving: `sign` returns a raw 64-byte P-256 `r || s` ES256 signature,
+`publicKey` returns the 65-byte uncompressed point. A signer that returns DER, or a compressed
+point, will produce a JWT that push services reject with no useful diagnostic.
+
+- Extend `VapidSignerContractTest` from `push2u-core`'s published test fixtures. That is what the
+  fixtures are published for, and it is the cheapest way to find out you got the encoding wrong.
+- If the signer talks to a network service, give it **its own transport seam**. Do not reuse
+  `PushHttpClient`: it exists for a domain where response bodies are never read, and a key service's
+  responses must be read. Bound them by streamed byte count, fail closed rather than truncating, and
+  put a timeout on the request itself, not just the connection — a service that accepts a connection
+  and never answers would otherwise hang application startup.
+- A remote signer belongs in its own optional module (`api(project(":push2u-core"))`), never in the
+  core.
+- If the module has test fixtures that are internal scaffolding rather than a published contract,
+  skip their variants from the publication the way `push2u-signer-vault` does — otherwise an
+  internal helper becomes frozen API on the next release.
+
+## Solving it without a new dependency
+
+`push2u-core` has no runtime implementation dependency and that is a design constraint, not an
+accident (ADR-002) — the library exists to replace one that dragged a heavy transitive surface into
+its public API. Work through the options in this order:
+
+1. **A JDK API.** Most of what this library needs is already in `java.net.http`, `java.security`,
+   `javax.crypto` and `java.util.Base64`.
+2. **A minimal, purpose-built implementation, with the reason in a comment.** The precedent is the
+   Vault module's targeted extraction of `data.signature` from a JSON response: it is not a JSON
+   parser and does not try to be, it is bounded, and it fails closed. Narrow beats general here
+   because the failure mode of general parsing is a surprise, and the surprise is in a security
+   path.
+3. **A real library** — then it goes in an optional module and never in the core, and that is an
+   ADR-level decision to argue in the pull request, not a dependency line to slip in.
+
+Test-scoped dependencies and `compileOnly` in the starters are not exceptions to this: neither
+reaches a consumer's runtime classpath. Framework artifacts in the starters stay BOM-managed so
+their versions are governed in one place.
+
+## Pinning a vulnerable dependency
+
+The advisory usually lands on a transitive that no manifest here declares, so the fix is a
+dependency **constraint**, never `resolutionStrategy.force` — force also records the originally
+requested version in the submitted dependency graph, and Dependabot then alerts on that phantom node
+forever.
+
+```kotlin
+constraints {
+    add("checkstyle", "org.apache.commons:commons-lang3:3.18.0") {
+        because("CVE-2025-48924")
+    }
+}
+```
+
+Where it goes depends on whose classpath it is: build tooling that runs the build lives in the
+`buildscript` block of the root `build.gradle.kts`; analyser tool classpaths live with the tool in
+the `push2u-quality` convention plugin; anything on a module's own classpath goes in the
+`subprojects` constraint block. Name the advisory, and say in a comment whether the vulnerable path
+is one this project actually takes — that is what tells the next maintainer whether the pin can be
+dropped when the tool upgrades.
+
+## Provider-specific and BC-FIPS tests
+
+The ES256 path has two shapes: providers that offer native `SHA256withECDSAinP1363Format`, and
+providers that offer only DER-format `SHA256withECDSA` and need strict conversion. Both need
+covering, and the two providers cannot share a classpath — `bc-fips` and stock `bcprov` both ship
+`org.bouncycastle.crypto` with incompatible `CryptoServicesRegistrar` classes, and the non-FIPS one
+shadows the FIPS one.
+
+So: a test needing stock BouncyCastle goes in `src/test`, a test needing BC-FIPS goes in
+`src/fipsTest`, and neither jar is ever added to the other's configuration. `fipsTest` reuses the
+compiled helpers from `test` but not its dependencies, which is what keeps them apart. It also fails
+on discovering zero tests, so a suite that silently stops compiling into that source set is a build
+failure rather than a green run.
+
+## Before you call it done
+
+Run `./gradlew qualityCheck` — it formats, analyses, tests and checks the aggregated coverage floor
+in one pass. Then check the things no tool can see: is the documentation that describes this
+behaviour still true, does a change to architecture need its ADR amended, and does a new public
+member deserve to be permanent, since it ships to Maven Central and cannot be withdrawn.
+
+Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
+request — the release notes are generated from labels, and an unlabeled pull request lands in "Other
+Changes" without anything failing to warn you.
