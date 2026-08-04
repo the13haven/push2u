@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,6 +27,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -252,7 +257,111 @@ class Push2uHealthIndicatorTest {
         assertThat(health.getStatus()).isEqualTo(Status.DOWN);
         assertThat(String.valueOf(health.getDetails().get("reason"))).contains("could not be verified");
         // Same payload discipline as signing failures: the exception TYPE, never its message.
-        assertThat(String.valueOf(health.getDetails().get("error"))).contains("InvalidKeyException");
+        assertThat(String.valueOf(health.getDetails().get("error"))).contains("IllegalArgumentException");
+    }
+
+    @Test
+    void defaultTtlKeepsTheTransitionLoggingSemantics() {
+        // The cache-ttl=0s variant of this pin lives in Push2uAutoConfigurationTest; this one runs
+        // at the DEFAULT 30s TTL — the deployment shape that actually ships — where the sequence
+        // is: WARN on the transition into failure, cached DOWNs log nothing at all, the re-probe
+        // after the 5s failure TTL logs at DEBUG, and a recovery re-arms the WARN for the next
+        // outage. Driven by the injected clock, not by sleeping.
+        try (CapturedLogs logs = new CapturedLogs()) {
+            SwitchableSigner signer = new SwitchableSigner(realSigner);
+            signer.failing.set(true);
+            Push2uHealthIndicator indicator =
+                    new Push2uHealthIndicator(signer, Push2uHealthIndicator.DEFAULT_CACHE_TTL, clock);
+
+            indicator.health(); // t=0s: probe -> DOWN, WARN (transition)
+            clock.advance(Duration.ofSeconds(2));
+            indicator.health(); // t=2s: inside the failure TTL -> cached, no probe, no log
+            clock.advance(Duration.ofSeconds(4));
+            indicator.health(); // t=6s: failure TTL lapsed -> re-probe -> still DOWN, DEBUG
+            signer.failing.set(false);
+            clock.advance(Duration.ofSeconds(6));
+            assertThat(indicator.health().getStatus()).isEqualTo(Status.UP); // t=12s: recovery re-arms
+            signer.failing.set(true);
+            clock.advance(Duration.ofSeconds(31));
+            indicator.health(); // t=43s: success TTL lapsed -> new outage -> WARN again
+
+            assertThat(signer.signAttempts())
+                    .as("the t=2s call was served from cache")
+                    .isEqualTo(4);
+            assertThat(logs.count(Level.WARNING))
+                    .as("one WARN per outage, on each transition")
+                    .isEqualTo(2);
+            assertThat(logs.count(Level.FINE))
+                    .as("the persisting failure's re-probe degrades to DEBUG")
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void aThrowingPublicKeyWarnsOnceNotOnEveryProbe() {
+        // sign() succeeds, publicKey() throws — a legal SPI implementation (a remote signer may
+        // fetch its key). The failing-state flag must be derived from the probe's FINAL outcome:
+        // were it cleared mid-probe after sign() returned, every evaluation would read as a fresh
+        // transition and WARN-stack-trace — at the failure-TTL cadence, a WARN every 5 seconds
+        // for the whole outage.
+        try (CapturedLogs logs = new CapturedLogs()) {
+            VapidSigner keylessSigner = new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    return realSigner.sign(signingInput);
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    throw new IllegalStateException("vault key metadata fetch failed");
+                }
+            };
+            Push2uHealthIndicator indicator = new Push2uHealthIndicator(keylessSigner, Duration.ZERO, clock);
+
+            for (int i = 0; i < 3; i++) {
+                Health health = indicator.health();
+                assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+                assertThat(health.getDetails()).containsEntry("reason", "signer probe failed");
+            }
+
+            assertThat(logs.count(Level.WARNING))
+                    .as("one WARN for the whole outage")
+                    .isEqualTo(1);
+            assertThat(logs.count(Level.FINE))
+                    .as("subsequent probes degrade to DEBUG")
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
+    void aVerificationFailureLogsOnTransitionLikeAnyOtherFailure() {
+        // A verification-failure DOWN without any log line would leave an operator running the
+        // default show-details (never) with nothing to go on. The reason string is fixed and
+        // carries no signer internals, so it follows the same WARN-on-transition cadence.
+        try (CapturedLogs logs = new CapturedLogs()) {
+            VapidSigner garbageSigner = new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    byte[] signature = new byte[64];
+                    Arrays.fill(signature, (byte) 0x42);
+                    return signature;
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    return realSigner.publicKey();
+                }
+            };
+            Push2uHealthIndicator indicator = new Push2uHealthIndicator(garbageSigner, Duration.ZERO, clock);
+
+            indicator.health();
+            indicator.health();
+
+            assertThat(logs.count(Level.WARNING)).isEqualTo(1);
+            assertThat(logs.warnMessages())
+                    .allSatisfy(message -> assertThat(message).contains("push2u health check failed"));
+            assertThat(logs.count(Level.FINE)).isEqualTo(1);
+        }
     }
 
     private static void await(CountDownLatch latch) {
@@ -319,6 +428,54 @@ class Push2uHealthIndicatorTest {
 
         int signAttempts() {
             return signAttempts.get();
+        }
+    }
+
+    /**
+     * Captures the indicator's JUL records (the commons-logging backend on this test classpath — no SLF4J binding is
+     * present) so the WARN/DEBUG cadence can be asserted; restores the logger on close.
+     */
+    private static final class CapturedLogs implements AutoCloseable {
+
+        private final Logger julLogger = Logger.getLogger(Push2uHealthIndicator.class.getName());
+        private final List<LogRecord> records = new CopyOnWriteArrayList<>();
+        private final Level originalLevel;
+        private final Handler handler = new Handler() {
+            @Override
+            public void publish(LogRecord logRecord) {
+                records.add(logRecord);
+            }
+
+            @Override
+            public void flush() {}
+
+            @Override
+            public void close() {}
+        };
+
+        CapturedLogs() {
+            originalLevel = julLogger.getLevel();
+            julLogger.addHandler(handler);
+            julLogger.setLevel(Level.ALL);
+        }
+
+        long count(Level level) {
+            return records.stream()
+                    .filter(logRecord -> logRecord.getLevel().equals(level))
+                    .count();
+        }
+
+        List<String> warnMessages() {
+            return records.stream()
+                    .filter(logRecord -> logRecord.getLevel().equals(Level.WARNING))
+                    .map(LogRecord::getMessage)
+                    .toList();
+        }
+
+        @Override
+        public void close() {
+            julLogger.removeHandler(handler);
+            julLogger.setLevel(originalLevel);
         }
     }
 

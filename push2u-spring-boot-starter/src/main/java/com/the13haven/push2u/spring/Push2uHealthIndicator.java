@@ -1,20 +1,8 @@
 package com.the13haven.push2u.spring;
 
-import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.security.AlgorithmParameters;
-import java.security.GeneralSecurityException;
-import java.security.InvalidKeyException;
-import java.security.KeyFactory;
-import java.security.Signature;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
-import java.security.spec.ECParameterSpec;
-import java.security.spec.ECPoint;
-import java.security.spec.ECPublicKeySpec;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -25,16 +13,21 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
 
+import com.the13haven.push2u.Es256Verify;
 import com.the13haven.push2u.VapidSigner;
 
 /**
  * Reports push2u readiness by exercising the configured {@link VapidSigner} end to end: it signs a small probe and
  * reports {@code UP} only if the signer returns a 64-byte raw {@code r||s} ES256 signature that <em>verifies</em>
- * against the signer's own advertised public key ({@link VapidSigner#publicKey()}). Verifying locally is what makes
- * this a probe rather than a length check — a signer returning 64 arbitrary bytes must be {@code DOWN}, and a signer
- * whose advertised public key does not belong to its signing key (a mispinned Vault {@code public-key} /
- * {@code key-version}, say) is exactly the misconfiguration that otherwise surfaces as a push service rejecting every
- * send with 401/403. The verification is pure local computation over the public key: no network, no key material.
+ * against the signer's own advertised public key ({@link VapidSigner#publicKey()}, checked locally through
+ * {@link Es256Verify}). Verifying is what makes this a probe rather than a length check — a signer returning 64
+ * arbitrary bytes must be {@code DOWN}, and a signer whose advertised public key does not belong to its signing key (a
+ * mispinned Vault {@code public-key} / {@code key-version}, say) is exactly the misconfiguration that otherwise
+ * surfaces as a push service rejecting every send with 401/403. The verification is pure local computation over the
+ * public key: no network, no key material. On the rare JVM whose providers offer no ES256 verification primitive at all
+ * ({@link Es256Verify#isSupported()}), the probe degrades to the length-only check with a one-time WARN — that is a
+ * platform capability statement, not a signer failure, and a signer that signs correctly there must not be reported
+ * {@code DOWN} forever.
  *
  * <p>The probe result is cached per indicator instance, because the health endpoint is polled: Kubernetes probes
  * commonly evaluate it every ~10 seconds per pod, Spring's own endpoint caching is off unless
@@ -50,10 +43,9 @@ import com.the13haven.push2u.VapidSigner;
  *
  * <p>Reports the signer type; never private key material, and never the failure's exception message — signer messages
  * embed internal detail (the Vault address, mount and key name, response body excerpts), which {@code show-details:
- * always} would republish to anyone who can reach the health endpoint. The full exception goes to the log instead,
- * where the operator diagnosing the DOWN already looks — at WARN once per outage (on the transition into failure) and
- * at DEBUG while it persists, because health is polled and re-tracing an unchanged failure every few seconds helps
- * nobody.
+ * always} would republish to anyone who can reach the health endpoint. The full failure goes to the log instead, where
+ * the operator diagnosing the DOWN already looks — at WARN once per outage (on the transition into failure) and at
+ * DEBUG while it persists, because health is polled and re-tracing an unchanged failure every few seconds helps nobody.
  *
  * <p>Registered only when a {@link com.the13haven.push2u.PushSender} is configured (see
  * {@link Push2uHealthAutoConfiguration}), so "the sender is wired" is the precondition and "the signer can sign" is the
@@ -68,12 +60,6 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     private static final String NAME = "signer";
     private static final byte[] PROBE_SIGNING_INPUT = "push2u signer probe".getBytes(StandardCharsets.UTF_8);
     private static final int ES256_SIGNATURE_LENGTH = 64;
-    /** The JCA name for ES256 with JOSE's raw {@code r||s} output — registered by SunEC on every stock JDK. */
-    private static final String ES256_P1363 = "SHA256withECDSAinP1363Format";
-
-    private static final int UNCOMPRESSED_POINT_LENGTH = 65;
-    private static final byte UNCOMPRESSED_POINT_TAG = 0x04;
-    private static final int COORDINATE_LENGTH = 32;
     /** The longest TTL representable in millis; anything above is clamped rather than overflowed. */
     private static final Duration MAX_MILLIS_DURATION = Duration.ofMillis(Long.MAX_VALUE);
 
@@ -111,12 +97,20 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     private final ReentrantLock probeLock = new ReentrantLock();
 
     /**
-     * Whether the previous probe threw — the state whose transitions gate the loud logging below. Health endpoints are
-     * polled (Kubernetes probes commonly every few seconds), so this is the only thing standing between one Vault
-     * outage and an unbounded stream of identical stack traces. The result cache above already suppresses most
-     * re-probing; this keeps the guarantee even at {@code cache-ttl: 0s}.
+     * Whether the previous probe concluded DOWN — the state whose transitions gate the loud logging below. Health
+     * endpoints are polled (Kubernetes probes commonly every few seconds), so this is the only thing standing between
+     * one Vault outage and an unbounded stream of identical stack traces. The result cache above already suppresses
+     * most re-probing; this keeps the guarantee even at {@code cache-ttl: 0s}. Cleared only from a probe's FINAL
+     * outcome (see {@link #probe()}), never mid-probe: a signer whose {@code sign()} succeeds but whose
+     * {@code publicKey()} then throws is one persistent failure, not a fresh transition on every evaluation.
      */
     private final AtomicBoolean probeFailing = new AtomicBoolean();
+
+    /**
+     * Whether the one-time "this JVM cannot verify ES256" WARN has been emitted. A platform property never changes at
+     * runtime, so one line per process is exactly the right amount of noise.
+     */
+    private final AtomicBoolean verificationUnsupportedWarned = new AtomicBoolean();
 
     /**
      * The last probe result with its expiry instant; volatile so the fast path can read it without taking
@@ -164,10 +158,12 @@ public final class Push2uHealthIndicator implements HealthIndicator {
 
     @Override
     public Health health() {
-        // Fast path: an unexpired cached result answers without contending on the lock — during
-        // steady state (the overwhelming majority of probe evaluations) this is one volatile read
-        // and one clock read, and a probe hanging on its backend never blocks callers that arrive
-        // while a valid result is still cached.
+        // Fast path: an unexpired cached result answers with one volatile read and one clock read,
+        // never touching the lock — the steady state for the overwhelming majority of evaluations.
+        // Callers that find the cache expired queue on the lock below. There is deliberately no
+        // probe timeout: a signer hanging on its backend holds those callers until the backend
+        // call itself gives up — bounding that wait belongs to the signer's transport (the Vault
+        // transport carries connect/read timeouts), and a second timeout here would only race it.
         CachedProbe cachedProbe = cache;
         if (cachedProbe != null && clock.millis() < cachedProbe.expiresAtMillis()) {
             return cachedProbe.health();
@@ -191,20 +187,35 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     }
 
     private Health probe() {
+        Health health = evaluateSigner();
+        if (Status.UP.equals(health.getStatus())) {
+            // Recovery re-arms the WARN — and only a probe that concluded UP as a WHOLE does so.
+            // Clearing the flag mid-probe (say, right after sign() returned) would turn a signer
+            // whose publicKey() throws on every probe into a WARN stack trace on every probe:
+            // precisely the log storm the transition gating exists to prevent.
+            probeFailing.set(false);
+        }
+        return health;
+    }
+
+    private Health evaluateSigner() {
         String signerType = signer.getClass().getSimpleName();
         try {
             byte[] signature = signer.sign(PROBE_SIGNING_INPUT);
-            // The probe no longer throws — arm the transition logging for the next outage.
-            probeFailing.set(false);
             if (signature.length != ES256_SIGNATURE_LENGTH) {
+                String reason = "signer produced " + signature.length + " bytes, expected " + ES256_SIGNATURE_LENGTH;
+                logFailure("the " + reason, null);
                 return Health.down()
                         .withDetail(NAME, signerType)
-                        .withDetail(
-                                "reason",
-                                "signer produced " + signature.length + " bytes, expected " + ES256_SIGNATURE_LENGTH)
+                        .withDetail("reason", reason)
                         .build();
             }
-            return verifyAgainstAdvertisedKey(signerType, signature);
+            // publicKey() is read inside this try on purpose: it is a signer call like sign(), and
+            // an implementation that fetches the key remotely can fail the same way — such a
+            // failure is classified (and transition-logged) as "signer probe failed", not as a
+            // verification problem.
+            byte[] advertisedKey = signer.publicKey();
+            return verifyAgainstAdvertisedKey(signerType, advertisedKey, signature);
         } catch (RuntimeException e) {
             // The exception message is deliberately kept OUT of the health payload: signer
             // failure messages embed internal detail by design (a Vault signer's names the Vault
@@ -214,17 +225,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
             // the exception type (getName(), never null unlike getMessage() and never empty
             // unlike an anonymous class's getSimpleName()); the full exception goes to the log,
             // which is where the operator diagnosing the DOWN already looks.
-            //
-            // Logged loudly only on the TRANSITION into failure: health is polled, so a Vault
-            // outage would otherwise stack-trace on every probe (every ~10s under Kubernetes)
-            // for its whole duration — from a library that otherwise never logs. While the
-            // failure persists the trace goes to DEBUG (opt-in); recovery re-arms the WARN, so
-            // each new outage announces itself once.
-            if (probeFailing.compareAndSet(false, true)) {
-                LOG.warn("push2u health check failed: the signer probe threw", e);
-            } else {
-                LOG.debug("push2u health check still failing: the signer probe threw", e);
-            }
+            logFailure("the signer probe threw", e);
             return Health.down()
                     .withDetail(NAME, signerType)
                     .withDetail("reason", "signer probe failed")
@@ -236,22 +237,32 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     /**
      * Finishes the probe with a local ES256 verification of the signature over the probe input, against the public key
      * the signer itself advertises. Without this, any signer returning 64 arbitrary bytes would probe as UP. The key is
-     * re-read and re-decoded on every probe rather than cached: probes run at most every few seconds, the decode is
-     * microseconds of local work, and a custom signer whose advertised key changes (rotation) must be verified against
-     * its current key, not the one it advertised at startup.
+     * re-read on every probe rather than cached: probes run at most every few seconds, the verification is microseconds
+     * of local work, and a custom signer whose advertised key changes (rotation) must be verified against its current
+     * key, not the one it advertised at startup.
      */
-    private Health verifyAgainstAdvertisedKey(String signerType, byte[] signature) {
+    private Health verifyAgainstAdvertisedKey(String signerType, byte[] advertisedKey, byte[] signature) {
+        if (!Es256Verify.isSupported()) {
+            // A platform-capability statement, not a signer failure: this JVM's providers register
+            // neither the raw-format nor the DER-form ECDSA name (push2u-core's own resolution —
+            // a stock JDK always has at least one). A remote signer on such a platform still signs
+            // perfectly well, so condemning it to a permanent DOWN would be strictly worse than
+            // the length-only probe this verification replaced. Degrade to that check, saying so
+            // once — a platform property cannot change mid-process.
+            if (verificationUnsupportedWarned.compareAndSet(false, true)) {
+                LOG.warn("push2u health probe cannot verify ES256 signatures with this JVM's providers;"
+                        + " the probe degrades to checking the signature length only");
+            }
+            return Health.up().withDetail(NAME, signerType).build();
+        }
         boolean valid;
         try {
-            Signature verifier = Signature.getInstance(ES256_P1363);
-            verifier.initVerify(decodeUncompressedP256(signer.publicKey()));
-            verifier.update(PROBE_SIGNING_INPUT);
-            valid = verifier.verify(signature);
-        } catch (GeneralSecurityException e) {
-            // Verification could not even run: the advertised key is malformed or not usable as a
-            // P-256 point, or the platform providers lack raw-format ECDSA (a stock JDK always has
-            // it). Same payload discipline as the signing failure above — a fixed reason and the
-            // exception type, never the message.
+            valid = Es256Verify.verify(advertisedKey, PROBE_SIGNING_INPUT, signature);
+        } catch (RuntimeException e) {
+            // The advertised key is malformed or cannot be imported as a P-256 point. Same payload
+            // discipline as the signing failure above — a fixed reason and the exception type,
+            // never the message.
+            logFailure("the signer probe signature could not be verified", e);
             return Health.down()
                     .withDetail(NAME, signerType)
                     .withDetail("reason", "signer probe signature could not be verified")
@@ -259,6 +270,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
                     .build();
         }
         if (!valid) {
+            logFailure("the signer probe signature does not verify against the advertised public key", null);
             return Health.down()
                     .withDetail(NAME, signerType)
                     .withDetail("reason", "signer probe signature does not verify against the advertised public key")
@@ -268,20 +280,24 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     }
 
     /**
-     * Decodes a 65-byte X9.62 uncompressed P-256 point into a public key, through the platform JCA. A local re-spelling
-     * of what push2u-core's package-private {@code EcKeys} does — deliberately not widened there: the core's API
-     * surface stays minimal, and this is public-key handling only, so duplicating it carries no key-custody risk.
+     * Logs a probe failure loudly only on the TRANSITION into failure: health is polled, so a Vault outage would
+     * otherwise stack-trace on every probe (every ~10s under Kubernetes, every ~5s once the failure TTL drives the
+     * cadence) for its whole duration — from a library that otherwise never logs. While the failure persists the detail
+     * goes to DEBUG (opt-in); recovery re-arms the WARN (see {@link #probe()}), so each new outage announces itself
+     * once. All failure modes share the one flag: what the operator needs announced is "the probe started failing",
+     * with the current mode carried in the message.
      */
-    private static ECPublicKey decodeUncompressedP256(byte[] point) throws GeneralSecurityException {
-        if (point.length != UNCOMPRESSED_POINT_LENGTH || point[0] != UNCOMPRESSED_POINT_TAG) {
-            throw new InvalidKeyException("the advertised public key is not a 65-byte uncompressed P-256 point");
+    private void logFailure(String what, @Nullable Throwable cause) {
+        // The level guards exist for PMD's GuardLogStatement, and they are honest: the message is
+        // concatenated eagerly, so skip building it when the level is off. The state transition
+        // (compareAndSet) must happen regardless — it tracks the outage, not the logging.
+        if (probeFailing.compareAndSet(false, true)) {
+            if (LOG.isWarnEnabled()) {
+                LOG.warn("push2u health check failed: " + what, cause);
+            }
+        } else if (LOG.isDebugEnabled()) {
+            LOG.debug("push2u health check still failing: " + what, cause);
         }
-        AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
-        parameters.init(new ECGenParameterSpec("secp256r1"));
-        ECParameterSpec p256 = parameters.getParameterSpec(ECParameterSpec.class);
-        BigInteger x = new BigInteger(1, Arrays.copyOfRange(point, 1, 1 + COORDINATE_LENGTH));
-        BigInteger y = new BigInteger(1, Arrays.copyOfRange(point, 1 + COORDINATE_LENGTH, UNCOMPRESSED_POINT_LENGTH));
-        return (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(new ECPoint(x, y), p256));
     }
 
     /** Millis conversion that clamps instead of overflowing, so an absurdly large TTL means "forever", not "never". */

@@ -2,6 +2,8 @@ package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.Test;
 
 /**
@@ -23,7 +25,8 @@ class Push2uPropertiesTest {
                 null,
                 null,
                 new Push2uProperties.Retry(3, null, null),
-                new Push2uProperties.Health(true, null));
+                // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
+                new Push2uProperties.Health(true, Duration.ofSeconds(30)));
 
         // Directly and through the enclosing record — the outer toString() embeds the inner one.
         for (String rendered : new String[] {vapid.toString(), properties.toString()}) {
