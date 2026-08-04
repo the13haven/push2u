@@ -41,9 +41,11 @@ import com.the13haven.push2u.PushCryptoException;
  * structural characters the extractor anchors on ({@code "data"}, whole spelled-out members, escaped quotes, braces,
  * trailing backslashes). A naive extractor that scans for a substring instead of tracking string state reads a value
  * out of a string literal — the most likely real bug in hand-rolled code like this — and these tests fail on the wrong
- * <em>result</em>, not just on a wrong exception. They extend {@link VaultTransitVapidSignerExtractionTest}'s anchoring
- * cases (decoy members whose string value merely equals a label) to hostile content <em>inside</em> string literals,
- * which that suite does not cover.
+ * <em>result</em>, not just on a wrong exception. The hostile payloads are planted in <em>sibling</em> decoy members,
+ * so they pin the lookup scanner's string-state tracking; the value scanner's own escape skip is pinned separately, by
+ * extracting a target value that itself contains escaped quotes and demanding it whole. They extend
+ * {@link VaultTransitVapidSignerExtractionTest}'s anchoring cases (decoy members whose string value merely equals a
+ * label) to hostile content <em>inside</em> string literals, which that suite does not cover.
  */
 class VaultTransitVapidSignerParserFuzzTest {
 
@@ -300,6 +302,34 @@ class VaultTransitVapidSignerParserFuzzTest {
                 "\\\"signature\\\":\\\"" + impostor + "\\\"",
                 // A well-formed envelope as a plain value.
                 impostor);
+    }
+
+    /**
+     * Escaped quotes inside the very string literal being extracted — the one place the sweeps above never put them.
+     * The hostile payloads plant {@code \"} only in sibling decoy members (pinning the lookup scanner's string-state
+     * tracking) and in unterminated strings (pinning the value scanner's post-loop bounds check), so a value scanner
+     * that stops at the first quote character — its escape skip dropped — returns a silently <em>truncated</em> value
+     * while still honouring the exception contract, invisible to every sweep. Only extracting a target value that
+     * itself contains {@code \"} and demanding the full raw content pins the skip. The whole-flow targets cannot
+     * discriminate here — a signature envelope or PEM containing an escaped quote is rejected downstream of extraction
+     * whether truncated or whole — so this pins the package-private extractors directly. Expected values are the raw
+     * (unescaped) content, exactly as {@code stringValueAt} contracts to return it; only {@code extractPublicKeyPem}'s
+     * documented {@code \n} unescaping is applied.
+     */
+    @Test
+    void anEscapedQuoteInsideAnExtractedValueDoesNotTruncateIt() {
+        String body = "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"PEM\\\"WITH\\\"QUOTES\\nEND\"}},"
+                + "\"latest_version\":1,\"type\":\"ecdsa\\\"p256\\\"tail\"}}";
+
+        assertThat(VaultTransitVapidSigner.extractKeyType(body))
+                .as("the full raw type value, escaped quotes and the content after them included")
+                .isEqualTo("ecdsa\\\"p256\\\"tail");
+        assertThat(VaultTransitVapidSigner.extractPublicKeyPem(body, 1))
+                .as("the full raw PEM value, with only the documented \\n unescaping applied")
+                .isEqualTo("PEM\\\"WITH\\\"QUOTES\nEND");
+        assertThat(VaultTransitVapidSigner.extractLatestVersion(body))
+                .as("the lookups around the escape-laden values must still bind to the real members")
+                .isEqualTo(1);
     }
 
     // ---- harness ----------------------------------------------------------------------------------

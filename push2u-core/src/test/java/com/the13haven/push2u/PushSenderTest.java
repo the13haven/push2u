@@ -12,8 +12,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -28,13 +26,13 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end send-pipeline tests: a real {@link PushSender} (real RFC 8291 encryption + RFC 8292 VAPID + the JDK HTTP
  * client) against an in-process {@link MockPushReceiver}, asserting the request shape, the VAPID claims of a real
- * request, the {@code Retry-After} handling and the async execution contract. A {@link RecordingSleeper} runs the retry
- * loop without real backoff delays. The full status-code → {@link PushResult} classification table (ranges and their
- * edges) lives in {@link PushSenderStatusClassificationTest}.
+ * request, the {@code Retry-After} handling and the async execution contract. A
+ * {@link PushTestSupport.RecordingSleeper} runs the retry loop without real backoff delays. The full status-code →
+ * {@link PushResult} classification table (ranges and their edges) lives in {@link PushSenderStatusClassificationTest}.
  */
 class PushSenderTest {
 
-    private final RecordingSleeper sleeper = new RecordingSleeper();
+    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
 
     @Test
     void deliversOn201AndSendsAWellFormedRequest() throws IOException {
@@ -383,15 +381,5 @@ class PushSenderTest {
     private static String claimsOf(String authorization) {
         String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
         return new String(Base64Url.decode(jwt.split("\\.", -1)[1]), StandardCharsets.UTF_8);
-    }
-
-    /** Records backoff durations instead of sleeping, so the retry tests run instantly. */
-    static final class RecordingSleeper implements Sleeper {
-        final List<Duration> sleeps = new ArrayList<>();
-
-        @Override
-        public void sleep(Duration duration) {
-            sleeps.add(duration);
-        }
     }
 }

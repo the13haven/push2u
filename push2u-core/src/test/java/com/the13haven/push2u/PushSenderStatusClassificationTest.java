@@ -16,17 +16,17 @@ import org.junit.jupiter.params.provider.ValueSource;
  * The complete HTTP status → {@link PushResult} classification table of {@link PushSender}, edges included, driven
  * through the real pipeline against the in-process {@link MockPushReceiver}. The tests in {@link PushSenderTest} pin
  * behaviours whose value is not the status code itself (request shape, {@code Retry-After} honouring); this class pins
- * the three classification predicates at their range boundaries — 299/300, 499/500, 599/600 — where an off-by-one in a
- * comparison silently reclassifies a status while every mid-range test stays green. A misclassification is quiet in
- * production too: a retried plain 4xx hammers a service that meant "go away", and a 5xx treated as fatal drops a
- * message one more attempt would have delivered.
+ * the three classification predicates at their range boundaries — 199/200, 299/300, 499/500, 599/600 — where an
+ * off-by-one in a comparison silently reclassifies a status while every mid-range test stays green. A misclassification
+ * is quiet in production too: a retried plain 4xx hammers a service that meant "go away", and a 5xx treated as fatal
+ * drops a message one more attempt would have delivered.
  *
  * <p>Also the retry-exhaustion invariant: exhaustion is FAILED with {@code attempts == maxAttempts} and exactly
  * {@code maxAttempts - 1} recorded backoffs — a backoff after the final attempt would delay the caller for nothing.
  */
 class PushSenderStatusClassificationTest {
 
-    private final PushSenderTest.RecordingSleeper sleeper = new PushSenderTest.RecordingSleeper();
+    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
 
     @ParameterizedTest(name = "HTTP {0} is DELIVERED")
     @ValueSource(ints = {200, 201, 204, 299})
@@ -110,6 +110,36 @@ class PushSenderStatusClassificationTest {
             assertThat(receiver.requests()).hasSize(1);
             assertThat(sleeper.sleeps).isEmpty();
         }
+    }
+
+    /**
+     * The DELIVERED lower edge: 199 must be FAILED, or {@code isDelivered} mutated to {@code code >= 199} ships green
+     * while 200 alone is pinned. This is the one boundary that cannot ride the {@link MockPushReceiver} like the
+     * others: the JDK HTTP client treats any 1xx as an interim response and keeps waiting for the final one (verified —
+     * a receiver answering a bare 199 makes the send time out instead of returning a result), so the case goes through
+     * the public {@link PushHttpClient} seam with a canned response instead. That still exercises the real
+     * {@code send()} classification loop, and it is exactly how a 199 can reach it in production: a custom transport
+     * that surfaces interim responses as final ones.
+     */
+    @Test
+    void theStatusJustBelowTheDeliveredRangeFailsInOneAttemptWithoutRetry() {
+        PushSender pusher = PushSender.builder()
+                .vapid(generateVapidKeys())
+                .contact("mailto:ops@example.com")
+                .httpClient((endpoint, headers, body) -> PushResponse.of(199))
+                .sleeper(sleeper)
+                .build();
+        Subscription subscription = new Subscription(
+                "https://push.example.com/never-contacted",
+                TestVectors.b64(TestVectors.UA_PUBLIC),
+                TestVectors.b64(TestVectors.AUTH_SECRET));
+
+        PushResult result = pusher.send(subscription, PushMessage.of(bytes("x")));
+
+        assertThat(result.status()).as("HTTP 199").isEqualTo(PushResult.Status.FAILED);
+        assertThat(result.statusCode()).isEqualTo(199);
+        assertThat(result.attempts()).isEqualTo(1);
+        assertThat(sleeper.sleeps).as("a 1xx is not retryable, so no backoff").isEmpty();
     }
 
     @Test
