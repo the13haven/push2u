@@ -295,7 +295,35 @@ push2u:
 
 The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
 same types take precedence. When Spring Boot health support is present, the starter also exposes
-a health indicator that verifies the configured signer can produce a 64-byte ES256 signature.
+a health indicator that exercises the configured signer end to end: it signs a probe input and
+verifies the resulting 64-byte ES256 signature locally against the signer's advertised public
+key — so a signer that returns bytes which do not verify (a mispinned Vault `public-key`, for
+instance) reports `DOWN` instead of failing every real send with `401`/`403`. On the rare JVM
+whose providers offer no ES256 verification primitive at all, the probe degrades to checking the
+signature length only and says so in the payload with a fixed `verification: unavailable` detail
+(plus a one-time WARN); the detail's absence means the `UP` went through full verification.
+
+Because the health endpoint is polled (Kubernetes probes commonly hit it every ~10 seconds per
+pod) and each probe of a remote signer is a full backend round-trip — against Vault Transit, one
+sign operation that is written to every audit device, counted against rate-limit quotas and, for
+`managed_key`-backed keys, billed as an HSM operation — the probe result is cached per process:
+
+```yaml
+push2u:
+  health:
+    enabled: true      # default — false removes the indicator, so health never touches the signer
+    cache-ttl: 30s     # default — how long a successful probe result is reused
+```
+
+A successful result is served from cache for `cache-ttl`; a *failed* result for at most 5 seconds
+(the shorter of `cache-ttl` and 5s), so recovery is noticed quickly even under a long TTL.
+Concurrent health evaluations are collapsed into a single signing operation. `cache-ttl: 0s`
+disables caching entirely; negative values fail startup naming the property. The cache is
+per-process by design — probes ask about the pod they run in.
+
+The indicator participates in the health endpoint's primary group only. Spring Boot's `liveness`
+group contains just the application's own liveness state, so a signer outage can never restart
+pods — an unreachable Vault is not something a container restart fixes.
 
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the

@@ -187,6 +187,68 @@ class EcdsaDerTest {
                 .hasMessageContaining("SEQUENCE length");
     }
 
+    // ---- raw → DER (toDer, the inverse direction) ---------------------------------------------
+
+    @Test
+    void toDerEmitsPlainCoordinatesAsIs() {
+        byte[] r = counting(32, (byte) 0x01); // high bit clear — no sign byte needed
+        byte[] s = counting(32, (byte) 0x41);
+
+        byte[] der = EcdsaDer.toDer(concat(r, s));
+
+        assertThat(der).isEqualTo(sequence(integer(r), integer(s)));
+        assertThat(EcdsaDer.toP1363(der)).as("round-trips losslessly").isEqualTo(concat(r, s));
+    }
+
+    @Test
+    void toDerAddsTheSignByteAHighBitCoordinateNeeds() {
+        byte[] r = counting(32, (byte) 0x91); // high bit set → DER needs 0x00 prepended
+        byte[] s = counting(32, (byte) 0x41);
+
+        byte[] der = EcdsaDer.toDer(concat(r, s));
+
+        assertThat(der).isEqualTo(sequence(integer(concat(new byte[] {0x00}, r)), integer(s)));
+        assertThat(EcdsaDer.toP1363(der)).isEqualTo(concat(r, s));
+    }
+
+    @Test
+    void toDerDropsLeadingZerosToTheMinimalEncoding() {
+        // A coordinate with leading zero bytes must shrink to its minimal DER INTEGER — the strict
+        // toP1363 parser (and strict FIPS verifiers) reject a redundant leading zero.
+        byte[] r = concat(new byte[] {0x00, 0x00}, counting(30, (byte) 0x11)); // 30 significant bytes
+        byte[] s = counting(32, (byte) 0x41);
+
+        byte[] der = EcdsaDer.toDer(concat(r, s));
+
+        assertThat(der).isEqualTo(sequence(integer(counting(30, (byte) 0x11)), integer(s)));
+        assertThat(EcdsaDer.toP1363(der))
+                .as("re-aligned to 32 bytes on the way back")
+                .isEqualTo(concat(r, s));
+    }
+
+    @Test
+    void toDerEncodesAnAllZeroCoordinateAsTheMinimalZeroInteger() {
+        // The same boundary toP1363 accepts, mirrored: representation only — a zero r can never
+        // verify, and rejecting impossible values is the verifier's job.
+        byte[] r = new byte[32];
+        byte[] s = counting(32, (byte) 0x41);
+
+        byte[] der = EcdsaDer.toDer(concat(r, s));
+
+        assertThat(der).isEqualTo(sequence(integer(new byte[] {0x00}), integer(s)));
+        assertThat(EcdsaDer.toP1363(der)).isEqualTo(concat(r, s));
+    }
+
+    @Test
+    void toDerRejectsAnythingButExactly64Bytes() {
+        assertThatThrownBy(() -> EcdsaDer.toDer(counting(63, (byte) 0x01)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("64-byte");
+        assertThatThrownBy(() -> EcdsaDer.toDer(counting(65, (byte) 0x01)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("64-byte");
+    }
+
     // ---- DER building blocks ------------------------------------------------------------------
 
     /** {@code length} bytes counting up from {@code from} — deterministic, high bit of byte 0 known. */

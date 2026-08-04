@@ -2,6 +2,8 @@ package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.Test;
 
 /**
@@ -16,8 +18,15 @@ class Push2uPropertiesTest {
     void toStringMasksThePrivateKey() {
         Push2uProperties.Vapid vapid =
                 new Push2uProperties.Vapid("BPublicKeyMarker", "raw-private-scalar-marker", "mailto:ops@example.com");
-        Push2uProperties properties =
-                new Push2uProperties(vapid, null, null, null, null, new Push2uProperties.Retry(3, null, null));
+        Push2uProperties properties = new Push2uProperties(
+                vapid,
+                null,
+                null,
+                null,
+                null,
+                new Push2uProperties.Retry(3, null, null),
+                // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
+                new Push2uProperties.Health(true, Duration.ofSeconds(30)));
 
         // Directly and through the enclosing record — the outer toString() embeds the inner one.
         for (String rendered : new String[] {vapid.toString(), properties.toString()}) {
