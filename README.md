@@ -275,9 +275,10 @@ responses must be read.
 **Supplying your own `java.net.http.HttpClient`.** Build it with `Redirect.NEVER`; both
 `JdkPushHttpClient(HttpClient, Duration)` and `JdkVaultHttpTransport(HttpClient, Duration, int)`
 reject a client whose `followRedirects()` is anything else, with an `IllegalArgumentException`
-naming the policy it found. Under the Spring starters that surfaces as a startup failure. The
-no-argument constructors build their clients with `Redirect.NEVER` explicitly rather than relying
-on the JDK's default:
+naming the policy it found. Under the Vault starter — where a `push2uVaultHttpClient`-qualified
+`HttpClient` bean is the supported injection point — that surfaces as a startup failure. Every
+`HttpClient` the library builds for itself sets `Redirect.NEVER` explicitly rather than relying on
+the JDK's default:
 
 ```java
 HttpClient client = HttpClient.newBuilder()
@@ -297,7 +298,8 @@ requires it and **nothing can verify it** — the library sees only the seam, so
 implementation. Turn redirect following off in whatever stack you wrap; several are unsafe by
 default, OkHttp among them (`followRedirects` and `followSslRedirects` are both `true` until you
 set `followRedirects(false).followSslRedirects(false)`). Return the `3xx` as an ordinary status
-and let `PushSender` classify it.
+and let the caller judge it — `PushSender` for a `PushHttpClient`, the Vault signer for a
+`VaultHttpTransport`.
 
 If a redirect is genuinely part of your Vault topology — typically an HA standby with
 `disable_clustering = true` answering `307` towards the active node — point the Vault address at
@@ -593,8 +595,9 @@ P-256 validation described under *Fetched public key* applies to that mode alone
 All Vault calls — the Transit `sign` POST and, in fetched mode, the startup `transit/keys/<key>`
 GET — go through the module's `VaultHttpTransport` seam. The default `JdkVaultHttpTransport`
 (JDK `java.net.http`) enforces a per-request timeout on every call (a Vault that accepts the
-connection but never answers cannot hang application startup) and a fail-closed response-size cap
-counted in raw streamed bytes (an oversized response fails the call; it is never truncated).
+connection but never answers cannot hang application startup), a fail-closed response-size cap
+counted in raw streamed bytes (an oversized response fails the call; it is never truncated), and
+`Redirect.NEVER` (see [Redirects must never be followed](#redirects-must-never-be-followed)).
 Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB cap.
 
 The starter exposes these as properties:
