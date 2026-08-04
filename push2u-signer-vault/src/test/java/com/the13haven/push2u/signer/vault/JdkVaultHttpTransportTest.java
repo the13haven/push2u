@@ -4,16 +4,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.OutputStream;
+import java.net.Authenticator;
+import java.net.CookieHandler;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -212,6 +222,54 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
+    void userinfoInTheVaultAddressNeverReachesTheExceptionMessage() {
+        // Credentials in the URI authority (https://user:secret@vault:8200) are exactly as
+        // secret as a query — an operator who smuggles basic-auth credentials for a fronting
+        // proxy into the Vault address must not find them in every transport failure. Exercised
+        // through the header-rejection path, which renders the URI without ever connecting.
+        URI uri = URI.create("http://vault-user:secret-cred@127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("/v1/transit/keys/vapid")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain("secret-cred")
+                        .doesNotContain("vault-user")
+                        .doesNotContain("secret-query"));
+    }
+
+    @Test
+    void anIllegalArgumentFromTheClientItselfKeepsItsOwnDiagnostic() {
+        // The header-sanitising catch must wrap the header loop ALONE: an
+        // IllegalArgumentException from inside the client's own send() has nothing to do with
+        // header values, and relabelling it as one — with the original diagnostic deliberately
+        // dropped, as the header path must — would destroy the only clue to an unrelated bug.
+        JdkVaultHttpTransport transport =
+                new JdkVaultHttpTransport(new IllegalArgumentThrowingClient(), Duration.ofSeconds(1), 1024);
+        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid");
+
+        assertThatThrownBy(() -> transport.get(uri, Map.of("X-Vault-Token", TOKEN)))
+                .hasMessageContaining("client rejected the request for its own reasons")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("illegal in an HTTP header value"));
+    }
+
+    @Test
+    void aUriThatCannotBackAnHttpRequestIsReportedAsThisModulesException() {
+        // HttpRequest.newBuilder rejects a URI without a usable scheme/host with a raw
+        // IllegalArgumentException — escaping as such would contradict the transport's
+        // PushCryptoException contract, and its message echoes the URI whole (userinfo
+        // included), so the conversion must not attach it as a cause either.
+        URI uri = URI.create("foo://vault-user:secret-cred@vault.test:8200/v1/transit/keys/vapid");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("/v1/transit/keys/vapid")
+                .hasNoCause()
+                .satisfies(e ->
+                        assertThat(e.getMessage()).doesNotContain("secret-cred").doesNotContain("vault-user"));
+    }
+
+    @Test
     void aRedirectFollowingClientIsRejectedAtConstruction() {
         // The JDK client does NOT strip custom headers such as X-Vault-Token across a
         // cross-origin redirect, so a Vault address resolving to an attacker (DNS hijack,
@@ -275,5 +333,79 @@ class JdkVaultHttpTransportTest {
                     .as("both calls went through the supplied client")
                     .isEqualTo(2);
         });
+    }
+
+    /**
+     * A client whose {@code send} throws {@link IllegalArgumentException} — standing in for any client-internal IAE,
+     * which the transport's header-sanitising catch must not relabel as a header problem. Everything else delegates to
+     * a real (non-redirecting) client so the transport's constructor checks pass.
+     */
+    private static final class IllegalArgumentThrowingClient extends HttpClient {
+
+        private final HttpClient delegate = HttpClient.newHttpClient();
+
+        @Override
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
+            throw new IllegalArgumentException("client rejected the request for its own reasons");
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
+            return delegate.sendAsync(request, responseBodyHandler);
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request,
+                HttpResponse.BodyHandler<T> responseBodyHandler,
+                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            return delegate.sendAsync(request, responseBodyHandler, pushPromiseHandler);
+        }
+
+        @Override
+        public Optional<CookieHandler> cookieHandler() {
+            return delegate.cookieHandler();
+        }
+
+        @Override
+        public Optional<Duration> connectTimeout() {
+            return delegate.connectTimeout();
+        }
+
+        @Override
+        public Redirect followRedirects() {
+            return delegate.followRedirects();
+        }
+
+        @Override
+        public Optional<ProxySelector> proxy() {
+            return delegate.proxy();
+        }
+
+        @Override
+        public SSLContext sslContext() {
+            return delegate.sslContext();
+        }
+
+        @Override
+        public SSLParameters sslParameters() {
+            return delegate.sslParameters();
+        }
+
+        @Override
+        public Optional<Authenticator> authenticator() {
+            return delegate.authenticator();
+        }
+
+        @Override
+        public Version version() {
+            return delegate.version();
+        }
+
+        @Override
+        public Optional<Executor> executor() {
+            return delegate.executor();
+        }
     }
 }

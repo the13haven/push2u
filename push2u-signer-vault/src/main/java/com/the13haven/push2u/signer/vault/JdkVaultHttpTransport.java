@@ -42,7 +42,8 @@ import com.the13haven.push2u.PushCryptoException;
  * receive the token. A supplied client whose {@link HttpClient#followRedirects()} is not
  * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way.
  *
- * <p>Exception messages carry the HTTP method and the request URI without its query (a Vault query can name secrets),
+ * <p>Exception messages carry the HTTP method and the request URI without its query (a Vault query can name secrets)
+ * and without its userinfo (credentials in the authority — {@code https://user:secret@vault:8200} — are secrets too),
  * and never any request header — the Vault token travels in {@code X-Vault-Token} and must not leak into logs. That
  * includes a header the JDK client itself refuses (e.g. a token with a trailing newline, illegal in an HTTP field
  * value): the client's {@code IllegalArgumentException} spells out the whole value, so it is reported as a
@@ -92,7 +93,9 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
             throw new IllegalArgumentException("httpClient must not follow redirects (followRedirects() is "
                     + httpClient.followRedirects() + "): the JDK client re-sends X-Vault-Token to the redirect"
                     + " target, handing the token to whatever host a redirecting Vault address names."
-                    + " Build the client with followRedirects(HttpClient.Redirect.NEVER)");
+                    + " Build the client with followRedirects(HttpClient.Redirect.NEVER); if the redirect you"
+                    + " relied on comes from a Vault HA standby, point the Vault address at the active node's"
+                    + " api_addr (or a load balancer in front of it), or terminate the redirect in the proxy");
         }
         Objects.requireNonNull(requestTimeout, "requestTimeout");
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
@@ -120,39 +123,52 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
             String method, URI uri, Map<String, String> headers, HttpRequest.BodyPublisher bodyPublisher) {
         Objects.requireNonNull(uri, "uri");
         Objects.requireNonNull(headers, "headers");
-        HttpRequest.Builder request =
-                HttpRequest.newBuilder(uri).timeout(requestTimeout).method(method, bodyPublisher);
+        HttpRequest.Builder request;
         try {
-            // Inside the try on purpose: header() rejects a value carrying a character illegal
-            // in an HTTP field — with THE WHOLE VALUE in its message. Outside, that exception
-            // (holding the Vault token, e.g. one that arrived with a trailing newline from a
-            // file-sourced secret) would bypass the sanitising below and land verbatim in logs.
+            request = HttpRequest.newBuilder(uri).timeout(requestTimeout).method(method, bodyPublisher);
+        } catch (IllegalArgumentException e) {
+            // newBuilder rejects a URI without a usable http(s) scheme or host — as a raw
+            // IllegalArgumentException, which would contradict this class's PushCryptoException
+            // contract. Its message echoes the URI whole, userinfo included, so the original is
+            // not attached as the cause either.
+            throw new PushCryptoException(
+                    "Vault request URI cannot back an HTTP request (scheme or authority is not usable): " + method + " "
+                            + redacted(uri));
+        }
+        try {
+            // Inside its own try on purpose — and ALONE in it: header() rejects a value carrying
+            // a character illegal in an HTTP field with THE WHOLE VALUE in its message. Outside
+            // a try, that exception (holding the Vault token, e.g. one that arrived with a
+            // trailing newline from a file-sourced secret) would land verbatim in logs; in a try
+            // shared with send(), a client-internal IllegalArgumentException would be relabelled
+            // as a header problem and lose its own diagnostic.
             headers.forEach(request::header);
-            HttpResponse<byte[]> response = httpClient.send(request.build(), this::boundedBody);
-            return new VaultHttpResponse(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
         } catch (IllegalArgumentException e) {
             // Deliberately NOT attached as the cause: the original's message spells out the
             // rejected header value, and a cause's message rides into every logged stack trace
             // just the same as the top-level one.
             throw new PushCryptoException("Vault request was not sent: a request header carries a character that"
                     + " is illegal in an HTTP header value (a token sourced from a file or a YAML block scalar"
-                    + " commonly ends with a newline): " + method + " " + withoutQuery(uri));
+                    + " commonly ends with a newline): " + method + " " + redacted(uri));
+        }
+        try {
+            HttpResponse<byte[]> response = httpClient.send(request.build(), this::boundedBody);
+            return new VaultHttpResponse(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
         } catch (HttpTimeoutException e) {
             throw new PushCryptoException(
-                    "Vault request timed out after " + requestTimeout + ": " + method + " " + withoutQuery(uri), e);
+                    "Vault request timed out after " + requestTimeout + ": " + method + " " + redacted(uri), e);
         } catch (IOException e) {
             // The JDK client surfaces a body-subscriber failure wrapped in IOException — recover
             // the size-cap violation from the cause chain and report it as what it is, naming the
             // call (method + query-less URI) so operators can tell the sign POST from the keys GET.
             ResponseTooLargeException tooLarge = findTooLarge(e);
             if (tooLarge != null) {
-                throw new PushCryptoException(tooLarge.getMessage() + ": " + method + " " + withoutQuery(uri), e);
+                throw new PushCryptoException(tooLarge.getMessage() + ": " + method + " " + redacted(uri), e);
             }
-            throw new PushCryptoException("Vault request failed: " + method + " " + withoutQuery(uri), e);
+            throw new PushCryptoException("Vault request failed: " + method + " " + redacted(uri), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new PushCryptoException(
-                    "Interrupted while waiting for Vault: " + method + " " + withoutQuery(uri), e);
+            throw new PushCryptoException("Interrupted while waiting for Vault: " + method + " " + redacted(uri), e);
         }
     }
 
@@ -166,8 +182,13 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         return new BoundedByteArraySubscriber(maxResponseBytes, declaredLength);
     }
 
-    /** The request URI without query or fragment — a Vault query can name secrets; the path may not. */
-    private static String withoutQuery(URI uri) {
+    /**
+     * The request URI as rendered into exception messages: without query or fragment — a Vault query can name secrets;
+     * the path may not — and without userinfo, because credentials smuggled into the authority (e.g.
+     * {@code https://user:secret@vault:8200}, basic auth for a fronting proxy) are exactly as secret as a query and
+     * would otherwise ride into every transport failure.
+     */
+    private static String redacted(URI uri) {
         String text = uri.toString();
         int cut = text.length();
         int query = text.indexOf('?');
@@ -178,7 +199,19 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         if (fragment >= 0 && fragment < cut) {
             cut = fragment;
         }
-        return text.substring(0, cut);
+        String stripped = text.substring(0, cut);
+        // Userinfo sits between "//" and the last "@" of the authority (an "@" may legally recur
+        // inside the userinfo itself, so the last one before the path is the delimiter).
+        int authorityStart = stripped.indexOf("//");
+        if (authorityStart >= 0) {
+            int pathStart = stripped.indexOf('/', authorityStart + 2);
+            int authorityEnd = pathStart >= 0 ? pathStart : stripped.length();
+            int at = stripped.lastIndexOf('@', authorityEnd - 1);
+            if (at > authorityStart) {
+                stripped = stripped.substring(0, authorityStart + 2) + stripped.substring(at + 1);
+            }
+        }
+        return stripped;
     }
 
     private static @Nullable ResponseTooLargeException findTooLarge(Throwable failure) {

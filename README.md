@@ -451,7 +451,10 @@ Resolution order (two extension points, plus the properties-only fallback):
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
    owns it). The client must not follow redirects (the builder default): the JDK client re-sends
    `X-Vault-Token` to a redirect target, so a client built with `followRedirects` other than
-   `NEVER` is rejected at startup.
+   `NEVER` is rejected at startup. If your setup relied on following a redirect — typically a
+   Vault HA standby with `disable_clustering = true` answering 307 towards the active node —
+   point the Vault address at the active node's `api_addr` (or a load balancer in front of it),
+   or terminate the redirect in the proxy instead.
 3. Otherwise the default transport is built entirely from the properties.
 
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push

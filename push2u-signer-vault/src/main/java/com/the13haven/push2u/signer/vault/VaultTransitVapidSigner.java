@@ -574,8 +574,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         // Bounded BEFORE Integer.parseInt sees it: parseInt's NumberFormatException carries the
         // ENTIRE digit run in its message, and attaching that as a cause would put a run as long
-        // as the response body into every logged stack trace — defeating ERROR_ECHO_LIMIT.
-        // Transit versions are small; nine ASCII digits (at most 999,999,999) always parse.
+        // as the response body into every logged stack trace — defeating ERROR_ECHO_LIMIT. The
+        // nine-digit bound is deliberately tighter than the int boundary (some ten-digit runs
+        // still fit an int): no plausible Transit version comes near either limit, and nine
+        // ASCII digits (at most 999,999,999) are guaranteed to parse, so the catch is gone.
         if (end - start > 9) {
             throw new PushCryptoException(
                     "malformed Vault 'latest_version' field — implausibly long number: " + abbreviated(json));
