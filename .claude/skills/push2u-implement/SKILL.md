@@ -7,8 +7,13 @@ description: How to implement a change in the push2u Web Push library — the re
 
 This is how work gets done in this repository — the procedures that span more than one file and are
 easy to complete only halfway. It does not restate what is already written elsewhere: `CLAUDE.md`
-carries the facts that are always true, `DESIGN.md` §9 the settled decisions, and the
-`push2u-review` skill what a reviewer will check when you are finished.
+carries the facts that are always true, `DESIGN.md` §9 the settled decisions, and
+`.claude/skills/push2u-review/SKILL.md` what a reviewer will check when you are finished.
+
+If you delegate part of the work to a subagent, note that it starts fresh and does not inherit this
+skill — only the repository's `CLAUDE.md` reaches it. Put the relevant recipe in the delegation
+prompt, or tell it to read this file first; otherwise the half of the work that spans other files is
+exactly the half that gets left out.
 
 ## The working loop
 

@@ -14,6 +14,11 @@ amend it in the same change if the decision moves. `RELEASING.md` covers the rel
 `CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
 vulnerability policy.
 
+Two skills hold the procedures that do not belong in this file:
+`.claude/skills/push2u-implement/SKILL.md` for how recurring multi-file changes are made here, and
+`.claude/skills/push2u-review/SKILL.md` for what a review of a change checks. A subagent inherits
+this file but not the skill list, so read the matching one directly when the task calls for it.
+
 **A vulnerability never goes in a public issue, pull request or commit message.** It is reported
 through GitHub's private advisory channel (`SECURITY.md`), because the repository is public and a
 description of a defect in the encryption, the VAPID signature or the endpoint policy discloses it

@@ -14,6 +14,12 @@ That last part is the reason a reviewer here matters. push2u claims conformance 
 two deliberately opposite trust boundaries, publishes an API to Maven Central that can never be
 withdrawn, and records its settled decisions as ADRs. No tool enforces any of it.
 
+If you hand part of this review to a subagent, remember that it starts with a fresh context and does
+not inherit this skill — it gets the repository's `CLAUDE.md` and nothing else from here. Either
+give it the relevant rules in the delegation prompt, or tell it to read
+`.claude/skills/push2u-review/SKILL.md` first. A subagent asked to "review these files" without that
+will review them as generic Java.
+
 ## 1. Understand the change first
 
 `git diff main...HEAD` for a branch, `gh pr diff <n>` for a pull request. Read all of it before
@@ -186,8 +192,8 @@ Nothing in the toolchain checks this, which makes it the easiest thing to lose.
 ### 5.6 ADR conformance
 
 If the change touches architecture, module boundaries, an SPI, the dependency posture or the release
-process, check it against the ADRs — and read `references/adr.md` for the index and the amendment
-procedure. A change that contradicts an ADR is not automatically wrong; a change that contradicts
+process, check it against the ADRs — and read `.claude/skills/push2u-review/references/adr.md` for
+the index and the amendment procedure. A change that contradicts an ADR is not automatically wrong; a change that contradicts
 one *silently* is, because it leaves `DESIGN.md` describing a design the code no longer follows.
 
 ### 5.7 Dependencies and supply chain
