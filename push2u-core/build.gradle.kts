@@ -84,3 +84,13 @@ val fipsTestTask = tasks.register<Test>("fipsTest") {
 tasks.named("check") {
     dependsOn(fipsTestTask)
 }
+
+// The published test kit is an automatic module: it is test scaffolding a consumer puts on the test
+// classpath, and it carries JUnit and AssertJ — themselves automatic modules — through
+// testFixturesApi. Fixing the name here keeps it off the jar file name, which would otherwise
+// derive `push2u.core.test.fixtures`. The package is com.the13haven.push2u.testkit, deliberately
+// not com.the13haven.push2u: the core is an explicit module now, and a package split between the
+// two artifacts would be unreadable from the module path (ADR-014).
+tasks.named<Jar>("testFixturesJar") {
+    manifest { attributes("Automatic-Module-Name" to "com.the13haven.push2u.testkit") }
+}

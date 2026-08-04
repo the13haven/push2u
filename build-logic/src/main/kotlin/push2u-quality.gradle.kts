@@ -72,6 +72,22 @@ spotless {
 // ---------------------------------------------------------------------------------------------
 // Checkstyle — naming, Javadoc and import-order verification (never formatting; Spotless owns it).
 // ---------------------------------------------------------------------------------------------
+// The header-only Checkstyle task, named here because the exclusion below has to spare it.
+val licenseHeaderTaskName = "checkstyleLicenseHeader"
+
+// Checkstyle 13.9.0 cannot parse a module declaration: its TreeWalker grammar has no production for
+// one, and `module foo {}` alone fails with "no viable alternative at input 'modulefoo{'". A single
+// unparseable file fails the whole task, so the descriptor is excluded here rather than costing the
+// module its Checkstyle coverage entirely. Nothing in checkstyle.xml applies to a module descriptor
+// anyway — naming, Javadoc and import order are all about type declarations — except the licence
+// header, which is why checkstyleLicenseHeader is exempt: its configuration has no TreeWalker, so
+// it reads the file as lines and never parses it. Revisit when Checkstyle grows the grammar.
+tasks.withType<Checkstyle>().configureEach {
+    if (name != licenseHeaderTaskName) {
+        exclude("module-info.java")
+    }
+}
+
 checkstyle {
     toolVersion = toolVersion("checkstyle")
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
@@ -121,7 +137,7 @@ dependencies {
 // would be the task's own and `SourceSetContainer` is not among them.
 val javaSourceSets = extensions.getByType<SourceSetContainer>()
 
-val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeader") {
+val checkstyleLicenseHeader = tasks.register<Checkstyle>(licenseHeaderTaskName) {
     description = "Verifies the licence header on the source sets checkstyleMain does not cover."
     group = "verification"
 
@@ -130,9 +146,22 @@ val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeade
     // A Callable, so the container is read when the task's inputs are resolved rather than when
     // this plugin is applied — push2u-core creates `fipsTest` in its own build script, which runs
     // later, and a list built here and now would miss it.
+    //
+    // `main` is here too, but only for module-info.java: checkstyleMain cannot read it at all.
+    // Checkstyle 13.9.0's TreeWalker has no grammar for a module declaration — even `module foo {}`
+    // fails with "no viable alternative at input 'modulefoo{'" — and one unparseable file aborts
+    // the whole task, taking the other 32 main sources with it. So checkstyleMain excludes the
+    // descriptor (see below) and it lands here instead, where the header-only configuration has no
+    // TreeWalker and never parses anything.
     setSource(
         Callable {
-            javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs }
+            javaSourceSets.flatMap { sourceSet ->
+                if (sourceSet.name == SourceSet.MAIN_SOURCE_SET_NAME) {
+                    sourceSet.java.srcDirs.map { File(it, "module-info.java") }.filter { it.isFile }
+                } else {
+                    sourceSet.java.srcDirs
+                }
+            }
         })
     include("**/*.java")
 

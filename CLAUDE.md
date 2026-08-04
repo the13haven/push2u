@@ -9,7 +9,7 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
 `README.md` documents the public API for consumers; `DESIGN.md` documents the architecture and
-carries the ADRs (ADR-001…013) — read the relevant ADR before changing anything structural, and
+carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything structural, and
 amend it in the same change if the decision moves. `RELEASING.md` covers the release procedure,
 `CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
 vulnerability policy.
@@ -164,8 +164,10 @@ starter is ordered before the core starter and outranks the local signer.
   `CryptoServicesRegistrar` classes and can never share a classpath. `fipsTest` covers the ES256
   DER-fallback path; the regular `test` set carries bcprov for the raw-`r||s` path. It is wired into
   `check`, and its `jacoco/fipsTest.exec` is added to the aggregated coverage report explicitly.
-- `push2u-core`'s published test fixtures are the `VapidSignerContractTest` conformance kit — every
-  signer implementation extends it. `push2u-signer-vault`'s fixtures (`RecordingHttpClient`) are
+- `push2u-core`'s published test fixtures are the `VapidSignerContractTest` conformance kit, in its
+  own package `com.the13haven.push2u.testkit` — every signer implementation extends it. The package
+  is separate from the core's on purpose: the core is an explicit JPMS module, and a package split
+  across two artifacts cannot be resolved from the module path (ADR-014). `push2u-signer-vault`'s fixtures (`RecordingHttpClient`) are
   internal and explicitly skipped from its publication.
 - Conformance is pinned by published RFC vectors (RFC 5869 HKDF, the RFC 8291 worked example,
   RFC 8292 structure). When touching crypto, the vectors are the specification — not the current

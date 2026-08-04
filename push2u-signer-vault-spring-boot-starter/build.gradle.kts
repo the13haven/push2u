@@ -26,3 +26,10 @@ dependencies {
     testImplementation(libs.assertj.core)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
+
+// An automatic module, for the reason ADR-014 gives for the core starter: Boot's own artifacts are
+// automatic modules and its auto-configuration is reflective. The name is fixed here so it does not
+// follow the jar file name.
+tasks.named<Jar>("jar") {
+    manifest { attributes("Automatic-Module-Name" to "com.the13haven.push2u.signer.vault.spring") }
+}

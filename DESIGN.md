@@ -69,6 +69,18 @@ push2u-signer-vault-spring-boot-starter
 The Spring Boot modules and Vault integration are
 opt-in and cannot leak framework types into the core API.
 
+Each artifact carries a JPMS identity (ADR-014). `push2u-core` and `push2u-signer-vault` are
+explicit modules with a `module-info.java`; the two starters and the published test kit are
+automatic modules with a fixed `Automatic-Module-Name`:
+
+| Artifact | Module name | Kind |
+|---|---|---|
+| `push2u-core` | `com.the13haven.push2u` | explicit |
+| `push2u-signer-vault` | `com.the13haven.push2u.signer.vault` | explicit |
+| `push2u-spring-boot-starter` | `com.the13haven.push2u.spring` | automatic |
+| `push2u-signer-vault-spring-boot-starter` | `com.the13haven.push2u.signer.vault.spring` | automatic |
+| `push2u-core` test fixtures | `com.the13haven.push2u.testkit` | automatic |
+
 ## 4. Send pipeline
 
 ```text
@@ -537,6 +549,42 @@ published Maven Central version is immutable — it cannot be deleted or replace
 decision "this state becomes a release" deserves an explicit human action rather than being
 implied by a merge. The rejected alternative, releasing on every merge to `main`, couples review
 cadence to release cadence and turns any accidental merge into a permanent artifact.
+
+### ADR-014 — JPMS: explicit modules for the library, automatic for the starters
+
+`push2u-core` and `push2u-signer-vault` carry a `module-info.java`. The module name is the package
+name — `com.the13haven.push2u` and `com.the13haven.push2u.signer.vault` — and the core's descriptor
+is three lines: `requires java.net.http` for `JdkHttpPushClient`, `requires static org.jspecify`,
+one `exports`. Nothing else is needed, because there is nothing else: the zero-dependency posture of
+ADR-002 is what makes an accurate descriptor this cheap to write, and the descriptor is what makes
+that posture checkable rather than merely asserted. `requires static` is the operative word — a
+consumer never resolves the JSpecify jar at runtime, which was verified by running a module-path
+consumer with it absent.
+
+The two Spring Boot starters stay **automatic** modules with a fixed `Automatic-Module-Name`. Boot's
+own artifacts are automatic modules, and auto-configuration works by reflecting over classes named
+in `META-INF/spring/*.imports` — a relationship no descriptor can express, and one that `requires`
+would misrepresent as a compile-time dependency. What the manifest attribute buys is that the module
+name stops following the jar file name: without it the starter would be `push2u.spring.boot.starter`
+and would change if the artifact were ever renamed.
+
+The published conformance kit moved from `com.the13haven.push2u` to `com.the13haven.push2u.testkit`
+in the same change, and it had to. A package split across two artifacts cannot be resolved from the
+module path — with the kit still in the core's package, a consumer putting both on it gets
+`ResolutionException: Module … contains package com.the13haven.push2u, module com.the13haven.push2u
+exports package com.the13haven.push2u to …`. That was reproduced before the move rather than assumed.
+
+Timing is the whole argument for doing this now: a module name, like a package name (ADR-013), is
+free to choose before the first release and a breaking change for every adopter afterwards. The same
+holds for the kit's package. Without a descriptor the name would be derived from the artifact name,
+which is neither stable nor ours to keep.
+
+One tool does not follow yet. Checkstyle 13.9.0 has no grammar for a module declaration — `module
+foo {}` alone fails to parse — and a single unparseable file aborts the whole task, so
+`module-info.java` is excluded from the analysing configuration. The exclusion costs nothing in
+substance: naming, Javadoc and import-order rules are all about type declarations. The licence
+header of ADR-008 is the exception, and it is checked by `checkstyleLicenseHeader`, whose
+configuration has no `TreeWalker` and therefore reads the descriptor as lines rather than parsing it.
 
 ## 10. Verification
 

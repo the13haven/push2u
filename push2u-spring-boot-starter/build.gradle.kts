@@ -34,3 +34,10 @@ dependencies {
     testImplementation(libs.assertj.core)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
+
+// An automatic module, not an explicit one (ADR-014): Spring Boot's own artifacts are automatic
+// modules themselves, and auto-configuration works by reflection over classes named in
+// META-INF/spring — a dependency graph a module descriptor cannot express. What the name buys is
+// stability: without it the module name is derived from the jar file name, which would make it
+// `push2u.spring.boot.starter` and tie it to an artifact name.
+tasks.named<Jar>("jar") { manifest { attributes("Automatic-Module-Name" to "com.the13haven.push2u.spring") } }

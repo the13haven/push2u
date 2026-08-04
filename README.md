@@ -35,12 +35,28 @@ implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 
 ## Modules
 
-| Module | Purpose |
-|---|---|
-| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport |
-| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit |
-| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator |
-| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer |
+| Module | Purpose | JPMS module name |
+|---|---|---|
+| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
+| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
+| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
+| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
+
+`push2u-core` and `push2u-signer-vault` are explicit JPMS modules — they ship a `module-info.java`
+and work on the module path as they do on the class path:
+
+```java
+module com.example.app {
+    requires com.the13haven.push2u;
+}
+```
+
+The core requires only `java.net.http` from the JDK, and JSpecify is a `requires static` — the
+annotations are needed to compile against the nullness contract and never resolved at runtime.
+
+The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
+Boot's own artifacts are automatic modules and its auto-configuration is reflective. The published
+test fixtures of `push2u-core` are likewise automatic, under `com.the13haven.push2u.testkit`.
 
 ## Requirements
 

@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-package com.the13haven.push2u;
+package com.the13haven.push2u.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,6 +20,8 @@ import java.security.spec.ECPublicKeySpec;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
+
+import com.the13haven.push2u.VapidSigner;
 
 /**
  * The conformance contract every {@link VapidSigner} must satisfy: signing produces a raw {@code r || s} ES256
