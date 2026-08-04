@@ -1,14 +1,14 @@
 package com.the13haven.push2u;
 
 /**
- * Strict conversion of a DER-encoded P-256 ECDSA signature — {@code SEQUENCE { INTEGER r, INTEGER s }} — into the
- * 64-byte raw {@code r || s} pair JOSE ES256 requires (RFC 7518 §3.4), each coordinate normalised to exactly 32
- * unsigned big-endian bytes.
+ * Strict conversion between the two representations of a P-256 ECDSA signature: DER ({@code SEQUENCE { INTEGER r,
+ * INTEGER s }}) and the 64-byte raw {@code r || s} pair JOSE ES256 requires (RFC 7518 §3.4), each coordinate normalised
+ * to exactly 32 unsigned big-endian bytes. {@link #toP1363} converts DER output to raw for signing; {@link #toDer}
+ * converts raw back to DER for verifying.
  *
- * <p>This is a re-encoding of the signature's <em>representation</em>, not a cryptographic operation: the private key
- * and the ECDSA computation itself stay entirely inside the JCE provider that produced the signature. It exists for
- * providers that register only the standard DER-output ECDSA name (BouncyCastle FIPS among them) and no raw-format
- * variant.
+ * <p>Both directions are re-encodings of the signature's <em>representation</em>, not cryptographic operations: the
+ * private key and the ECDSA computation itself stay entirely inside the JCE provider involved. They exist for providers
+ * that register only the standard DER-form ECDSA name (BouncyCastle FIPS among them) and no raw-format variant.
  *
  * <p>The parser is deliberately strict and rejects anything but the minimal DER a well-formed P-256 signature can
  * produce: wrong tags, long-form lengths (impossible at P-256 sizes), negative or non-minimally-encoded INTEGERs,
@@ -50,6 +50,56 @@ final class EcdsaDer {
         if (afterS != der.length) {
             throw malformed("trailing bytes after the second INTEGER");
         }
+        return out;
+    }
+
+    /**
+     * Converts a raw 64-byte {@code r || s} signature into the minimal DER {@code SEQUENCE { INTEGER r, INTEGER s }} —
+     * the exact inverse of {@link #toP1363}. Like its counterpart this is a re-encoding of the signature's
+     * representation, not a cryptographic operation. It exists for the verifying direction of the same provider gap:
+     * handing a JOSE signature to a provider that registers only the standard DER-input ECDSA name (BouncyCastle FIPS
+     * among them) requires the DER form. The output is strictly minimal — leading zero bytes are dropped from each
+     * coordinate and a {@code 0x00} sign byte is added only when the top bit is set — because DER admits exactly one
+     * encoding and strict verifiers (the FIPS ones in particular) reject anything else.
+     *
+     * <p>An all-zero coordinate encodes as the minimal zero INTEGER ({@code 02 01 00}) — the same boundary
+     * {@link #toP1363} accepts, and for the same reason: rejecting cryptographically impossible values is the
+     * verifier's job, not the re-encoder's.
+     *
+     * @param p1363 the 64-byte raw {@code r || s} signature
+     * @return the minimal DER encoding
+     * @throws IllegalArgumentException if the input is not exactly 64 bytes
+     */
+    static byte[] toDer(byte[] p1363) {
+        if (p1363 == null || p1363.length != 2 * COORDINATE_LENGTH) {
+            throw new IllegalArgumentException("Expected a 64-byte raw r||s ES256 signature");
+        }
+        byte[] r = encodeInteger(p1363, 0);
+        byte[] s = encodeInteger(p1363, COORDINATE_LENGTH);
+        // Worst case 2 + 35 + 35 = 72 bytes: the body always fits a short-form SEQUENCE length.
+        byte[] out = new byte[2 + r.length + s.length];
+        out[0] = SEQUENCE_TAG;
+        out[1] = (byte) (r.length + s.length);
+        System.arraycopy(r, 0, out, 2, r.length);
+        System.arraycopy(s, 0, out, 2 + r.length, s.length);
+        return out;
+    }
+
+    /** One minimally-encoded INTEGER TLV over the 32-byte big-endian coordinate at {@code offset}. */
+    private static byte[] encodeInteger(byte[] src, int offset) {
+        int start = offset;
+        int end = offset + COORDINATE_LENGTH;
+        // Drop leading zeros, keeping at least one byte so a zero coordinate stays representable.
+        while (start < end - 1 && src[start] == 0) {
+            start++;
+        }
+        int valueLength = end - start;
+        // DER INTEGERs are signed: a value whose top bit is set needs a 0x00 sign byte to stay positive.
+        boolean needsSignByte = (src[start] & 0x80) != 0;
+        byte[] out = new byte[2 + (needsSignByte ? 1 : 0) + valueLength];
+        out[0] = INTEGER_TAG;
+        out[1] = (byte) (out.length - 2);
+        System.arraycopy(src, start, out, out.length - valueLength, valueLength);
         return out;
     }
 

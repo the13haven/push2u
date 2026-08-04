@@ -30,6 +30,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     value beside a bean cedes to the bean — the escape hatch for a service that inherits this property from shared
  *     configuration it cannot unset
  * @param retry the retry policy
+ * @param health the Actuator health probe settings; always present, defaults apply when unset
  */
 @ConfigurationProperties("push2u")
 public record Push2uProperties(
@@ -39,7 +40,8 @@ public record Push2uProperties(
         @Nullable Integer recordSize,
         @Nullable Integer maxEncryptedBodyBytes,
         @Nullable List<String> allowedOrigins,
-        @DefaultValue Retry retry) {
+        @DefaultValue Retry retry,
+        @DefaultValue Health health) {
 
     /**
      * Snapshots {@code allowedOrigins} into an unmodifiable copy (when set), so the bound configuration cannot drift
@@ -62,7 +64,23 @@ public record Push2uProperties(
     public record Vapid(
             @Nullable String publicKey,
             @Nullable String privateKey,
-            @Nullable String subject) {}
+            @Nullable String subject) {
+
+        /**
+         * The record-generated {@code toString()} prints every component, {@code privateKey} included — and while
+         * push2u never stringifies this record and the actuator env/configprops endpoints mask values by default, the
+         * consuming application is one accidental {@code log.info("{}", properties)} or debugger dump away from its
+         * VAPID private key in a log line. The private key renders as {@code ***} when set (and as {@code null} when
+         * not, so the mask never reads as "a key is configured"); the public key and subject are published identity and
+         * stay readable.
+         */
+        @Override
+        public String toString() {
+            return "Vapid[publicKey=" + publicKey
+                    + ", privateKey=" + (privateKey == null ? null : "***")
+                    + ", subject=" + subject + "]";
+        }
+    }
 
     /**
      * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
@@ -75,4 +93,20 @@ public record Push2uProperties(
             @DefaultValue("3") int maxAttempts,
             @DefaultValue("1s") Duration initialBackoff,
             @DefaultValue("60s") Duration maxBackoff) {}
+
+    /**
+     * The Actuator health probe ({@link Push2uHealthIndicator}). The probe exercises the configured signer, which for a
+     * remote signer (Vault Transit) is a full backend round-trip on an endpoint Kubernetes polls every few seconds —
+     * hence a result cache, and an off switch for deployments that do not want health tied to the signer at all.
+     *
+     * @param enabled whether the push2u health indicator is registered. {@code false} removes it entirely, so health
+     *     never touches the signer
+     * @param cacheTtl how long a successful probe result is served from cache before the signer is exercised again. A
+     *     <em>failed</em> result is cached for at most 5 seconds regardless (the shorter of this value and 5s), so
+     *     recovery is noticed quickly even under a long TTL. {@code 0s} disables caching; negative values are rejected
+     *     at startup
+     */
+    public record Health(
+            @DefaultValue("true") boolean enabled,
+            @DefaultValue("30s") Duration cacheTtl) {}
 }

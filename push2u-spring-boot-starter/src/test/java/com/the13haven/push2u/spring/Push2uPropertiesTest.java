@@ -1,0 +1,52 @@
+package com.the13haven.push2u.spring;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Duration;
+
+import org.junit.jupiter.api.Test;
+
+/**
+ * {@link Push2uProperties} renders no secret in {@code toString()}. Records generate a {@code toString()} that prints
+ * every component, so without an override the bound VAPID private key would ride into any accidental
+ * {@code log.info("{}", properties)} or debugger dump in the consuming application — push2u itself never stringifies
+ * the record, but the hazard is handed to whoever does.
+ */
+class Push2uPropertiesTest {
+
+    @Test
+    void toStringMasksThePrivateKey() {
+        Push2uProperties.Vapid vapid =
+                new Push2uProperties.Vapid("BPublicKeyMarker", "raw-private-scalar-marker", "mailto:ops@example.com");
+        Push2uProperties properties = new Push2uProperties(
+                vapid,
+                null,
+                null,
+                null,
+                null,
+                // allowedOrigins: unset, i.e. the PushSender default of no endpoint policy.
+                null,
+                new Push2uProperties.Retry(3, null, null),
+                // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
+                new Push2uProperties.Health(true, Duration.ofSeconds(30)));
+
+        // Directly and through the enclosing record — the outer toString() embeds the inner one.
+        for (String rendered : new String[] {vapid.toString(), properties.toString()}) {
+            assertThat(rendered)
+                    .doesNotContain("raw-private-scalar-marker")
+                    .contains("***")
+                    .as("non-secret components stay readable")
+                    .contains("BPublicKeyMarker")
+                    .contains("mailto:ops@example.com");
+        }
+    }
+
+    @Test
+    void anUnsetPrivateKeyIsRenderedAsNullNotAsAMask() {
+        // "***" for an unset key would read as "a key is configured" — the mask must only stand
+        // in for an actual value.
+        Push2uProperties.Vapid vapid = new Push2uProperties.Vapid("BPublicKeyMarker", null, null);
+
+        assertThat(vapid.toString()).contains("privateKey=null");
+    }
+}

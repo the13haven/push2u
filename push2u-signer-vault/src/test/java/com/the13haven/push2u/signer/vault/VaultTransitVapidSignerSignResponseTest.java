@@ -54,6 +54,25 @@ class VaultTransitVapidSignerSignResponseTest {
         return signer(responseBody).sign("probe".getBytes(StandardCharsets.UTF_8));
     }
 
+    /** An explicit-mode signer pinned to {@code keyVersion}, whose Vault always answers {@code responseBody}. */
+    private static VaultTransitVapidSigner pinnedSigner(String responseBody, int keyVersion) {
+        byte[] publicKey = new byte[65];
+        publicKey[0] = 0x04;
+        VaultHttpTransport stub = new VaultHttpTransport() {
+            @Override
+            public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                throw new AssertionError("the explicit mode must never read key metadata from Vault");
+            }
+
+            @Override
+            public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                return new VaultHttpResponse(200, responseBody);
+            }
+        };
+        return new VaultTransitVapidSigner(
+                URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, keyVersion, stub);
+    }
+
     /** 64 distinguishable bytes standing in for a real {@code r || s} pair. */
     private static byte[] wellFormedSignature() {
         byte[] signature = new byte[64];
@@ -86,6 +105,33 @@ class VaultTransitVapidSignerSignResponseTest {
                 .as("the padded form is what this test means to exercise")
                 .endsWith("==");
         assertThat(sign("{\"data\":{\"signature\":\"vault:v1:" + padded + "\"}}"))
+                .isEqualTo(expected);
+    }
+
+    @Test
+    void aPinnedSignerRejectsAnEnvelopeFromAnotherKeyVersion() {
+        // The version pin is the class's whole rotation-safety argument: the published VAPID
+        // public key belongs to ONE Transit key version, and a signature from any other version
+        // produces JWTs push services reject. A signer pinned to version 3 must therefore refuse
+        // a vault:v99: envelope loudly, naming both versions — not silently accept it.
+        String body =
+                "{\"data\":{\"signature\":\"vault:v99:" + BASE64_URL.encodeToString(wellFormedSignature()) + "\"}}";
+
+        assertThatThrownBy(() -> pinnedSigner(body, 3).sign("probe".getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("key version 99")
+                .hasMessageContaining("key version 3")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+    }
+
+    @Test
+    void aPinnedSignerAcceptsTheEnvelopeOfItsOwnKeyVersion() {
+        // The counterpart: the strictness must not reject the version the signer itself pinned
+        // into the request.
+        byte[] expected = wellFormedSignature();
+        String body = "{\"data\":{\"signature\":\"vault:v3:" + BASE64_URL.encodeToString(expected) + "\"}}";
+
+        assertThat(pinnedSigner(body, 3).sign("probe".getBytes(StandardCharsets.UTF_8)))
                 .isEqualTo(expected);
     }
 

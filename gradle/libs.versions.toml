@@ -66,6 +66,10 @@ testcontainers-vault = { module = "org.testcontainers:testcontainers-vault", ver
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
 spring-boot-health = { module = "org.springframework.boot:spring-boot-health" }
+# Actuator endpoint infrastructure — test-only, for the starter's proof that the health endpoint's
+# liveness group never includes the push2u indicator (spring-boot-health's endpoint/groups classes
+# reference actuator's endpoint types, which the library itself never needs at runtime).
+spring-boot-actuator = { module = "org.springframework.boot:spring-boot-actuator" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
 spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
 # Jackson annotations — spring-boot-health's Health type carries @JsonInclude; having the annotation

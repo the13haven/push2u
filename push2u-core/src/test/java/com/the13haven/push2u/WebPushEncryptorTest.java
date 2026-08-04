@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
@@ -43,7 +44,7 @@ class WebPushEncryptorTest {
     }
 
     @Test
-    void randomPathProducesWellFormedHeaderAndUniqueOutput() {
+    void randomPathProducesWellFormedHeaderWithFreshSaltAndFreshEphemeralKeyPerMessage() {
         byte[] uaPublic = b64(TestVectors.UA_PUBLIC);
         byte[] auth = b64(TestVectors.AUTH_SECRET);
         byte[] plaintext = TestVectors.PLAINTEXT.getBytes(StandardCharsets.US_ASCII);
@@ -64,8 +65,16 @@ class WebPushEncryptorTest {
         // header(86) + plaintext(41) + delimiter(1) + GCM tag(16)
         assertThat(body).hasSize(86 + plaintext.length + 1 + 16);
 
+        // RFC 8291 §2: a fresh application-server key pair (and salt) per message. Comparing whole
+        // bodies would also pass with a reused ephemeral key and only the salt changing, so the
+        // salt and the keyid are compared separately.
         byte[] second = encryptor.encrypt(uaPublic, auth, plaintext, WebPushEncryptor.DEFAULT_RECORD_SIZE);
-        assertThat(second).as("fresh salt + ephemeral key per message").isNotEqualTo(body);
+        assertThat(Arrays.copyOfRange(second, 0, 16))
+                .as("fresh salt per message")
+                .isNotEqualTo(salt);
+        assertThat(Arrays.copyOfRange(second, 21, 86))
+                .as("fresh ephemeral application-server key per message (RFC 8291 §2)")
+                .isNotEqualTo(keyId);
     }
 
     @Test
