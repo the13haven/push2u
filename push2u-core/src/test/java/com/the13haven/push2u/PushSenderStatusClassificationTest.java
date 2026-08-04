@@ -39,6 +39,9 @@ class PushSenderStatusClassificationTest {
             assertThat(result.status()).as("HTTP %d", status).isEqualTo(PushResult.Status.DELIVERED);
             assertThat(result.statusCode()).isEqualTo(status);
             assertThat(result.attempts()).isEqualTo(1);
+            assertThat(receiver.requests())
+                    .as("one POST on the wire, not just one reported")
+                    .hasSize(1);
             assertThat(sleeper.sleeps).as("no backoff on success").isEmpty();
         }
     }
@@ -52,6 +55,9 @@ class PushSenderStatusClassificationTest {
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
             assertThat(result.status()).as("HTTP %d", status).isEqualTo(PushResult.Status.SUBSCRIPTION_EXPIRED);
+            assertThat(result.isSubscriptionExpired())
+                    .as("the accessor callers prune their subscription store on must agree with the status")
+                    .isTrue();
             assertThat(result.statusCode()).isEqualTo(status);
             assertThat(result.attempts())
                     .as("a dead subscription is never retried")
@@ -75,6 +81,9 @@ class PushSenderStatusClassificationTest {
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
             assertThat(result.status()).as("HTTP %d then 201", status).isEqualTo(PushResult.Status.DELIVERED);
+            assertThat(result.statusCode())
+                    .as("the result reports the second response's 201, not the retried %d", status)
+                    .isEqualTo(201);
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(receiver.requests()).hasSize(2);
             assertThat(sleeper.sleeps)
@@ -106,10 +115,13 @@ class PushSenderStatusClassificationTest {
     @Test
     void exhaustedRetriesFailWithMaxAttemptsAndNoBackoffAfterTheFinalAttempt() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
+            // Mixed retryable statuses, so asserting the reported code below distinguishes the
+            // final attempt's 503 from the first attempt's 500.
+            receiver.enqueue(500);
+            receiver.enqueue(503);
+            receiver.enqueue(500);
+            receiver.enqueue(503);
             RetryPolicy policy = new RetryPolicy(4, Duration.ofSeconds(1), Duration.ofSeconds(60));
-            for (int attempt = 0; attempt < policy.maxAttempts(); attempt++) {
-                receiver.enqueue(503);
-            }
             PushSender pusher = PushSender.builder()
                     .vapid(generateVapidKeys())
                     .contact("mailto:ops@example.com")
@@ -121,7 +133,7 @@ class PushSenderStatusClassificationTest {
 
             assertThat(result.status()).isEqualTo(PushResult.Status.FAILED);
             assertThat(result.statusCode())
-                    .as("the final attempt's status is what the result reports")
+                    .as("the final attempt's status is what the result reports, not an earlier attempt's")
                     .isEqualTo(503);
             assertThat(result.attempts()).isEqualTo(policy.maxAttempts());
             assertThat(receiver.requests())
@@ -131,6 +143,30 @@ class PushSenderStatusClassificationTest {
                     .as("exactly maxAttempts - 1 backoffs on the exponential schedule — a fourth entry would be"
                             + " a sleep after the final attempt, delaying the caller for nothing")
                     .containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(2), Duration.ofSeconds(4));
+        }
+    }
+
+    /**
+     * The explicit-policy test above proves the exhaustion invariant for any {@code maxAttempts}; this one proves the
+     * builder actually wires {@link RetryPolicy#defaults()} in. {@link RetryPolicyTest} pins {@code defaults()} to 3
+     * attempts on the record itself, but nothing else runs a default-configured sender to exhaustion — a builder
+     * default silently swapped for a more aggressive policy would ship green while every deployment that never calls
+     * {@code retryPolicy(...)} hammered push services with extra retries.
+     */
+    @Test
+    void aDefaultConfiguredSenderExhaustsAfterExactlyThreeAttempts() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.enqueue(503);
+            receiver.enqueue(503);
+            receiver.enqueue(503);
+
+            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.status())
+                    .as("a fourth attempt would have hit the receiver's drain-to-201 default and DELIVERED")
+                    .isEqualTo(PushResult.Status.FAILED);
+            assertThat(result.attempts()).isEqualTo(3);
+            assertThat(receiver.requests()).hasSize(3);
         }
     }
 
