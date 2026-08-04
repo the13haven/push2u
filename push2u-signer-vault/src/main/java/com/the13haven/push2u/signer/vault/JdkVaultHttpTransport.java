@@ -119,6 +119,12 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         return execute("POST", uri, headers, HttpRequest.BodyPublishers.ofByteArray(body));
     }
 
+    // PreserveStackTrace: the two IllegalArgumentException conversions drop the cause on purpose —
+    // the JDK's message spells out the rejected header value whole (the Vault token, for the
+    // X-Vault-Token header this transport exists to carry) or the whole URI including any
+    // userinfo, and a cause's message rides into every logged stack trace just like the top-level
+    // one. Same reasoning as Endpoints.requireSecure in push2u-core.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     private VaultHttpResponse execute(
             String method, URI uri, Map<String, String> headers, HttpRequest.BodyPublisher bodyPublisher) {
         Objects.requireNonNull(uri, "uri");

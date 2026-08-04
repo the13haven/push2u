@@ -26,7 +26,7 @@ import com.the13haven.push2u.VapidSigner;
  */
 public final class Push2uHealthIndicator implements HealthIndicator {
 
-    private static final Log logger = LogFactory.getLog(Push2uHealthIndicator.class);
+    private static final Log LOG = LogFactory.getLog(Push2uHealthIndicator.class);
 
     private static final String NAME = "signer";
     private static final byte[] LIVENESS_PROBE = "push2u liveness probe".getBytes(StandardCharsets.UTF_8);
@@ -81,9 +81,9 @@ public final class Push2uHealthIndicator implements HealthIndicator {
             // failure persists the trace goes to DEBUG (opt-in); recovery re-arms the WARN, so
             // each new outage announces itself once.
             if (probeFailing.compareAndSet(false, true)) {
-                logger.warn("push2u health check failed: the signer probe threw", e);
+                LOG.warn("push2u health check failed: the signer probe threw", e);
             } else {
-                logger.debug("push2u health check still failing: the signer probe threw", e);
+                LOG.debug("push2u health check still failing: the signer probe threw", e);
             }
             return Health.down()
                     .withDetail(NAME, signerType)
