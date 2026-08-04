@@ -85,13 +85,14 @@ import com.the13haven.push2u.VapidSigner;
 public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
-     * Vault's marshalled signature envelope: the literal {@code vault}, the key version, and the base64url payload,
-     * whose alphabet ({@code A-Za-z0-9-_} plus {@code =} padding) contains no colon — so the payload group cannot
-     * swallow a further separator. The payload is allowed to be empty on purpose: {@code vault:v1:} is a well-formed
-     * envelope carrying no signature, and the length check in {@link #sign} reports that far more usefully ("expected
-     * 64 bytes, got 0") than a format complaint would.
+     * Vault's marshalled signature envelope: the literal {@code vault}, the key version (captured — a pinned signer
+     * checks it against its pin in {@link #stripVaultPrefix}), and the base64url payload, whose alphabet
+     * ({@code A-Za-z0-9-_} plus {@code =} padding) contains no colon — so the payload group cannot swallow a further
+     * separator. The payload is allowed to be empty on purpose: {@code vault:v1:} is a well-formed envelope carrying no
+     * signature, and the length check in {@link #sign} reports that far more usefully ("expected 64 bytes, got 0") than
+     * a format complaint would.
      */
-    private static final Pattern VAULT_SIGNATURE = Pattern.compile("vault:v\\d+:([A-Za-z0-9\\-_]*={0,2})");
+    private static final Pattern VAULT_SIGNATURE = Pattern.compile("vault:v(\\d+):([A-Za-z0-9\\-_]*={0,2})");
     /** Cap for response text echoed into exception messages — enough context, log-safe size. */
     private static final int ERROR_ECHO_LIMIT = 2048;
 
@@ -280,10 +281,33 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
         }
         this.signUri = vaultAddress.resolve("/v1/" + mount + "/sign/" + keyName);
-        this.token = Objects.requireNonNull(token, "token");
+        this.token = headerSafeToken(token);
         this.publicKey = publicKey.clone();
         this.keyVersion = keyVersion;
         this.transport = Objects.requireNonNull(transport, "transport");
+    }
+
+    /**
+     * Validate that {@code token} can travel in an HTTP header before it is ever offered to a transport. RFC 9110
+     * limits a field value to HTAB, SP, visible ASCII and obs-text (0x80–0xFF); the character actually seen in the wild
+     * is the trailing newline a token picks up from {@code kubectl create secret --from-file}, a Vault Agent sidecar
+     * file, or a YAML block scalar. Left to the HTTP client, that token is rejected by the JDK's own header validation
+     * with the WHOLE value in the {@code IllegalArgumentException} message — in the fetched mode from inside the
+     * constructor, i.e. straight into the application's startup stack trace and logs. Failing here makes the
+     * misconfiguration fail at construction with a message that names the problem and no part of the value.
+     */
+    private static String headerSafeToken(String token) {
+        Objects.requireNonNull(token, "token");
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if (c != '\t' && (c < 0x20 || c == 0x7F || c > 0xFF)) {
+                throw new IllegalArgumentException("token contains a character (at index " + i + " of "
+                        + token.length() + ") that cannot appear in an HTTP header value — a token sourced from a"
+                        + " file or a YAML block scalar commonly carries a trailing newline. The value itself is"
+                        + " deliberately not echoed");
+            }
+        }
+        return token;
     }
 
     @Override
@@ -338,7 +362,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         Objects.requireNonNull(vaultAddress, "vaultAddress");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
-        Objects.requireNonNull(token, "token");
+        // Validated here as well as in the canonical constructor: this runs FIRST in the fetched
+        // mode (the constructor chain calls it before any field assignment), and the token must
+        // be rejected before it is ever offered to a transport as a header value.
+        headerSafeToken(token);
         Objects.requireNonNull(transport, "transport");
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName);
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
@@ -545,15 +572,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new PushCryptoException(
                     "malformed Vault 'latest_version' field — expected a whole number: " + abbreviated(json));
         }
-        int version;
-        try {
-            version = Integer.parseInt(json.substring(start, end));
-        } catch (NumberFormatException e) {
-            // A digit run too long for an int. Report it as this module's exception, next to the
-            // cause: the constructor's documented failure mode is PushCryptoException, and a raw
-            // IllegalArgumentException escaping from it would break that contract.
-            throw new PushCryptoException("malformed Vault 'latest_version' field: " + abbreviated(json), e);
+        // Bounded BEFORE Integer.parseInt sees it: parseInt's NumberFormatException carries the
+        // ENTIRE digit run in its message, and attaching that as a cause would put a run as long
+        // as the response body into every logged stack trace — defeating ERROR_ECHO_LIMIT. The
+        // nine-digit bound is deliberately tighter than the int boundary (some ten-digit runs
+        // still fit an int): no plausible Transit version comes near either limit, and nine
+        // ASCII digits (at most 999,999,999) are guaranteed to parse, so the catch is gone.
+        if (end - start > 9) {
+            throw new PushCryptoException(
+                    "malformed Vault 'latest_version' field — implausibly long number: " + abbreviated(json));
         }
+        int version = Integer.parseInt(json.substring(start, end));
         if (version < 1) {
             // Transit numbers key versions from 1; a 0 would be pinned into every sign request and
             // rejected by Vault on each send, far from the response that caused it.
@@ -851,15 +880,28 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * (or, worse, as a decoded 64-byte blob) instead of naming the real problem: the response is not a Transit
      * signature.
      *
+     * <p>A pinned signer additionally requires the envelope's version to <em>be</em> the pin. The pin exists because
+     * the advertised public key belongs to exactly one Transit key version — a signature from any other version can
+     * never verify against it, and accepting one would surface only as an opaque push-service rejection, far from the
+     * Vault response that caused it. The versions are compared as strings against the pin's canonical decimal form:
+     * Vault never emits leading zeros or a version beyond an int, so an envelope shaped that way is not Vault's and
+     * must not be normalised into matching.
+     *
      * <p>The offending value is not echoed, for the same reason {@link #sign} keeps a corrupt payload out of its
      * message — and more so here: a value that failed the signature shape is, by definition, not known to be a
-     * signature, and Vault dresses wrapped tokens and Transit ciphertext in the same {@code vault:v<n>:} clothing.
+     * signature, and Vault dresses wrapped tokens and Transit ciphertext in the same {@code vault:v<n>:} clothing. The
+     * mismatch message carries only the two version numbers ({@link #abbreviated} keeps a nonsense digit run log-safe).
      */
-    private static String stripVaultPrefix(String marshalled) {
+    private String stripVaultPrefix(String marshalled) {
         Matcher signature = VAULT_SIGNATURE.matcher(marshalled);
         if (!signature.matches()) {
             throw new PushCryptoException("unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
         }
-        return signature.group(1);
+        if (keyVersion != null && !signature.group(1).equals(Integer.toString(keyVersion))) {
+            throw new PushCryptoException("Vault Transit signed with key version " + abbreviated(signature.group(1))
+                    + ", but this signer is pinned to key version " + keyVersion + " — the advertised VAPID public"
+                    + " key belongs to the pinned version, so this signature could never verify against it");
+        }
+        return signature.group(2);
     }
 }

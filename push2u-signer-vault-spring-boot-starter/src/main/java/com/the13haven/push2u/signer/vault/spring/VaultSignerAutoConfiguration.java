@@ -41,7 +41,12 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  *   <li>an application {@link HttpClient} bean qualified {@code "push2uVaultHttpClient"} — the middle road for
  *       mTLS/proxy setups: the starter wraps it in a {@link JdkVaultHttpTransport} with the configured
  *       {@code request-timeout} and {@code max-response-bytes} ({@code connect-timeout} is ignored, the supplied client
- *       owns it);
+ *       owns it). The client must not follow redirects (the builder default): the JDK client re-sends
+ *       {@code X-Vault-Token} to a redirect target, so {@link JdkVaultHttpTransport} rejects a client whose
+ *       {@code followRedirects()} is not {@code NEVER}, failing startup. If the setup relied on following a redirect —
+ *       typically a Vault HA standby with {@code disable_clustering = true} answering 307 towards the active node —
+ *       point {@code push2u.signer.vault.address} at the active node's {@code api_addr} (or a load balancer in front of
+ *       it), or terminate the redirect in the proxy;
  *   <li>otherwise a {@link JdkVaultHttpTransport} built entirely from the properties.
  * </ol>
  *

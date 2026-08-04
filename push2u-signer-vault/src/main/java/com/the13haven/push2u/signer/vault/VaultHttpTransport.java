@@ -17,8 +17,11 @@ import com.the13haven.push2u.PushCryptoException;
  * <p>The default is {@link JdkVaultHttpTransport} over {@code java.net.http}; applications supply another
  * implementation (OkHttp, Apache HttpClient 5, ...) by implementing this interface. Implementations report Vault
  * <em>answering</em> — any status — as a {@link VaultHttpResponse}; only transport failures (no connection, timeout,
- * oversized response) throw. They must enforce a response-size cap and a per-request timeout, and must never echo
- * request headers (the Vault token travels in {@code X-Vault-Token}) into exception messages.
+ * oversized response) throw. They must enforce a response-size cap and a per-request timeout, must not follow redirects
+ * (a redirect, 3xx like any other status, is returned to the caller — following it would replay the request headers,
+ * {@code X-Vault-Token} included, against whatever host the {@code Location} names, which for a hijacked or
+ * mis-resolved Vault address is an attacker), and must never echo request headers (the Vault token travels in
+ * {@code X-Vault-Token}) into exception messages.
  */
 public interface VaultHttpTransport {
 

@@ -156,6 +156,34 @@ class VaultTransitVapidSignerErrorResponseTest {
         }
     }
 
+    @Test
+    void aTokenWithACharacterIllegalInAHeaderIsRejectedBeforeAnyRequest() {
+        // A token with a trailing newline is exactly how it arrives from `kubectl create secret
+        // --from-file`, a Vault Agent sidecar file, or a YAML block scalar. Sent as-is, the JDK
+        // header validation rejects it with the WHOLE token in the exception message — in
+        // fetched mode inside the constructor, i.e. in the application's startup stack trace.
+        // The misconfiguration must instead fail here, before any request, with a message that
+        // names the problem and no part of the value.
+        byte[] publicKey = new byte[65];
+        publicKey[0] = 0x04;
+
+        for (String token : new String[] {TOKEN + "\n", TOKEN + "\r", "hvs.embedded\0nul"}) {
+            assertThatThrownBy(() ->
+                            new VaultTransitVapidSigner(VAULT, "transit", "vapid", token, publicKey, alwaysFails()))
+                    .as("explicit mode")
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("token")
+                    .satisfies(e ->
+                            assertThat(e.getMessage()).doesNotContain(TOKEN).doesNotContain("hvs.embedded"));
+            assertThatThrownBy(() -> new VaultTransitVapidSigner(VAULT, "transit", "vapid", token, alwaysFails()))
+                    .as("fetched mode")
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("token")
+                    .satisfies(e ->
+                            assertThat(e.getMessage()).doesNotContain(TOKEN).doesNotContain("hvs.embedded"));
+        }
+    }
+
     // ---- fixtures ---------------------------------------------------------------------------------
 
     /** An explicit-mode signer whose Vault always answers {@code response} to a sign request. */

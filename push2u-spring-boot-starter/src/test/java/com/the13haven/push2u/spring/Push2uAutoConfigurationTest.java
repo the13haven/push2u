@@ -10,7 +10,12 @@ import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -246,10 +251,16 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void healthIndicatorReportsDownWhenTheSignerFails() {
+        // The details carry a fixed reason and the exception TYPE (its full name — a simple
+        // name is empty for anonymous classes) — never the message, whose content is the
+        // signer's own diagnostic and belongs in the log, not the health payload (see
+        // healthIndicatorNeverRepublishesTheSignerExceptionMessage below).
         keyedRunner().withUserConfiguration(FailingSignerConfiguration.class).run(context -> {
             Health health = context.getBean(Push2uHealthIndicator.class).health();
             assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-            assertThat(health.getDetails()).containsEntry("error", "signer backend unavailable");
+            assertThat(health.getDetails())
+                    .containsEntry("reason", "signer probe failed")
+                    .containsEntry("error", IllegalStateException.class.getName());
         });
     }
 
@@ -258,12 +269,91 @@ class Push2uAutoConfigurationTest {
         keyedRunner()
                 .withUserConfiguration(MessagelessFailingSignerConfiguration.class)
                 .run(context -> {
-                    // Health.Builder.withDetail rejects a null value, so passing getMessage() through would
-                    // make health() throw instead of reporting the failure it exists to report.
+                    // The details are built from the exception type alone, so a messageless
+                    // exception must report exactly like one with a message — this pins that no
+                    // code path reaches for getMessage(), whose null Health.Builder.withDetail
+                    // would reject, making health() throw precisely when the signer is broken.
                     Health health = context.getBean(Push2uHealthIndicator.class).health();
                     assertThat(health.getStatus()).isEqualTo(Status.DOWN);
                     assertThat(health.getDetails()).containsEntry("error", IllegalStateException.class.getName());
                 });
+    }
+
+    @Test
+    void healthIndicatorNeverRepublishesTheSignerExceptionMessage() {
+        // Signer exception messages embed internal detail by design — the Vault address, mount
+        // and key name, and up to 2 KiB of Vault response body. Health details are served to
+        // whoever can reach the endpoint once show-details is opened up (show-details: always
+        // is common), so the message must never enter the payload — only a fixed reason and
+        // the exception type.
+        keyedRunner().withUserConfiguration(LeakingSignerConfiguration.class).run(context -> {
+            Health health = context.getBean(Push2uHealthIndicator.class).health();
+            assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+            assertThat(health.getDetails().values())
+                    .allSatisfy(value -> assertThat(String.valueOf(value))
+                            .doesNotContain("hvs.SECRET-TOKEN-MARKER")
+                            .doesNotContain("vault.internal"));
+        });
+    }
+
+    @Test
+    void healthIndicatorNamesTheExceptionEvenWhenItsClassIsAnonymous() {
+        // getSimpleName() of an anonymous class is the empty string — an "error": "" detail
+        // names nothing. getName() always names something and leaks nothing a simple name
+        // would not.
+        keyedRunner()
+                .withUserConfiguration(AnonymousFailingSignerConfiguration.class)
+                .run(context -> {
+                    Health health = context.getBean(Push2uHealthIndicator.class).health();
+                    assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+                    assertThat(String.valueOf(health.getDetails().get("error"))).isNotBlank();
+                });
+    }
+
+    @Test
+    void healthIndicatorLogsTheFullFailureOnTransitionNotOnEveryProbe() {
+        // Kubernetes-style probes evaluate health every few seconds. The full exception (whose
+        // message belongs in the log, not the payload) must be logged at WARN once, on the
+        // transition into failure — not re-traced on every probe for the whole duration of an
+        // outage. Asserted on the JUL records behind Spring's commons-logging (the backend on
+        // this test classpath — no SLF4J binding is present, and JUL's ConsoleHandler holds the
+        // original stderr, which is why OutputCapture cannot see it).
+        java.util.logging.Logger julLogger = java.util.logging.Logger.getLogger(Push2uHealthIndicator.class.getName());
+        List<LogRecord> records = new CopyOnWriteArrayList<>();
+        Handler handler = new Handler() {
+            @Override
+            public void publish(LogRecord logRecord) {
+                records.add(logRecord);
+            }
+
+            @Override
+            public void flush() {}
+
+            @Override
+            public void close() {}
+        };
+        Level originalLevel = julLogger.getLevel();
+        julLogger.addHandler(handler);
+        julLogger.setLevel(Level.ALL);
+        try {
+            keyedRunner()
+                    .withUserConfiguration(FailingSignerConfiguration.class)
+                    .run(context -> {
+                        Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+                        indicator.health();
+                        indicator.health();
+                        indicator.health();
+                        assertThat(records)
+                                .filteredOn(logRecord -> logRecord.getLevel().intValue() >= Level.WARNING.intValue())
+                                .as("the full exception is logged loudly exactly once, on the transition")
+                                .hasSize(1)
+                                .allSatisfy(logRecord ->
+                                        assertThat(logRecord.getThrown()).hasMessage("signer backend unavailable"));
+                    });
+        } finally {
+            julLogger.removeHandler(handler);
+            julLogger.setLevel(originalLevel);
+        }
     }
 
     private ApplicationContextRunner keyedRunner() {
@@ -358,6 +448,28 @@ class Push2uAutoConfigurationTest {
         }
     }
 
+    /** A signer failing with an anonymous exception class, whose {@code getSimpleName()} is empty. */
+    @Configuration(proxyBeanMethods = false)
+    static class AnonymousFailingSignerConfiguration {
+
+        @Bean
+        VapidSigner anonymousFailingSigner() {
+            return new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    throw new RuntimeException("anonymous failure") {};
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            };
+        }
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class MessagelessFailingSignerConfiguration {
 
@@ -369,6 +481,30 @@ class Push2uAutoConfigurationTest {
                     // No message — Health.Builder rejects a null detail value, so the indicator
                     // must not pass getMessage() through unguarded.
                     throw new IllegalStateException();
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    byte[] key = new byte[65];
+                    key[0] = 0x04;
+                    return key;
+                }
+            };
+        }
+    }
+
+    /** A signer whose failure message carries the internals a remote signer's genuinely would. */
+    @Configuration(proxyBeanMethods = false)
+    static class LeakingSignerConfiguration {
+
+        @Bean
+        VapidSigner leakingSigner() {
+            return new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    throw new IllegalStateException("Vault Transit sign failed: HTTP 403 — "
+                            + "POST http://vault.internal:8200/v1/transit/sign/vapid "
+                            + "(token hvs.SECRET-TOKEN-MARKER)");
                 }
 
                 @Override

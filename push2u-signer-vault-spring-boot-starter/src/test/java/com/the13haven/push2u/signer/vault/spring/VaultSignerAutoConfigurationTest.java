@@ -323,6 +323,24 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void aRedirectFollowingQualifiedClientFailsStartupInsteadOfOfferingTheTokenCrossOrigin() {
+        // The JDK client does not strip custom headers such as X-Vault-Token across a
+        // cross-origin redirect: a Vault address resolving to an attacker (DNS hijack, squatted
+        // typo host, compromised reverse proxy) could answer 307 and receive the token. An
+        // injected client that follows redirects must fail startup with a message saying so,
+        // not be silently accepted.
+        vaultRunner()
+                .withUserConfiguration(RedirectFollowingHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("redirect");
+                });
+    }
+
+    @Test
     void anUnqualifiedHttpClientBeanIsNotPickedUp() throws Exception {
         // The whole point of the qualifier: an application HttpClient bean meant for something
         // else (push delivery, arbitrary REST calls) must not be silently drafted into carrying
@@ -556,6 +574,18 @@ class VaultSignerAutoConfigurationTest {
         @Bean("push2uVaultHttpClient")
         HttpClient push2uVaultHttpClient() {
             return CLIENT;
+        }
+    }
+
+    /** A qualified client that follows redirects — the configuration the starter must refuse. */
+    @Configuration(proxyBeanMethods = false)
+    static class RedirectFollowingHttpClientConfiguration {
+
+        @Bean("push2uVaultHttpClient")
+        HttpClient redirectFollowingVaultHttpClient() {
+            return HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.ALWAYS)
+                    .build();
         }
     }
 

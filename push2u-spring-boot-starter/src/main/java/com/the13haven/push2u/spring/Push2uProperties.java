@@ -43,7 +43,23 @@ public record Push2uProperties(
     public record Vapid(
             @Nullable String publicKey,
             @Nullable String privateKey,
-            @Nullable String subject) {}
+            @Nullable String subject) {
+
+        /**
+         * The record-generated {@code toString()} prints every component, {@code privateKey} included — and while
+         * push2u never stringifies this record and the actuator env/configprops endpoints mask values by default, the
+         * consuming application is one accidental {@code log.info("{}", properties)} or debugger dump away from its
+         * VAPID private key in a log line. The private key renders as {@code ***} when set (and as {@code null} when
+         * not, so the mask never reads as "a key is configured"); the public key and subject are published identity and
+         * stay readable.
+         */
+        @Override
+        public String toString() {
+            return "Vapid[publicKey=" + publicKey
+                    + ", privateKey=" + (privateKey == null ? null : "***")
+                    + ", subject=" + subject + "]";
+        }
+    }
 
     /**
      * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
