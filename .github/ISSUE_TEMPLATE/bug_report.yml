@@ -1,0 +1,112 @@
+name: Bug report
+description: Something in push2u behaves differently from what the documentation or an RFC says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **If this is a security vulnerability, stop and read
+        [SECURITY.md](https://github.com/the13haven/push2u/blob/main/SECURITY.md).** A public issue
+        about a defect in encryption, VAPID authentication, key handling or the endpoint policy
+        discloses it before a fix exists.
+
+  - type: checkboxes
+    id: not-security
+    attributes:
+      label: Confirmation
+      options:
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I searched the existing issues.
+          required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      description: Where the problem shows up. Pick several if it spans modules.
+      multiple: true
+      options:
+        - push2u-core
+        - push2u-signer-vault
+        - push2u-spring-boot-starter
+        - push2u-signer-vault-spring-boot-starter
+        - Build / documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Released version, or the commit SHA if you build from source.
+      placeholder: "0.1.0, or 31b4933"
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Java runtime
+      description: Vendor and version, from `java -version`.
+      placeholder: "Temurin 21.0.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: push-service
+    attributes:
+      label: Push service
+      description: >-
+        Which service the endpoint belongs to. Behaviour differs between them, and a mismatch is
+        often the answer.
+      options:
+        - FCM (Chrome, Edge)
+        - Mozilla autopush (Firefox)
+        - WNS (Windows)
+        - Apple Push (Safari)
+        - Other / self-hosted
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        Include the `PushResult`, status code or exception you observed. If an RFC says otherwise,
+        cite the section — this library treats the RFCs as its specification.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        The most useful form is a failing test against this repository. Otherwise, the smallest
+        code and configuration that shows the behaviour.
+      render: java
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, stack traces or configuration
+      description: >-
+        **Redact secrets first.** A subscription endpoint is a capability URL; `p256dh`, `auth`,
+        VAPID private keys and Vault tokens are secrets. Replace them rather than trimming them,
+        so the structure stays readable.
+      render: text
+    validations:
+      required: false

@@ -640,6 +640,18 @@ Rule exclusions carry a comment stating why, and a per-file exception is a `@Sup
 `fipsTest` suite included — into `build/test-results-aggregated/`. CI runs it after the quality
 check and hands that directory, plus the aggregated JaCoCo XML, to Codecov.
 
+## Contributing
+
+Bug reports, proposals and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
+the build, what the quality gate enforces, and the two design constraints most changes run into —
+the zero-dependency core and the small set of extension points.
+
+## Security
+
+Do not report a vulnerability in a public issue. Use GitHub's private reporting —
+[Report a vulnerability](https://github.com/the13haven/push2u/security/advisories/new) — and see
+[`SECURITY.md`](SECURITY.md) for the scope, the response targets and how to test safely.
+
 ## Releases
 
 Releases are cut manually from GitHub Actions: the *Release* workflow runs the full quality
