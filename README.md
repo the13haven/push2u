@@ -240,6 +240,57 @@ This seam covers push delivery only. The Vault signer module has its own transpo
 (`VaultHttpTransport`, below) because the Vault API sits in a different trust domain and its
 responses must be read.
 
+### Endpoint policy (SSRF hardening)
+
+The endpoint inside a `Subscription` is attacker-influenced data: a typical integration accepts
+the browser's `PushSubscription` JSON at a public registration endpoint, and nothing stops a
+client from posting a hand-crafted subscription whose endpoint points into your own network — a
+loopback port, a private-range address, a cloud metadata service. Every later send then POSTs to
+that address from inside your network, and the visible outcome (`PushResult.statusCode()` versus
+`PushDeliveryException`, plus timing) is a blind SSRF oracle for internal host and port
+existence.
+
+Restrict where a sender may POST with an endpoint policy — for almost every deployment, an
+origin allowlist naming the browser push services its users can actually arrive from:
+
+```java
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .endpointPolicy(EndpointPolicies.allowedOrigins(
+        "https://fcm.googleapis.com",           // Chrome
+        "https://updates.push.services.mozilla.com", // Firefox
+        "https://web.push.apple.com"))          // Safari
+    .build();
+```
+
+The policy runs on every send — `sendAsync` included, it goes through the same pipeline —
+before encryption, before the VAPID signature (a remote Vault/KMS call under an external
+signer), and before any network I/O. A rejected endpoint throws `EndpointRejectedException`
+and costs none of them. The exception is a dedicated subtype of `IllegalArgumentException`, so
+a loop over stored subscriptions can tell "this subscription violates policy — flag or remove
+it" apart from a retryable transport failure (`PushDeliveryException`); its message never
+contains the endpoint's path or query, because a push endpoint is a capability URL.
+
+Origins compare after RFC 6454 normalization on both sides — lowercase scheme and host, IDNA
+A-labels decoded, the default `:443` dropped — so `https://PUSH.Example:443` in the
+configuration matches an endpoint on `https://push.example`. Matching is exact: subdomains of an
+allowed origin are not allowed. A malformed entry (unparseable, non-`https`, hostless, or
+carrying a path/query/fragment/userinfo) fails at construction, so a misconfigured allowlist
+fails deployment startup instead of misbehaving at send time.
+
+`EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
+egress rules, per-tenant allowlists or custom DNS checks can be expressed directly.
+
+With no policy configured, behaviour is unchanged: any absolute `https` endpoint accepted by
+`Subscription` is sent to. Know the limits either way: a URI-level check cannot close DNS
+rebinding, and it cannot see what happens after the connection. Redirects are not followed by
+the default transport (the JDK client's policy is `NEVER`), but a custom `PushHttpClient` must
+preserve that itself. Strict guarantees require pinning resolution and egress in the transport
+layer — see the
+[OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html).
+The policy is a coarse filter, not a sandbox.
+
 ### JCE provider selection
 
 By default, cryptographic primitives resolve through the JVM provider chain. Passing a provider
