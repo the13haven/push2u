@@ -14,6 +14,9 @@ amend it in the same change if the decision moves. `RELEASING.md` covers the rel
 `CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
 vulnerability policy.
 
+`.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
+approves a merge into `main`. It loads automatically alongside this file.
+
 Two skills hold the procedures that do not belong in this file:
 `.claude/skills/push2u-implement/SKILL.md` for how recurring multi-file changes are made here, and
 `.claude/skills/push2u-review/SKILL.md` for what a review of a change checks. A subagent inherits
