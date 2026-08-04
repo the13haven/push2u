@@ -30,6 +30,12 @@ out/
 .metadata/
 bin/
 
+# Claude Code — the local half of .claude/ only. The shared half (settings.json, skills/, agents/,
+# commands/) is meant to be committed, so it travels with the repository instead of living on one
+# machine; CLAUDE.md is tracked for the same reason.
+.claude/settings.local.json
+.claude/worktrees/
+
 # macOS
 .DS_Store
 
