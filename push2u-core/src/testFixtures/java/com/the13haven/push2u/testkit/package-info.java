@@ -13,4 +13,7 @@
  * <p>Its one member today is {@link com.the13haven.push2u.testkit.VapidSignerContractTest}, which every
  * {@link com.the13haven.push2u.VapidSigner} implementation extends.
  */
+@NullMarked
 package com.the13haven.push2u.testkit;
+
+import org.jspecify.annotations.NullMarked;

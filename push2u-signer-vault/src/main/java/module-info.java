@@ -14,9 +14,14 @@ module com.the13haven.push2u.signer.vault {
     // `api(project(":push2u-core"))` this module already declares to Gradle.
     requires transitive com.the13haven.push2u;
 
-    // The JDK HttpClient behind the default VaultHttpTransport — this module's own transport seam,
-    // deliberately not PushHttpClient: Vault's responses must be read, push responses must not.
-    requires java.net.http;
+    // `transitive` for the same reason as the core: HttpClient is a parameter of the public
+    // `JdkVaultHttpTransport(HttpClient, Duration, int)`, which is how the README's mTLS and proxy
+    // configurations reach Vault. This is the module's own transport seam, deliberately not
+    // PushHttpClient — Vault's responses must be read, push responses must not.
+    requires transitive java.net.http;
+
+    // `static`: see the core's descriptor — the annotations are RUNTIME-retention, but an
+    // unresolvable annotation type is ignored by the JVM rather than fatal.
     requires static org.jspecify;
 
     exports com.the13haven.push2u.signer.vault;

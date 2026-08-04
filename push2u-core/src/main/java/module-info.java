@@ -10,14 +10,18 @@
  * that reads this artifact from the module path (ADR-014).
  */
 module com.the13haven.push2u {
-    // The JDK HttpClient behind JdkHttpPushClient, the default PushHttpClient. Everything else the
+    // `transitive`, because HttpClient is not merely behind JdkHttpPushClient — it is in its public
+    // constructor, `JdkHttpPushClient(HttpClient, Duration)`, which is the documented way to supply
+    // a configured client. Without it a consumer calling that constructor gets "package
+    // java.net.http is not visible" until they add the requires themselves. Everything else the
     // core uses — java.security, javax.crypto, java.util.Base64 — is in java.base.
-    requires java.net.http;
+    requires transitive java.net.http;
 
-    // `static`: JSpecify's annotations are CLASS-retention, so they are needed to compile against
-    // this module and never at runtime. A consumer that does not care about the nullness contract
-    // is not made to resolve the jar for it — which is what keeps ADR-002's zero-dependency claim
-    // true on the module path as well as the classpath.
+    // `static`: nothing resolves the JSpecify jar at runtime. Its annotations are RUNTIME-retention,
+    // but the JVM silently ignores an annotation whose type it cannot resolve, so a consumer that
+    // does not care about the nullness contract never has to supply the jar — which is what keeps
+    // ADR-002's zero-dependency claim true on the module path as well as the classpath. A consumer
+    // that does care puts it on the path and reads the annotations as usual.
     requires static org.jspecify;
 
     exports com.the13haven.push2u;

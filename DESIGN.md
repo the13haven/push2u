@@ -554,12 +554,20 @@ cadence to release cadence and turns any accidental merge into a permanent artif
 
 `push2u-core` and `push2u-signer-vault` carry a `module-info.java`. The module name is the package
 name — `com.the13haven.push2u` and `com.the13haven.push2u.signer.vault` — and the core's descriptor
-is three lines: `requires java.net.http` for `JdkHttpPushClient`, `requires static org.jspecify`,
-one `exports`. Nothing else is needed, because there is nothing else: the zero-dependency posture of
-ADR-002 is what makes an accurate descriptor this cheap to write, and the descriptor is what makes
-that posture checkable rather than merely asserted. `requires static` is the operative word — a
-consumer never resolves the JSpecify jar at runtime, which was verified by running a module-path
-consumer with it absent.
+is three lines: `requires transitive java.net.http`, `requires static org.jspecify`, one `exports`.
+Nothing else is needed, because there is nothing else: the zero-dependency posture of ADR-002 is
+what makes an accurate descriptor this cheap to write, and the descriptor is what makes that posture
+checkable rather than merely asserted.
+
+Both qualifiers carry weight. `java.net.http` is `transitive` because `HttpClient` is not an
+implementation detail behind the default client — it is a parameter of the public
+`JdkHttpPushClient(HttpClient, Duration)`, and of `JdkVaultHttpTransport` in the Vault module, so a
+consumer configuring their own client would otherwise have to require the JDK module themselves;
+`javac -Xlint:exports` names exactly this. `requires static org.jspecify` means nothing resolves the
+JSpecify jar at runtime. Note the reason is not annotation retention — JSpecify's annotations are
+`RUNTIME`-retained — but that the JVM ignores an annotation whose type it cannot resolve. Verified
+running a module-path consumer with the jar absent, reflecting over every annotated member: empty
+annotation arrays, no exception.
 
 The two Spring Boot starters stay **automatic** modules with a fixed `Automatic-Module-Name`. Boot's
 own artifacts are automatic modules, and auto-configuration works by reflecting over classes named
@@ -572,7 +580,7 @@ The published conformance kit moved from `com.the13haven.push2u` to `com.the13ha
 in the same change, and it had to. A package split across two artifacts cannot be resolved from the
 module path — with the kit still in the core's package, a consumer putting both on it gets
 `ResolutionException: Module … contains package com.the13haven.push2u, module com.the13haven.push2u
-exports package com.the13haven.push2u to …`. That was reproduced before the move rather than assumed.
+exports package com.the13haven.push2u to …`. That was reproduced before the move, not assumed.
 
 Timing is the whole argument for doing this now: a module name, like a package name (ADR-013), is
 free to choose before the first release and a breaking change for every adopter afterwards. The same
@@ -584,7 +592,7 @@ foo {}` alone fails to parse — and a single unparseable file aborts the whole 
 `module-info.java` is excluded from the analysing configuration. The exclusion costs nothing in
 substance: naming, Javadoc and import-order rules are all about type declarations. The licence
 header of ADR-008 is the exception, and it is checked by `checkstyleLicenseHeader`, whose
-configuration has no `TreeWalker` and therefore reads the descriptor as lines rather than parsing it.
+configuration has no `TreeWalker` and so reads the descriptor as lines rather than parsing it.
 
 ## 10. Verification
 

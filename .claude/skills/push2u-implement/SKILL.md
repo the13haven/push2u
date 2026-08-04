@@ -109,7 +109,8 @@ The contract is narrow and unforgiving: `sign` returns a raw 64-byte P-256 `r ||
 `publicKey` returns the 65-byte uncompressed point. A signer that returns DER, or a compressed
 point, will produce a JWT that push services reject with no useful diagnostic.
 
-- Extend `VapidSignerContractTest` (package `com.the13haven.push2u.testkit`) from `push2u-core`'s published test fixtures. That is what the
+- Extend `VapidSignerContractTest` (package `com.the13haven.push2u.testkit`) from `push2u-core`'s
+  published test fixtures. That is what the
   fixtures are published for, and it is the cheapest way to find out you got the encoding wrong.
 - If the signer talks to a network service, give it **its own transport seam**. Do not reuse
   `PushHttpClient`: it exists for a domain where response bodies are never read, and a key service's

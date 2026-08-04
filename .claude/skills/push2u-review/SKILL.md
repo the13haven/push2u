@@ -217,7 +217,8 @@ one *silently* is, because it leaves `DESIGN.md` describing a design the code no
 - BC-FIPS tests belong in the `fipsTest` source set and nowhere else: `bc-fips` and stock `bcprov`
   ship incompatible `org.bouncycastle.crypto` classes and cannot share a classpath. A BC-FIPS test
   added to `test` may appear to pass while exercising the wrong provider.
-- A new `VapidSigner` implementation extends the published `com.the13haven.push2u.testkit.VapidSignerContractTest`.
+- A new `VapidSigner` implementation extends the published conformance kit,
+  `com.the13haven.push2u.testkit.VapidSignerContractTest`.
 - Aggregated coverage must stay ≥ 80 %, but the threshold is a floor, not a target — a large
   untested branch is a finding even when the number holds.
 

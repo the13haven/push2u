@@ -51,8 +51,11 @@ module com.example.app {
 }
 ```
 
-The core requires only `java.net.http` from the JDK, and JSpecify is a `requires static` — the
-annotations are needed to compile against the nullness contract and never resolved at runtime.
+The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
+its own configured `HttpClient` to `JdkHttpPushClient` does not have to require it as well. JSpecify
+is a `requires static`: nothing resolves that jar at runtime, so the module stays dependency-free on
+the module path exactly as it is on the class path. Put it on the path if your analysers read the
+nullness annotations; leave it off and everything works the same.
 
 The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
 Boot's own artifacts are automatic modules and its auto-configuration is reflective. The published

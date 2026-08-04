@@ -384,17 +384,24 @@ gradle.taskGraph.whenReady {
         // invites — and an eager read degrades both sides identically, `missing` comes back empty,
         // and the guard waves through exactly what it was written to catch. Keep the two reads
         // separate, and the guard fails independently of how the task's source was built.
-        val expected =
+        val sourceSetsNow = project.extensions.getByType<SourceSetContainer>()
+        val nonMain =
             project
-                .files(
-                    project
-                        .extensions
-                        .getByType<SourceSetContainer>()
-                        .filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }
-                        .flatMap { it.java.srcDirs })
+                .files(sourceSetsNow.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs })
                 .asFileTree
                 .matching { include("**/*.java") }
                 .files
+        // main's module descriptor belongs to the assertion too: checkstyleMain excludes it (the
+        // parser cannot read it) and Spotless skips it by name, so this task is the only thing
+        // checking its licence header. Leaving it out of `expected` would let the task quietly stop
+        // reading the one file whose coverage depends entirely on it.
+        val mainDescriptors =
+            sourceSetsNow
+                .filter { it.name == SourceSet.MAIN_SOURCE_SET_NAME }
+                .flatMap { it.java.srcDirs }
+                .map { File(it, "module-info.java") }
+                .filter { it.isFile }
+        val expected = nonMain + mainDescriptors
         val missing = expected - checkstyleLicenseHeader.get().source.files
 
         // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
@@ -409,7 +416,7 @@ gradle.taskGraph.whenReady {
             // 43-path error message buries its own first line.
             val examples = missing.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
             error(
-                "$licenseHeaderTask does not cover every non-main source — ${missing.size} file(s) " +
+                "$licenseHeaderTask does not cover everything it must read — ${missing.size} file(s) " +
                     "would go unchecked, among them:\n  $examples")
         }
     }
