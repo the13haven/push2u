@@ -11,15 +11,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link Es256Verify} answers "is this raw {@code r || s} signature valid for this input and this advertised public
+ * {@link Es256Verifier} answers "is this raw {@code r || s} signature valid for this input and this advertised public
  * key" — true only for the genuine article, false (never an exception) for wrong-but-well-formed signatures, and a
  * clear split between input problems ({@link IllegalArgumentException}) and platform problems
  * ({@link PushCryptoException}). The DER-fallback verification path is pinned separately by the FIPS suite
- * ({@code BcFipsEs256VerifyTest}); the platform here resolves the raw P1363 name.
+ * ({@code BcFipsEs256VerifierTest}); the platform here resolves the raw P1363 name.
  */
-class Es256VerifyTest {
+class Es256VerifierTest {
 
-    private static final byte[] SIGNING_INPUT = "push2u Es256Verify test input".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SIGNING_INPUT = "push2u Es256Verifier test input".getBytes(StandardCharsets.US_ASCII);
 
     private static VapidSigner signer;
     /** The public half of an unrelated pair, for the wrong-key case. */
@@ -35,7 +35,7 @@ class Es256VerifyTest {
     void aGenuineSignatureVerifies() {
         byte[] signature = signer.sign(SIGNING_INPUT);
 
-        assertThat(Es256Verify.verify(signer.publicKey(), SIGNING_INPUT, signature))
+        assertThat(Es256Verifier.verify(signer.publicKey(), SIGNING_INPUT, signature))
                 .isTrue();
     }
 
@@ -43,7 +43,7 @@ class Es256VerifyTest {
     void aSignatureOverDifferentInputDoesNotVerify() {
         byte[] signature = signer.sign(SIGNING_INPUT);
 
-        assertThat(Es256Verify.verify(
+        assertThat(Es256Verifier.verify(
                         signer.publicKey(), "some other input".getBytes(StandardCharsets.US_ASCII), signature))
                 .isFalse();
     }
@@ -52,7 +52,7 @@ class Es256VerifyTest {
     void aForeignPublicKeyDoesNotVerify() {
         byte[] signature = signer.sign(SIGNING_INPUT);
 
-        assertThat(Es256Verify.verify(foreignPublicKey, SIGNING_INPUT, signature))
+        assertThat(Es256Verifier.verify(foreignPublicKey, SIGNING_INPUT, signature))
                 .isFalse();
     }
 
@@ -64,7 +64,7 @@ class Es256VerifyTest {
         byte[] garbage = new byte[64];
         Arrays.fill(garbage, (byte) 0x42);
 
-        assertThat(Es256Verify.verify(signer.publicKey(), SIGNING_INPUT, garbage))
+        assertThat(Es256Verifier.verify(signer.publicKey(), SIGNING_INPUT, garbage))
                 .isFalse();
     }
 
@@ -72,13 +72,13 @@ class Es256VerifyTest {
     void anAllZeroSignatureIsInvalidNotAnError() {
         // r = s = 0 can never verify; some providers throw rather than return false — either way
         // the API answer is false.
-        assertThat(Es256Verify.verify(signer.publicKey(), SIGNING_INPUT, new byte[64]))
+        assertThat(Es256Verifier.verify(signer.publicKey(), SIGNING_INPUT, new byte[64]))
                 .isFalse();
     }
 
     @Test
     void rejectsAWrongLengthSignature() {
-        assertThatThrownBy(() -> Es256Verify.verify(signer.publicKey(), SIGNING_INPUT, new byte[63]))
+        assertThatThrownBy(() -> Es256Verifier.verify(signer.publicKey(), SIGNING_INPUT, new byte[63]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("64-byte");
     }
@@ -87,14 +87,14 @@ class Es256VerifyTest {
     void rejectsAMalformedPublicKey() {
         byte[] signature = signer.sign(SIGNING_INPUT);
 
-        assertThatThrownBy(() -> Es256Verify.verify(new byte[10], SIGNING_INPUT, signature))
+        assertThatThrownBy(() -> Es256Verifier.verify(new byte[10], SIGNING_INPUT, signature))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("uncompressed P-256 point");
     }
 
     @Test
     void theStockPlatformIsSupported() {
-        assertThat(Es256Verify.isSupported()).isTrue();
+        assertThat(Es256Verifier.isSupported()).isTrue();
     }
 
     @Test
@@ -106,8 +106,8 @@ class Es256VerifyTest {
         Jca jca = Jca.using(empty);
         byte[] signature = signer.sign(SIGNING_INPUT);
 
-        assertThat(Es256Verify.isSupported(jca)).isFalse();
-        assertThatThrownBy(() -> Es256Verify.verify(jca, signer.publicKey(), SIGNING_INPUT, signature))
+        assertThat(Es256Verifier.isSupported(jca)).isFalse();
+        assertThatThrownBy(() -> Es256Verifier.verify(jca, signer.publicKey(), SIGNING_INPUT, signature))
                 .isInstanceOf(PushCryptoException.class)
                 .hasMessageContaining("ES256");
     }

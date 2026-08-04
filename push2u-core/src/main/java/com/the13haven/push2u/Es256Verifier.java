@@ -22,7 +22,7 @@ import java.security.interfaces.ECPublicKey;
  * directly; fall back to {@code SHA256withECDSA} and re-encode the raw signature to minimal DER
  * ({@link EcdsaDer#toDer}) first — a representation change only.
  */
-public final class Es256Verify {
+public final class Es256Verifier {
 
     private static final int SIGNATURE_LENGTH = 64;
 
@@ -32,7 +32,7 @@ public final class Es256Verify {
      */
     private static final Jca PLATFORM_JCA = Jca.platform();
 
-    private Es256Verify() {}
+    private Es256Verifier() {}
 
     /**
      * Whether this JVM's default providers offer an ES256 verification primitive at all — {@code true} on any stock
