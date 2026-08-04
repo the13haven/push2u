@@ -12,8 +12,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -27,12 +25,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end send-pipeline tests: a real {@link PushSender} (real RFC 8291 encryption + RFC 8292 VAPID + the JDK HTTP
- * client) against an in-process {@link MockPushReceiver}, asserting the status-code → {@link PushResult} mapping and
- * the retry behaviour. A {@link RecordingSleeper} runs the retry loop without real backoff delays.
+ * client) against an in-process {@link MockPushReceiver}, asserting the request shape, the VAPID claims of a real
+ * request, the {@code Retry-After} handling and the async execution contract. A
+ * {@link PushTestSupport.RecordingSleeper} runs the retry loop without real backoff delays. The full status-code →
+ * {@link PushResult} classification table (ranges and their edges) lives in {@link PushSenderStatusClassificationTest}.
  */
 class PushSenderTest {
 
-    private final RecordingSleeper sleeper = new RecordingSleeper();
+    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
 
     @Test
     void deliversOn201AndSendsAWellFormedRequest() throws IOException {
@@ -79,9 +79,7 @@ class PushSenderTest {
                 .send(subscription, PushMessage.of(bytes("x")));
 
         assertThat(result.delivered()).isTrue();
-        String authorization = captured.get().get("Authorization");
-        String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
-        String claims = new String(Base64Url.decode(jwt.split("\\.", -1)[1]), StandardCharsets.UTF_8);
+        String claims = claimsOf(captured.get().get("Authorization"));
         assertThat(claims)
                 .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
                 .contains("\"aud\":\"https://push.example\"")
@@ -90,66 +88,52 @@ class PushSenderTest {
     }
 
     @Test
-    void deadSubscriptionIsAResultNotAnException() throws IOException {
-        for (int status : new int[] {404, 410}) {
-            try (MockPushReceiver receiver = new MockPushReceiver()) {
-                receiver.enqueue(status);
-                PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
-
-                assertThat(result.isSubscriptionExpired())
-                        .as("status %d", status)
-                        .isTrue();
-                assertThat(result.attempts()).as("no retry on %d", status).isEqualTo(1);
-                assertThat(receiver.requests()).hasSize(1);
-            }
-        }
-    }
-
-    @Test
-    void nonRetryableClientErrorFailsImmediately() throws IOException {
+    void expClaimOfASentRequestIsThePinnedClockPlusTheConfiguredExpiry() throws IOException {
+        // RFC 8292 §2 caps exp at 24 hours after the request; the builder already rejects a larger
+        // configuration (PushSenderOptionsTest), so what is left unproven is the request itself:
+        // exp must be exactly clock-now plus the configured expiry. Configuring the 24h ceiling
+        // makes the equality double as the RFC bound — an arithmetic slip that lands exp even one
+        // second later produces a JWT every push service is entitled to answer with 401.
+        Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(413);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            PushSender pusher = PushSender.builder()
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .sleeper(sleeper)
+                    .clock(Clock.fixed(now, ZoneOffset.UTC))
+                    .jwtExpiry(Duration.ofHours(24))
+                    .build();
 
-            assertThat(result.status()).isEqualTo(PushResult.Status.FAILED);
-            assertThat(result.statusCode()).isEqualTo(413);
-            assertThat(result.attempts()).isEqualTo(1);
-            assertThat(receiver.requests()).hasSize(1);
-        }
-    }
-
-    @Test
-    void retriesServerErrorThenSucceeds() throws IOException {
-        try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(500);
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
             assertThat(result.delivered()).isTrue();
-            assertThat(result.attempts()).isEqualTo(2);
-            assertThat(receiver.requests()).hasSize(2);
-            assertThat(sleeper.sleeps)
-                    .as("one backoff between the two attempts, at the policy's initial value")
-                    .containsExactly(RetryPolicy.defaults().initialBackoff());
+            String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
+            assertThat(claims)
+                    .as("exp is exactly now + 24h, the RFC 8292 §2 maximum (the trailing comma pins"
+                            + " the whole number, not a prefix of a larger one)")
+                    .contains("\"exp\":" + now.plus(Duration.ofHours(24)).getEpochSecond() + ",");
         }
     }
 
     @Test
-    void exhaustsRetriesThenFails() throws IOException {
+    void expClaimDefaultsToTwelveHoursAfterTheClock() throws IOException {
+        // Pins the documented builder default: a sender that never calls jwtExpiry() must sign
+        // 12h ahead, not silently drift to some other offset the Javadoc no longer matches.
+        Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(500);
-            receiver.enqueue(503);
-            receiver.enqueue(500);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            PushSender pusher = PushSender.builder()
+                    .vapid(generateVapidKeys())
+                    .contact("mailto:ops@example.com")
+                    .sleeper(sleeper)
+                    .clock(Clock.fixed(now, ZoneOffset.UTC))
+                    .build();
 
-            assertThat(result.status()).isEqualTo(PushResult.Status.FAILED);
-            assertThat(result.attempts())
-                    .as("RetryPolicy.defaults() caps at 3 attempts")
-                    .isEqualTo(3);
-            assertThat(receiver.requests()).hasSize(3);
-            assertThat(sleeper.sleeps)
-                    .as("no Retry-After on either 5xx — the exponential schedule doubles")
-                    .containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(2));
+            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(result.delivered()).isTrue();
+            String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
+            assertThat(claims)
+                    .contains("\"exp\":" + now.plus(Duration.ofHours(12)).getEpochSecond() + ",");
         }
     }
 
@@ -393,13 +377,9 @@ class PushSenderTest {
         return value.getBytes(StandardCharsets.UTF_8);
     }
 
-    /** Records backoff durations instead of sleeping, so the retry tests run instantly. */
-    static final class RecordingSleeper implements Sleeper {
-        final List<Duration> sleeps = new ArrayList<>();
-
-        @Override
-        public void sleep(Duration duration) {
-            sleeps.add(duration);
-        }
+    /** The decoded claims JSON of the JWT inside a {@code vapid t=<jwt>, k=<key>} Authorization header. */
+    private static String claimsOf(String authorization) {
+        String jwt = authorization.substring("vapid t=".length(), authorization.indexOf(", k="));
+        return new String(Base64Url.decode(jwt.split("\\.", -1)[1]), StandardCharsets.UTF_8);
     }
 }

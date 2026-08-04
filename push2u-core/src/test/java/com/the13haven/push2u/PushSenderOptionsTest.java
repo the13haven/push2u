@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  */
 class PushSenderOptionsTest {
 
-    private final PushSenderTest.RecordingSleeper sleeper = new PushSenderTest.RecordingSleeper();
+    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
 
     @Test
     void urgencyAndTopicAreSentUnderTheirRfc8030HeaderNames() throws IOException {
