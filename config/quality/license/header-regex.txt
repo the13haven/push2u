@@ -1,0 +1,5 @@
+^/\*$
+^ \* Copyright \d{4} The 13 Haven$
+^ \*$
+^ \* SPDX-License-Identifier: Apache-2\.0$
+^ \*/$

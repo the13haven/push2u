@@ -66,6 +66,22 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
 
 - A new package needs a `package-info.java` carrying JSpecify's `@NullMarked`; forgetting it is a
   build failure, not a lint warning.
+- Every `.java` file carries the Apache-2.0 SPDX licence header. You do not have to type it:
+  `./gradlew qualityCheck` writes it into any file that lacks one, with the current year, and the
+  year is never rewritten afterwards. The exceptions are `package-info.java` and `module-info.java`
+  — Spotless leaves those alone so it cannot eat their Javadoc, so copy the header into them by
+  hand:
+
+  ```java
+  /*
+   * Copyright <the year you create the file> The 13 Haven
+   *
+   * SPDX-License-Identifier: Apache-2.0
+   */
+  ```
+
+  Copy the year from a file you are adding alongside it rather than from this example — the check
+  accepts any four digits, so a stale year copied from documentation would pass unnoticed.
 - A rule exclusion carries a comment saying why. A per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope that covers it, next to its reason.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never

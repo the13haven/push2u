@@ -419,6 +419,48 @@ exception-driven control flow.
 
 The project is licensed under Apache License 2.0, including its explicit patent grant.
 
+*Amended:* every Java source file carries the licence in its header, in the short SPDX form rather
+than the full boilerplate the licence's appendix suggests:
+
+```java
+/*
+ * Copyright <year> The 13 Haven
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+```
+
+`LICENSE` and the POM's `licenses` element already cover the distribution, so the header is not what
+makes the licence apply. It is what survives a single file being copied out of the repository, and
+what per-file scanners (ScanCode, FOSSA, ORT) read — without it they classify the file as
+`unknown licence`, which is friction for exactly the enterprise consumer this library targets. The
+SPDX identifier is machine-readable and says the same thing far more briefly than repeating the
+appendix boilerplate in a hundred files.
+
+`LICENSE` itself keeps the appendix verbatim, placeholders and all: it is the canonical Apache text,
+and the appendix is an instruction for applying the licence rather than a place to assert ownership.
+Filling it in was the half-measure this amendment replaces — the notice now sits in each file, which
+is what the instruction asks for. Every published jar additionally carries `META-INF/LICENSE`, so an
+artifact separated from its POM still states its terms — the terms, not the copyright holder, since
+the canonical appendix names nobody and compiled classes carry no comments. A scanner reading the
+binary jar alone therefore sees Apache-2.0 without an owner; the owner is in the POM's `developer`
+entry and its `organization`, in the source jar and in every source file, which is where it is
+useful. No `NOTICE` file: §4(d) would oblige every redistributor of a derivative work to reproduce
+it, and that is a real obligation to place on consumers in exchange for attribution they already
+have.
+
+The year is the year the file was created, and is never advanced: a maintained copyright range
+means re-touching every file each January for no legal effect, since the notice is evidence of
+authorship at a date rather than a term that lapses. Spotless writes the current year into a new
+file and preserves whatever it finds afterwards.
+
+Enforcement is split because Spotless's `LicenseHeaderStep` skips `package-info.java` and
+`module-info.java` by name — their leading Javadoc would otherwise be read as a stale header and
+replaced. Spotless therefore owns every other file in every source set; Checkstyle carries the
+`RegexpHeader` rule that covers those two file kinds, on `main` sources under the full configuration
+and on the test source sets under a header-only one (the full configuration reports hundreds of
+Javadoc and naming violations there, which is why it is main-only in the first place).
+
 ### ADR-009 — Standalone repository
 
 push2u is maintained as an independent Gradle multi-project build and has no application-specific

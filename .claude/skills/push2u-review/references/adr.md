@@ -20,7 +20,7 @@ describing a design that no longer exists.
 | 005 | Two public SPIs in the core (`VapidSigner`, `PushHttpClient`), plus `EndpointPolicy` added later under the same test | New seams without an articulable difference the library cannot decide for the deployment; reusing one transport seam for both trust domains |
 | 006 | `aes128gcm` only | Legacy `aesgcm` support |
 | 007 | Expired subscription is a result | `404`/`410` as exception-driven control flow |
-| 008 | Apache License 2.0 | — |
+| 008 | Apache License 2.0, declared per file with an SPDX header | A Java file without the header; a copyright year advanced after the file was created |
 | 009 | Standalone repository | Application-specific dependencies or configuration |
 | 010 | Pluggable VAPID key custody | Hardwiring local signing into the pipeline |
 | 011 | Size limit expressed on the encrypted body | A plaintext maximum as the configurable knob, or a hardcoded plaintext constant |

@@ -1,4 +1,5 @@
 import com.github.spotbugs.snom.SpotBugsTask
+import java.util.concurrent.Callable
 import net.ltgt.gradle.errorprone.errorprone
 
 // Convention plugin bundling every static-analysis tool push2u runs: Spotless (formatting),
@@ -41,6 +42,19 @@ fun toolLibrary(alias: String): Provider<MinimalExternalModuleDependency> =
 // ---------------------------------------------------------------------------------------------
 spotless {
     java {
+        // The Apache-2.0 SPDX header, on every Java file of every source set — Spotless both
+        // applies it (qualityCheck) and verifies it (qualityCheckCi).
+        //
+        // $YEAR is resolved once, when the header is first written to a file, and preserved on
+        // every later run (Spotless's PRESERVE year mode, the default without `ratchetFrom`): a
+        // file keeps the year it was created in, and nothing rewrites every file each January.
+        //
+        // LicenseHeaderStep skips package-info.java and module-info.java by name — their leading
+        // Javadoc would otherwise be treated as the old header and replaced. Those files carry the
+        // header by hand, and Checkstyle's RegexpHeader is what verifies it there: checkstyle.xml
+        // on `main`, the `checkstyleLicenseHeader` task below on every other source set.
+        licenseHeaderFile(rootProject.file("config/quality/license/header.txt"))
+
         palantirJavaFormat(toolVersion("palantir"))
             .formatJavadoc(true)
             .style("PALANTIR")
@@ -61,6 +75,17 @@ spotless {
 checkstyle {
     toolVersion = toolVersion("checkstyle")
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
+
+    // `config/quality`, not the directory holding checkstyle.xml: this is what `${config_loc}`
+    // resolves to inside the config, and both configurations read the header pattern from
+    // `${config_loc}/license/header-regex.txt`. Gradle tracks the whole directory as a task input,
+    // so editing the header pattern re-runs Checkstyle — a path escaping it with `..` would not
+    // be tracked, and a changed pattern would silently replay a stale UP-TO-DATE result.
+    //
+    // An IDE Checkstyle plugin resolving `${config_loc}` on its own will point it at the directory
+    // holding the config file; set it to `config/quality` there too, or the header pattern will
+    // not be found.
+    configDirectory = rootProject.layout.projectDirectory.dir("config/quality")
 }
 
 // Version bumps, not suppressions. Both artefacts reach the `checkstyle` configuration only — the
@@ -84,6 +109,35 @@ dependencies {
             because("GHSA-6fmv-xxpf-w3cw")
         }
     }
+}
+
+// The one Checkstyle task that is not main-only. Checkstyle skips the test source sets because the
+// full ruleset does not apply to them, and Spotless — which does cover every source set — skips
+// package-info.java and module-info.java by name (LicenseHeaderStep would eat their leading
+// Javadoc). The overlap of the two exclusions is a file nothing checks, and push2u-core's
+// testFixtures are PUBLISHED, so such a file would ship to Maven Central without a licence header.
+// This task closes that gap with a configuration holding RegexpHeader and nothing else.
+// Resolved here, against the project: inside the task-configuration lambda below, `extensions`
+// would be the task's own and `SourceSetContainer` is not among them.
+val javaSourceSets = extensions.getByType<SourceSetContainer>()
+
+val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeader") {
+    description = "Verifies the licence header on the source sets checkstyleMain does not cover."
+    group = "verification"
+
+    configFile = rootProject.file("config/quality/checkstyle/checkstyle-header.xml")
+
+    // A Callable, so the container is read when the task's inputs are resolved rather than when
+    // this plugin is applied — push2u-core creates `fipsTest` in its own build script, which runs
+    // later, and a list built here and now would miss it.
+    setSource(
+        Callable {
+            javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs }
+        })
+    include("**/*.java")
+
+    // Checkstyle parses source, not bytecode; the property is mandatory but nothing here reads it.
+    classpath = files()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -214,7 +268,7 @@ tasks.withType<JavaCompile>().configureEach {
 // ---------------------------------------------------------------------------------------------
 // Lifecycle tasks
 // ---------------------------------------------------------------------------------------------
-val analysisTasks = listOf("checkstyleMain", "pmdMain", "spotbugsMain")
+val analysisTasks = listOf("checkstyleMain", checkstyleLicenseHeader.name, "pmdMain", "spotbugsMain")
 
 tasks.register("qualityCheck") {
     description = "Runs all quality checks locally (auto-formats code)."
@@ -244,7 +298,10 @@ tasks.register("qualityCheckCi") {
 val formattingTasks = listOf("spotlessApply", "spotlessCheck")
 
 tasks.withType<JavaCompile>().configureEach { mustRunAfter(formattingTasks) }
-tasks.named("checkstyleMain") { mustRunAfter(formattingTasks) }
+// checkstyleLicenseHeader goes first among the analysers: one rule over the source lines, a
+// fraction of a second, against SpotBugs' ~17s at the other end of the chain.
+checkstyleLicenseHeader.configure { mustRunAfter(formattingTasks) }
+tasks.named("checkstyleMain") { mustRunAfter(formattingTasks, checkstyleLicenseHeader) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
 tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }
@@ -264,10 +321,67 @@ gradle.taskGraph.whenReady {
     val requested = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }.toSet()
     val spotlessRequested = requested.any { it.startsWith("spotless") }
 
-    tasks.withType<Checkstyle>().configureEach { enabled = mainOnly(name) || name in requested }
+    // checkstyleLicenseHeader is the exception to "main-only": it exists precisely for the source
+    // sets the name-based rule excludes, so it is enabled by the quality gate on its own name.
+    tasks.withType<Checkstyle>().configureEach {
+        enabled = mainOnly(name) || (runQuality && name == checkstyleLicenseHeader.name) || name in requested
+    }
     tasks.withType<Pmd>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.matching { it.name.startsWith("spotless") }.configureEach {
         enabled = runQuality || spotlessRequested
+    }
+
+    // The failure mode of resolving the source sets lazily is a rule that checks nothing, quietly.
+    // Two shapes of it, and the second is the likely one:
+    //
+    //   * nothing at all resolves — Checkstyle reports NO-SOURCE and the build stays green;
+    //   * something resolves, but not everything. Replace the Callable at the top of this file with
+    //     a list built where it stands, and it evaluates while `plugins.withId("java")` is firing —
+    //     before push2u-core applies java-test-fixtures and creates fipsTest. What you get is
+    //     src/test alone: not empty, so a non-emptiness check passes, and the published conformance
+    //     kit — the whole reason this task exists — goes unchecked.
+    //
+    // So the assertion is coverage, not non-emptiness: every non-main Java file the source sets
+    // hold now must be one this task is about to read. `whenReady` is where that can be asked —
+    // the graph is built and every build script has run, but nothing has executed, and
+    // `SourceTask.getSource()` being @SkipWhenEmpty means a guard inside the task would itself be
+    // skipped in the first case.
+    val licenseHeaderTask = "${project.path}:${checkstyleLicenseHeader.name}"
+    if (hasTask(licenseHeaderTask)) {
+        // Read the container again here rather than reusing `javaSourceSets` from the top of the
+        // file. An assertion computed from the same expression as the thing it asserts about is
+        // not an assertion: factor the two into one shared val — the refactor this duplication
+        // invites — and an eager read degrades both sides identically, `missing` comes back empty,
+        // and the guard waves through exactly what it was written to catch. Keep the two reads
+        // separate, and the guard fails independently of how the task's source was built.
+        val expected =
+            project
+                .files(
+                    project
+                        .extensions
+                        .getByType<SourceSetContainer>()
+                        .filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }
+                        .flatMap { it.java.srcDirs })
+                .asFileTree
+                .matching { include("**/*.java") }
+                .files
+        val missing = expected - checkstyleLicenseHeader.get().source.files
+
+        // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
+        // here and every module that does has test sources. Nothing to check therefore means
+        // either the source-set read stopped being lazy, or a module was added before its tests —
+        // both worth stopping for rather than passing silently.
+        if (expected.isEmpty()) {
+            error("$licenseHeaderTask found no non-main sources — module without tests, or a read that is no longer lazy?")
+        }
+        if (missing.isNotEmpty()) {
+            // Capped: the total failure resolves to every non-main file in the module, and a
+            // 43-path error message buries its own first line.
+            val examples = missing.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
+            error(
+                "$licenseHeaderTask does not cover every non-main source — ${missing.size} file(s) " +
+                    "would go unchecked, among them:\n  $examples")
+        }
     }
 }

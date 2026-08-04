@@ -123,6 +123,19 @@ starter is ordered before the core starter and outranks the local signer.
 - **Formatting:** Palantir Java Format via Spotless is authoritative. Import order is
   `java`, everything else, `com.the13haven.push2u` (Checkstyle verifies the same grouping).
   Checkstyle requires Javadoc on the public API.
+- **Licence header:** every `.java` file in every source set opens with the Apache-2.0 SPDX header
+  from `config/quality/license/header.txt` (ADR-008), and the build fails without it. Spotless
+  writes it into a new file on `qualityCheck` and verifies it on `qualityCheckCi`. Two file kinds
+  are the exception: `package-info.java` and `module-info.java`, which `LicenseHeaderStep` skips by
+  name because their leading Javadoc would be mistaken for an old header and replaced — write the
+  header by hand there. Checkstyle's `RegexpHeader` is what catches its absence, on `main` through
+  `checkstyle.xml` and on every other source set through `checkstyle-header.xml` and the
+  `checkstyleLicenseHeader` task (`push2u-core`'s test fixtures are published, so a headerless file
+  there would reach Maven Central). **The year is the year the file was created and is never updated
+  afterwards**, so the tree holds a spread of years on purpose; a new file gets the current one
+  automatically. `LICENSE` itself keeps the canonical Apache appendix with its `[yyyy]` placeholder
+  — the notice belongs in the files, and each published jar carries the licence as
+  `META-INF/LICENSE`.
 - **Suppressions:** a rule exclusion carries a comment stating why; a per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope, next to the reason.
 - **Gradle 10 readiness:** the build avoids removed idioms on purpose — `register<Type>(name)` not
