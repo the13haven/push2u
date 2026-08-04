@@ -25,8 +25,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param allowedOrigins the push-service origins the sender may POST to (e.g. {@code https://fcm.googleapis.com}),
  *     enforced as {@code EndpointPolicies.allowedOrigins}; {@code null} keeps the {@code PushSender} default of no
  *     endpoint policy — any https endpoint is sent to, which for client-registered subscriptions is a blind-SSRF
- *     surface. Malformed entries (and an explicitly empty list) are rejected at startup. Mutually exclusive with an
- *     application-supplied {@code EndpointPolicy} bean
+ *     surface. Malformed entries are rejected at startup, as is an explicitly empty value on its own. A non-empty value
+ *     is mutually exclusive with an application-supplied {@code EndpointPolicy} bean; an explicitly <em>empty</em>
+ *     value beside a bean cedes to the bean — the escape hatch for a service that inherits this property from shared
+ *     configuration it cannot unset
  * @param retry the retry policy
  */
 @ConfigurationProperties("push2u")

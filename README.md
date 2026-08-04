@@ -375,8 +375,14 @@ prefixed with the YAML property name (the builder itself only names its Java par
 `PushSender` default of no endpoint policy. A malformed entry fails the context with the message
 prefixed by the property name, like the size properties. Alternatively, supply an
 `EndpointPolicy` bean, which the autoconfigured sender picks up; configuring *both* the property
-and a bean fails the context — they express the same security control, and silently preferring
-one would leave the other believed-active but ignored.
+and a bean fails the context, naming the property and the bean — they express the same security
+control, and silently preferring one would leave the other believed-active but ignored.
+
+One escape hatch: a service that *inherits* `push2u.allowed-origins` from a shared configuration
+it does not own cannot unset the property, so setting it to an explicitly **empty** value beside
+a bean means "deliberately not using the property here" and the bean wins. An empty value on its
+own still fails the context (`requires at least one origin`), so the control cannot be disabled
+by accident.
 
 ## Vault Transit signer
 

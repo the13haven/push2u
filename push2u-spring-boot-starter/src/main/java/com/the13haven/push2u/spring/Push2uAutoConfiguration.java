@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -90,15 +91,21 @@ public final class Push2uAutoConfiguration {
      *
      * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
      * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
-     * fails the context: the two express a security control, and silently letting one win could leave the operator
-     * believing the ignored one is in force. Configuring neither keeps {@link PushSender}'s default of no policy.
+     * fails the context, naming the property and the bean: the two express a security control, and silently letting one
+     * win could leave the operator believing the ignored one is in force. The single exception is a property explicitly
+     * set to an <em>empty</em> value alongside a bean — that is the escape hatch for a service inheriting
+     * {@code push2u.allowed-origins} from a shared configuration it does not own: it cannot unset the property, so
+     * emptying it means "deliberately not using the property here" and the bean wins. An empty value <em>alone</em>
+     * still fails ("requires at least one origin"), so the control cannot be disabled by accident. Configuring neither
+     * keeps {@link PushSender}'s default of no policy.
      *
      * @param signer the VAPID signer
      * @param httpClient the HTTP transport
      * @param endpointPolicy an application-supplied endpoint policy, if any
+     * @param beanFactory the bean factory, used to name the conflicting {@code EndpointPolicy} bean in the failure
      * @param properties the bound configuration
      * @return the configured sender
-     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both
+     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both a non-empty
      *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured
      * @throws IllegalArgumentException if {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes} or
      *     {@code push2u.allowed-origins} is set to a value the builder or the policy factory rejects
@@ -110,6 +117,7 @@ public final class Push2uAutoConfiguration {
             VapidSigner signer,
             PushHttpClient httpClient,
             ObjectProvider<EndpointPolicy> endpointPolicy,
+            ListableBeanFactory beanFactory,
             Push2uProperties properties) {
         String subject = properties.vapid().subject();
         if (subject == null || subject.isBlank()) {
@@ -151,7 +159,7 @@ public final class Push2uAutoConfiguration {
                 throw new IllegalArgumentException("push2u.max-encrypted-body-bytes: " + e.getMessage(), e);
             }
         }
-        EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, properties.allowedOrigins());
+        EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, beanFactory, properties.allowedOrigins());
         if (policy != null) {
             builder.endpointPolicy(policy);
         }
@@ -161,17 +169,28 @@ public final class Push2uAutoConfiguration {
     /**
      * Resolves the endpoint policy from its two possible sources — the {@code push2u.allowed-origins} property and an
      * application-supplied {@link EndpointPolicy} bean — or {@code null} for none (the {@link PushSender} default).
-     * Both at once fails: they express the same security control, and silently preferring one would leave the operator
-     * believing the ignored one is in force.
+     * Both at once fails, naming the property and the bean: they express the same security control, and silently
+     * preferring one would leave the operator believing the ignored one is in force. An <em>empty</em> property beside
+     * a bean is the deliberate exception (the bean wins): a service inheriting {@code push2u.allowed-origins} from a
+     * shared configuration cannot unset it, so explicitly emptying it is its only way to cede to a bean — while an
+     * empty property alone still fails below ("requires at least one origin"), so nobody disables the control by
+     * accident.
      */
     @Nullable
     private static EndpointPolicy resolveEndpointPolicy(
-            ObjectProvider<EndpointPolicy> endpointPolicy, @Nullable List<String> allowedOrigins) {
+            ObjectProvider<EndpointPolicy> endpointPolicy,
+            ListableBeanFactory beanFactory,
+            @Nullable List<String> allowedOrigins) {
         EndpointPolicy applicationPolicy = endpointPolicy.getIfAvailable();
-        if (allowedOrigins != null && applicationPolicy != null) {
-            throw new IllegalStateException("push2u.allowed-origins and an application-supplied EndpointPolicy bean"
-                    + " are both configured — they express the same security control, and silently preferring one"
-                    + " would leave the other believed-active but ignored. Configure exactly one.");
+        if (allowedOrigins != null && !allowedOrigins.isEmpty() && applicationPolicy != null) {
+            // Named, not just described: any autoconfiguration could contribute the bean, so the
+            // failure must say which one collided — turning a hunt into a fix.
+            throw new IllegalStateException("push2u.allowed-origins and the application-supplied EndpointPolicy bean"
+                    + " '" + String.join("', '", beanFactory.getBeanNamesForType(EndpointPolicy.class))
+                    + "' are both configured — they express the same security control, and silently preferring one"
+                    + " would leave the other believed-active but ignored. Configure exactly one; if"
+                    + " push2u.allowed-origins is inherited from configuration you do not own, set it to an empty"
+                    + " value to cede to the bean.");
         }
         if (applicationPolicy != null) {
             return applicationPolicy;

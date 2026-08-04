@@ -358,9 +358,13 @@ builder's own message names its camelCase parameter instead.
 `push2u.allowed-origins` binds to `EndpointPolicies.allowedOrigins` and follows the same
 fail-at-startup pattern: a malformed entry's `IllegalArgumentException` is re-thrown with the
 property name prefixed. Alternatively an application `EndpointPolicy` bean is picked up by the
-autoconfigured sender; configuring both fails the context rather than silently preferring one,
-because they express the same security control and the ignored one would be believed active.
-Configuring neither keeps the core default of no endpoint policy.
+autoconfigured sender; configuring both fails the context (naming the property and the bean)
+rather than silently preferring one, because they express the same security control and the
+ignored one would be believed active. The one exception: an explicitly *empty* property beside a
+bean cedes to the bean — the escape hatch for a service inheriting the property from shared
+configuration it cannot unset — while an empty property alone still fails ("requires at least
+one origin"), so the control cannot be disabled by accident. Configuring neither keeps the core
+default of no endpoint policy.
 
 `push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
 configured, the Vault signer takes precedence over the local signer unless the application
