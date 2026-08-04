@@ -11,6 +11,8 @@ import java.security.interfaces.ECPublicKey;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
+import com.the13haven.push2u.testkit.VapidSignerContractTest;
+
 /**
  * {@link LocalEcVapidSigner} bound to a stock BouncyCastle provider instance (not registered with
  * {@code java.security.Security}) satisfies the shared {@link VapidSignerContractTest}: bcprov registers raw-format

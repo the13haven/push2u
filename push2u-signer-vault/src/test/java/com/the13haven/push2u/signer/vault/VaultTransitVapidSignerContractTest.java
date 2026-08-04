@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-package com.the13haven.push2u;
+package com.the13haven.push2u.signer.vault;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,7 +30,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.vault.VaultContainer;
 
-import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
+import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.testkit.VapidSignerContractTest;
 
 /**
  * {@link VaultTransitVapidSigner} satisfies the shared {@link VapidSignerContractTest} against a real Vault (dev mode)

@@ -9,6 +9,8 @@ import java.security.KeyPair;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 
+import com.the13haven.push2u.testkit.VapidSignerContractTest;
+
 /** {@link LocalEcVapidSigner} satisfies the shared {@link VapidSignerContractTest}. */
 class LocalEcVapidSignerContractTest extends VapidSignerContractTest {
 

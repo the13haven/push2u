@@ -26,6 +26,7 @@ describing a design that no longer exists.
 | 011 | Size limit expressed on the encrypted body | A plaintext maximum as the configurable knob, or a hardcoded plaintext constant |
 | 012 | Nullness declared with JSpecify | Unmarked packages; a nullness contract that exists only in prose |
 | 013 | Release and publication process | A version constant in the build; a half-published release |
+| 014 | JPMS: explicit modules for the library, automatic for the starters | A module or package name changed after release; a package split across two artifacts; a descriptor on a starter |
 
 `RELEASING.md` is the operational companion to ADR-013.
 
@@ -78,5 +79,5 @@ an ADR; "the transport is replaceable but the encryptor is not, because an alter
 would only introduce a silent wrong-ciphertext failure mode" is.
 
 After adding one, update the cross-references that carry the range: `DESIGN.md` §1 if it enumerates
-scope, `CLAUDE.md` (which cites "ADR-001…013"), and `CONTRIBUTING.md` where it points contributors
+scope, `CLAUDE.md` (which cites "ADR-001…014"), and `CONTRIBUTING.md` where it points contributors
 at the settled decisions.

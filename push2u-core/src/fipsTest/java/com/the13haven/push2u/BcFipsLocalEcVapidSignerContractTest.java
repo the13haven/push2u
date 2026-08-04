@@ -13,6 +13,8 @@ import java.security.interfaces.ECPublicKey;
 
 import org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider;
 
+import com.the13haven.push2u.testkit.VapidSignerContractTest;
+
 /**
  * {@link LocalEcVapidSigner} bound to a BC-FIPS provider instance (not registered with {@code java.security.Security})
  * satisfies the shared {@link VapidSignerContractTest}. BC-FIPS registers only DER-format ECDSA, so every signature

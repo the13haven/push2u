@@ -30,7 +30,16 @@ While iterating, run the narrowest thing that answers your question:
 ```
 
 Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
-package and unused imports, do not spend attention hand-checking them. Write the code, run the gate.
+package in `main` and unused imports, do not spend attention hand-checking them. Write the code, run
+the gate.
+
+That covers a new package under `testFixtures` too, not only `main` — those fixtures are published,
+so NullAway and `RequireExplicitNullMarking` run over them as well.
+
+One thing the gate does **not** catch: a new public package in `push2u-core` or
+`push2u-signer-vault` needs an `exports` line in that module's `module-info.java`. The tests run on
+the class path, so a missing one stays invisible until a module-path consumer hits "package … is not
+visible" after the release.
 
 The same goes for the Apache-2.0 SPDX licence header every `.java` file carries: `qualityCheck`
 writes it into a new file with the current year, and leaves the year alone from then on. The one
@@ -109,7 +118,8 @@ The contract is narrow and unforgiving: `sign` returns a raw 64-byte P-256 `r ||
 `publicKey` returns the 65-byte uncompressed point. A signer that returns DER, or a compressed
 point, will produce a JWT that push services reject with no useful diagnostic.
 
-- Extend `VapidSignerContractTest` from `push2u-core`'s published test fixtures. That is what the
+- Extend `VapidSignerContractTest` (package `com.the13haven.push2u.testkit`) from `push2u-core`'s
+  published test fixtures. That is what the
   fixtures are published for, and it is the cheapest way to find out you got the encoding wrong.
 - If the signer talks to a network service, give it **its own transport seam**. Do not reuse
   `PushHttpClient`: it exists for a domain where response bodies are never read, and a key service's

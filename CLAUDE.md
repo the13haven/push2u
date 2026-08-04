@@ -9,7 +9,7 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
 `README.md` documents the public API for consumers; `DESIGN.md` documents the architecture and
-carries the ADRs (ADR-001…013) — read the relevant ADR before changing anything structural, and
+carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything structural, and
 amend it in the same change if the decision moves. `RELEASING.md` covers the release procedure,
 `CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
 vulnerability policy.
@@ -76,7 +76,11 @@ push2u-core                                  no runtime implementation dependenc
   └── push2u-spring-boot-starter             api(push2u-core) + Spring Boot 4 autoconfigure
 ```
 
-Packages are `com.the13haven.push2u` plus `.signer.vault`, `.spring`, `.signer.vault.spring`.
+Packages are `com.the13haven.push2u` plus `.signer.vault`, `.spring`, `.signer.vault.spring`, and
+`.testkit` for the published conformance kit in `push2u-core`'s test fixtures.
+
+`push2u-core` and `push2u-signer-vault` are explicit JPMS modules named after their package
+(ADR-014); the starters and the test kit are automatic modules with a fixed `Automatic-Module-Name`.
 
 **The core's zero-dependency constraint is load-bearing (ADR-002).** `push2u-core` declares exactly
 one non-test dependency: JSpecify (annotations, no code, `api` so the nullness contract travels to
@@ -119,7 +123,12 @@ starter is ordered before the core starter and outranks the local signer.
 
 - **Nullness:** every package's `package-info.java` carries JSpecify `@NullMarked`. NullAway plus
   `RequireExplicitNullMarking` fail the build on a violation or a new unmarked package — a new
-  package needs its `package-info.java` with the mark.
+  package needs its `package-info.java` with the mark. Both checks cover `main` and `testFixtures`
+  — `push2u-core`'s fixtures are published, so the contract has to hold there too — and stop at
+  `test`/`fipsTest`, where NullAway without annotations is noise.
+- **A new public package in `push2u-core` or `push2u-signer-vault` needs an `exports` line** in that
+  module's `module-info.java` (ADR-014). Nothing fails without it — tests run on the class path —
+  but every module-path consumer gets "package … is not visible" once the version is published.
 - **Formatting:** Palantir Java Format via Spotless is authoritative. Import order is
   `java`, everything else, `com.the13haven.push2u` (Checkstyle verifies the same grouping).
   Checkstyle requires Javadoc on the public API.
@@ -164,9 +173,11 @@ starter is ordered before the core starter and outranks the local signer.
   `CryptoServicesRegistrar` classes and can never share a classpath. `fipsTest` covers the ES256
   DER-fallback path; the regular `test` set carries bcprov for the raw-`r||s` path. It is wired into
   `check`, and its `jacoco/fipsTest.exec` is added to the aggregated coverage report explicitly.
-- `push2u-core`'s published test fixtures are the `VapidSignerContractTest` conformance kit — every
-  signer implementation extends it. `push2u-signer-vault`'s fixtures (`RecordingHttpClient`) are
-  internal and explicitly skipped from its publication.
+- `push2u-core`'s published test fixtures are the `VapidSignerContractTest` conformance kit, in its
+  own package `com.the13haven.push2u.testkit` — every signer implementation extends it. The package
+  is separate from the core's on purpose: the core is an explicit JPMS module, and a package split
+  across two artifacts cannot be resolved from the module path (ADR-014). `push2u-signer-vault`'s
+  fixtures (`RecordingHttpClient`) are internal and explicitly skipped from its publication.
 - Conformance is pinned by published RFC vectors (RFC 5869 HKDF, the RFC 8291 worked example,
   RFC 8292 structure). When touching crypto, the vectors are the specification — not the current
   output.

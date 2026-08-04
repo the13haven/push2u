@@ -52,7 +52,8 @@ spotless {
         // LicenseHeaderStep skips package-info.java and module-info.java by name — their leading
         // Javadoc would otherwise be treated as the old header and replaced. Those files carry the
         // header by hand, and Checkstyle's RegexpHeader is what verifies it there: checkstyle.xml
-        // on `main`, the `checkstyleLicenseHeader` task below on every other source set.
+        // covers main's package-info.java, and the `checkstyleLicenseHeader` task below covers
+        // every other source set plus main's module-info.java, which checkstyleMain cannot parse.
         licenseHeaderFile(rootProject.file("config/quality/license/header.txt"))
 
         palantirJavaFormat(toolVersion("palantir"))
@@ -72,6 +73,22 @@ spotless {
 // ---------------------------------------------------------------------------------------------
 // Checkstyle — naming, Javadoc and import-order verification (never formatting; Spotless owns it).
 // ---------------------------------------------------------------------------------------------
+// The header-only Checkstyle task, named here because the exclusion below has to spare it.
+val licenseHeaderTaskName = "checkstyleLicenseHeader"
+
+// Checkstyle 13.9.0 cannot parse a module declaration: its TreeWalker grammar has no production for
+// one, and `module foo {}` alone fails with "no viable alternative at input 'modulefoo{'". A single
+// unparseable file fails the whole task, so the descriptor is excluded here rather than costing the
+// module its Checkstyle coverage entirely. Nothing in checkstyle.xml applies to a module descriptor
+// anyway — naming, Javadoc and import order are all about type declarations — except the licence
+// header, which is why checkstyleLicenseHeader is exempt: its configuration has no TreeWalker, so
+// it reads the file as lines and never parses it. Revisit when Checkstyle grows the grammar.
+tasks.withType<Checkstyle>().configureEach {
+    if (name != licenseHeaderTaskName) {
+        exclude("module-info.java")
+    }
+}
+
 checkstyle {
     toolVersion = toolVersion("checkstyle")
     configFile = rootProject.file("config/quality/checkstyle/checkstyle.xml")
@@ -121,7 +138,7 @@ dependencies {
 // would be the task's own and `SourceSetContainer` is not among them.
 val javaSourceSets = extensions.getByType<SourceSetContainer>()
 
-val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeader") {
+val checkstyleLicenseHeader = tasks.register<Checkstyle>(licenseHeaderTaskName) {
     description = "Verifies the licence header on the source sets checkstyleMain does not cover."
     group = "verification"
 
@@ -130,9 +147,22 @@ val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeade
     // A Callable, so the container is read when the task's inputs are resolved rather than when
     // this plugin is applied — push2u-core creates `fipsTest` in its own build script, which runs
     // later, and a list built here and now would miss it.
+    //
+    // `main` is here too, but only for module-info.java: checkstyleMain cannot read it at all.
+    // Checkstyle 13.9.0's TreeWalker has no grammar for a module declaration — even `module foo {}`
+    // fails with "no viable alternative at input 'modulefoo{'" — and one unparseable file aborts
+    // the whole task, taking the other 32 main sources with it. So checkstyleMain excludes the
+    // descriptor (see below) and it lands here instead, where the header-only configuration has no
+    // TreeWalker and never parses anything.
     setSource(
         Callable {
-            javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs }
+            javaSourceSets.flatMap { sourceSet ->
+                if (sourceSet.name == SourceSet.MAIN_SOURCE_SET_NAME) {
+                    sourceSet.java.srcDirs.map { File(it, "module-info.java") }.filter { it.isFile }
+                } else {
+                    sourceSet.java.srcDirs
+                }
+            }
         })
     include("**/*.java")
 
@@ -232,7 +262,14 @@ val blockingChecks = listOf(
 )
 
 tasks.withType<JavaCompile>().configureEach {
-    val productionCompile = name == "compileJava"
+    // testFixtures counts as production for the nullness contract, `test` and `fipsTest` do not.
+    // push2u-core's fixtures are the PUBLISHED conformance kit (ADR-012 applies to them exactly as
+    // it does to the library), and the failure this catches has already happened once: moving the
+    // kit into its own package left it outside any @NullMarked, and nothing said so — a
+    // package-info.java carrying no annotation does not even compile to a class file, so the loss
+    // is invisible in the jar. The reason `test` and `fipsTest` stay out is unchanged: NullAway
+    // over unannotated test code reports every builder field and nothing useful.
+    val productionCompile = name == "compileJava" || name == "compileTestFixturesJava"
     options.errorprone {
         enabled = provider {
             gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||
@@ -355,24 +392,36 @@ gradle.taskGraph.whenReady {
         // invites — and an eager read degrades both sides identically, `missing` comes back empty,
         // and the guard waves through exactly what it was written to catch. Keep the two reads
         // separate, and the guard fails independently of how the task's source was built.
-        val expected =
+        val sourceSetsNow = project.extensions.getByType<SourceSetContainer>()
+        val nonMain =
             project
-                .files(
-                    project
-                        .extensions
-                        .getByType<SourceSetContainer>()
-                        .filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }
-                        .flatMap { it.java.srcDirs })
+                .files(sourceSetsNow.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs })
                 .asFileTree
                 .matching { include("**/*.java") }
                 .files
+        // main's module descriptor belongs to the assertion too: checkstyleMain excludes it (the
+        // parser cannot read it) and Spotless skips it by name, so this task is the only thing
+        // checking its licence header. Leaving it out of `expected` would let the task quietly stop
+        // reading the one file whose coverage depends entirely on it.
+        val mainDescriptors =
+            sourceSetsNow
+                .filter { it.name == SourceSet.MAIN_SOURCE_SET_NAME }
+                .flatMap { it.java.srcDirs }
+                .map { File(it, "module-info.java") }
+                .filter { it.isFile }
+        val expected = nonMain + mainDescriptors
         val missing = expected - checkstyleLicenseHeader.get().source.files
 
+        // `nonMain`, not `expected`: a module carrying a module-info.java has a non-empty `expected`
+        // from that one file alone, so testing the union would leave this tripwire alive only in
+        // the modules without a descriptor — and silent in push2u-core, which holds the published
+        // conformance kit and most of the non-main sources.
+        //
         // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
         // here and every module that does has test sources. Nothing to check therefore means
         // either the source-set read stopped being lazy, or a module was added before its tests —
         // both worth stopping for rather than passing silently.
-        if (expected.isEmpty()) {
+        if (nonMain.isEmpty()) {
             error("$licenseHeaderTask found no non-main sources — module without tests, or a read that is no longer lazy?")
         }
         if (missing.isNotEmpty()) {
@@ -380,7 +429,7 @@ gradle.taskGraph.whenReady {
             // 43-path error message buries its own first line.
             val examples = missing.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
             error(
-                "$licenseHeaderTask does not cover every non-main source — ${missing.size} file(s) " +
+                "$licenseHeaderTask does not cover everything it must read — ${missing.size} file(s) " +
                     "would go unchecked, among them:\n  $examples")
         }
     }

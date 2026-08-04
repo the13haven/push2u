@@ -15,6 +15,8 @@ import java.security.interfaces.ECPublicKey;
 
 import org.junit.jupiter.api.Test;
 
+import com.the13haven.push2u.testkit.VapidSignerContractTest;
+
 /**
  * The construction-time key-pair self-test of {@link LocalEcVapidSigner}: a public key and a private scalar taken from
  * two different P-256 pairs must be rejected when the signer is created, before any send. The happy path — a matching

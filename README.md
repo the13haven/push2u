@@ -35,12 +35,33 @@ implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 
 ## Modules
 
-| Module | Purpose |
-|---|---|
-| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport |
-| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit |
-| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator |
-| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer |
+| Module | Purpose | JPMS module name |
+|---|---|---|
+| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
+| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
+| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
+| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
+
+`push2u-core` and `push2u-signer-vault` are explicit JPMS modules — they ship a `module-info.java`
+and work on the module path as they do on the class path:
+
+```java
+module com.example.app {
+    requires com.the13haven.push2u;
+}
+```
+
+The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
+its own configured `HttpClient` to `JdkHttpPushClient` does not have to require it as well. JSpecify
+is a `requires static`, so nothing resolves that jar at runtime and the module stays dependency-free
+on the module path exactly as it is on the class path. You do not need JSpecify to compile against
+push2u — the nullness annotations are readable from the class files either way. You need it only if
+something reads them reflectively at runtime, and then the module has to be added explicitly
+(`--add-modules org.jspecify`), because a `static` requires is not resolved on its own.
+
+The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
+Boot's own artifacts are automatic modules and its auto-configuration is reflective. The published
+test fixtures of `push2u-core` are likewise automatic, under `com.the13haven.push2u.testkit`.
 
 ## Requirements
 
