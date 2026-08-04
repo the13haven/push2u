@@ -6,6 +6,11 @@ look for, so that neither is a surprise at pull-request time.
 **Found a security problem? Do not open an issue.** Follow [`SECURITY.md`](SECURITY.md) — the
 report stays private until a fix is released.
 
+Questions and half-formed ideas belong in
+[Discussions](https://github.com/the13haven/push2u/discussions); the issue tracker is for defects
+and accepted work. Participation is covered by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Before you start
 
 Read [`DESIGN.md`](DESIGN.md) for the architecture, and its ADRs (§9) for the decisions that are

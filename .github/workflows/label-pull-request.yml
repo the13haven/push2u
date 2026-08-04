@@ -1,0 +1,88 @@
+name: Label pull request
+
+# Derives the changelog label from a pull request's Conventional Commit title.
+#
+# .github/release.yml groups the generated release notes by label, and a pull request carrying
+# none of them lands in "Other Changes". That failure is silent — nothing fails, the notes are
+# just quietly wrong — which is exactly the kind of mistake a human checklist does not catch.
+#
+# pull_request_target rather than pull_request: a pull request opened from a FORK gets a read-only
+# GITHUB_TOKEN, so labelling would fail for outside contributors — the very people who do not know
+# the convention yet. pull_request_target runs in the context of the base repository with a
+# writable token. That is safe HERE only because this workflow never checks out and never executes
+# the pull request's code; it reads one field of the event payload. Do not add a checkout step.
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Derive the changelog label from the title
+        env:
+          # Passed through the environment, never interpolated into the script body: a title is
+          # attacker-controlled text, and a `${{ }}` expansion inside `run:` splices it into the
+          # shell before bash ever sees a quote.
+          TITLE: ${{ github.event.pull_request.title }}
+          CURRENT_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Every label .github/release.yml routes on, synonyms included.
+          known='["breaking-change","semver-major","enhancement","feature","bug","bugfix",
+                  "security","dependencies","documentation","ignore-for-release"]'
+
+          # A label a human already chose wins. This step fills a gap; it never overrides a
+          # deliberate choice and never removes anything. It is also what keeps Dependabot's
+          # pull requests (already labelled `dependencies`) untouched.
+          if jq -e --argjson known "$known" '[.[] | select(IN($known[]))] | length > 0' \
+               <<<"$CURRENT_LABELS" >/dev/null; then
+            echo "Already carries a changelog label — leaving it alone."
+            exit 0
+          fi
+
+          # type(scope)!: subject
+          type=$(sed -nE 's/^([a-z]+)(\([^)]*\))?!?:.*/\1/p' <<<"$TITLE")
+          labels=()
+
+          if grep -qE '^[a-z]+(\([^)]*\))?!:' <<<"$TITLE"; then
+            labels+=("breaking-change")
+          fi
+
+          case "$type" in
+            feat) labels+=("enhancement") ;;
+            fix) labels+=("bug") ;;
+            docs) labels+=("documentation") ;;
+            # test, ci, chore, refactor, perf, build — and anything unrecognised — are left alone
+            # on purpose. They belong in "Other Changes", and inferring `ignore-for-release` here
+            # would silently drop a real change out of the release notes, which is the failure
+            # this workflow exists to prevent.
+            *) ;;
+          esac
+
+          # A security fix is `fix:` by Conventional Commit and would land under Bug Fixes. Which
+          # fixes are security fixes is a judgement call about impact, not something a title
+          # prefix can carry, so the `security` label stays manual.
+
+          if [ ${#labels[@]} -eq 0 ]; then
+            echo "No changelog label follows from this title; leaving it to the reviewer."
+            exit 0
+          fi
+
+          echo "Adding: ${labels[*]}"
+          gh pr edit "$PR" "${labels[@]/#/--add-label=}"

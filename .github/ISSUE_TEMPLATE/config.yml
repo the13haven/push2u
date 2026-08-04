@@ -9,6 +9,12 @@ contact_links:
       Never report a security problem in a public issue. This opens a private advisory visible
       only to you and the maintainers. See SECURITY.md for scope and what to expect.
 
+  - name: Question or idea
+    url: https://github.com/the13haven/push2u/discussions
+    about: >-
+      "How do I…", "should this work like that", or an idea you want to talk through before it
+      becomes a proposal. Discussions keep the issue tracker to defects and accepted work.
+
   - name: Usage and configuration
     url: https://github.com/the13haven/push2u#readme
     about: >-
