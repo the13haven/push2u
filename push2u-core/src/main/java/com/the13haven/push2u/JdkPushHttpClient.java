@@ -22,6 +22,14 @@ import java.util.Objects;
  * push delivery (RFC 8030 §5) only needs the status and headers, and the endpoint is a capability URL taken from the
  * subscription — a hostile server answering with a huge body must cost the sender nothing. Discarding still drains the
  * stream, so connections stay reusable.
+ *
+ * <p>A second guarantee holds at construction: <b>the client must not follow redirects.</b> The endpoint is an
+ * attacker-supplied capability URL and the {@link EndpointPolicy} validated exactly the URI handed to {@link #post} — a
+ * {@code 3xx} chased by the client would re-send the encrypted body and the request headers to whatever host
+ * {@code Location} names, an address the policy never saw, and the redirect target's answer would be reported as the
+ * delivery result. A supplied client whose {@link HttpClient#followRedirects()} is not
+ * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way. A {@code 3xx} therefore reaches
+ * the caller as an ordinary status, which {@link PushSender} classifies as a failed {@link PushResult}.
  */
 public final class JdkPushHttpClient implements PushHttpClient {
 
@@ -30,19 +38,36 @@ public final class JdkPushHttpClient implements PushHttpClient {
     private final HttpClient httpClient;
     private final Duration requestTimeout;
 
-    /** Uses a fresh default {@link HttpClient} and a 30-second per-request timeout. */
+    /**
+     * Uses a fresh {@link HttpClient} that never follows redirects, and a 30-second per-request timeout. The redirect
+     * policy is set explicitly rather than inherited: it is this class's own invariant, not a JDK default to rely on.
+     */
     public JdkPushHttpClient() {
-        this(HttpClient.newHttpClient(), DEFAULT_REQUEST_TIMEOUT);
+        this(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), DEFAULT_REQUEST_TIMEOUT);
     }
 
     /**
-     * Uses the given {@link HttpClient} and per-request timeout.
+     * Uses the given {@link HttpClient} (bring your own proxy, executor, or TLS configuration) and per-request timeout.
      *
-     * @param httpClient the HTTP client to send requests with
-     * @param requestTimeout the per-request timeout
+     * @param httpClient the HTTP client to send requests with; must be built with {@link HttpClient.Redirect#NEVER}
+     * @param requestTimeout the per-request timeout, applied to every request
+     * @throws IllegalArgumentException if the client follows redirects
      */
     public JdkPushHttpClient(HttpClient httpClient, Duration requestTimeout) {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+        if (httpClient.followRedirects() != HttpClient.Redirect.NEVER) {
+            // The endpoint is attacker-supplied and EndpointPolicy vetted that exact URI. A
+            // followed 3xx carries the encrypted body and the request headers to a host the
+            // policy never saw (the JDK strips Authorization cross-origin, but not TTL, Topic,
+            // Urgency or the body), reports the redirect target's answer as the delivery result,
+            // and under Redirect.ALWAYS will downgrade https to http on the way. No push service
+            // answers a delivery POST with a redirect, so there is nothing legitimate to lose.
+            throw new IllegalArgumentException("httpClient must not follow redirects (followRedirects() is "
+                    + httpClient.followRedirects() + "): the push endpoint is an attacker-supplied capability URL"
+                    + " and the EndpointPolicy vetted exactly that URI, so following a 3xx would POST the encrypted"
+                    + " body and its headers to a host no policy ever saw, and would report that host's answer as"
+                    + " the delivery result. Build the client with followRedirects(HttpClient.Redirect.NEVER)");
+        }
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
     }
 
