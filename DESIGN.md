@@ -210,6 +210,16 @@ discards the body without buffering it — a hostile push endpoint cannot create
 by returning a huge response. This seam is push-delivery only; the Vault module has its own
 transport seam (section 7) because Vault responses must be read.
 
+Implementations must not follow redirects: a `3xx` is returned like any other status and the
+sender classifies it as a failure. Chasing a `Location` would POST the encrypted body and the
+request headers to a host `EndpointPolicy` never validated (the JDK strips `Authorization`
+across origins, but not custom headers or the body), would let the redirect target's answer
+stand in for the push service's verdict, and under a permissive policy would follow `https` down
+to `http`. `JdkPushHttpClient` builds its own client with `Redirect.NEVER` and rejects a supplied
+`java.net.http.HttpClient` whose `followRedirects()` differs — the invariant is stated in code,
+not inherited from a JDK default. For an implementation on another stack it stays a contract
+only, unverifiable from here.
+
 ### EndpointPolicy
 
 ```java
@@ -234,9 +244,10 @@ commonly map IAE to a 400 response that would echo the redacted-but-fingerprinte
 the caller who registered the subscription. Rejection messages never carry the capability
 path/query (`Endpoints.redact`).
 
-A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and
-redirect behaviour belongs to the transport (the default JDK client never follows them). Strict
-guarantees require resolution/egress pinning inside a `PushHttpClient` implementation.
+A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and redirect
+behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redirect.NEVER`, so a
+`3xx` cannot route the send past the policy that just ran. Strict guarantees require
+resolution/egress pinning inside a `PushHttpClient` implementation.
 
 ### Deliberately concrete components
 
@@ -318,7 +329,7 @@ operator-configured service whose JSON responses must be read. Both Vault calls 
 `sign` POST and the fetched mode's startup metadata GET — go through the same transport, so an
 application's mTLS, proxy, or observability configuration is never bypassed.
 
-The default `JdkVaultHttpTransport` enforces two invariants on every request:
+The default `JdkVaultHttpTransport` enforces three invariants:
 
 - a per-request timeout (`HttpRequest.timeout`), because a connect timeout alone cannot end an
   exchange with a Vault that accepts the connection and never answers — in fetched mode that
@@ -326,7 +337,13 @@ The default `JdkVaultHttpTransport` enforces two invariants on every request:
 - a response-size cap counted in raw streamed bytes (a declared `Content-Length` above the cap
   fails early, but the streaming count is authoritative). Exceeding the cap fails the whole call
   — fail-closed, never truncation, because the targeted JSON extraction could still find a
-  complete-looking `data.signature` before the cut.
+  complete-looking `data.signature` before the cut;
+- no redirect following, checked at construction rather than at send time. The JDK client
+  re-sends custom headers — `X-Vault-Token` among them — to a redirect target, cross-origin ones
+  included, so a Vault address that can be made to answer `3xx` (DNS hijack, squatted typo host,
+  compromised reverse proxy) would be handed the live token. The default client is built with
+  `Redirect.NEVER` explicitly, and a supplied client whose `followRedirects()` is anything else
+  is rejected with an `IllegalArgumentException`.
 
 Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB response cap. Transport exception
 messages carry the HTTP method and the query-less request URI, never the `X-Vault-Token` header.

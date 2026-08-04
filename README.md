@@ -261,6 +261,50 @@ This seam covers push delivery only. The Vault signer module has its own transpo
 (`VaultHttpTransport`, below) because the Vault API sits in a different trust domain and its
 responses must be read.
 
+### Redirects must never be followed
+
+> [!WARNING]
+> Neither transport seam may follow HTTP redirects. A `3xx` is a result to report, not a
+> `Location` to chase — on the push side it would carry the encrypted body and the request
+> headers (`TTL`, `Topic`, `Urgency`) to a host `EndpointPolicy` never saw, defeating the
+> allowlist and letting the redirect target's answer count as a successful delivery; on the
+> Vault side it would replay `X-Vault-Token` to whatever host a hijacked or mis-resolved Vault
+> address names. The JDK strips `Authorization` across origins, but nothing else, and a
+> permissive policy will also follow `https` down to `http`.
+
+**Supplying your own `java.net.http.HttpClient`.** Build it with `Redirect.NEVER`; both
+`JdkPushHttpClient(HttpClient, Duration)` and `JdkVaultHttpTransport(HttpClient, Duration, int)`
+reject a client whose `followRedirects()` is anything else, with an `IllegalArgumentException`
+naming the policy it found. Under the Spring starters that surfaces as a startup failure. The
+no-argument constructors build their clients with `Redirect.NEVER` explicitly rather than relying
+on the JDK's default:
+
+```java
+HttpClient client = HttpClient.newBuilder()
+    .followRedirects(HttpClient.Redirect.NEVER)   // required
+    .connectTimeout(Duration.ofSeconds(10))
+    .build();
+
+PushSender sender = PushSender.builder()
+    .vapid(keys)
+    .contact("mailto:ops@example.com")
+    .httpClient(new JdkPushHttpClient(client, Duration.ofSeconds(30)))
+    .build();
+```
+
+**Implementing `PushHttpClient` or `VaultHttpTransport` yourself.** The interface contract
+requires it and **nothing can verify it** — the library sees only the seam, so this one is on the
+implementation. Turn redirect following off in whatever stack you wrap; several are unsafe by
+default, OkHttp among them (`followRedirects` and `followSslRedirects` are both `true` until you
+set `followRedirects(false).followSslRedirects(false)`). Return the `3xx` as an ordinary status
+and let `PushSender` classify it.
+
+If a redirect is genuinely part of your Vault topology — typically an HA standby with
+`disable_clustering = true` answering `307` towards the active node — point the Vault address at
+the active node's `api_addr` (or a load balancer in front of it), or terminate the redirect in
+the proxy. On the push side there is nothing to accommodate: RFC 8030 §5 delivery has no redirect
+step.
+
 ### Endpoint policy (SSRF hardening)
 
 The endpoint inside a `Subscription` is attacker-influenced data: a typical integration accepts
@@ -312,10 +356,10 @@ is built and receives only the URI — a rule that varies by tenant means one se
 
 With no policy configured, behaviour is unchanged: any absolute `https` endpoint accepted by
 `Subscription` is sent to. Know the limits either way: a URI-level check cannot close DNS
-rebinding, and it cannot see what happens after the connection. Redirects are not followed by
-the default transport (the JDK client's policy is `NEVER`), but a custom `PushHttpClient` must
-preserve that itself. Strict guarantees require pinning resolution and egress in the transport
-layer — see the
+rebinding, and it cannot see what happens after the connection. The one gap it would otherwise
+leave — a `3xx` steering the POST to a host the allowlist never saw — is closed in the transport
+(see [Redirects must never be followed](#redirects-must-never-be-followed)). Strict guarantees
+require pinning resolution and egress in the transport layer — see the
 [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html).
 The policy is a coarse filter, not a sandbox.
 
@@ -574,12 +618,9 @@ Resolution order (two extension points, plus the properties-only fallback):
 2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
-   owns it). The client must not follow redirects (the builder default): the JDK client re-sends
-   `X-Vault-Token` to a redirect target, so a client built with `followRedirects` other than
-   `NEVER` is rejected at startup. If your setup relied on following a redirect — typically a
-   Vault HA standby with `disable_clustering = true` answering 307 towards the active node —
-   point the Vault address at the active node's `api_addr` (or a load balancer in front of it),
-   or terminate the redirect in the proxy instead.
+   owns it). The client must be built with `Redirect.NEVER` or startup fails — see
+   [Redirects must never be followed](#redirects-must-never-be-followed), which also covers what
+   to do when a Vault HA standby is the source of the redirect.
 3. Otherwise the default transport is built entirely from the properties.
 
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push

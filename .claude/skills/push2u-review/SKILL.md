@@ -131,11 +131,14 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
 - **`Endpoints.requireSecure` is a protocol check, not a security control.** Which hosts a
   deployment may contact is policy and lives in `EndpointPolicy`. Conflating them weakens both.
 - **The push transport must not read the response body**, so a hostile service cannot create memory
-  pressure by answering with a huge one. Redirects are not followed either — but that rests on
-  `HttpClient.newHttpClient()` defaulting to `Redirect.NEVER`, not on an explicit setting, so an
-  application-supplied client (the two-argument `JdkPushHttpClient` constructor) can lose the
-  property without this class changing at all. Code that builds an `HttpClient` anywhere in the
-  library should set the policy explicitly rather than inherit it.
+  pressure by answering with a huge one. **Redirects must not be followed**, and this no longer
+  rests on a JDK default: every `HttpClient` the library builds sets `Redirect.NEVER` explicitly,
+  and both `JdkPushHttpClient(HttpClient, Duration)` and the `JdkVaultHttpTransport` constructor
+  reject a supplied client whose `followRedirects()` differs. Code that builds an `HttpClient`
+  anywhere in the library must keep setting the policy rather than inherit it, and a new transport
+  seam or a new implementation of an existing one is a place to check the property holds — a
+  followed `3xx` re-sends the encrypted body and the request headers past the `EndpointPolicy`
+  that vetted the original URI, and turns the redirect target's answer into a delivery result.
 - **The Vault transport faces the opposite way** and must read responses — bounded and timed. The
   streamed byte count is authoritative, not a declared `Content-Length`; exceeding the cap fails the
   whole call rather than truncating, because the targeted JSON extraction could otherwise find a

@@ -28,11 +28,12 @@ import java.net.URI;
  * <p><b>What a URI-level check cannot do.</b> The policy sees a {@link URI}, so it can enforce name and origin rules
  * but not what the name resolves to when the connection is made: DNS rebinding (a hostname resolving to an acceptable
  * address when checked and an internal one when connected to) is out of its reach, as is anything the remote server
- * does after the connection. Redirects are already not followed — the default transport's
- * {@code HttpClient.newHttpClient()} leaves the redirect policy at {@code NEVER}, so a {@code 3xx} surfaces as a failed
- * {@link PushResult} rather than a request to the redirect target — but a custom {@link PushHttpClient} must preserve
- * that property itself. Deployments needing strict guarantees should pin resolution and egress in the transport layer
- * (resolve the name, verify the address, connect to what was verified), per the <a
+ * does after the connection. One gap it would otherwise leave is closed in the transport: redirects are not followed,
+ * so a {@code 3xx} surfaces as a failed {@link PushResult} rather than as a POST to a host this policy never saw.
+ * {@link JdkPushHttpClient} builds its client with {@link java.net.http.HttpClient.Redirect#NEVER} and rejects a
+ * supplied one that follows redirects, but a custom {@link PushHttpClient} carries that property itself — nothing here
+ * can check it. Deployments needing strict guarantees should pin resolution and egress in the transport layer (resolve
+ * the name, verify the address, connect to what was verified), per the <a
  * href="https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html">OWASP
  * SSRF Prevention Cheat Sheet</a>. The policy is a coarse filter, not a sandbox.
  */

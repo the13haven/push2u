@@ -69,12 +69,16 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
     private final int maxResponseBytes;
 
     /**
-     * The defaults: a fresh {@link HttpClient} with a 10-second connect timeout, a 30-second per-request timeout, and a
-     * 1 MiB response-size cap.
+     * The defaults: a fresh {@link HttpClient} with a 10-second connect timeout and {@link HttpClient.Redirect#NEVER},
+     * a 30-second per-request timeout, and a 1 MiB response-size cap. The redirect policy is set explicitly rather than
+     * inherited: it is this class's own invariant, not a JDK default to rely on.
      */
     public JdkVaultHttpTransport() {
         this(
-                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build(),
+                HttpClient.newBuilder()
+                        .connectTimeout(DEFAULT_CONNECT_TIMEOUT)
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
                 DEFAULT_REQUEST_TIMEOUT,
                 DEFAULT_MAX_RESPONSE_BYTES);
     }
