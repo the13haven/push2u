@@ -15,9 +15,10 @@ import pl.allegro.tech.build.axion.release.domain.preRelease
 // takes, but the version is the version). axion-release 1.21.2 is the current release and still
 // ships that JGit, so there is no upgrade to wait for.
 //
-// CONSTRAINTS rather than resolutionStrategy.force, for the same reason the subproject pin below
-// uses them: force also records the originally requested version in the submitted dependency graph,
-// and Dependabot alerts on that phantom node even though only the resolved version is ever used.
+// CONSTRAINTS rather than resolutionStrategy.force (the convention in CONTRIBUTING.md): force also
+// records the originally requested version in the submitted dependency graph, and Dependabot alerts
+// on that phantom node even though only the resolved version is ever used. This classpath is
+// submitted, so the difference is the six alerts that prompted the pin in the first place.
 //
 // The repositories block is required — plugins arrive through settings.gradle.kts pluginManagement,
 // so the buildscript itself declares none, and raising a version means fetching an artifact.
@@ -197,23 +198,25 @@ subprojects {
     }
 }
 
-// No module-level BouncyCastle pin. There used to be one here, adding bcprov/bcpkix constraints to
-// every declarable configuration of every module, and it resolved nothing: bcprov appears on
-// exactly one classpath in this build — push2u-core's `test`, where it is declared directly at the
-// catalog version — while push2u-signer-vault, both starters and every published runtimeClasspath
-// carry no BouncyCastle at all, and bcpkix never appears anywhere. What the constraints did reach
-// was `api` and `implementation`, which apiElements/runtimeElements extend, so they were published:
-// Gradle applies a consumer-visible constraint from module metadata, which is exactly the
-// transitive surface ADR-002 exists to keep out of a consumer's graph, and published metadata
-// cannot be taken back. A transitive BouncyCastle arriving one day gets a pin in the module that
-// resolves it, naming its advisory, per the convention in CONTRIBUTING.md.
+// No module-level dependency constraints here, on purpose.
 //
-// The buildscript pin above is a different thing and stays: JGit (inside axion-release) really does
-// request 1.81/1.82, and that pin really does raise it to 1.85 — on the classpath of the build
-// itself, which no artefact's metadata sees.
+// A constraint declared in `api` or `implementation` is inherited by apiElements/runtimeElements,
+// which are the configurations Gradle publishes — it lands in the module metadata as
+// dependencyConstraints and in the POM as dependencyManagement, and Gradle applies it to every
+// consumer's graph. That is the transitive surface ADR-002 exists to keep out, and published
+// metadata cannot be taken back. The same holds for testFixturesApi/testFixturesImplementation in
+// push2u-core, whose fixtures are published as the conformance kit.
 //
-// Jackson is not pinned either: Spring Boot's managed jackson-2-bom governs it on the starter
-// classpaths.
+// So a vulnerable transitive gets pinned where it actually resolves and where the pin stays private:
+// a non-published bucket (testImplementation, fipsTestImplementation), a tool configuration (as
+// push2u-quality.gradle.kts does for the Checkstyle classpath), or the buildscript. Each pin names
+// its advisory — the convention in CONTRIBUTING.md.
+//
+// The buildscript pin above is exactly that and stays: JGit (inside axion-release) really does
+// request 1.81/1.82, the pin really does raise it to 1.85, and it is the build's own classpath, so
+// no artefact's metadata sees it.
+//
+// Jackson is not pinned: Spring Boot's managed jackson-2-bom governs it on the starter classpaths.
 
 // ---------------------------------------------------------------------------------------------
 // Aggregated coverage. Each module produces its own JaCoCo report; the aggregation below merges
