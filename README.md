@@ -298,7 +298,10 @@ same types take precedence. When Spring Boot health support is present, the star
 a health indicator that exercises the configured signer end to end: it signs a probe input and
 verifies the resulting 64-byte ES256 signature locally against the signer's advertised public
 key — so a signer that returns bytes which do not verify (a mispinned Vault `public-key`, for
-instance) reports `DOWN` instead of failing every real send with `401`/`403`.
+instance) reports `DOWN` instead of failing every real send with `401`/`403`. On the rare JVM
+whose providers offer no ES256 verification primitive at all, the probe degrades to checking the
+signature length only and says so in the payload with a fixed `verification: unavailable` detail
+(plus a one-time WARN); the detail's absence means the `UP` went through full verification.
 
 Because the health endpoint is polled (Kubernetes probes commonly hit it every ~10 seconds per
 pod) and each probe of a remote signer is a full backend round-trip — against Vault Transit, one

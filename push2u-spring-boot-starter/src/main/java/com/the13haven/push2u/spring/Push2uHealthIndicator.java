@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -25,9 +26,9 @@ import com.the13haven.push2u.VapidSigner;
  * mispinned Vault {@code public-key} / {@code key-version}, say) is exactly the misconfiguration that otherwise
  * surfaces as a push service rejecting every send with 401/403. The verification is pure local computation over the
  * public key: no network, no key material. On the rare JVM whose providers offer no ES256 verification primitive at all
- * ({@link Es256Verify#isSupported()}), the probe degrades to the length-only check with a one-time WARN — that is a
- * platform capability statement, not a signer failure, and a signer that signs correctly there must not be reported
- * {@code DOWN} forever.
+ * ({@link Es256Verify#isSupported()}), the probe degrades to the length-only check with a one-time WARN and a fixed
+ * {@code verification: unavailable} payload detail — that is a platform capability statement, not a signer failure, and
+ * a signer that signs correctly there must not be reported {@code DOWN} forever.
  *
  * <p>The probe result is cached per indicator instance, because the health endpoint is polled: Kubernetes probes
  * commonly evaluate it every ~10 seconds per pod, Spring's own endpoint caching is off unless
@@ -86,6 +87,8 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     private final long successTtlMillis;
     private final long failureTtlMillis;
     private final Clock clock;
+    /** {@link Es256Verify#isSupported()} in production; injectable so tests can pin the degraded mode. */
+    private final BooleanSupplier verificationSupported;
 
     /**
      * Serializes probe execution — the single-flight mechanism. A plain mutual-exclusion lock (rather than a
@@ -147,6 +150,15 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * injected rather than read from the system.
      */
     Push2uHealthIndicator(VapidSigner signer, Duration cacheTtl, Clock clock) {
+        this(signer, cacheTtl, clock, Es256Verify::isSupported);
+    }
+
+    /**
+     * Visible for tests, like the clock: whether the platform can verify ES256 is a JVM property that cannot be varied
+     * inside a test running on a stock JDK, so the degraded mode's contract (UP on the length check alone, one WARN,
+     * the {@code verification: unavailable} detail) is pinned by injecting the capability answer.
+     */
+    Push2uHealthIndicator(VapidSigner signer, Duration cacheTtl, Clock clock, BooleanSupplier verificationSupported) {
         if (cacheTtl.isNegative()) {
             throw new IllegalArgumentException("the cache TTL must not be negative: " + cacheTtl);
         }
@@ -154,6 +166,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
         this.successTtlMillis = toMillisClamped(cacheTtl);
         this.failureTtlMillis = Math.min(this.successTtlMillis, MAX_FAILURE_CACHE_TTL.toMillis());
         this.clock = clock;
+        this.verificationSupported = verificationSupported;
     }
 
     @Override
@@ -242,18 +255,25 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * key, not the one it advertised at startup.
      */
     private Health verifyAgainstAdvertisedKey(String signerType, byte[] advertisedKey, byte[] signature) {
-        if (!Es256Verify.isSupported()) {
+        if (!verificationSupported.getAsBoolean()) {
             // A platform-capability statement, not a signer failure: this JVM's providers register
             // neither the raw-format nor the DER-form ECDSA name (push2u-core's own resolution —
             // a stock JDK always has at least one). A remote signer on such a platform still signs
             // perfectly well, so condemning it to a permanent DOWN would be strictly worse than
             // the length-only probe this verification replaced. Degrade to that check, saying so
-            // once — a platform property cannot change mid-process.
+            // once in the log — a platform property cannot change mid-process — and on EVERY
+            // payload: the startup WARN has scrolled away by the time an operator looks at
+            // /actuator/health, so the degraded mode must be visible where they are looking. The
+            // detail appears only in this mode — its presence IS the signal; the fully verified UP
+            // stays as lean as before. A fixed string, per the payload discipline above.
             if (verificationUnsupportedWarned.compareAndSet(false, true)) {
                 LOG.warn("push2u health probe cannot verify ES256 signatures with this JVM's providers;"
                         + " the probe degrades to checking the signature length only");
             }
-            return Health.up().withDetail(NAME, signerType).build();
+            return Health.up()
+                    .withDetail(NAME, signerType)
+                    .withDetail("verification", "unavailable")
+                    .build();
         }
         boolean valid;
         try {

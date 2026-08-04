@@ -78,7 +78,11 @@ class Push2uHealthIndicatorTest {
         // Five evaluations spread across 20s of (virtual) time — all inside the 30s TTL, so the
         // signer must be exercised exactly once and every caller served the cached UP.
         for (int i = 0; i < 5; i++) {
-            assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+            Health health = indicator.health();
+            assertThat(health.getStatus()).isEqualTo(Status.UP);
+            // The `verification` detail marks the degraded (length-check-only) mode; its ABSENCE
+            // is the signal that this UP went through the full cryptographic verification.
+            assertThat(health.getDetails()).doesNotContainKey("verification");
             clock.advance(Duration.ofSeconds(5));
         }
         assertThat(signer.signOperations()).isEqualTo(1);
@@ -258,6 +262,43 @@ class Push2uHealthIndicatorTest {
         assertThat(String.valueOf(health.getDetails().get("reason"))).contains("could not be verified");
         // Same payload discipline as signing failures: the exception TYPE, never its message.
         assertThat(String.valueOf(health.getDetails().get("error"))).contains("IllegalArgumentException");
+    }
+
+    @Test
+    void anUnsupportedPlatformDegradesToTheLengthCheckAndSaysSoInThePayload() {
+        // On a JVM whose providers offer no ES256 verify primitive, the same garbage that must be
+        // DOWN elsewhere is accepted by the degraded length-only check — the signer might be fine,
+        // and a permanent DOWN for a platform property would be worse than the old length probe.
+        // The degraded mode must be durably visible though: the WARN fires once and scrolls away,
+        // so every payload carries the fixed `verification: unavailable` detail. Capability is
+        // injected (like the clock) because it cannot be varied on the stock JDK the tests run on.
+        try (CapturedLogs logs = new CapturedLogs()) {
+            VapidSigner garbageSigner = new VapidSigner() {
+                @Override
+                public byte[] sign(byte[] signingInput) {
+                    byte[] signature = new byte[64];
+                    Arrays.fill(signature, (byte) 0x42);
+                    return signature;
+                }
+
+                @Override
+                public byte[] publicKey() {
+                    return realSigner.publicKey();
+                }
+            };
+            Push2uHealthIndicator indicator =
+                    new Push2uHealthIndicator(garbageSigner, Duration.ZERO, clock, () -> false);
+
+            for (int i = 0; i < 2; i++) {
+                Health health = indicator.health();
+                assertThat(health.getStatus()).isEqualTo(Status.UP);
+                assertThat(health.getDetails()).containsEntry("verification", "unavailable");
+            }
+
+            assertThat(logs.count(Level.WARNING))
+                    .as("the platform-capability WARN fires once per process, not per probe")
+                    .isEqualTo(1);
+        }
     }
 
     @Test
