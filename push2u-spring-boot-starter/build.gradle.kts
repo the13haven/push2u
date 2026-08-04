@@ -25,6 +25,10 @@ dependencies {
     testImplementation(platform(libs.spring.boot.dependencies))
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.spring.boot.health)
+    // Actuator's endpoint types back spring-boot-health's HealthEndpointGroups machinery, which
+    // the liveness-group test drives for real — proving Boot never places the push2u indicator in
+    // the liveness group. Test classpath only; the starter itself never needs actuator.
+    testImplementation(libs.spring.boot.actuator)
     testImplementation(libs.jackson.annotations)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)

@@ -16,8 +16,14 @@ class Push2uPropertiesTest {
     void toStringMasksThePrivateKey() {
         Push2uProperties.Vapid vapid =
                 new Push2uProperties.Vapid("BPublicKeyMarker", "raw-private-scalar-marker", "mailto:ops@example.com");
-        Push2uProperties properties =
-                new Push2uProperties(vapid, null, null, null, null, new Push2uProperties.Retry(3, null, null));
+        Push2uProperties properties = new Push2uProperties(
+                vapid,
+                null,
+                null,
+                null,
+                null,
+                new Push2uProperties.Retry(3, null, null),
+                new Push2uProperties.Health(true, null));
 
         // Directly and through the enclosing record — the outer toString() embeds the inner one.
         for (String rendered : new String[] {vapid.toString(), properties.toString()}) {

@@ -12,6 +12,7 @@ import java.security.spec.ECGenParameterSpec;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -20,8 +21,16 @@ import java.util.logging.LogRecord;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.availability.ApplicationAvailabilityAutoConfiguration;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroup;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
+import org.springframework.boot.health.autoconfigure.actuate.endpoint.AvailabilityProbesAutoConfiguration;
+import org.springframework.boot.health.autoconfigure.actuate.endpoint.HealthEndpointAutoConfiguration;
+import org.springframework.boot.health.autoconfigure.application.AvailabilityHealthContributorAutoConfiguration;
+import org.springframework.boot.health.autoconfigure.registry.HealthContributorRegistryAutoConfiguration;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
+import org.springframework.boot.health.registry.HealthContributorRegistry;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -311,6 +320,71 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void healthIndicatorCanBeDisabledByProperty() {
+        // The operator's escape hatch for deployments that must not tie health to the signer at
+        // all: the indicator is not registered, so no health evaluation can ever reach the signer
+        // backend — while the sender itself stays wired.
+        keyedRunner().withPropertyValues("push2u.health.enabled=false").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+            assertThat(context).hasSingleBean(PushSender.class);
+        });
+    }
+
+    @Test
+    void negativeHealthCacheTtlFailsTheContextNamingTheProperty() {
+        // Same convention as push2u.record-size: the indicator's own validation message cannot
+        // know the YAML property, so the autoconfiguration re-throws with the property prefixed.
+        keyedRunner().withPropertyValues("push2u.health.cache-ttl=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.health.cache-ttl:"))
+                    .hasMessageContaining("push2u.health.cache-ttl:")
+                    .hasMessageContaining("negative");
+        });
+    }
+
+    @Test
+    void livenessGroupDoesNotIncludeThePush2uIndicator() {
+        // Liveness failures restart containers, and no container restart fixes an unreachable
+        // Vault — so the signer probe must never gate liveness. This wires up the real health
+        // endpoint machinery with Kubernetes-style probes enabled and asserts on the actual
+        // group membership Boot computes: the indicator is registered (under the conventional
+        // contributor name "push2u", the bean name minus the HealthIndicator suffix) and belongs
+        // to the primary health group, but neither the liveness nor the readiness group — those
+        // contain only the application's own availability states unless an operator explicitly
+        // opts contributors in via management.endpoint.health.group.*.
+        keyedRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        ApplicationAvailabilityAutoConfiguration.class,
+                        AvailabilityHealthContributorAutoConfiguration.class,
+                        HealthContributorRegistryAutoConfiguration.class,
+                        HealthEndpointAutoConfiguration.class,
+                        AvailabilityProbesAutoConfiguration.class))
+                .withPropertyValues("management.endpoint.health.probes.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                    // The name the groups are asked about must be the name the indicator is
+                    // actually registered under — assert it, or the isMember checks below could
+                    // pass vacuously for a name that exists nowhere.
+                    HealthContributorRegistry registry = context.getBean(HealthContributorRegistry.class);
+                    assertThat(registry.getContributor("push2u")).isNotNull();
+
+                    HealthEndpointGroups groups = context.getBean(HealthEndpointGroups.class);
+                    assertThat(groups.getNames()).contains("liveness", "readiness");
+                    HealthEndpointGroup liveness = Objects.requireNonNull(groups.get("liveness"));
+                    HealthEndpointGroup readiness = Objects.requireNonNull(groups.get("readiness"));
+                    assertThat(liveness.isMember("push2u"))
+                            .as("liveness must not depend on the signer backend")
+                            .isFalse();
+                    assertThat(liveness.isMember("livenessState")).isTrue();
+                    assertThat(readiness.isMember("push2u")).isFalse();
+                    assertThat(groups.getPrimary().isMember("push2u")).isTrue();
+                });
+    }
+
+    @Test
     void healthIndicatorLogsTheFullFailureOnTransitionNotOnEveryProbe() {
         // Kubernetes-style probes evaluate health every few seconds. The full exception (whose
         // message belongs in the log, not the payload) must be logged at WARN once, on the
@@ -318,6 +392,10 @@ class Push2uAutoConfigurationTest {
         // outage. Asserted on the JUL records behind Spring's commons-logging (the backend on
         // this test classpath — no SLF4J binding is present, and JUL's ConsoleHandler holds the
         // original stderr, which is why OutputCapture cannot see it).
+        //
+        // cache-ttl is set to 0s so every health() call really probes the signer: the transition
+        // logic must hold on its own, without the result cache masking repeated probes — and this
+        // doubles as the pin that 0s means "no caching", failures included.
         java.util.logging.Logger julLogger = java.util.logging.Logger.getLogger(Push2uHealthIndicator.class.getName());
         List<LogRecord> records = new CopyOnWriteArrayList<>();
         Handler handler = new Handler() {
@@ -337,6 +415,7 @@ class Push2uAutoConfigurationTest {
         julLogger.setLevel(Level.ALL);
         try {
             keyedRunner()
+                    .withPropertyValues("push2u.health.cache-ttl=0s")
                     .withUserConfiguration(FailingSignerConfiguration.class)
                     .run(context -> {
                         Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
@@ -349,6 +428,12 @@ class Push2uAutoConfigurationTest {
                                 .hasSize(1)
                                 .allSatisfy(logRecord ->
                                         assertThat(logRecord.getThrown()).hasMessage("signer backend unavailable"));
+                        // The two later probes really ran (cache-ttl 0s disabled the cache) and
+                        // each degraded to DEBUG — JUL FINE — instead of re-tracing at WARN.
+                        assertThat(records)
+                                .filteredOn(logRecord -> logRecord.getLevel().equals(Level.FINE))
+                                .as("while the failure persists, each re-probe logs at DEBUG")
+                                .hasSize(2);
                     });
         } finally {
             julLogger.removeHandler(handler);
