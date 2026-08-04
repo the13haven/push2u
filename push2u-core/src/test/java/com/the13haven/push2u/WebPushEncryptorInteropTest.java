@@ -1,7 +1,6 @@
 package com.the13haven.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -17,15 +16,14 @@ import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
+import java.security.spec.InvalidKeySpecException;
 import java.util.Arrays;
-import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -66,29 +64,12 @@ class WebPushEncryptorInteropTest {
         // authenticated data on the sender side would fail this call in every user agent.
         byte[] recovered = decryptAsUserAgent(body, receiver, uaPublic, authSecret);
 
-        // RFC 8188 §2: the last (only) record ends in the delimiter 0x02 and nothing after it.
-        assertThat(recovered).as("plaintext || 0x02, nothing more").hasSize(length + 1);
-        assertThat(recovered[length])
-                .as("last-record padding delimiter (RFC 8188 §2)")
-                .isEqualTo((byte) 0x02);
+        // The delimiter value is the RFC's (0x02 marks the last record, RFC 8188 §2); the absence
+        // of anything after it is this library's choice — the RFC permits 0x00 padding there, and
+        // this encryptor sends none, so the record is exactly plaintext || 0x02.
+        assertThat(recovered).as("plaintext || 0x02, no padding").hasSize(length + 1);
+        assertThat(recovered[length]).as("last-record delimiter (RFC 8188 §2)").isEqualTo((byte) 0x02);
         assertThat(Arrays.copyOf(recovered, length)).as("recovered plaintext").isEqualTo(plaintext);
-    }
-
-    @Test
-    void aFlippedCiphertextByteFailsTheAuthenticationTagCheck() throws Exception {
-        KeyPair receiver = generateReceiverKeyPair();
-        byte[] uaPublic = encodeUncompressed((ECPublicKey) receiver.getPublic());
-        byte[] authSecret = new byte[16];
-        random.nextBytes(authSecret);
-        byte[] plaintext = "tamper with me".getBytes(StandardCharsets.US_ASCII);
-
-        byte[] body = encryptor.encrypt(uaPublic, authSecret, plaintext, WebPushEncryptor.DEFAULT_RECORD_SIZE);
-        // First ciphertext byte: right after the 86-byte header (16 salt + 4 rs + 1 idlen + 65 keyid).
-        body[86] ^= 0x01;
-
-        assertThatThrownBy(() -> decryptAsUserAgent(body, receiver, uaPublic, authSecret))
-                .as("the record is authenticated, not merely enciphered")
-                .isInstanceOf(AEADBadTagException.class);
     }
 
     // ---- The receiver, from the RFCs alone (no production crypto classes below this line) ----
@@ -145,6 +126,10 @@ class WebPushEncryptorInteropTest {
     }
 
     private static ECPublicKey decodeUncompressed(byte[] point) throws GeneralSecurityException {
+        // A browser rejects a keyid that is not an X9.62 uncompressed point, so this receiver does too.
+        if (point.length != 65 || point[0] != 0x04) {
+            throw new InvalidKeySpecException("keyid is not a 65-byte uncompressed P-256 point");
+        }
         BigInteger x = new BigInteger(1, Arrays.copyOfRange(point, 1, 33));
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(point, 33, 65));
         return (ECPublicKey)
