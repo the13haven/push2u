@@ -51,8 +51,8 @@ spotless {
         //
         // LicenseHeaderStep skips package-info.java and module-info.java by name — their leading
         // Javadoc would otherwise be treated as the old header and replaced. Those files carry the
-        // header by hand, and checkstyle.xml's RegexpHeader is what verifies it there; it re-checks
-        // the shape on all main sources anyway, the way it already re-checks the import grouping.
+        // header by hand, and Checkstyle's RegexpHeader is what verifies it there: checkstyle.xml
+        // on `main`, the `checkstyleLicenseHeader` task below on every other source set.
         licenseHeaderFile(rootProject.file("config/quality/license/header.txt"))
 
         palantirJavaFormat(toolVersion("palantir"))
@@ -138,6 +138,17 @@ val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeade
 
     // Checkstyle parses source, not bytecode; the property is mandatory but nothing here reads it.
     classpath = files()
+
+    // An empty source set makes Checkstyle report NO-SOURCE and the build stays green, so the
+    // failure mode of the laziness above is a rule that silently checks nothing. Every module here
+    // has test sources, so emptiness means the source sets were resolved before they existed, not
+    // that there was nothing to check. Same guard as `fipsTest`'s failOnNoDiscoveredTests, and for
+    // the same reason.
+    doFirst {
+        if (source.isEmpty) {
+            error("$path resolved no sources — the non-main source sets were read too early.")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -298,8 +309,10 @@ tasks.register("qualityCheckCi") {
 val formattingTasks = listOf("spotlessApply", "spotlessCheck")
 
 tasks.withType<JavaCompile>().configureEach { mustRunAfter(formattingTasks) }
-tasks.named("checkstyleMain") { mustRunAfter(formattingTasks) }
+// checkstyleLicenseHeader goes first among the analysers: one rule over the source lines, a
+// fraction of a second, against SpotBugs' ~17s at the other end of the chain.
 checkstyleLicenseHeader.configure { mustRunAfter(formattingTasks) }
+tasks.named("checkstyleMain") { mustRunAfter(formattingTasks, checkstyleLicenseHeader) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
 tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }

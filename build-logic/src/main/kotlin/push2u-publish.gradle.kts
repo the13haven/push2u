@@ -27,6 +27,19 @@ extensions.configure<JavaPluginExtension> {
     withSourcesJar()
 }
 
+// The licence travels inside every artifact, not only in the POM's `licenses` element. A jar that
+// has been copied out of a repository — into a shaded bundle, an air-gapped mirror, a vendored
+// lib/ directory — carries no POM with it, and META-INF/LICENSE is where every convention-following
+// tool looks. This is the artifact-level counterpart of the per-file SPDX header of ADR-008.
+//
+// Deliberately not a NOTICE file: Apache-2.0 §4(d) would then oblige everyone redistributing a
+// derivative work to reproduce its contents, which is a real obligation to place on consumers, and
+// the attribution it would carry is already in the POM and in every source file.
+//
+// withType<Jar>, so the -sources and -javadoc jars carry it too — they are distributed artifacts
+// like any other.
+tasks.withType<Jar>().configureEach { metaInf { from(rootProject.file("LICENSE")) } }
+
 publishing {
     publications {
         // `register<Type>(name)`, not the `by registering` delegate: the delegated-property

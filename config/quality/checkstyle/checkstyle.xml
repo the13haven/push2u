@@ -24,8 +24,10 @@
     <!--
         Every Java file opens with the Apache-2.0 SPDX header (ADR-008). Spotless writes and
         verifies it across all source sets, but skips package-info.java and module-info.java by
-        name — there the header is written by hand and this rule is the only thing checking it.
-        Checkstyle analyses main sources only, which is exactly where those two file kinds live.
+        name — there the header is written by hand and a RegexpHeader rule is the only thing
+        checking it. This configuration covers `main`; the same rule reaches the other source sets
+        through checkstyle-header.xml and the `checkstyleLicenseHeader` task, because a headerless
+        package-info.java under src/testFixtures would otherwise go out to Maven Central unchecked.
 
         The year is `\d{4}` rather than a literal: a file keeps the year it was created in and is
         never rewritten, so the tree holds a spread of years by design.

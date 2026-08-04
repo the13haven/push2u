@@ -420,7 +420,7 @@ exception-driven control flow.
 The project is licensed under Apache License 2.0, including its explicit patent grant.
 
 *Amended:* every Java source file carries the licence in its header, in the short SPDX form rather
-than the eleven-line boilerplate the licence's appendix suggests:
+than the full boilerplate the licence's appendix suggests:
 
 ```java
 /*
@@ -434,8 +434,16 @@ than the eleven-line boilerplate the licence's appendix suggests:
 makes the licence apply. It is what survives a single file being copied out of the repository, and
 what per-file scanners (ScanCode, FOSSA, ORT) read — without it they classify the file as
 `unknown licence`, which is friction for exactly the enterprise consumer this library targets. The
-SPDX identifier is machine-readable and says the same thing in three lines instead of repeating
-`LICENSE` in a hundred files.
+SPDX identifier is machine-readable and says the same thing far more briefly than repeating the
+appendix boilerplate in a hundred files.
+
+`LICENSE` itself keeps the appendix verbatim, placeholders and all: it is the canonical Apache text,
+and the appendix is an instruction for applying the licence rather than a place to assert ownership.
+Filling it in was the half-measure this amendment replaces — the notice now sits in each file, which
+is what the instruction asks for. Every published jar additionally carries `META-INF/LICENSE`, so an
+artifact separated from its POM still states its terms. No `NOTICE` file: §4(d) would oblige every
+redistributor of a derivative work to reproduce it, and the attribution is already in the POM and in
+every source file.
 
 The year is the year the file was created, and is never advanced: a maintained copyright range
 means re-touching every file each January for no legal effect, since the notice is evidence of
