@@ -14,19 +14,19 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
 
-import com.the13haven.push2u.Es256Verify;
+import com.the13haven.push2u.Es256Verifier;
 import com.the13haven.push2u.VapidSigner;
 
 /**
  * Reports push2u readiness by exercising the configured {@link VapidSigner} end to end: it signs a small probe and
  * reports {@code UP} only if the signer returns a 64-byte raw {@code r||s} ES256 signature that <em>verifies</em>
  * against the signer's own advertised public key ({@link VapidSigner#publicKey()}, checked locally through
- * {@link Es256Verify}). Verifying is what makes this a probe rather than a length check — a signer returning 64
+ * {@link Es256Verifier}). Verifying is what makes this a probe rather than a length check — a signer returning 64
  * arbitrary bytes must be {@code DOWN}, and a signer whose advertised public key does not belong to its signing key (a
  * mispinned Vault {@code public-key} / {@code key-version}, say) is exactly the misconfiguration that otherwise
  * surfaces as a push service rejecting every send with 401/403. The verification is pure local computation over the
  * public key: no network, no key material. On the rare JVM whose providers offer no ES256 verification primitive at all
- * ({@link Es256Verify#isSupported()}), the probe degrades to the length-only check with a one-time WARN and a fixed
+ * ({@link Es256Verifier#isSupported()}), the probe degrades to the length-only check with a one-time WARN and a fixed
  * {@code verification: unavailable} payload detail — that is a platform capability statement, not a signer failure, and
  * a signer that signs correctly there must not be reported {@code DOWN} forever.
  *
@@ -87,7 +87,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
     private final long successTtlMillis;
     private final long failureTtlMillis;
     private final Clock clock;
-    /** {@link Es256Verify#isSupported()} in production; injectable so tests can pin the degraded mode. */
+    /** {@link Es256Verifier#isSupported()} in production; injectable so tests can pin the degraded mode. */
     private final BooleanSupplier verificationSupported;
 
     /**
@@ -150,7 +150,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * injected rather than read from the system.
      */
     Push2uHealthIndicator(VapidSigner signer, Duration cacheTtl, Clock clock) {
-        this(signer, cacheTtl, clock, Es256Verify::isSupported);
+        this(signer, cacheTtl, clock, Es256Verifier::isSupported);
     }
 
     /**
@@ -277,7 +277,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
         }
         boolean valid;
         try {
-            valid = Es256Verify.verify(advertisedKey, PROBE_SIGNING_INPUT, signature);
+            valid = Es256Verifier.verify(advertisedKey, PROBE_SIGNING_INPUT, signature);
         } catch (RuntimeException e) {
             // The advertised key is malformed or cannot be imported as a P-256 point. Same payload
             // discipline as the signing failure above — a fixed reason and the exception type,
