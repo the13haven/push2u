@@ -37,7 +37,9 @@ extensions.configure<JavaPluginExtension> {
 // the attribution it would carry is already in the POM and in every source file.
 //
 // withType<Jar>, so the -sources and -javadoc jars carry it too — they are distributed artifacts
-// like any other.
+// like any other. It also reaches jars that are never published (push2u-signer-vault's internal
+// test fixtures), which is harmless: a licence in an artifact that stays inside the build costs
+// nothing, and narrowing the rule would cost the guarantee that every jar leaving here has one.
 tasks.withType<Jar>().configureEach { metaInf { from(rootProject.file("LICENSE")) } }
 
 publishing {

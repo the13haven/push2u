@@ -138,17 +138,6 @@ val checkstyleLicenseHeader = tasks.register<Checkstyle>("checkstyleLicenseHeade
 
     // Checkstyle parses source, not bytecode; the property is mandatory but nothing here reads it.
     classpath = files()
-
-    // An empty source set makes Checkstyle report NO-SOURCE and the build stays green, so the
-    // failure mode of the laziness above is a rule that silently checks nothing. Every module here
-    // has test sources, so emptiness means the source sets were resolved before they existed, not
-    // that there was nothing to check. Same guard as `fipsTest`'s failOnNoDiscoveredTests, and for
-    // the same reason.
-    doFirst {
-        if (source.isEmpty) {
-            error("$path resolved no sources — the non-main source sets were read too early.")
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -341,5 +330,19 @@ gradle.taskGraph.whenReady {
     tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.matching { it.name.startsWith("spotless") }.configureEach {
         enabled = runQuality || spotlessRequested
+    }
+
+    // The failure mode of resolving the source sets lazily is a rule that checks nothing: an empty
+    // source makes Checkstyle report NO-SOURCE and the build stays green. `SourceTask.getSource()`
+    // is @SkipWhenEmpty, so the task is skipped before any of its own actions run — a doFirst
+    // guard inside it would never execute. Here the graph is ready, every build script has run,
+    // and the check still happens before anything is executed.
+    //
+    // Emptiness cannot be legitimate for a module this plugin applies to: it is applied reactively
+    // to `java` modules, all of which have at least src/test. A java-platform module (a BOM) never
+    // gets here at all.
+    val licenseHeaderTask = "${project.path}:${checkstyleLicenseHeader.name}"
+    if (hasTask(licenseHeaderTask) && checkstyleLicenseHeader.get().let { it.enabled && it.source.isEmpty }) {
+        error("$licenseHeaderTask resolved no sources — the non-main source sets were read too early.")
     }
 }

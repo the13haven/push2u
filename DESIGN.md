@@ -441,9 +441,12 @@ appendix boilerplate in a hundred files.
 and the appendix is an instruction for applying the licence rather than a place to assert ownership.
 Filling it in was the half-measure this amendment replaces — the notice now sits in each file, which
 is what the instruction asks for. Every published jar additionally carries `META-INF/LICENSE`, so an
-artifact separated from its POM still states its terms. No `NOTICE` file: §4(d) would oblige every
-redistributor of a derivative work to reproduce it, and the attribution is already in the POM and in
-every source file.
+artifact separated from its POM still states its terms — the terms, not the copyright holder, since
+the canonical appendix names nobody and compiled classes carry no comments. A scanner reading the
+binary jar alone therefore sees Apache-2.0 without an owner; the owner is in the POM's `developers`
+and `organization`, in the source jar and in every source file, which is where it is useful. No
+`NOTICE` file: §4(d) would oblige every redistributor of a derivative work to reproduce it, and that
+is a real obligation to place on consumers in exchange for attribution they already have.
 
 The year is the year the file was created, and is never advanced: a maintained copyright range
 means re-touching every file each January for no legal effect, since the notice is evidence of
