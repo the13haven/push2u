@@ -332,17 +332,44 @@ gradle.taskGraph.whenReady {
         enabled = runQuality || spotlessRequested
     }
 
-    // The failure mode of resolving the source sets lazily is a rule that checks nothing: an empty
-    // source makes Checkstyle report NO-SOURCE and the build stays green. `SourceTask.getSource()`
-    // is @SkipWhenEmpty, so the task is skipped before any of its own actions run — a doFirst
-    // guard inside it would never execute. Here the graph is ready, every build script has run,
-    // and the check still happens before anything is executed.
+    // The failure mode of resolving the source sets lazily is a rule that checks nothing, quietly.
+    // Two shapes of it, and the second is the likely one:
     //
-    // Emptiness cannot be legitimate for a module this plugin applies to: it is applied reactively
-    // to `java` modules, all of which have at least src/test. A java-platform module (a BOM) never
-    // gets here at all.
+    //   * nothing at all resolves — Checkstyle reports NO-SOURCE and the build stays green;
+    //   * something resolves, but not everything. Replace the Callable at the top of this file with
+    //     a list built where it stands, and it evaluates while `plugins.withId("java")` is firing —
+    //     before push2u-core applies java-test-fixtures and creates fipsTest. What you get is
+    //     src/test alone: not empty, so a non-emptiness check passes, and the published conformance
+    //     kit — the whole reason this task exists — goes unchecked.
+    //
+    // So the assertion is coverage, not non-emptiness: every non-main Java file the source sets
+    // hold now must be one this task is about to read. `whenReady` is where that can be asked —
+    // the graph is built and every build script has run, but nothing has executed, and
+    // `SourceTask.getSource()` being @SkipWhenEmpty means a guard inside the task would itself be
+    // skipped in the first case.
     val licenseHeaderTask = "${project.path}:${checkstyleLicenseHeader.name}"
-    if (hasTask(licenseHeaderTask) && checkstyleLicenseHeader.get().let { it.enabled && it.source.isEmpty }) {
-        error("$licenseHeaderTask resolved no sources — the non-main source sets were read too early.")
+    if (hasTask(licenseHeaderTask)) {
+        val expected =
+            project
+                .files(javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs })
+                .asFileTree
+                .matching { include("**/*.java") }
+                .files
+        val missing = expected - checkstyleLicenseHeader.get().source.files
+
+        // Empty `expected` is its own failure: every module this plugin reaches has test sources
+        // (it is applied reactively to `java`, so a java-platform BOM never gets here), and a new
+        // module that genuinely has none would be adding one — say so rather than pass silently.
+        if (expected.isEmpty()) {
+            error("$licenseHeaderTask found no non-main sources to check — is the source-set read still lazy?")
+        }
+        if (missing.isNotEmpty()) {
+            // Capped: the total failure resolves to every non-main file in the module, and a
+            // 43-path error message buries its own first line.
+            val examples = missing.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
+            error(
+                "$licenseHeaderTask does not cover every non-main source — ${missing.size} file(s) " +
+                    "would go unchecked, among them:\n  $examples")
+        }
     }
 }

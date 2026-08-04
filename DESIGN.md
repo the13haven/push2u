@@ -444,7 +444,8 @@ is what the instruction asks for. Every published jar additionally carries `META
 artifact separated from its POM still states its terms — the terms, not the copyright holder, since
 the canonical appendix names nobody and compiled classes carry no comments. A scanner reading the
 binary jar alone therefore sees Apache-2.0 without an owner; the owner is in the POM's `developers`
-and `organization`, in the source jar and in every source file, which is where it is useful. No
+entry and its `organization`, in the source jar and in every source file, which is where it is
+useful. No
 `NOTICE` file: §4(d) would oblige every redistributor of a derivative work to reproduce it, and that
 is a real obligation to place on consumers in exchange for attribution they already have.
 
