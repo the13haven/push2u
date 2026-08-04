@@ -12,9 +12,21 @@ coverage:
         target: 80%
         threshold: 5%
 
-comment:
-  layout: "reach, diff, flags, files, tests"
-  behavior: default
+# No pull-request comment, which is the only way to stop the mail.
+#
+# Codecov sends no email itself — "the email notifications are tied directly to GitHub's
+# notification system as we do not send the emails ourselves". What arrives in an inbox is GitHub
+# notifying the subscribers of a pull request that codecov-commenter posted on it, and there is no
+# codecov.yml key for email: coverage.notify covers Slack, IRC, Gitter and webhooks, nothing else.
+# So silencing the comment is the whole mechanism, not a workaround for a missing one.
+#
+# What is given up: the per-PR coverage table. Not the coverage signal itself — the README badge
+# carries the trend, app.codecov.io has the detail per commit, and the quality gate in ci.yml
+# enforces the aggregated JaCoCo floor on every run, which is the check that can actually fail a
+# build. The status blocks below are kept: they cost nothing while unpublished, and they become the
+# in-PR signal the moment the Codecov GitHub App is installed on this repository (today the uploads
+# are token-only, so Codecov posts as codecov-commenter and publishes no commit status or check).
+comment: false
 
 # Only production code is instrumented, but say so explicitly: the uploaded report is the
 # aggregated one, and these paths must never count towards coverage if a future report includes
