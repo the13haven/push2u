@@ -19,7 +19,7 @@ code is not an approval to merge — they are separate, and only the second one 
 
 1. Branch from `main` for the task.
 2. Implement it — in this session or in a subagent, whichever fits.
-3. Review the change.
+3. Review the change in a separate subagent, never in the one that implemented it.
 4. Fix every reasonable finding. Review again if the fixes were substantial enough to introduce
    something new.
 5. Report the outcome and ask the user before merging.
@@ -30,8 +30,9 @@ code is not an approval to merge — they are separate, and only the second one 
 2. Create the feature branch from `main`.
 3. Give each subtask to a subagent. Subagents branch **from the feature branch**, not from `main`,
    so the work converges where it belongs.
-4. Each subtask runs its own review-and-fix loop, exactly as a small task does, and merges into the
-   feature branch only once its review is clean.
+4. Each subtask runs its own review-and-fix loop, exactly as a small task does — reviewed by a
+   subagent other than the one that implemented it — and merges into the feature branch only once
+   its review is clean.
 5. When every subtask is merged, review the feature as a whole. Individually correct changes can
    still be wrong together — a shared assumption that drifted, a boundary crossed in two places, a
    limit now checked twice and enforced nowhere.
@@ -47,9 +48,15 @@ skills. So when you delegate implementation or review, tell it to read the file 
 `.claude/skills/push2u-implement/SKILL.md` or `.claude/skills/push2u-review/SKILL.md` — otherwise
 the work comes back missing exactly what those files exist to carry.
 
-Reviewing your own work in the same context is the weakest form of review available. When this
-session wrote the change, prefer delegating the review to a subagent that has to read the code
-rather than remember writing it.
+**Implementation and review go to different subagents, with separate contexts.** A reviewer that
+shares the implementer's context inherits its assumptions along with its blind spots — it checks the
+code against what the author meant rather than against what the code says, and the defects worth
+catching are precisely the ones the author could not see. The reviewing agent therefore gets the
+change and the repository, not the implementer's reasoning, and it is a fresh subagent rather than a
+fork of the one that wrote the code, since a fork inherits the parent's context by definition.
+
+The same holds when this session wrote the change itself — review it in a subagent that has to read
+the code rather than remember writing it.
 
 ## Choosing the model for a subagent
 
