@@ -95,35 +95,14 @@ class VaultTransitVapidSignerErrorResponseTest {
                 .hasMessageContaining("not an object");
     }
 
-    /**
-     * Vault does report the key type, and it is the cheapest way to catch the most common misconfiguration — pointing
-     * the mount at an existing key of the wrong algorithm. A response without it is either a Vault version this code
-     * has not seen or something else answering on that URL; either way, guessing is worse than failing.
-     */
-    @Test
-    void aResponseWithoutATypeFieldIsRejectedRatherThanAssumedToBeP256() {
-        assertThatThrownBy(() -> fetchedSigner(
-                        new VaultHttpResponse(200, "{\"data\":{\"keys\":{\"1\":{}},\"latest_version\":1}}")))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("'type'");
-    }
-
-    @Test
-    void aManagedKeyIsRejectedByNameBecauseItsAlgorithmIsNotVisibleHere() {
-        assertThatThrownBy(() -> fetchedSigner(new VaultHttpResponse(
-                        200, "{\"data\":{\"keys\":{\"1\":{}},\"latest_version\":1,\"type\":\"managed_key\"}}")))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("managed_key");
-    }
-
-    @Test
-    void aKeyOfTheWrongAlgorithmIsNamedInTheFailure() {
-        assertThatThrownBy(() -> fetchedSigner(new VaultHttpResponse(
-                        200, "{\"data\":{\"keys\":{\"1\":{}},\"latest_version\":1,\"type\":\"ed25519\"}}")))
-                .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("ed25519")
-                .hasMessageContaining("ecdsa-p256");
-    }
+    // The key-type failure modes (missing type, wrong algorithm, managed_key) live in
+    // VaultTransitVapidSignerKeyValidationTest, whose fixtures carry a real P-256 PEM so a failure
+    // is attributable to the type check alone. This class once duplicated two of them with
+    // PEM-less bodies — and asserted managed_key was "rejected" when production accepts it: the
+    // hasMessageContaining("managed_key") check passed only because the failure ("no 'public_key'
+    // for key version 1") echoes the response body, which contains the words being asserted.
+    // Message-content checks against an exception that echoes the whole body prove nothing about
+    // which check fired.
 
     @Test
     void aMissingOrMalformedLatestVersionIsRejected() {
