@@ -349,19 +349,31 @@ gradle.taskGraph.whenReady {
     // skipped in the first case.
     val licenseHeaderTask = "${project.path}:${checkstyleLicenseHeader.name}"
     if (hasTask(licenseHeaderTask)) {
+        // Read the container again here rather than reusing `javaSourceSets` from the top of the
+        // file. An assertion computed from the same expression as the thing it asserts about is
+        // not an assertion: factor the two into one shared val — the refactor this duplication
+        // invites — and an eager read degrades both sides identically, `missing` comes back empty,
+        // and the guard waves through exactly what it was written to catch. Keep the two reads
+        // separate, and the guard fails independently of how the task's source was built.
         val expected =
             project
-                .files(javaSourceSets.filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs })
+                .files(
+                    project
+                        .extensions
+                        .getByType<SourceSetContainer>()
+                        .filter { it.name != SourceSet.MAIN_SOURCE_SET_NAME }
+                        .flatMap { it.java.srcDirs })
                 .asFileTree
                 .matching { include("**/*.java") }
                 .files
         val missing = expected - checkstyleLicenseHeader.get().source.files
 
-        // Empty `expected` is its own failure: every module this plugin reaches has test sources
-        // (it is applied reactively to `java`, so a java-platform BOM never gets here), and a new
-        // module that genuinely has none would be adding one — say so rather than pass silently.
+        // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
+        // here and every module that does has test sources. Nothing to check therefore means
+        // either the source-set read stopped being lazy, or a module was added before its tests —
+        // both worth stopping for rather than passing silently.
         if (expected.isEmpty()) {
-            error("$licenseHeaderTask found no non-main sources to check — is the source-set read still lazy?")
+            error("$licenseHeaderTask found no non-main sources — module without tests, or a read that is no longer lazy?")
         }
         if (missing.isNotEmpty()) {
             // Capped: the total failure resolves to every non-main file in the module, and a

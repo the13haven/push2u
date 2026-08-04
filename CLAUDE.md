@@ -134,7 +134,8 @@ starter is ordered before the core starter and outranks the local signer.
   there would reach Maven Central). **The year is the year the file was created and is never updated
   afterwards**, so the tree holds a spread of years on purpose; a new file gets the current one
   automatically. `LICENSE` itself keeps the canonical Apache appendix with its `[yyyy]` placeholder
-  — the notice belongs in the files, and each published jar carries the licence as `META-INF/LICENSE`.
+  — the notice belongs in the files, and each published jar carries the licence as
+  `META-INF/LICENSE`.
 - **Suppressions:** a rule exclusion carries a comment stating why; a per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope, next to the reason.
 - **Gradle 10 readiness:** the build avoids removed idioms on purpose — `register<Type>(name)` not
