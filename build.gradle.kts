@@ -197,32 +197,23 @@ subprojects {
     }
 }
 
-// Catalog handles for the BouncyCastle security pin, referenced by the constraints below.
-// Jackson is not pinned: Spring Boot's managed jackson-2-bom governs it on the starter
+// No module-level BouncyCastle pin. There used to be one here, adding bcprov/bcpkix constraints to
+// every declarable configuration of every module, and it resolved nothing: bcprov appears on
+// exactly one classpath in this build — push2u-core's `test`, where it is declared directly at the
+// catalog version — while push2u-signer-vault, both starters and every published runtimeClasspath
+// carry no BouncyCastle at all, and bcpkix never appears anywhere. What the constraints did reach
+// was `api` and `implementation`, which apiElements/runtimeElements extend, so they were published:
+// Gradle applies a consumer-visible constraint from module metadata, which is exactly the
+// transitive surface ADR-002 exists to keep out of a consumer's graph, and published metadata
+// cannot be taken back. A transitive BouncyCastle arriving one day gets a pin in the module that
+// resolves it, naming its advisory, per the convention in CONTRIBUTING.md.
+//
+// The buildscript pin above is a different thing and stays: JGit (inside axion-release) really does
+// request 1.81/1.82, and that pin really does raise it to 1.85 — on the classpath of the build
+// itself, which no artefact's metadata sees.
+//
+// Jackson is not pinned either: Spring Boot's managed jackson-2-bom governs it on the starter
 // classpaths.
-val bouncycastleBcpkix = libs.bouncycastle.bcpkix
-val bouncycastleBcprov = libs.bouncycastle.bcprov
-
-subprojects {
-
-    plugins.withType<JavaPlugin> {
-
-        // Pin BouncyCastle via dependency CONSTRAINTS rather than resolutionStrategy.force. Same
-        // resolved classpath (1.85), but constraints report only the resolved version in the GitHub
-        // dependency graph, whereas `force` also leaked the original requested version (1.82) as a
-        // phantom node that Dependabot alerted on. Added to every declarable configuration for
-        // consistent resolution across modules.
-        configurations.configureEach {
-            if (isCanBeDeclared && !isCanBeResolved && !isCanBeConsumed) {
-                val bucket = name
-                project.dependencies.constraints.apply {
-                    add(bucket, bouncycastleBcpkix)
-                    add(bucket, bouncycastleBcprov)
-                }
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------------------------
 // Aggregated coverage. Each module produces its own JaCoCo report; the aggregation below merges
