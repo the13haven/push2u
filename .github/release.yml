@@ -11,18 +11,20 @@ changelog:
       # An explicit opt-out for housekeeping PRs that would only add noise to the changelog.
       - ignore-for-release
   categories:
+    # One label per category, deliberately. A second name for the same category (semver-major,
+    # feature, bugfix) was listed here at first, but none of those labels exists in the repository,
+    # nothing creates them — the labelling workflow emits only the names below, Dependabot only
+    # `dependencies` — and a second name that produces an identical section turns labelling into a
+    # coin flip whose outcome carries no information and whose inconsistency is permanent.
     - title: "Breaking Changes"
       labels:
         - breaking-change
-        - semver-major
     - title: "New Features"
       labels:
         - enhancement
-        - feature
     - title: "Bug Fixes"
       labels:
         - bug
-        - bugfix
     - title: "Security"
       labels:
         - security

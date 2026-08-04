@@ -43,9 +43,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Every label .github/release.yml routes on, synonyms included.
-          known='["breaking-change","semver-major","enhancement","feature","bug","bugfix",
-                  "security","dependencies","documentation","ignore-for-release"]'
+          # Every label .github/release.yml routes on.
+          known='["breaking-change","enhancement","bug","security","dependencies",
+                  "documentation","ignore-for-release"]'
 
           # A label a human already chose wins. This step fills a gap; it never overrides a
           # deliberate choice and never removes anything. It is also what keeps Dependabot's
