@@ -381,6 +381,14 @@ An external `VapidSigner` controls its own signing provider.
 A public key that does not correspond to the configured private scalar is therefore rejected at
 startup instead of producing repeated `401`/`403` responses at send time.
 
+Whatever the signer, its two outputs are checked on every send: the signature must be the raw
+64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point (RFC 8292 §3.2).
+A violation raises `PushCryptoException` saying what was returned — otherwise it would surface as
+an opaque `401`/`403` on every send, with nothing pointing at the signer. If your implementation
+signs through JCA, note that `SHA256withECDSA` produces DER: ask for
+`SHA256withECDSAinP1363Format` or convert before returning, and the rejection message will say so
+if you forget.
+
 ## Spring Boot
 
 Add the core starter:

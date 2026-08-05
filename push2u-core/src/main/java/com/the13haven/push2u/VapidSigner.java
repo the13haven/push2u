@@ -11,6 +11,18 @@ package com.the13haven.push2u;
  * <p>This is the library's primary extension point: the seam is <em>key custody</em>. The default
  * {@link LocalEcVapidSigner} holds the private key in memory; a Vault Transit / KMS / HSM implementation keeps it off
  * the JVM heap entirely — a genuinely different security posture, the articulable reason this is an SPI.
+ *
+ * <p><b>Both outputs are checked on every send</b>, and a violation raises {@link PushCryptoException} naming what was
+ * returned. Neither is checkable by the implementation's own tests in the way that matters: a signature or key of the
+ * wrong shape still produces a syntactically valid {@code Authorization} header, so the failure would otherwise reach
+ * the caller as an opaque 401/403 from the push service — on every send, with nothing in it pointing at the signer. The
+ * shapes are not this library's invention: RFC 7518 §3.4 fixes the ES256 signature at the raw {@code r || s} pair, and
+ * RFC 8292 §3.2 fixes the key at the X9.62 uncompressed point.
+ *
+ * <p>The likely mistake is DER. JCA's {@code SHA256withECDSA} returns a DER-encoded signature, and an implementation
+ * that forwards its provider's output unconverted looks correct until a push service rejects it. Ask the provider for
+ * {@code SHA256withECDSAinP1363Format}, or convert before returning — the library does exactly that for its own signer
+ * but cannot do it here, since these bytes arrive from an implementation whose provider and encoding are unknown.
  */
 public interface VapidSigner {
 
