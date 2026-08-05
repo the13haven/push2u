@@ -76,8 +76,12 @@ plugins {
 // `./gradlew release` tags (and pushes) the next one.
 // ---------------------------------------------------------------------------------------------
 scmVersion {
-    // Consult the remote, don't trust the local clone alone: a release must not mint a version
-    // that ignores tags pushed from elsewhere (another machine, the CI runner).
+    // Release for real: push the release commit and tag to origin, and run the `aheadOfRemote`
+    // precondition rather than skipping it. Note what this does NOT do — it is not what makes the
+    // version resolution see tags pushed from elsewhere. `localOnly` is read only by the push and
+    // by whether that precondition runs; tag visibility comes from the clone (`fetch-depth: 0` in
+    // the workflows) plus axion's own unshallow on CI. `fetchTags` would be the setting for that,
+    // and it is deliberately left at its default.
     localOnly.set(false)
     // Highest tag overall, not the nearest reachable one — keeps the version monotonic even if
     // release and maintenance branches diverge.
@@ -120,7 +124,15 @@ scmVersion {
             // README states them strictly as `com.the13haven:<module>:X.Y.Z`. axion's fileUpdate
             // pattern is a regex (multiline), but capture groups in the replacement are not a
             // documented feature — so instead of one clever regex there is one fileUpdate hook
-            // per module with a fully literal (Regex.escape'd) pattern. Boring and robust.
+            // per module, each matching only its own coordinate. Boring and robust.
+            //
+            // The version part matches ANY X.Y.Z rather than the literal previousVersion axion
+            // offers, and that is load-bearing at the first release: axion computes
+            // previousVersion with ignoreNextVersionTags, so the `vX.Y.Z-SNAPSHOT` marker that
+            // Setup Next Version pushes is skipped and previousVersion falls back to
+            // initialVersion — 0.0.0, a string the README does not contain. A literal pattern
+            // would therefore match nothing exactly once: on the release where getting the
+            // coordinates right matters most, and silently.
             listOf(
                 "push2u-core",
                 "push2u-testkit",
@@ -131,8 +143,8 @@ scmVersion {
                 fileUpdate {
                     encoding = "utf-8"
                     file("README.md")
-                    pattern = { previousVersion: String, _: HookContext ->
-                        Regex.escape("com.the13haven:$module:$previousVersion")
+                    pattern = { _: String, _: HookContext ->
+                        Regex.escape("com.the13haven:$module:") + """\d+\.\d+\.\d+"""
                     }
                     replacement = { currentVersion: String, _: HookContext ->
                         "com.the13haven:$module:$currentVersion"

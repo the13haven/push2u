@@ -15,8 +15,8 @@ and Spring Boot auto-configuration.
 
 Releases are published to Maven Central under the `com.the13haven` group ID. The version is
 derived from git tags of the form `vX.Y.Z`; between releases the build identifies itself as the
-next `X.Y.Z-SNAPSHOT`. The first release has not been tagged yet — until it appears on Maven
-Central, use the [composite build](#developing-against-unpublished-changes) described below. The
+next `X.Y.Z-SNAPSHOT`, which is not published anywhere — anything ahead of the latest release is
+consumed through the [composite build](#developing-against-unpublished-changes) below. The
 implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 
 ## Features

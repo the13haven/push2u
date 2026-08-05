@@ -44,10 +44,12 @@ longer. You are credited in the advisory unless you ask not to be. There is no b
 
 | Version | Supported |
 |---|---|
-| `main` | Yes — the only line that currently exists |
+| `main` | Yes |
+| Latest released minor | Yes |
+| Any earlier release | No |
 
-The first release has not been tagged yet. Once releases exist, security fixes go to the latest
-minor of the latest major; before 1.0 there are no backports to earlier minors.
+Security fixes go to the latest minor of the latest major; before 1.0 there are no backports to
+earlier minors.
 
 ## Scope
 

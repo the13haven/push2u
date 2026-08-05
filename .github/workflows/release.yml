@@ -3,7 +3,7 @@ name: Release
 on:
   workflow_dispatch:
 
-# The tag itself is pushed over SSH with the deploy key, but `gh release create` at the end
+# The release commit and the tag are pushed over SSH with the deploy key, but `gh release create` at the end
 # authenticates with GITHUB_TOKEN, and creating a GitHub Release requires contents: write.
 permissions:
   contents: write
@@ -22,7 +22,30 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Must exceed this job's worst case, not its typical one: a timeout is a cancellation, and a
+    # cancellation between the tag and the upload leaves a version burnt with nothing on Central.
+    #
+    # This job is the two other release-path jobs back to back, so the budget is theirs added up:
+    #     ci.yml `quality`                 30   (checkout, wrapper validation, setup, qualityCheckCi,
+    #                                            result aggregation, Codecov — the whole job, not
+    #                                            just the Gradle task, and here on a cold cache)
+    #   + publish-existing-tag.yml         30   (checkout, setup, a second from-scratch build of
+    #                                            every jar, sign, upload, gh release — exactly the
+    #                                            work this job's tail does)
+    #   ------------------------------------
+    #                                      60
+    #
+    # Two things this job does that neither term names — the bundle build (`nmcpZipAggregation`)
+    # and `./gradlew release` itself — ride in the slack instead of adding terms. The slack is in
+    # the first term: this job's head omits what ci.yml's 30 also covers (result aggregation, both
+    # Codecov uploads, the artifact upload), so 30 over-provisions it. That is deliberate but tight:
+    # if both halves ever really took their maximum, the cancellation would land inside the upload.
+    # It is survivable — `Publish Existing Tag` exists to finish a run that tagged but did not
+    # publish — and it is the reason this number is a sum rather than a guess.
+    #
+    # **Keep it equal to ci.yml's `quality` budget plus publish-existing-tag.yml's.** If either of
+    # those moves, recompute; this number is derived, not chosen.
+    timeout-minutes: 60
 
     steps:
       # workflow_dispatch lets the caller pick any branch in the UI, but the build only releases
@@ -40,10 +63,10 @@ jobs:
           fi
 
       # Fail before anything is tagged or uploaded if a publishing secret is missing. The order of
-      # steps below makes this necessary: `release` pushes the tag first and only then does the
-      # publish step run, so a missing SIGNING_KEY would otherwise surface as an unsigned bundle
-      # rejected by the Central Portal — with the tag already pushed and the version burnt. A
-      # secret that is absent expands to the empty string, which is exactly what this checks.
+      # steps below makes this necessary: `release` pushes the commit and the tag first, and only
+      # then does the publish step run, so a missing SIGNING_KEY would otherwise surface as an
+      # unsigned bundle rejected by the Central Portal — with the tag already pushed and the version
+      # burnt. A secret that is absent expands to the empty string, which is exactly what this checks.
       - name: Verify release secrets are configured
         env:
           ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
@@ -63,7 +86,7 @@ jobs:
             exit 1
           fi
 
-      # axion pushes the release tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
+      # axion pushes the release commit and tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
       # transport, so the push goes over SSH with a dedicated deploy key instead. known_hosts is
       # pinned explicitly rather than populated with ssh-keyscan at run time: scanning would
       # trust whatever answers on the network, which defeats host verification entirely.
@@ -91,8 +114,15 @@ jobs:
           # plugin would fall back to its default 0.1.0-SNAPSHOT.
           fetch-depth: 0
 
-      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
-      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      # The commit this release is cut from. Everything below — the quality gate, the signed
+      # bundle, the tag — is about THIS tree, and the guard just before the tag compares the state
+      # of origin/main against it. Reading HEAD of the checkout is exact: the checkout pins the
+      # tree, so this records what was actually built no matter when the step runs.
+      - name: Record the commit the release is cut from
+        run: echo "RELEASE_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's push
+      # uses the deploy key configured above. The bot identity is what ends up as the tagger.
       - name: Set git to use SSH
         run: |
           git config --global user.name "release-bot"
@@ -145,7 +175,56 @@ jobs:
             exit 1
           fi
 
-      # Creates the release tag (v<version>) and pushes it to origin over SSH. The step id matters:
+      # The last gap before the first irreversible step, and the only place this check is worth
+      # anything. A pull request merged into main while this job runs makes axion's push
+      # non-fast-forward, and that failure lands AFTER the release commit and the tag have been
+      # created locally: a burnt version number, no artifacts, and a repository that has to be
+      # untangled by hand. RELEASING.md asks for a merge freeze for the duration of a release run;
+      # this is the half that does not depend on anyone remembering.
+      #
+      # Late on purpose. Everything above is reversible and can take half an hour, so checking
+      # early would leave exactly the window it is meant to close; checking here narrows it to
+      # what the next step needs before it tags — a cold JVM, configuration (which reaches the
+      # remote: axion resolves the version at configuration time and `unshallowRepoOnCI` fetches
+      # first — not `localOnly`, which only governs the push and one precondition), axion's own
+      # preconditions and its five README rewrites. That
+      # is minutes, not seconds, and it cannot be narrowed to zero either: closing it would need
+      # an atomic compare-and-swap the git transport does not offer. What this buys is turning an
+      # expensive failure into a cheap one — a release that refuses to start is a non-event.
+      #
+      # axion's own preconditions do not cover this. `aheadOfRemote` fails when the LOCAL branch
+      # has commits the remote lacks; here the remote is the side that moved, which that check
+      # reads as clean.
+      #
+      # `git fetch` rather than reading origin/main from the checkout: the remote-tracking ref is
+      # as old as the checkout itself, so comparing against it would compare the base commit with
+      # itself. The fetch goes over SSH with the deploy key, which makes this the first step to
+      # exercise that credential — a key that cannot reach the repository now fails here, one step
+      # before the tag, instead of during the push. Only partly, though: this reaches the remote
+      # through OpenSSH, while the push below hands the same file to axion's JGit
+      # (`-Prelease.customKeyFile`). A key OpenSSH accepts and JGit cannot parse still fails at the
+      # push, so do not read a green step here as proof the credential works end to end.
+      #
+      # Nothing after this deserves the same guard: from the step below onwards main is SUPPOSED
+      # to have moved, because axion moved it. Tags need no equivalent check either — the two
+      # workflows that push them share this file's concurrency group and cannot interleave.
+      - name: Verify main has not moved since the run started
+        run: |
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy_key_rsa -o IdentitiesOnly=yes"
+          git fetch --no-tags origin main
+          remote_head=$(git rev-parse FETCH_HEAD)
+          if [ "$remote_head" != "$RELEASE_BASE_SHA" ]; then
+            echo "main moved while this release was running:" >&2
+            echo "  cut from: $RELEASE_BASE_SHA" >&2
+            echo "  now at:   $remote_head" >&2
+            echo "Nothing has been tagged or published. Re-run Release once main is quiet; see" >&2
+            echo "RELEASING.md, 'Freeze main while a release runs'." >&2
+            exit 1
+          fi
+
+      # Writes the `Release v<version>` commit (the preRelease hooks rewrite the README coordinates),
+      # creates the tag from it, and pushes BOTH to origin over SSH — the commit onto main, which is
+      # what needs the deploy-key bypass in the branch ruleset. The step id matters:
       # axion publishes the resolved version as the `released-version` GitHub Actions output, which
       # the GitHub Release step below reads.
       # https://axion-release-plugin.readthedocs.io/en/latest/configuration/ci_servers/

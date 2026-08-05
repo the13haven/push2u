@@ -58,6 +58,37 @@ Useful narrower runs:
 Reports land in `<module>/build/reports/`; aggregated coverage in
 `build/reports/jacoco/testCodeCoverageReport/`.
 
+### Upgrading Gradle
+
+`gradle/wrapper/gradle-wrapper.properties` carries a `distributionSha256Sum`, so the wrapper
+verifies the distribution zip it downloads instead of trusting TLS alone. CI's
+`gradle/actions/wrapper-validation` checks the wrapper *jar* committed here; the checksum checks
+the distribution that jar goes and fetches, which nothing else does.
+
+**The version and the checksum move together, and neither the tooling nor the build lets them
+drift apart.**
+
+- Dependabot's `gradle` ecosystem — already configured in `.github/dependabot.yml` for `/`, which
+  is where this wrapper lives — updates `gradle-wrapper.properties`, and updates
+  `distributionSha256Sum` too whenever the file already has one. So the ordinary Gradle bump
+  arrives as a pull request with both lines changed and needs nothing from you.
+- Upgrading by hand goes through the `wrapper` task, and it will not let you drop the sum:
+
+  ```bash
+  ./gradlew wrapper --gradle-version <X.Y.Z> \
+      --gradle-distribution-sha256-sum "$(curl -sSL \
+        https://services.gradle.org/distributions/gradle-<X.Y.Z>-bin.zip.sha256)"
+  ```
+
+  Without the second option the task fails with *"gradle-wrapper.properties contains
+  distributionSha256Sum property, but the wrapper configuration does not have one"*. That is the
+  guard against the tempting fix: a stale checksum makes the build fail loudly, and the way out is
+  the correct sum, not deleting the line.
+
+Take the checksum from Gradle itself — `<distributionUrl>.sha256`, or the
+[release checksums page](https://gradle.org/release-checksums/) — never from a mirror, a blog, or
+a value copied out of another repository.
+
 ## What the build enforces
 
 Formatting (Spotless/Palantir), naming and Javadoc on the public API (Checkstyle), bug patterns
@@ -204,10 +235,17 @@ Before merging, `main` requires the `quality` check and CodeQL analysis to pass.
 documentation-only change skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`)
 and still reports success.
 
+One more thing gates a merge, and no check reports it: **nothing merges into `main` while the
+Release workflow is running.** A release works from the commit it checked out, and a merge landing
+underneath it breaks the run at its most expensive point. If *Actions → Release* shows a run in
+progress, wait for it — it is a matter of tens of minutes. See
+[`RELEASING.md`](RELEASING.md#freeze-main-while-a-release-runs).
+
 Also update, when your change touches them:
 
 - `README.md` — the consumer-facing documentation. Keep Maven coordinates in the literal form
-  `com.the13haven:<module>:X.Y.Z`; a release hook rewrites exactly that string.
+  `com.the13haven:<module>:X.Y.Z`; a release hook rewrites every such coordinate to the released
+  version, matching any `X.Y.Z` — so do not write one to name a historical version.
 - `DESIGN.md` — the architecture and its ADRs.
 
 ## Public API

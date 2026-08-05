@@ -99,8 +99,9 @@ the three-argument form that names the key ID.
 
 ### 4. Generate the release bot's SSH deploy key
 
-The release workflows push tags back to the repository. `GITHUB_TOKEN` cannot be handed to
-axion's JGit transport, so the push goes over SSH with a dedicated deploy key:
+The release workflows push back to the repository — the release commit onto `main` as well as the
+tags. `GITHUB_TOKEN` cannot be handed to axion's JGit transport, so the push goes over SSH with a
+dedicated deploy key:
 
 ```bash
 ssh-keygen -t ed25519 -C "release-bot@noreply.the13haven.com" -f push2u-deploy-key -N ""
@@ -111,17 +112,74 @@ ssh-keygen -t ed25519 -C "release-bot@noreply.the13haven.com" -f push2u-deploy-k
 2. Store the private key (`push2u-deploy-key`) as the `ACTIONS_WRITE_KEY` secret.
 3. Delete both files locally once the secret is stored.
 
+### 5. Let the release bot past the branch ruleset
+
+A release does not only push a tag. axion's `preRelease` hook rewrites the Maven coordinates in
+`README.md` and commits them as `Release vX.Y.Z`, then tags that commit and pushes both to `main`
+— a direct push to the protected default branch.
+
+The repository's ruleset **Protected main** (*Settings → Rules → Rulesets*) targets the default
+branch and would reject it. It requires a pull request to change `main` (squash the only allowed
+merge method, code-owner review), requires the `quality`, `Analyze java-kotlin` and
+`Analyze actions` status checks, and blocks branch deletion and non-fast-forward pushes. A release
+commit pushed straight from a runner satisfies none of that.
+
+So the ruleset carries one bypass entry: **Deploy keys**, with bypass mode *Always*, added under
+*Bypass list* in the ruleset editor. Two consequences worth knowing before reproducing this:
+
+- **The entry is the deploy-key class, not a named key.** GitHub has no way to grant the bypass to
+  one specific deploy key, so *every* deploy key with write access on this repository can push
+  directly to `main`. That is why the repository has exactly one — `release-bot`, the key from
+  step 4 — and why adding a second write-enabled deploy key is a decision about who may bypass the
+  ruleset, not a piece of housekeeping.
+- **Nothing else bypasses.** No role, team or app is on the list, so every human change to `main`
+  still goes through a pull request and the required checks, including one made by a repository
+  administrator.
+
+Tags are not covered by any ruleset here, so the tag push itself needs no bypass; the bypass exists
+for the release commit that precedes it.
+
+The configuration can be read back without touching the UI — the reply lists the rules and a
+`bypass_actors` entry of type `DeployKey`:
+
+```bash
+gh api repos/the13haven/push2u/rulesets
+gh api repos/the13haven/push2u/rulesets/<id>
+```
+
+If the release fails at *Perform release* with a push rejected by a rule
+(`refusing to allow ... push`, `Changes must be made through a pull request`), this bypass is what
+is missing — on a fork, on a restored repository, or after the ruleset was edited.
+
 ## Repository secrets
 
 | Secret | Purpose | How to obtain |
 |---|---|---|
-| `ACTIONS_WRITE_KEY` | Private SSH deploy key; the workflows use it to push the release tag and the next-version marker tag | `ssh-keygen` as above; the matching public key must be a repository Deploy key with write access |
+| `ACTIONS_WRITE_KEY` | Private SSH deploy key; the workflows use it to push the release commit to `main`, the release tag, and the next-version marker tag — the commit is why it needs the ruleset bypass | `ssh-keygen` as above; the matching public key must be a repository Deploy key with write access |
 | `SIGNING_KEY` | ASCII-armored GPG private key that signs every published artifact | `gpg --armor --export-secret-keys <KEYID>` |
 | `SIGNING_PASSWORD` | Passphrase of the GPG signing key | Chosen when the key was generated |
 | `MAVEN_CENTRAL_USERNAME` | Username half of the Central Portal user token | Central Portal → *View Account* → *Generate User Token* |
 | `MAVEN_CENTRAL_PASSWORD` | Password half of the Central Portal user token | Same token generation step |
 
 ## Cutting a release
+
+### Freeze main while a release runs
+
+**Nothing merges into `main` from the moment the Release workflow is started until it finishes.**
+The run takes tens of minutes, most of it the quality gate, and it is working from the commit it
+checked out at the start. A pull request merged into `main` in the meantime makes axion's push
+non-fast-forward — and that fails *after* the release commit and the tag have been created, which
+is the expensive half: a version number burnt, nothing on Maven Central, and the recovery
+procedures below to work through.
+
+Say so in the pull requests that are waiting, or leave them until the release is out. The rule is
+not enforced by the ruleset — there is nothing in GitHub that closes merging for the duration of a
+workflow run.
+
+What *is* enforced is that a release cannot proceed on a stale `main`: the workflow records the
+commit it was cut from and, in the last step before the tag, checks `origin/main` still points at
+it. If it moved, the run fails with both SHAs and nothing has been tagged or published — start the
+release again on the new `main`.
 
 ### 1. Make sure pull requests are labeled
 
@@ -156,6 +214,13 @@ Write any version number in it by hand: the pre-release hook that rewrites Maven
 (`build.gradle.kts`) touches `README.md` only, so a snippet in these notes is nobody's job but
 yours.
 
+The hook matches any `X.Y.Z` in those coordinates rather than the version axion reports as the
+previous one, and that is deliberate. At the first release there is no *release* tag: axion computes
+`previousVersion` with `ignoreNextVersionTags`, so the `vX.Y.Z-SNAPSHOT` marker pushed by *Setting
+the next version* is skipped and the value falls back to `initialVersion`, `0.0.0` — a string
+`README.md` does not contain. A literal pattern would have matched nothing exactly once, on the
+release where the coordinates matter most, and without saying so.
+
 The notes can also be edited on GitHub afterwards — a GitHub Release is mutable, unlike the
 artifacts on Maven Central. The file exists so the text is reviewed with the code and is there the
 moment the release goes public, not so editing later becomes impossible.
@@ -169,21 +234,28 @@ moment the release goes public, not so editing later becomes impossible.
 2. runs the full quality gate (`qualityCheckCi`: compilation, all test suites including
    `fipsTest` and the Testcontainers-backed Vault test, static analysis, coverage threshold);
 3. builds and signs the deployment bundle **without uploading it**, and fails unless every
-   artifact carries a signature — the last step that can still fail without consequences;
-4. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
-   with the deploy key;
-5. creates a **draft** GitHub Release for the tag, with notes generated from the merged pull
+   artifact carries a signature;
+4. checks that `origin/main` still points at the commit the run was cut from, and fails if it
+   moved (see *Freeze main while a release runs* above) — the last step that can still fail
+   without consequences;
+5. has axion write the `Release v<X.Y.Z>` commit (the `preRelease` hooks rewrite the README
+   coordinates), create the tag `v<X.Y.Z>` from it, and push **both the commit to `main` and the
+   tag** over SSH with the deploy key — the commit is what needs the ruleset bypass above;
+6. creates a **draft** GitHub Release for the tag, with notes generated from the merged pull
    requests — prefixed by `.github/release-notes/<tag>.md` when that file exists (step 2);
-6. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
+7. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
    builds each module's `jar`, `-sources.jar` and `-javadoc.jar`, signs everything with the GPG
    key, and uploads the bundle to the Central Portal via `publishAggregationToCentralPortal`.
    The publishing mode is AUTOMATIC: once the Portal's validation passes, the deployment is
    released to Maven Central without any manual step;
-7. takes the GitHub Release out of draft, now that the artifacts it describes actually exist.
+8. takes the GitHub Release out of draft, now that the artifacts it describes actually exist.
 
-The order is deliberate. Steps 1–3 run entirely on the runner, so a failure there leaves nothing
-behind at all. Step 4 pushes a tag, which can still be deleted. Step 5 creates a draft, which can
-still be deleted. **Step 6 is the point of no return** — everything reversible happens before it.
+The order is deliberate. Steps 1–4 run entirely on the runner, so a failure there leaves nothing
+behind at all. Step 5 pushes a commit and a tag: the tag can simply be deleted, the commit cannot
+— the ruleset blocks non-fast-forward pushes to `main`, so only the deploy key could rewrite it,
+and in practice you move forward rather than back. Step 6 creates a draft, which can still be
+deleted. **Step 7 is where reversibility ends entirely** — after it the artifacts are on Maven
+Central, which is immutable.
 
 ### 4. Verify the result
 
