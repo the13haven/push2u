@@ -10,9 +10,12 @@ Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
 `README.md` documents the public API for consumers; `DESIGN.md` documents the architecture and
 carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything structural, and
-amend it in the same change if the decision moves. `RELEASING.md` covers the release procedure,
-`CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
-vulnerability policy.
+amend it in the same change if the decision moves. `MIGRATION.md` is the guide for consumers coming
+from `nl.martijndwars:web-push` — it states the other library's API and dependency set as verified
+facts, so anything added there must be checked against the published artifact, and it deliberately
+carries no `com.the13haven:<module>:X.Y.Z` coordinate, because the pre-release hook rewrites those
+in `README.md` only. `RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the
+contributor-facing form of the conventions below, and `SECURITY.md` the vulnerability policy.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main`. It loads automatically alongside this file.
