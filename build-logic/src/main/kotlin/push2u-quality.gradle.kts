@@ -263,21 +263,23 @@ val blockingChecks = listOf(
 )
 
 tasks.withType<JavaCompile>().configureEach {
-    // `main` counts as production for the nullness contract; no test source set does, testFixtures
-    // included. The nullness contract of ADR-012 is a promise to consumers, so it is enforced
-    // exactly where something reaches one — and the published conformance kit is now a module of
-    // its own (push2u-testkit), whose `main` this covers like any other. What is left under
-    // testFixtures is internal plumbing that never leaves the build, on the same footing as `test`
-    // and `fipsTest`: NullAway over unannotated test code reports every builder field and nothing
-    // useful, and marking those packages is not free either — the core's fixtures deliberately
-    // share the package of `main`, so a @NullMarked package-info.java there would be a second
-    // class file for a package that already has one.
+    // `main` plus `testFixtures`; `test` and `fipsTest` stay out. NullAway runs in OnlyNullMarked
+    // mode, so what decides coverage is whether the code sits in a @NullMarked scope, not which
+    // source set it is in — and both modules' fixtures deliberately share the package of `main`,
+    // whose package-info.java marks it. They inherit the mark from the classpath and need no
+    // package-info.java of their own; covering them costs nothing and is not optional to keep,
+    // because dropping it silently retires enforcement that already worked.
     //
-    // The failure the kit's coverage catches is real and has happened once: moving it into its own
-    // package (ADR-014) left it outside any @NullMarked, and nothing said so — a package-info.java
-    // carrying no annotation does not even compile to a class file, so the loss is invisible in the
-    // jar. In push2u-testkit that check is simply `compileJava`.
-    val productionCompile = name == "compileJava"
+    // `test` and `fipsTest` are excluded on their own merits, not for lack of a mark: they are
+    // where a nullness complaint is least likely to be a defect and most likely to be scaffolding
+    // written to fail. Whether they would pay for themselves has not been measured; if it ever is,
+    // this is the line to change.
+    //
+    // The failure this catches is real and has happened once: moving the conformance kit into its
+    // own package (ADR-014) left it outside any @NullMarked, and nothing said so — a
+    // package-info.java carrying no annotation does not even compile to a class file, so the loss
+    // is invisible in the jar. In push2u-testkit that check is now simply `compileJava`.
+    val productionCompile = name == "compileJava" || name == "compileTestFixturesJava"
     options.errorprone {
         enabled = provider {
             gradle.taskGraph.hasTask("${project.path}:qualityCheck") ||

@@ -125,11 +125,13 @@ starter is ordered before the core starter and outranks the local signer.
 
 - **Nullness:** every package's `package-info.java` carries JSpecify `@NullMarked`. NullAway plus
   `RequireExplicitNullMarking` fail the build on a violation or a new unmarked package — a new
-  package needs its `package-info.java` with the mark. Both checks cover `main` and stop there: the
-  contract is a promise to consumers, and every published package is a `main` one now that the
-  conformance kit is its own module. No test source set is covered, `testFixtures` included —
-  NullAway over unannotated test code is noise, and `push2u-core`'s fixtures deliberately share
-  `main`'s package, where a second `package-info.java` would be a duplicate class.
+  package needs its `package-info.java` with the mark. Both checks cover `main` **and
+  `testFixtures`**, and stop before `test`/`fipsTest`. NullAway runs in `OnlyNullMarked` mode, so
+  coverage follows the `@NullMarked` scope rather than the source set: both modules' fixtures
+  deliberately share `main`'s package and inherit its mark from the classpath, so they need no
+  `package-info.java` of their own and cost nothing to keep covered. `test`/`fipsTest` are left out
+  because that is where a nullness complaint is least likely to be a defect — not for lack of a
+  mark, which they also inherit.
 - **A new public package in `push2u-core` or `push2u-signer-vault` needs an `exports` line** in that
   module's `module-info.java` (ADR-014). Nothing fails without it — tests run on the class path —
   but every module-path consumer gets "package … is not visible" once the version is published.
@@ -166,8 +168,8 @@ starter is ordered before the core starter and outranks the local signer.
   name because their leading Javadoc would be mistaken for an old header and replaced — write the
   header by hand there. Checkstyle's `RegexpHeader` is what catches its absence, on `main` through
   `checkstyle.xml` and on every other source set through `checkstyle-header.xml` and the
-  `checkstyleLicenseHeader` task (`push2u-core`'s test fixtures are published, so a headerless file
-  there would reach Maven Central). **The year is the year the file was created and is never updated
+  `checkstyleLicenseHeader` task — the split exists because `checkstyleMain` cannot parse `main`'s
+  `module-info.java`. **The year is the year the file was created and is never updated
   afterwards**, so the tree holds a spread of years on purpose; a new file gets the current one
   automatically. `LICENSE` itself keeps the canonical Apache appendix with its `[yyyy]` placeholder
   — the notice belongs in the files, and each published jar carries the licence as

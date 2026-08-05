@@ -46,12 +46,6 @@ import com.the13haven.push2u.VapidSigner;
  * }
  * }</pre>
  */
-// PMD analyses this module's main sources, and this is main source that happens to be a test. Each check below
-// asserts the several facts that make up ONE claim about ONE artifact — a public key is 65 bytes AND carries the
-// uncompressed prefix; a point is in the field AND satisfies the curve equation — and every assertion carries an
-// `as(...)` description, so a failure names which of them broke. Splitting them into one assertion per method would
-// re-derive the same key three times and report a broken signer as three unrelated failures.
-@SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
 public abstract class VapidSignerContractTest {
 
     /** For subclasses: the kit is extended, never instantiated on its own. */
@@ -64,6 +58,11 @@ public abstract class VapidSignerContractTest {
      */
     protected abstract VapidSigner signer();
 
+    // UnitTestContainsTooManyAsserts: PMD analyses this module's main sources, and this is main
+    // source that happens to be a test. Length and prefix are the two halves of one claim — "this
+    // is an X9.62 uncompressed point" — and each assertion carries its own `as(...)`, so a failure
+    // still names which half broke.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void publicKeyIsA65ByteUncompressedPoint() {
         byte[] publicKey = signer().publicKey();
@@ -77,6 +76,11 @@ public abstract class VapidSignerContractTest {
      * checks the point against P-256 itself — coordinates inside the prime field, then the curve equation {@code y² ≡
      * x³ + ax + b (mod p)}.
      */
+    // UnitTestContainsTooManyAsserts: "the point is on P-256" is one claim with three conditions —
+    // both coordinates inside the prime field, then the curve equation — and the equation is only
+    // meaningful once the coordinates are. Split across methods they would re-derive the same key
+    // and report one broken signer as three unrelated failures.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void publicKeyIsAPointOnTheP256Curve() throws GeneralSecurityException {
         byte[] publicKey = signer().publicKey();
@@ -100,6 +104,10 @@ public abstract class VapidSignerContractTest {
                 .isEqualTo(right);
     }
 
+    // UnitTestContainsTooManyAsserts: the signature's length and its verification are one claim —
+    // raw r||s that verifies — and asserting the length first is what turns a DER signature into
+    // "expected 64 bytes" instead of an opaque `verify() == false`.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey() throws GeneralSecurityException {
         VapidSigner signer = signer();
