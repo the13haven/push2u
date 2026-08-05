@@ -473,14 +473,32 @@ signer starter supplies only key custody, not a contact address. The `pushSender
 explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing the
 `PushSender.builder(…)` factory's generic `"contact is required"`.
 
-`push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
-pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,
-set forwards the value to `Builder#recordSize(int)` / `Builder#maxEncryptedBodyBytes(int)`. Their
-own validation — the RFC 8188 §2 18-byte floor for `recordSize`, checked at startup, separately
-from the RFC 8291 §4 per-payload rule checked on each `send()`; and the fixed 103-byte
-`aes128gcm` overhead for `maxEncryptedBodyBytes` — governs context startup; the starter re-throws
-an invalid value's `IllegalArgumentException` with the YAML property name prefixed, since the
-builder's own message names its camelCase parameter instead.
+`push2u.jwt-expiry`, `push2u.default-ttl`, `push2u.record-size`, `push2u.max-encrypted-body-bytes`
+and the three `push2u.retry.*` keys share one optional-property pattern: unset (`null`, or for the
+retry keys their `@DefaultValue`) leaves the `PushSender`/`RetryPolicy` default, set forwards the
+value to `Builder#jwtExpiry(Duration)`, `Builder#defaultTtl(Duration)`, `Builder#recordSize(int)`,
+`Builder#maxEncryptedBodyBytes(int)`, or — for the retry keys — to `new RetryPolicy(…)`. Each one's
+own validation governs context startup, not just the send-time path: `jwtExpiry` must be strictly
+positive and at most 24h (RFC 8292 §2); `defaultTtl` must not be negative; `recordSize` enforces the
+RFC 8188 §2 18-byte floor at startup, separately from the RFC 8291 §4 per-payload rule checked on
+each `send()`; `maxEncryptedBodyBytes` enforces the fixed 103-byte `aes128gcm` overhead;
+`maxAttempts` must be at least 1 and neither backoff may be negative. The starter re-throws each
+`IllegalArgumentException` with the YAML property name prefixed, since the builder's — and
+`RetryPolicy`'s — own message names its camelCase parameter instead.
+
+The `retry.*` keys need one extra step, because `RetryPolicy`'s constructor validates all three
+components together and reports both backoff bounds through a single shared message — so a
+rejection cannot be attributed to a key without asking the constructor about one real value at a
+time. The starter probes each key separately, filling the other two components with `1` and
+`Duration.ZERO`, the triple `RetryPolicy.none()` is built from. The attribution rests on those
+filler values staying acceptable beside any value of the key being probed — which `none()` alone
+does not witness, since it fixes all three — and **not** on the order of the checks inside the
+compact constructor. A test asserts the filler combinations directly — the `RetryPolicy.none()`
+baseline plus one per probe — rather than leaving the invariant to a comment; it *samples* the
+invariant rather than deciding it, since a constraint biting only above some threshold would pass
+those points, and no black-box check can do better. Restating the bounds in the starter was rejected
+for the usual reason: two copies of a limit drift, and the core is the authority on what a legal
+value is.
 
 `push2u.allowed-origins` binds to `EndpointPolicies.allowedOrigins` and follows the same
 fail-at-startup pattern: a malformed entry's `IllegalArgumentException` is re-thrown with the

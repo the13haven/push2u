@@ -97,22 +97,27 @@ This is the procedure most often left half-finished, because the useful part wor
    `record-size` and `max-encrypted-body-bytes` all follow, and it keeps the default in one place
    instead of two.
 
-3. **Wire it, and translate the error.** In `Push2uAutoConfiguration`, forward the value only when
-   it is set, and re-throw a rejection with the YAML property name in front:
+3. **Wire it, and translate the error.** In `Push2uAutoConfiguration`, forward the value through
+   `applyIfPresent`, which skips a `null` and re-throws a rejection with the YAML property name in
+   front:
 
    ```java
-   Integer recordSize = properties.recordSize();
-   if (recordSize != null) {
-       try {
-           builder.recordSize(recordSize);
-       } catch (IllegalArgumentException e) {
-           throw new IllegalArgumentException("push2u.record-size: " + e.getMessage(), e);
-       }
-   }
+   applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
    ```
 
    The builder's own message names its camelCase parameter, which is not what the operator wrote in
-   their YAML. Keep the cause — the original message carries the actual constraint.
+   their YAML. The helper keeps the cause — the original message carries the actual constraint.
+   Use it rather than writing the try/catch inline: four inline copies is what pushed
+   `pushSender(...)` past PMD's complexity thresholds, and a fifth would do it again.
+
+   A value that reaches a *constructor* validating several properties at once (as `push2u.retry.*`
+   does) needs the other helper, `requireValid(property, probe)`. `applyIfPresent` would compile,
+   but it cannot attribute the failure: one constructor call rejects on behalf of any of its
+   arguments, and `RetryPolicy` reports both backoff bounds through a single message. So
+   `retryPolicy(...)` calls that constructor once per key, passing one real value and filling the
+   rest with values the constructor accepts regardless. Read its Javadoc before copying the shape —
+   the attribution rests on a stated invariant that a test samples, and the Javadoc is explicit
+   about what the sampling does and does not decide.
 
 4. **Document it.** The README property table, and the protocol-limits section if the option changes
    a limit. `DESIGN.md` too if it changes the pipeline's contract rather than a number.

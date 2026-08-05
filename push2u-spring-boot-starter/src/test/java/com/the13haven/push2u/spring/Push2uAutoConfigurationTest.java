@@ -6,6 +6,7 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
@@ -14,6 +15,7 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +50,7 @@ import com.the13haven.push2u.PushMessage;
 import com.the13haven.push2u.PushResponse;
 import com.the13haven.push2u.PushResult;
 import com.the13haven.push2u.PushSender;
+import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.Subscription;
 import com.the13haven.push2u.VapidSigner;
 
@@ -283,6 +286,121 @@ class Push2uAutoConfigurationTest {
                             "push2u.max-encrypted-body-bytes:"))
                     .hasMessageContaining("push2u.max-encrypted-body-bytes:")
                     .hasMessageContaining("maxEncryptedBodyBytes must be at least");
+        });
+    }
+
+    @Test
+    void invalidJwtExpiryFailsTheContextNamingTheProperty() {
+        // Same convention as push2u.record-size: PushSender.Builder#jwtExpiry's own message names
+        // its camelCase parameter ("jwtExpiry"), not the YAML property.
+        keyedRunner().withPropertyValues("push2u.jwt-expiry=25h").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-expiry:"))
+                    .hasMessageContaining("push2u.jwt-expiry:")
+                    .hasMessageContaining("jwtExpiry must be > 0 and <= 24h");
+        });
+    }
+
+    @Test
+    void invalidDefaultTtlFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.default-ttl=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.default-ttl:"))
+                    .hasMessageContaining("push2u.default-ttl:")
+                    .hasMessageContaining("defaultTtl must not be negative");
+        });
+    }
+
+    @Test
+    void invalidRetryMaxAttemptsFailsTheContextNamingTheProperty() {
+        // The worst offender before this fix: RetryPolicy's own message ("maxAttempts must be >=
+        // 1") does not even mention "retry", let alone the YAML property — an operator reading it
+        // has nothing to go on.
+        keyedRunner().withPropertyValues("push2u.retry.max-attempts=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-attempts:"))
+                    .hasMessageContaining("push2u.retry.max-attempts:")
+                    .hasMessageContaining("maxAttempts must be >= 1");
+        });
+    }
+
+    @Test
+    void invalidRetryInitialBackoffFailsTheContextNamingTheProperty() {
+        // RetryPolicy reports both backoff bounds through one message, so without the per-key probe
+        // an operator cannot tell which of the two durations it is complaining about.
+        keyedRunner().withPropertyValues("push2u.retry.initial-backoff=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(),
+                            IllegalArgumentException.class,
+                            "push2u.retry.initial-backoff:"))
+                    .hasMessageContaining("push2u.retry.initial-backoff:")
+                    .hasMessageContaining("backoff durations must not be negative");
+        });
+    }
+
+    @Test
+    void invalidRetryMaxBackoffFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.retry.max-backoff=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-backoff:"))
+                    .hasMessageContaining("push2u.retry.max-backoff:")
+                    .hasMessageContaining("backoff durations must not be negative");
+        });
+    }
+
+    /**
+     * The tripwire for the probes in {@code Push2uAutoConfiguration.retryPolicy}. Each of them fills the components it
+     * is not testing with {@code 1} and {@code Duration.ZERO}, and attributes any rejection to the one real value it
+     * passed. That attribution is only sound while those filler values stay acceptable beside an arbitrary value of the
+     * component under test — which {@link RetryPolicy#none()} alone does not witness, since it fixes all three. A
+     * constraint <em>between</em> components would otherwise leave the probes blaming the wrong YAML key with every
+     * other test still green.
+     *
+     * <p>Four assertions: the {@link RetryPolicy#none()} baseline, then one per probe pairing that probe's filler with
+     * a non-trivial value of its own component — the shape a cross-component constraint would break. <b>This samples
+     * the invariant, it does not decide it:</b> a constraint that only bites above some threshold would survive these
+     * points. What it buys is that the cheap and likely versions of that mistake fail here rather than in an operator's
+     * log, and that the invariant is written down as something executable rather than as a comment nobody re-checks.
+     */
+    @Test
+    void probeFillersStayAcceptableBesideARealValue() {
+        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ZERO))
+                .as("the triple RetryPolicy.none() is built from")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(Integer.MAX_VALUE, Duration.ZERO, Duration.ZERO))
+                .as("zero backoffs stay legal for any attempt count — what the max-attempts probe assumes")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(1, Duration.ofSeconds(1), Duration.ZERO))
+                .as("a zero max-backoff stays legal beside a real initial-backoff")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ofSeconds(1)))
+                .as("a zero initial-backoff stays legal beside a real max-backoff — the max-backoff probe's own"
+                        + " assumption, and the one the other three assertions do not cover")
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be {@code RetryPolicy.defaults()}
+     * restated in YAML terms — that equality is what lets the README and DESIGN.md describe an unset retry block as
+     * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
+     * either side would make both documents quietly wrong.
+     */
+    @Test
+    void theStarterRetryDefaultsAreTheCoreRetryDefaults() {
+        // Read back what Spring actually bound with no push2u.retry.* set, rather than restating
+        // the @DefaultValue literals here — restating them would pin this test to itself.
+        keyedRunner().run(context -> {
+            Push2uProperties.Retry bound =
+                    context.getBean(Push2uProperties.class).retry();
+
+            assertThat(new RetryPolicy(bound.maxAttempts(), bound.initialBackoff(), bound.maxBackoff()))
+                    .as("the @DefaultValue triple Spring binds for push2u.retry.*")
+                    .isEqualTo(RetryPolicy.defaults());
         });
     }
 
