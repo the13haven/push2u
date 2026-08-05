@@ -34,9 +34,7 @@ class BcFipsPushSenderTest {
         assertThat(Jca.using(bcFips).es256().encoding()).isEqualTo(Jca.EcdsaSignature.Encoding.DER);
 
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .cryptoProvider(bcFips)
                     // No-op sleeper: the happy path never retries, but if this scenario ever grows a
                     // retry the test must not fall back to real wall-clock backoff.

@@ -128,9 +128,7 @@ class PushSenderStatusClassificationTest {
      */
     @Test
     void theStatusJustBelowTheDeliveredRangeFailsInOneAttemptWithoutRetry() {
-        PushSender pusher = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
+        PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                 .httpClient((endpoint, headers, body) -> PushResponse.of(199))
                 .sleeper(sleeper)
                 .build();
@@ -157,9 +155,7 @@ class PushSenderStatusClassificationTest {
             receiver.enqueue(500);
             receiver.enqueue(503);
             RetryPolicy policy = new RetryPolicy(4, Duration.ofSeconds(1), Duration.ofSeconds(60));
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .retryPolicy(policy)
                     .sleeper(sleeper)
                     .build();
@@ -206,9 +202,7 @@ class PushSenderStatusClassificationTest {
     }
 
     private PushSender pusher() {
-        return PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                 .sleeper(sleeper)
                 .build();
     }

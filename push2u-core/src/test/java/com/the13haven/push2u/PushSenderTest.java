@@ -76,9 +76,7 @@ class PushSenderTest {
         Subscription subscription = new Subscription(
                 "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
 
-        PushResult result = PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
+        PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                 .httpClient(capturingClient)
                 .build()
                 .send(subscription, PushMessage.of(bytes("x")));
@@ -101,9 +99,7 @@ class PushSenderTest {
         // second later produces a JWT every push service is entitled to answer with 401.
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .jwtExpiry(Duration.ofHours(24))
@@ -126,9 +122,7 @@ class PushSenderTest {
         // 12h ahead, not silently drift to some other offset the Javadoc no longer matches.
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .build();
@@ -173,9 +167,7 @@ class PushSenderTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
             receiver.enqueue(201);
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .sleeper(sleeper)
                     .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
                     .build();
@@ -244,9 +236,7 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .httpClient(capturingClient)
                     .build()
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
@@ -277,9 +267,7 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .httpClient(capturingClient)
                     .executor(executor)
                     .build()
@@ -304,9 +292,7 @@ class PushSenderTest {
             throw new RejectedExecutionException("saturated");
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .executor(rejecting)
                     .build();
             Subscription subscription = subscription(receiver);
@@ -322,9 +308,7 @@ class PushSenderTest {
     void externalSignerPathDelivers() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             VapidSigner externalSigner = new LocalEcVapidSigner(generateVapidKeys());
-            PushSender pusher = PushSender.builder()
-                    .signer(externalSigner)
-                    .contact("mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(externalSigner, "mailto:ops@example.com")
                     .sleeper(sleeper)
                     .build();
 
@@ -338,42 +322,31 @@ class PushSenderTest {
     // in BcFipsPushSenderTest in the fipsTest source set — bc-fips cannot share a classpath with
     // the stock bcprov this source set carries.
 
-    @Test
-    void builderRequiresExactlyOneKeySource() {
-        VapidKeys keys = generateVapidKeys();
-
-        PushSender.Builder noKeySource = PushSender.builder().contact("mailto:ops@example.com");
-        assertThatThrownBy(noKeySource::build).as("neither vapid nor signer").isInstanceOf(IllegalStateException.class);
-
-        PushSender.Builder bothSources = PushSender.builder()
-                .contact("mailto:ops@example.com")
-                .vapid(keys)
-                .signer(new LocalEcVapidSigner(keys));
-        assertThatThrownBy(bothSources::build).as("both vapid and signer").isInstanceOf(IllegalStateException.class);
-    }
+    // A sender without a key source, with two key sources, or without a contact no longer has a
+    // test because it no longer has a runtime failure: the factory overloads each take exactly one
+    // key source plus the contact, so none of those states compile.
 
     @Test
-    void builderRequiresContact() {
-        PushSender.Builder noContact = PushSender.builder().vapid(generateVapidKeys());
-        assertThatThrownBy(noContact::build).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void builderRejectsABlankContact() {
+    void theFactoryRejectsABlankContact() {
         // A blank contact would still build a JWT carrying an empty/whitespace 'sub' claim, which
         // satisfies push2u's contact contract no better than the omission RFC 8292 §2.1 permits —
-        // reject it here rather than ship a claim a push service may or may not refuse.
-        PushSender.Builder blankContact =
-                PushSender.builder().vapid(generateVapidKeys()).contact("   ");
-        assertThatThrownBy(blankContact::build)
-                .isInstanceOf(IllegalStateException.class)
+        // reject it at the factory rather than ship a claim a push service may or may not refuse.
+        // The value is present but invalid, so this is IllegalArgumentException — a *missing*
+        // required value is inexpressible.
+        VapidKeys keys = generateVapidKeys();
+
+        assertThatThrownBy(() -> PushSender.builder(keys, "   "))
+                .as("keys overload")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("contact is required");
+        assertThatThrownBy(() -> PushSender.builder(new LocalEcVapidSigner(keys), ""))
+                .as("signer overload")
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("contact is required");
     }
 
     private PushSender pusher() {
-        return PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                 .sleeper(sleeper)
                 .build();
     }

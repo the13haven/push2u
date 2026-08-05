@@ -155,10 +155,8 @@ class PushSenderEndpointPolicyTest {
     }
 
     private PushSender sender(@Nullable EndpointPolicy policy) {
-        PushSender.Builder builder = PushSender.builder()
-                .signer(signer)
-                .contact("mailto:ops@example.com")
-                .httpClient(client);
+        PushSender.Builder builder =
+                PushSender.builder(signer, "mailto:ops@example.com").httpClient(client);
         if (policy != null) {
             builder.endpointPolicy(policy);
         }

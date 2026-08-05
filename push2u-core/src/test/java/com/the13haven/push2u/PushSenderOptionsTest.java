@@ -74,9 +74,7 @@ class PushSenderOptionsTest {
     @Test
     void aMessageWithoutATtlFallsBackToTheSenderDefault() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender.builder()
-                    .vapid(generateVapidKeys())
-                    .contact("mailto:ops@example.com")
+            PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                     .sleeper(sleeper)
                     .defaultTtl(Duration.ofMinutes(5))
                     .build()
@@ -129,7 +127,7 @@ class PushSenderOptionsTest {
     private @org.jspecify.annotations.Nullable Throwable catchBuilderFailure(
             java.util.function.Consumer<PushSender.Builder> mutation) {
         try {
-            mutation.accept(PushSender.builder());
+            mutation.accept(PushSender.builder(generateVapidKeys(), "mailto:ops@example.com"));
             return null;
         } catch (RuntimeException e) {
             return e;
@@ -137,9 +135,7 @@ class PushSenderOptionsTest {
     }
 
     private PushSender pusher() {
-        return PushSender.builder()
-                .vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
                 .sleeper(sleeper)
                 .build();
     }

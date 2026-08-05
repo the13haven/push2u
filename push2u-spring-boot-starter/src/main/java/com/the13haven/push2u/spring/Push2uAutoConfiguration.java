@@ -87,7 +87,7 @@ public final class Push2uAutoConfiguration {
      * <p>{@code push2u.vapid.subject} is required for this autoconfigured sender even when the signer itself comes from
      * another starter (e.g. the Vault Transit signer starter, which supplies only key custody, not a contact address):
      * it is checked here, with a message naming the property, so a missing subject fails with an actionable diagnostic
-     * rather than {@link PushSender.Builder#build()}'s generic {@code "contact is required"}.
+     * rather than {@link PushSender#builder(VapidSigner, String)}'s generic {@code "contact is required"}.
      *
      * <p>{@code push2u.record-size} / {@code push2u.max-encrypted-body-bytes} failures from
      * {@link PushSender.Builder#recordSize(int)} / {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown
@@ -133,9 +133,7 @@ public final class Push2uAutoConfiguration {
                             + " custody, not a contact address");
         }
         Push2uProperties.Retry retry = properties.retry();
-        PushSender.Builder builder = PushSender.builder()
-                .signer(signer)
-                .contact(subject)
+        PushSender.Builder builder = PushSender.builder(signer, subject)
                 .httpClient(httpClient)
                 .retryPolicy(new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff()));
         // Every optional property is read once into a local — see the same pattern in

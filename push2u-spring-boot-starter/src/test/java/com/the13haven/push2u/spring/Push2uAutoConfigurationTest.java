@@ -126,8 +126,8 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void withoutSubjectTheContextFailsNamingTheProperty() {
-        // The starter's own pre-flight, not PushSender.Builder's generic "contact is required":
-        // the failure must point at the concrete property to set.
+        // The starter's own pre-flight, not the PushSender.builder(...) factory's generic
+        // "contact is required": the failure must point at the concrete property to set.
         runner.withPropertyValues(
                         "push2u.vapid.public-key=" + publicKeyB64, "push2u.vapid.private-key=" + privateKeyB64)
                 .run(context -> {
@@ -655,21 +655,21 @@ class Push2uAutoConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     static class CustomSenderConfiguration {
 
-        static final PushSender SENDER = PushSender.builder()
-                .signer(new VapidSigner() {
-                    @Override
-                    public byte[] sign(byte[] signingInput) {
-                        return new byte[64];
-                    }
+        static final PushSender SENDER = PushSender.builder(
+                        new VapidSigner() {
+                            @Override
+                            public byte[] sign(byte[] signingInput) {
+                                return new byte[64];
+                            }
 
-                    @Override
-                    public byte[] publicKey() {
-                        byte[] key = new byte[65];
-                        key[0] = 0x04;
-                        return key;
-                    }
-                })
-                .contact("mailto:ops@example.com")
+                            @Override
+                            public byte[] publicKey() {
+                                byte[] key = new byte[65];
+                                key[0] = 0x04;
+                                return key;
+                            }
+                        },
+                        "mailto:ops@example.com")
                 .build();
 
         @Bean
