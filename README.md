@@ -538,12 +538,17 @@ rather than the curve; that value is therefore also accepted and the key is admi
 curve checks pass. This path has not been exercised against a real Vault Enterprise.
 
 ```java
-VapidSigner signer = new VaultTransitVapidSigner(
-    URI.create("https://vault.example:8200"),
-    "transit",
-    "vapid",
-    vaultToken);
+VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey()
+    .address(URI.create("https://vault.example:8200"))
+    .keyName("vapid")
+    .token(vaultToken)
+    .build();
 ```
+
+`address`, `key-name`/`keyName` and `token` are required — `build()` fails naming the step that is
+missing. `mount` is optional in both the builder and the properties and defaults to `transit`,
+Vault's own default mount for the Transit secrets engine; `transport` is optional too and defaults
+to a `JdkVaultHttpTransport` (see *Vault HTTP transport* below).
 
 The equivalent Spring Boot configuration is:
 
@@ -588,21 +593,24 @@ push2u:
 As above, `push2u.vapid.subject` (the VAPID `sub` claim) comes from the core starter, not the Vault
 signer starter — it must be set here too.
 
-The equivalent plain-Java constructor takes the version after the public key:
+The equivalent plain Java takes the public key at the factory method and the version as a step:
 
 ```java
-VapidSigner signer = new VaultTransitVapidSigner(
-    URI.create("https://vault.example:8200"),
-    "transit",
-    "vapid",
-    vaultToken,
-    publicKeyBytes,
-    3);
+VapidSigner signer = VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKeyBytes)
+    .address(URI.create("https://vault.example:8200"))
+    .keyName("vapid")
+    .token(vaultToken)
+    .keyVersion(3)
+    .build();
 ```
 
-The explicit constructor/property form without a version is retained for compatibility, but it
-sends no `key_version`; Vault then signs with its latest version. Use that form only when the
-Transit key is guaranteed never to rotate.
+There are two builders rather than one because the two modes differ in contract, not only in
+parameters: `builderWithFetchedPublicKey()` reads Vault inside `build()` and can fail there, while
+`builderWithSuppliedPublicKey(point)` contacts nothing. `keyVersion(...)` exists only on the second
+one — in the fetched mode the version comes from Vault, together with the public key it belongs to.
+
+Leaving `keyVersion` (or the `key-version` property) out sends no `key_version`; Vault then signs
+with its latest version. Use that form only when the Transit key is guaranteed never to rotate.
 
 An explicitly supplied `public-key` is checked structurally only — 65 bytes with the `0x04`
 uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is

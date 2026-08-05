@@ -139,6 +139,13 @@ starter is ordered before the core starter and outranks the local signer.
   (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived predicate wearing a
   component accessor's name — `delivered()` beside `status()` — and the pair that takes judgement
   is predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
+- **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
+  method, optional ones become builder steps — `PushMessage.builder(payload)`. One way to assemble a
+  type means `builder()`; several ways that differ in *contract* rather than only in parameters get
+  one `builderWith<what exactly>()` each, in a single consistent form, and no bare `builder()` —
+  offering one would silently promote one equal way to the default. `builderWithFetchedPublicKey()`
+  reads Vault inside `build()`, `builderWithSuppliedPublicKey(point)` does nothing over the network.
+  Entry points differing only in a required parameter would be `builder()` / `builder(x)` instead.
 - **Licence header:** every `.java` file in every source set opens with the Apache-2.0 SPDX header
   from `config/quality/license/header.txt` (ADR-008), and the build fails without it. Spotless
   writes it into a new file on `qualityCheck` and verifies it on `qualityCheckCi`. Two file kinds

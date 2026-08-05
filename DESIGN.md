@@ -286,6 +286,16 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 
 ## 7. Vault Transit integration
 
+`VaultTransitVapidSigner` has no public constructor: each mode has its own builder, obtained from
+`builderWithFetchedPublicKey()` or `builderWithSuppliedPublicKey(point)`. Two builders rather than
+one overloaded family because the modes differ in *contract*, not only in parameters — the fetched
+one performs a Vault read inside `build()` and can fail there, the supplied one contacts nothing —
+and because `keyVersion` belongs to exactly one of them: in the fetched mode the version is Vault's
+to state, taken from the same response as the public key. A bare `builder()` would have made one of
+two equal modes the default by omission. `address`, `keyName` and `token` are required steps and
+`build()` refuses without them, naming the step; `mount` defaults to `transit` (Vault's own default
+mount) and `transport` to a `JdkVaultHttpTransport`.
+
 `VaultTransitVapidSigner` supports:
 
 - **Fetched mode:** reads `latest_version` and that version's public key atomically from one
@@ -302,8 +312,8 @@ Applications must still treat the complete endpoint as a credential and avoid lo
   syntactically valid but unusable VAPID key, and the misconfiguration surfaced only as an
   unexplained push-service rejection on the first send.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
-  Supplying the matching Transit key version pins signing to that version. The compatibility form
-  without a version uses Vault's latest version and is safe only for a key that never rotates.
+  Supplying the matching Transit key version pins signing to that version. Omitting `keyVersion`
+  uses Vault's latest version and is safe only for a key that never rotates.
   The supplied key is checked structurally only (65 bytes, `0x04` tag) — neither its point nor its
   correspondence to the Transit key can be established here; both stay with the caller.
 

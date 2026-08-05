@@ -105,15 +105,27 @@ public final class VaultSignerAutoConfiguration {
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
             // (the token needs `read` on the key).
-            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, resolved);
+            return VaultTransitVapidSigner.builderWithFetchedPublicKey()
+                    .address(address)
+                    .mount(properties.mount())
+                    .keyName(keyName)
+                    .token(token)
+                    .transport(resolved)
+                    .build();
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
-        byte[] point = decodePublicKey(publicKey);
-        if (keyVersion == null) {
-            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, resolved);
+        VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        decodePublicKey(publicKey))
+                .address(address)
+                .mount(properties.mount())
+                .keyName(keyName)
+                .token(token)
+                .transport(resolved);
+        if (keyVersion != null) {
+            builder.keyVersion(keyVersion);
         }
-        return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, keyVersion, resolved);
+        return builder.build();
     }
 
     /**

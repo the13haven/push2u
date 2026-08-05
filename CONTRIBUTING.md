@@ -107,6 +107,18 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
 
   A name fixed by an interface or superclass is not ours to choose — `getBody()` in
   `JdkVaultHttpTransport` overrides the JDK's `BodySubscriber` and stays as the JDK named it.
+- **Required parameters go into the factory method, optional ones become builder steps.** That is a
+  firm rule, not a preference: `PushMessage.builder(payload)` takes the payload because there is no
+  message without one, and everything the builder still exposes is genuinely optional.
+
+  When a type has one way to be assembled, the method is `builder()`. When it has several and they
+  differ in *contract* rather than only in their parameters, each is named
+  `builderWith<what exactly>()`, in one consistent form, and a bare `builder()` is not offered — it
+  would silently promote one of several equal ways to the default. The example is the Vault signer:
+  `builderWithFetchedPublicKey()` reads Vault inside `build()` and can fail there, while
+  `builderWithSuppliedPublicKey(point)` does nothing over the network — different contracts, so
+  different names. Had the two entry points differed only in whether a required parameter is
+  present, the right answer would have been an overloaded `builder()` / `builder(x)` instead.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its
