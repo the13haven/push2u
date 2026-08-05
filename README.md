@@ -552,8 +552,8 @@ Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (s
 transport* below). `mount` is validated where it is set, per segment: nested mounts like
 `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
 and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
-reopened by encoding: a `%2e%2e` or `%2F` segment travels in the raw request path (`URI.resolve`
-does not normalize dot segments) — Vault's own router decodes a `%2F` before routing and addresses
+reopened by encoding: a `%2e%2e` or `%2F` segment travels in the raw request path (`URI.resolve` does not normalize dot
+segments in an absolute-path reference) — Vault's own router decodes a `%2F` before routing and addresses
 a different mount, a decoded dot segment draws a 307 redirect to the collapsed path from Vault's
 handler (harmless under the default `Redirect.NEVER` transport, executed — `X-Vault-Token`
 included — by a redirect-following custom one), and a normalizing proxy in front of Vault

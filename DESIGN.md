@@ -320,7 +320,8 @@ hold only the optional steps: `mount` defaults to `transit` (Vault's own default
 every `/`-separated segment must be non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
 The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
 literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
-`URI.resolve` does *not* normalize dot segments, the path goes onto the wire as written. What
+`URI.resolve` does *not* normalize dot segments in the absolute-path references this signer
+builds, so the path goes onto the wire as written. What
 happens next depends on the hops: Vault's own Go router decodes the path before routing, so a
 `%2F` addresses a different mount inside Vault itself; a decoded dot segment draws a *307
 redirect* to the collapsed path from Vault's handler (`cleanPath` in `http/handler.go`) — the

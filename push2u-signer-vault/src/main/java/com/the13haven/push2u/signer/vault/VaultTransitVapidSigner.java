@@ -821,19 +821,20 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * <p>An explicit allowed set, not a blacklist, because a blacklist here is reopenable by encoding: a
      * percent-encoded {@code %2e%2e} or {@code %2F} passes any literal {@code ..}/{@code /} check and travels in the
-     * raw request path — {@link URI#resolve} does <em>not</em> normalize dot segments, so the path goes onto the wire
-     * exactly as written. What happens next depends on the hops. Go's {@code net/url} decodes the path before Vault
-     * routes it, so a {@code %2F} addresses a different mount inside Vault itself. A decoded dot segment makes Vault's
-     * own handler ({@code cleanPath} in {@code http/handler.go}) answer a <em>307 redirect</em> to the collapsed path —
-     * the default transport ({@code Redirect.NEVER}) refuses it loudly, but a redirect-following custom transport would
-     * execute it, re-sending {@code X-Vault-Token} to the other path. And a normalizing proxy in front of Vault (nginx
+     * raw request path — {@link URI#resolve} does <em>not</em> normalize dot segments in an absolute-path reference
+     * such as the {@code /v1/…} this signer builds, so the path goes onto the wire exactly as written. What happens
+     * next depends on the hops. Go's {@code net/url} decodes the path before Vault routes it, so a {@code %2F}
+     * addresses a different mount inside Vault itself. A decoded dot segment makes Vault's own handler
+     * ({@code cleanPath} in {@code http/handler.go}) answer a <em>307 redirect</em> to the collapsed path — the default
+     * transport ({@code Redirect.NEVER}) refuses it loudly, but a redirect-following custom transport would execute it,
+     * re-sending {@code X-Vault-Token} to the other path. And a normalizing proxy in front of Vault (nginx
      * {@code proxy_pass} with a URI part, HAProxy {@code normalize-uri}) collapses the path before Vault sees it at
      * all. The literal {@code .}/{@code ..} segments are refused for the same hops. A token-bearing request whose
      * destination depends on which of those hops is deployed must fail loudly at configuration instead.
      *
      * <p>The allowed set is deliberately narrower than either Vault or a URL requires — that is policy, not necessity.
      * Vault accepts any printable Unicode in a mount path ({@code validateMountPath} in
-     * {@code vault/logical_system.go}: canonical per {@code path.Clean}, no unprintables), and thirteen further
+     * {@code vault/logical_system.go}: canonical per {@code path.Clean}, no unprintables), and fourteen further
      * characters ({@code ~ ! $ & ' ( ) * + , ; = : @}) are legal <em>raw</em> in a URI path segment — a mount like
      * {@code transit+prod} is real and was addressable through this signer before this rule existed. They are excluded
      * anyway: some of that punctuation is treated specially by intermediaries (a {@code ;} reads as a path parameter to

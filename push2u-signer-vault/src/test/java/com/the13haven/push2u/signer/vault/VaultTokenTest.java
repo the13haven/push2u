@@ -24,10 +24,11 @@ class VaultTokenTest {
     @Test
     void aVisibleAsciiTokenIsAcceptedWhateverItsFormat() {
         // Every Vault token era plus the dev-mode arbitrary string: hvs./hvb./hvr. (current),
-        // s./b. (pre-1.10), and plain values like `root` or this repository's own `test-token`.
-        // The format is deliberately not validated — only the character set is.
+        // s./b. (pre-1.10), and plain values like `root` or the `push2u-test-root` this
+        // repository's Testcontainers-backed test runs Vault with. The format is deliberately not
+        // validated — only the character set is.
         for (String value :
-                new String[] {TOKEN, "hvs.CAESIJ", "hvb.AAAAAQ", "hvr.abc", "b.legacy", "root", "test-token"}) {
+                new String[] {TOKEN, "hvs.CAESIJ", "hvb.AAAAAQ", "hvr.abc", "b.legacy", "root", "push2u-test-root"}) {
             assertThat(new VaultToken(value).value()).isEqualTo(value);
         }
     }
