@@ -140,7 +140,10 @@ starter is ordered before the core starter and outranks the local signer.
   component accessor's name — `delivered()` beside `status()` — and the pair that takes judgement
   is predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
 - **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
-  method, optional ones become builder steps — `PushMessage.builder(payload)`. One way to assemble a
+  method, optional ones become builder steps — `PushMessage.builder(payload)`,
+  `builderWithSuppliedPublicKey(point)`. The bound is the positional list the builder replaces:
+  where several required values would rebuild one (`address`/`keyName`/`token`, `PushSender`'s
+  contact and key source) they stay steps and `build()` refuses, naming the step. One way to assemble a
   type means `builder()`; several ways that differ in *contract* rather than only in parameters get
   one `builderWith<what exactly>()` each, in a single consistent form, and no bare `builder()` —
   offering one would silently promote one equal way to the default. `builderWithFetchedPublicKey()`

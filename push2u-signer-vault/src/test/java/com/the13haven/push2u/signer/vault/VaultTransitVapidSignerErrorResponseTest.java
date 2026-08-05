@@ -189,8 +189,7 @@ class VaultTransitVapidSignerErrorResponseTest {
                         .build())
                 .as("no token(...)")
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("token(...) is required")
-                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+                .hasMessageContaining("token(...) is required");
     }
 
     /** The same, for the supplied-key builder — the public key itself is a factory argument, so it cannot be missed. */
@@ -224,8 +223,7 @@ class VaultTransitVapidSignerErrorResponseTest {
                         .build())
                 .as("no token(...)")
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("token(...) is required")
-                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
+                .hasMessageContaining("token(...) is required");
     }
 
     @Test

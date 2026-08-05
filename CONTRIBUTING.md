@@ -109,7 +109,16 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   `JdkVaultHttpTransport` overrides the JDK's `BodySubscriber` and stays as the JDK named it.
 - **Required parameters go into the factory method, optional ones become builder steps.** That is a
   firm rule, not a preference: `PushMessage.builder(payload)` takes the payload because there is no
-  message without one, and everything the builder still exposes is genuinely optional.
+  message without one, and everything the builder still exposes is genuinely optional. Likewise
+  `builderWithSuppliedPublicKey(point)` — that key is what distinguishes the mode, so it is an
+  argument, not a step.
+
+  The bound on it is the shape the builder exists to replace. Where several required values would
+  reassemble a positional argument list — `VaultTransitVapidSigner`'s `address`, `keyName` and
+  `token`, three interchangeable strings; `PushSender`'s contact and key source — they stay steps
+  and `build()` refuses without them, naming the step it is missing. What is never acceptable is a
+  required value that `build()` accepts silently, or an optional one smuggled into the factory
+  method.
 
   When a type has one way to be assembled, the method is `builder()`. When it has several and they
   differ in *contract* rather than only in their parameters, each is named
