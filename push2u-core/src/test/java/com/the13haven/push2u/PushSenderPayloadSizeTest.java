@@ -30,7 +30,7 @@ class PushSenderPayloadSizeTest {
             PushResult result = sender(PushSender.builder())
                     .send(subscription(receiver), PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD]));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(receiver.requests().getFirst().bodyLength())
                     .as("3993 bytes of plaintext fill the 4096-byte body exactly")
                     .isEqualTo(4096);
@@ -78,7 +78,7 @@ class PushSenderPayloadSizeTest {
                             PushSender.builder().maxEncryptedBodyBytes(8192).recordSize(8192))
                     .send(subscription(receiver), PushMessage.of(new byte[5000]));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(receiver.requests().getFirst().bodyLength()).isEqualTo(5000 + 103);
         }
     }
@@ -97,7 +97,7 @@ class PushSenderPayloadSizeTest {
 
             assertThat(sender(PushSender.builder().recordSize(118))
                             .send(subscription, message)
-                            .delivered())
+                            .isDelivered())
                     .as("one octet more is the smallest legal rs")
                     .isTrue();
         }
@@ -135,7 +135,7 @@ class PushSenderPayloadSizeTest {
             PushResult result = sender(PushSender.builder().maxEncryptedBodyBytes(103))
                     .send(subscription(receiver), PushMessage.of(new byte[0]));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(receiver.requests().getFirst().bodyLength())
                     .as("an empty payload encrypts to exactly the fixed overhead")
                     .isEqualTo(103);

@@ -75,7 +75,7 @@ class PushSenderEndpointPolicyTest {
 
         PushResult result = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
 
-        assertThat(result.delivered()).isTrue();
+        assertThat(result.isDelivered()).isTrue();
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
     }
@@ -86,7 +86,7 @@ class PushSenderEndpointPolicyTest {
 
         PushResult result = sender.send(subscription(ALLOWED_ENDPOINT), PushMessage.of(new byte[] {1}));
 
-        assertThat(result.delivered()).isTrue();
+        assertThat(result.isDelivered()).isTrue();
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
         assertThat(client.lastEndpoint).isEqualTo(URI.create(ALLOWED_ENDPOINT));
@@ -110,7 +110,7 @@ class PushSenderEndpointPolicyTest {
 
         PushResult delivered =
                 sender.sendAsync(subscription(ALLOWED_ENDPOINT), message).get(5, TimeUnit.SECONDS);
-        assertThat(delivered.delivered()).isTrue();
+        assertThat(delivered.isDelivered()).isTrue();
     }
 
     @Test
@@ -136,7 +136,7 @@ class PushSenderEndpointPolicyTest {
         assertThat(client.posts.get()).isZero();
 
         PushResult result = sender.send(subscription, message);
-        assertThat(result.delivered()).isTrue();
+        assertThat(result.isDelivered()).isTrue();
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
     }

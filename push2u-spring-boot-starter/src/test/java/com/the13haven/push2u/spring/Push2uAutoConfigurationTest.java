@@ -235,7 +235,7 @@ class Push2uAutoConfigurationTest {
                     // are raised, proving the properties actually reached the builder.
                     PushResult result = sender.send(
                             subscription(), PushMessage.builder(new byte[4096]).build());
-                    assertThat(result.delivered()).isTrue();
+                    assertThat(result.isDelivered()).isTrue();
                 });
     }
 
@@ -298,7 +298,7 @@ class Push2uAutoConfigurationTest {
                     PushSender sender = context.getBean(PushSender.class);
                     PushResult result = sender.send(
                             subscription(), PushMessage.builder(new byte[1]).build());
-                    assertThat(result.delivered()).isTrue();
+                    assertThat(result.isDelivered()).isTrue();
                 });
         keyedRunner()
                 .withPropertyValues("push2u.allowed-origins=https://other.example")

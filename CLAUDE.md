@@ -132,6 +132,13 @@ starter is ordered before the core starter and outranks the local signer.
 - **Formatting:** Palantir Java Format via Spotless is authoritative. Import order is
   `java`, everything else, `com.the13haven.push2u` (Checkstyle verifies the same grouping).
   Checkstyle requires Javadoc on the public API.
+- **Boolean naming** (CONTRIBUTING.md carries the full form, nothing enforces it): a record's
+  component accessor keeps the component's name (`Health.enabled()`) because the language says so;
+  a question about state is `is…`/`has…`/`can…` regardless of whether the answer is stored or
+  computed (`isDelivered()`, `isSupported()`); an action or a two-argument relation keeps its verb
+  (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived predicate wearing a
+  component accessor's name — `delivered()` beside `status()` — and the pair that takes judgement
+  is predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
 - **Licence header:** every `.java` file in every source set opens with the Apache-2.0 SPDX header
   from `config/quality/license/header.txt` (ADR-008), and the build fails without it. Spotless
   writes it into a new file on `qualityCheck` and verifies it on `qualityCheckCi`. Two file kinds

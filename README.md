@@ -143,7 +143,7 @@ PushMessage message = PushMessage.builder(payloadBytes)
 
 PushResult result = sender.send(subscription, message);
 
-if (result.delivered()) {
+if (result.isDelivered()) {
     // The push service accepted the message.
 } else if (result.isSubscriptionExpired()) {
     subscriptionStore.delete(subscription);
