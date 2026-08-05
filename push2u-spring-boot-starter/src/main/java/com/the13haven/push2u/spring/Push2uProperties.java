@@ -91,8 +91,10 @@ public record Push2uProperties(
      * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
      *
      * @param maxAttempts the maximum number of POSTs including the first (≥ 1). Rejected at startup if below 1
-     * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry
-     * @param maxBackoff the ceiling for the backoff (and any honoured {@code Retry-After})
+     * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry. Rejected at startup
+     *     if negative
+     * @param maxBackoff the ceiling for the backoff (and any honoured {@code Retry-After}). Rejected at startup if
+     *     negative
      */
     public record Retry(
             @DefaultValue("3") int maxAttempts,

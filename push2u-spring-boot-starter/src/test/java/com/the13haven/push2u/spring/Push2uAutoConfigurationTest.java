@@ -356,10 +356,16 @@ class Push2uAutoConfigurationTest {
     /**
      * The tripwire for the probes in {@code Push2uAutoConfiguration.retryPolicy}. Each of them fills the components it
      * is not testing with {@code 1} and {@code Duration.ZERO}, and attributes any rejection to the one real value it
-     * passed. That attribution is only sound while those filler values are accepted unconditionally — in particular in
-     * combination with an arbitrary {@code maxAttempts}, which {@link RetryPolicy#none()} alone does not witness. A
-     * constraint <em>between</em> components would leave the probes blaming the wrong YAML key with every test still
-     * green, so the invariant is asserted here rather than left to a comment.
+     * passed. That attribution is only sound while those filler values stay acceptable beside an arbitrary value of the
+     * component under test — which {@link RetryPolicy#none()} alone does not witness, since it fixes all three. A
+     * constraint <em>between</em> components would otherwise leave the probes blaming the wrong YAML key with every
+     * other test still green.
+     *
+     * <p>One assertion per probe, each pairing that probe's filler with a non-trivial value of its own component — the
+     * shape a cross-component constraint would break. <b>This samples the invariant, it does not decide it:</b> a
+     * constraint that only bites above some threshold would survive these points. What it buys is that the cheap and
+     * likely versions of that mistake fail here rather than in an operator's log, and that the invariant is written
+     * down as something executable rather than as a comment nobody re-checks.
      */
     @Test
     void probeFillerValuesAreUnconditionallyAccepted() {
@@ -372,6 +378,30 @@ class Push2uAutoConfigurationTest {
         assertThatCode(() -> new RetryPolicy(1, Duration.ofSeconds(1), Duration.ZERO))
                 .as("a zero max-backoff stays legal beside a real initial-backoff")
                 .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ofSeconds(1)))
+                .as("a zero initial-backoff stays legal beside a real max-backoff — the max-backoff probe's own"
+                        + " assumption, and the one the other three assertions do not cover")
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be `RetryPolicy.defaults()`
+     * restated in YAML terms — that equality is what lets the README and DESIGN.md describe an unset retry block as
+     * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
+     * either side would make both documents quietly wrong.
+     */
+    @Test
+    void theStarterRetryDefaultsAreTheCoreRetryDefaults() {
+        // Read back what Spring actually bound with no push2u.retry.* set, rather than restating
+        // the @DefaultValue literals here — restating them would pin this test to itself.
+        keyedRunner().run(context -> {
+            Push2uProperties.Retry bound =
+                    context.getBean(Push2uProperties.class).retry();
+
+            assertThat(new RetryPolicy(bound.maxAttempts(), bound.initialBackoff(), bound.maxBackoff()))
+                    .as("the @DefaultValue triple Spring binds for push2u.retry.*")
+                    .isEqualTo(RetryPolicy.defaults());
+        });
     }
 
     @Test

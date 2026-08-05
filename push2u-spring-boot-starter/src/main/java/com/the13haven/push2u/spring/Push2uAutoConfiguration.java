@@ -97,7 +97,7 @@ public final class Push2uAutoConfiguration {
      * builder's own message names its camelCase parameter, not the YAML property. All three {@code push2u.retry.*} keys
      * get the same treatment ahead of {@link RetryPolicy}'s own constructor, which validates the attempt count and both
      * backoff bounds together — and reports the two bounds through one shared message — so it cannot be blamed on a
-     * single property by its message alone; see {@link #retryPolicy}.
+     * single property by its message alone; {@code retryPolicy(…)} below carries the reasoning.
      *
      * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
      * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
@@ -163,10 +163,14 @@ public final class Push2uAutoConfiguration {
      *
      * <p>Each probe fills the two components it is <em>not</em> testing with {@code 1} and {@link Duration#ZERO} — the
      * triple {@link RetryPolicy#none()} is built from. That is the invariant this rests on: those filler values must
-     * stay unconditionally acceptable, including in combination with any {@code maxAttempts}. It does <em>not</em> rest
-     * on the order of the checks inside the compact constructor; reordering them changes nothing here. Were
-     * {@code RetryPolicy} ever to gain a constraint <em>between</em> components, a probe would blame the wrong key —
-     * {@code probeFillerValuesAreUnconditionallyAccepted} in the starter's tests exists to fail when that happens.
+     * stay acceptable beside any value of the component being probed. It does <em>not</em> rest on the order of the
+     * checks inside the compact constructor; reordering them changes nothing here.
+     *
+     * <p>A constraint <em>between</em> components would make a probe blame the wrong key.
+     * {@code probeFillerValuesAreUnconditionallyAccepted} in the starter's tests samples that invariant at the point
+     * each probe depends on, so the cheap version of that mistake fails the build — but it samples rather than decides,
+     * and a constraint that only bites above some threshold would pass it. No black-box check can do better; changing
+     * {@code RetryPolicy}'s constructor means revisiting this method.
      *
      * <p>Probing rather than restating the bounds keeps the core the authority on what a legal value is: no {@code >=
      * 1} or non-negative check is duplicated here, so none can drift.
