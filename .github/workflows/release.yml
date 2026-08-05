@@ -3,7 +3,7 @@ name: Release
 on:
   workflow_dispatch:
 
-# The tag itself is pushed over SSH with the deploy key, but `gh release create` at the end
+# The release commit and the tag are pushed over SSH with the deploy key, but `gh release create` at the end
 # authenticates with GITHUB_TOKEN, and creating a GitHub Release requires contents: write.
 permissions:
   contents: write
@@ -86,7 +86,7 @@ jobs:
             exit 1
           fi
 
-      # axion pushes the release tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
+      # axion pushes the release commit and tag back to origin, and GITHUB_TOKEN cannot be handed to its JGit
       # transport, so the push goes over SSH with a dedicated deploy key instead. known_hosts is
       # pinned explicitly rather than populated with ssh-keyscan at run time: scanning would
       # trust whatever answers on the network, which defeats host verification entirely.
@@ -121,8 +121,8 @@ jobs:
       - name: Record the commit the release is cut from
         run: echo "RELEASE_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
-      # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
+      # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's push
+      # uses the deploy key configured above. The bot identity is what ends up as the tagger.
       - name: Set git to use SSH
         run: |
           git config --global user.name "release-bot"
@@ -222,7 +222,9 @@ jobs:
             exit 1
           fi
 
-      # Creates the release tag (v<version>) and pushes it to origin over SSH. The step id matters:
+      # Writes the `Release v<version>` commit (the preRelease hooks rewrite the README coordinates),
+      # creates the tag from it, and pushes BOTH to origin over SSH — the commit onto main, which is
+      # what needs the deploy-key bypass in the branch ruleset. The step id matters:
       # axion publishes the resolved version as the `released-version` GitHub Actions output, which
       # the GitHub Release step below reads.
       # https://axion-release-plugin.readthedocs.io/en/latest/configuration/ci_servers/

@@ -183,11 +183,13 @@ starter is ordered before the core starter and outranks the local signer.
 - **Versions:** never hardcode a version. `libs.versions.toml` holds every dependency and tool
   version; the project version comes from `vX.Y.Z` git tags via axion. The README's Maven
   coordinates must stay in the literal form `com.the13haven:<module>:X.Y.Z` — a pre-release hook
-  rewrites exactly that string. Two versions live outside the catalog because they cannot be in it:
-  the JDK toolchain and `--release` level, in the root build and the workflows; and **Gradle's own
-  version**, in `gradle/wrapper/gradle-wrapper.properties` beside a `distributionSha256Sum` — which
-  makes bumping it a procedure, CONTRIBUTING.md, *Upgrading Gradle*. The `wrapper` task refuses to
-  drop the checksum silently, so a wrong move there fails loudly rather than weakening the build.
+  rewrites exactly that string. Some versions cannot live in the catalog and are not violations of
+  this rule: the JDK toolchain (root build and both workflows) and `--release 21` (root build);
+  GitHub Action versions, major-tag pinned and Dependabot-managed; the Testcontainers image tag in
+  the Vault test; and **Gradle's own version**, in `gradle/wrapper/gradle-wrapper.properties` beside
+  a `distributionSha256Sum` — which makes bumping it a procedure, CONTRIBUTING.md, *Upgrading
+  Gradle*. The `wrapper` task refuses to drop the checksum silently, so a wrong move there fails
+  loudly rather than weakening the build.
 - **Security pins:** vulnerable transitives are pinned with dependency *constraints*, never
   `resolutionStrategy.force` (force leaks the originally requested version into the submitted
   dependency graph and Dependabot alerts on that phantom node). Each pin names its advisory.

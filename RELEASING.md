@@ -214,12 +214,12 @@ Write any version number in it by hand: the pre-release hook that rewrites Maven
 (`build.gradle.kts`) touches `README.md` only, so a snippet in these notes is nobody's job but
 yours.
 
-> **The first release is the one exception to that hook working at all.** Each `fileUpdate`
-> searches for the literal string `com.the13haven:<module>:<previousVersion>`, and with no tag yet
-> `previousVersion` resolves to `0.0.0` — which appears nowhere in `README.md`. So the very first
-> release rewrites nothing, and the five coordinates in `README.md` ship exactly as committed.
-> **Before cutting the first release, set them by hand to the version being released.** From the
-> second release onwards the hook matches and maintains them by itself.
+The hook matches any `X.Y.Z` in those coordinates rather than the version axion reports as the
+previous one, and that is deliberate. At the first release there is no *release* tag: axion computes
+`previousVersion` with `ignoreNextVersionTags`, so the `vX.Y.Z-SNAPSHOT` marker pushed by *Setting
+the next version* is skipped and the value falls back to `initialVersion`, `0.0.0` — a string
+`README.md` does not contain. A literal pattern would have matched nothing exactly once, on the
+release where the coordinates matter most, and without saying so.
 
 The notes can also be edited on GitHub afterwards — a GitHub Release is mutable, unlike the
 artifacts on Maven Central. The file exists so the text is reviewed with the code and is there the

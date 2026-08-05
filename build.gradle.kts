@@ -124,7 +124,15 @@ scmVersion {
             // README states them strictly as `com.the13haven:<module>:X.Y.Z`. axion's fileUpdate
             // pattern is a regex (multiline), but capture groups in the replacement are not a
             // documented feature — so instead of one clever regex there is one fileUpdate hook
-            // per module with a fully literal (Regex.escape'd) pattern. Boring and robust.
+            // per module, each matching only its own coordinate. Boring and robust.
+            //
+            // The version part matches ANY X.Y.Z rather than the literal previousVersion axion
+            // offers, and that is load-bearing at the first release: axion computes
+            // previousVersion with ignoreNextVersionTags, so the `vX.Y.Z-SNAPSHOT` marker that
+            // Setup Next Version pushes is skipped and previousVersion falls back to
+            // initialVersion — 0.0.0, a string the README does not contain. A literal pattern
+            // would therefore match nothing exactly once: on the release where getting the
+            // coordinates right matters most, and silently.
             listOf(
                 "push2u-core",
                 "push2u-testkit",
@@ -135,8 +143,8 @@ scmVersion {
                 fileUpdate {
                     encoding = "utf-8"
                     file("README.md")
-                    pattern = { previousVersion: String, _: HookContext ->
-                        Regex.escape("com.the13haven:$module:$previousVersion")
+                    pattern = { _: String, _: HookContext ->
+                        Regex.escape("com.the13haven:$module:") + """\d+\.\d+\.\d+"""
                     }
                     replacement = { currentVersion: String, _: HookContext ->
                         "com.the13haven:$module:$currentVersion"
