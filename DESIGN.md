@@ -22,6 +22,13 @@ applications have a legitimate reason to replace behavior.
 
 ## 2. Goals and non-goals
 
+The library exists to replace `nl.martijndwars:web-push`, the JVM's usual answer for Web Push,
+whose resolved runtime graph is 26 artifacts — two complete HTTP stacks, Netty with its
+platform-specific native transports, a JOSE library and a CLI argument parser — and whose public
+API exposes BouncyCastle types and requires the consumer to register the BC provider. That is the
+motive behind the first goal below and behind ADR-002; the constraint is stated there, the reason
+for it is here. `MIGRATION.md` maps the two APIs onto each other for consumers making the move.
+
 ### Goals
 
 - Zero runtime *implementation* dependencies in `push2u-core` — its one dependency is JSpecify,

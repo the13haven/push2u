@@ -19,6 +19,11 @@ next `X.Y.Z-SNAPSHOT`, which is not published anywhere — anything ahead of the
 consumed through the [composite build](#developing-against-unpublished-changes) below. The
 implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 
+Coming from `nl.martijndwars:web-push`? [`MIGRATION.md`](MIGRATION.md) maps the two APIs onto each
+other, lists the 26 transitive artifacts and the BouncyCastle provider registration a migration
+removes, and is explicit about where push2u is stricter — `https`-only endpoints, up-front size
+limits, `aes128gcm` only, and a VAPID private key that has to be exactly 32 bytes.
+
 ## Features
 
 - Java 21 baseline.
