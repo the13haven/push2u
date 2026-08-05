@@ -197,8 +197,16 @@ KMS, or HSM implementations can keep private material outside the JVM.
 construction by signing and verifying a fixed probe. A mismatched pair therefore fails before the
 first delivery attempt.
 
-The contract requires a raw 64-byte P-256 `r || s` ES256 signature and a 65-byte uncompressed
-P-256 public point.
+The contract requires a raw 64-byte P-256 `r || s` ES256 signature (RFC 7518 §3.4) and a 65-byte
+uncompressed P-256 public point (RFC 8292 §3.2), and **both are checked on every send** — a
+violation raises `PushCryptoException` naming what came back. The check exists because neither
+half fails visibly on its own: a signature or key of the wrong shape still yields a syntactically
+valid `Authorization` header, so without it the mistake reaches the caller as an opaque 401/403
+from the push service, on every send, with nothing naming the signer. DER is the case worth
+naming, and the message does: JCA's `SHA256withECDSA` returns it, and a signer forwarding its
+provider's output unconverted looks correct until the wire. The library converts for its own
+signer (above) but cannot here — the provider and encoding behind an external signer are unknown,
+and a valid 64-byte signature may itself begin with `0x30`.
 
 ### PushHttpClient
 
