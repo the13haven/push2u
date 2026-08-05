@@ -30,11 +30,13 @@ import com.the13haven.push2u.VapidSigner;
  * there is a signer bean to sign with.
  *
  * <p>Missing configuration is not this indicator's business, and it does not have to be: an incomplete setup fails at
- * startup instead. {@link Push2uAutoConfiguration#pushSender} is itself {@code @ConditionalOnBean(VapidSigner.class)}
- * and throws when {@code push2u.vapid.subject} is unset, so "a signer but no sender" is not a state a context reaches —
- * it is a context that never started. An application that builds its {@code PushSender} by hand keeps the indicator as
- * long as its signer is a bean; one whose signer is not a bean gets no indicator, because nothing here can reach it.
- * When the entry is missing unexpectedly, {@code /actuator/conditions} (or {@code --debug}) names the bean the
+ * startup instead. While {@link Push2uAutoConfiguration} is active, {@code pushSender} is itself
+ * {@code @ConditionalOnBean(VapidSigner.class)} and throws when {@code push2u.vapid.subject} is unset, so a signer bean
+ * yields either a sender bean too or a context that never started — never a running context with one and not the other.
+ * The case this condition adds is therefore the one where that autoconfiguration is <em>excluded</em> (or absent) and
+ * the application wires its own {@code PushSender} around a signer it keeps as a bean: the probe applies to exactly the
+ * signer that sender uses. An application whose signer is not a bean gets no indicator, because nothing here can reach
+ * it. When the entry is missing unexpectedly, {@code /actuator/conditions} (or {@code --debug}) names the bean the
  * condition did not find.
  *
  * <p>One consequence of probing a <em>bean</em>: an application that supplies its own {@code PushSender} and also
@@ -46,10 +48,12 @@ import com.the13haven.push2u.VapidSigner;
  * what is registered by the time it runs, and a signer registered later is invisible to it. The Vault signer comes from
  * a starter ordered ahead of {@code Push2uAutoConfiguration}, so it is registered by then too; the Vault starter's test
  * suite pins that composition, because a signer arriving too late makes the indicator vanish silently rather than fail.
- * {@link ConditionalOnClass} keeps the starter usable without Actuator on the classpath.
- * {@link EnableConfigurationProperties} is restated here (not only on {@link Push2uAutoConfiguration}) so the
- * indicator's configuration binds even in a context that supplies its own {@code VapidSigner} bean and excludes the
- * main autoconfiguration.
+ * Neither the {@code after} here nor the Vault starter's {@code beforeName} is pinned on its own: remove either and the
+ * suite stays green, since the sorter falls back to class name and lands on the same order by coincidence. Both are
+ * declared because depending on that coincidence would be worse than stating the order. {@link ConditionalOnClass}
+ * keeps the starter usable without Actuator on the classpath. {@link EnableConfigurationProperties} is restated here
+ * (not only on {@link Push2uAutoConfiguration}) so the indicator's configuration binds even in a context that supplies
+ * its own {@code VapidSigner} bean and excludes the main autoconfiguration.
  *
  * <p>The indicator is an ordinary application-scoped contributor: it lands in the health endpoint's primary group (and
  * in {@code readiness} only if the operator includes it there), never in {@code liveness} — Spring Boot's liveness

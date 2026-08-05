@@ -461,8 +461,11 @@ of a `PushSender` is immutable configuration the builder already validated, and 
 configuration fails startup rather than showing up here: health answers "what broke", not "what was
 set up wrong".
 
-So an application that keeps a signer bean and builds its `PushSender` by hand still gets the
-probe, while one that supplies its own `PushSender` and no `push2u.vapid.*` gets none — that
+While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
+a startup failure naming `push2u.vapid.subject`), so this changes nothing there. Where it matters
+is a context that *excludes* `Push2uAutoConfiguration` and wires its own `PushSender` around a
+signer kept as a bean: the probe then applies to exactly the signer that sender uses. An
+application that supplies its own `PushSender` and no `push2u.vapid.*` gets no indicator — that
 sender's signer lives inside it, where the starter cannot reach it, and an indicator reporting
 health it never established would be worse than its absence. When the entry is missing and you
 expected it, `/actuator/conditions` (or starting with `--debug`) names the bean the condition did

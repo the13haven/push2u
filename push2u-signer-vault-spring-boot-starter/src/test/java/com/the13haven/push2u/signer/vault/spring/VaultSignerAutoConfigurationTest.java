@@ -178,8 +178,8 @@ class VaultSignerAutoConfigurationTest {
 
     @Test
     void theHealthIndicatorStillAppearsWhenTheSignerIsTheVaultOne() {
-        // The health indicator is @ConditionalOnBean({PushSender.class, VapidSigner.class}), and a
-        // condition sees only the beans registered by the time it runs. When the only signer is the
+        // The health indicator is @ConditionalOnBean(VapidSigner.class), and a condition sees only
+        // the beans registered by the time it runs. When the only signer is the
         // Vault one, this module has to have been evaluated first, or the condition finds nothing
         // and the indicator disappears for every Vault deployment — silently, with no error to
         // notice. This pins the outcome: all three autoconfigurations together still produce it.

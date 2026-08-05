@@ -187,7 +187,7 @@ class Push2uAutoConfigurationTest {
         // factory method took a VapidSigner, so the context failed to start with an
         // UnsatisfiedDependencyException on a bean the application never had reason to declare.
         //
-        // Requiring both beans makes the indicator absent instead: its probe signs to learn whether
+        // Conditioning on the signer bean makes the indicator absent instead: its probe signs to learn whether
         // the signing backend answers, and there is nothing here to sign with. Actuator's health
         // endpoint simply carries no push2u entry. The sender itself is untouched and usable.
         runner.withUserConfiguration(CustomSenderConfiguration.class).run(context -> {
