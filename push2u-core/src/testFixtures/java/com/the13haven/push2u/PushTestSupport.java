@@ -17,8 +17,8 @@ import java.util.List;
 
 /**
  * Shared helpers for the send-pipeline tests. A plain class (not JUnit lifecycle) so both test source sets can use it:
- * the regular {@code test} set and the bcprov-free {@code fipsTest} set, which reuses this compiled output instead of
- * duplicating the receiver/subscription plumbing.
+ * the regular {@code test} set and the bcprov-free {@code fipsTest} set, each depending on these fixtures as an
+ * ordinary consumer instead of duplicating the receiver/subscription plumbing.
  *
  * <p><b>Invariant: keep this class provider-free.</b> It is loaded on two deliberately disjoint classpaths —
  * {@code test} carries only bcprov, {@code fipsTest} carries only bc-fips — so any reference to either BouncyCastle

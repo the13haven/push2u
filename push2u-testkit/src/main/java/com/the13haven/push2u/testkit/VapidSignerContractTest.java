@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.Signature;
 import java.security.interfaces.ECPublicKey;
@@ -33,8 +34,28 @@ import com.the13haven.push2u.VapidSigner;
  *
  * <p>Verification uses only the JDK and the public {@link VapidSigner} surface, so the contract is self-contained and
  * carries no push2u-internal dependency.
+ *
+ * <p>Put {@code com.the13haven:push2u-testkit} on the test classpath and extend this class:
+ *
+ * <pre>{@code
+ * class MySignerContractTest extends VapidSignerContractTest {
+ *     @Override
+ *     protected VapidSigner signer() {
+ *         return new MySigner(...);
+ *     }
+ * }
+ * }</pre>
  */
+// PMD analyses this module's main sources, and this is main source that happens to be a test. Each check below
+// asserts the several facts that make up ONE claim about ONE artifact — a public key is 65 bytes AND carries the
+// uncompressed prefix; a point is in the field AND satisfies the curve equation — and every assertion carries an
+// `as(...)` description, so a failure names which of them broke. Splitting them into one assertion per method would
+// re-derive the same key three times and report a broken signer as three unrelated failures.
+@SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
 public abstract class VapidSignerContractTest {
+
+    /** For subclasses: the kit is extended, never instantiated on its own. */
+    protected VapidSignerContractTest() {}
 
     /**
      * The signer under test.
@@ -57,7 +78,7 @@ public abstract class VapidSignerContractTest {
      * x³ + ax + b (mod p)}.
      */
     @Test
-    void publicKeyIsAPointOnTheP256Curve() throws Exception {
+    void publicKeyIsAPointOnTheP256Curve() throws GeneralSecurityException {
         byte[] publicKey = signer().publicKey();
         assertThat(publicKey).hasSize(65);
 
@@ -80,7 +101,7 @@ public abstract class VapidSignerContractTest {
     }
 
     @Test
-    void signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey() throws Exception {
+    void signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey() throws GeneralSecurityException {
         VapidSigner signer = signer();
         byte[] signingInput = "push2u VapidSigner conformance".getBytes(StandardCharsets.US_ASCII);
 
@@ -95,7 +116,7 @@ public abstract class VapidSignerContractTest {
                 .isTrue();
     }
 
-    private static ECPublicKey decodeP256PublicKey(byte[] uncompressed) throws Exception {
+    private static ECPublicKey decodeP256PublicKey(byte[] uncompressed) throws GeneralSecurityException {
         BigInteger x = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1, 33));
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(uncompressed, 33, 65));
         return (ECPublicKey)
@@ -103,7 +124,7 @@ public abstract class VapidSignerContractTest {
     }
 
     /** The canonical {@code secp256r1} (NIST P-256) domain parameters, from the platform JCE providers. */
-    private static ECParameterSpec p256Parameters() throws Exception {
+    private static ECParameterSpec p256Parameters() throws GeneralSecurityException {
         AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
         parameters.init(new ECGenParameterSpec("secp256r1"));
         return parameters.getParameterSpec(ECParameterSpec.class);

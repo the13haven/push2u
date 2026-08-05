@@ -1,7 +1,8 @@
 plugins {
     `java-library`
-    // Hosts the shared VapidSigner conformance contract (src/testFixtures), extended by the local
-    // signer's test here and by each remote signer module (e.g. push2u-signer-vault).
+    // Hosts the shared test plumbing (src/testFixtures): the RFC vectors, the in-process mock push
+    // receiver and its loopback TLS identity, used by both `test` and `fipsTest`. Internal to this
+    // build — the published conformance kit lives in push2u-testkit.
     `java-test-fixtures`
 }
 
@@ -14,18 +15,13 @@ description = "push2u-core — JVM Web Push library core with no runtime impleme
 // CryptoServicesRegistrar classes, so the two jars can never coexist on one classpath — the
 // non-FIPS class shadows the FIPS one and BC-FIPS fails with NoSuchMethodError
 // (isInApprovedOnlyMode). The regular `test` set carries bcprov only; `fipsTest` carries bc-fips
-// only. fipsTest reuses the compiled helpers of `test` (mock receiver, vectors, subscription
-// helpers) by putting the test OUTPUT — classes only, not the test dependency configurations —
-// on its classpath, so bcprov cannot leak across. The main classes and the testFixtures
-// contract are NOT added here: they arrive once via the testFixtures(project) dependency below
-// (adding sourceSets.main output too would duplicate every main class on the classpath).
+// only. Both reach the shared plumbing (mock receiver, vectors, subscription helpers) through an
+// ordinary testFixtures(project) dependency, declared per source set below — no classpath surgery,
+// so neither set can drag the other's BouncyCastle across.
 //
 // `sourceSets.create("fipsTest")`, not the `by sourceSets.creating` delegate: the Kotlin DSL
 // delegated-property syntax is deprecated and scheduled for removal in Gradle 10.
-val fipsTest: SourceSet = sourceSets.create("fipsTest") {
-    compileClasspath += sourceSets.test.get().output
-    runtimeClasspath += sourceSets.test.get().output
-}
+val fipsTest: SourceSet = sourceSets.create("fipsTest")
 
 // Toolchain (JDK 26) + `--release 21` + JUnit Platform are configured for every module in the
 // composite-build root build.gradle.kts. Zero runtime IMPLEMENTATION dependencies is a deliberate design
@@ -43,6 +39,13 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
+    // The shared plumbing. testFixtures(project(":push2u-core")), not testFixtures(project):
+    // passing the Project object itself as a dependency notation is deprecated and fails in
+    // Gradle 10.
+    testImplementation(testFixtures(project(":push2u-core")))
+    // The published conformance kit — LocalEcVapidSigner's contract tests extend it, on the same
+    // terms as any other signer implementation.
+    testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 
     // Stock BouncyCastle for the ES256 provider-matrix tests: it registers raw-format ECDSA
@@ -52,21 +55,21 @@ dependencies {
     testImplementation(libs.bouncycastle.bcprov)
 
     // BC-FIPS for the DER-fallback tests (registers only DER-format SHA256withECDSA) — isolated
-    // in the fipsTest source set, never on the same classpath as bcprov.
+    // in the fipsTest source set, never on the same classpath as bcprov. Everything else is the
+    // same set of dependencies `test` takes, declared rather than borrowed.
     "fipsTestImplementation"(platform(libs.junit.bom))
     "fipsTestImplementation"(libs.junit.jupiter)
     "fipsTestImplementation"(libs.assertj.core)
-    // testFixtures(project(":push2u-core")), not testFixtures(project): passing the Project object
-    // itself as a dependency notation is deprecated and fails in Gradle 10.
     "fipsTestImplementation"(testFixtures(project(":push2u-core")))
+    "fipsTestImplementation"(project(":push2u-testkit"))
     "fipsTestImplementation"(libs.bouncycastle.bcfips)
     "fipsTestRuntimeOnly"(libs.junit.platform.launcher)
 
-    // Test fixtures = the shared VapidSigner conformance contract, published with the module so
-    // downstream signer implementations can extend it.
-    testFixturesApi(platform(libs.junit.bom))
-    testFixturesApi(libs.junit.jupiter)
-    testFixturesApi(libs.assertj.core)
+    // The test fixtures declare nothing of their own. They are the shared plumbing of the two test
+    // source sets — mock receiver, loopback TLS identity, RFC vectors — and java-test-fixtures
+    // already puts this module's main classes on their classpath, which is all they use. No JUnit
+    // and no assertion library: they are plain helpers, not tests. Above all no BouncyCastle, in
+    // either flavour, because `test` and `fipsTest` load them on deliberately disjoint classpaths.
 }
 
 val fipsTestTask = tasks.register<Test>("fipsTest") {
@@ -85,12 +88,15 @@ tasks.named("check") {
     dependsOn(fipsTestTask)
 }
 
-// The published test kit is an automatic module: it is test scaffolding a consumer puts on the test
-// classpath, and it carries JUnit and AssertJ — themselves automatic modules — through
-// testFixturesApi. Fixing the name here keeps it off the jar file name, which would otherwise
-// derive `push2u.core.test.fixtures`. The package is com.the13haven.push2u.testkit, deliberately
-// not com.the13haven.push2u: the core is an explicit module now, and a package split between the
-// two artifacts would be unreadable from the module path (ADR-014).
-tasks.named<Jar>("testFixturesJar") {
-    manifest { attributes("Automatic-Module-Name" to "com.the13haven.push2u.testkit") }
+// java-test-fixtures wires the fixture variants into the `java` component, so the publication (see
+// build-logic's push2u-publish convention plugin) would ship them by default. That default was
+// right while these fixtures WERE the published conformance kit; the kit is now push2u-testkit, and
+// what is left here is internal plumbing — an in-process mock push service and a self-signed
+// certificate factory, which have no business in an artifact on Maven Central. Skip the variants
+// via the documented AdhocComponentWithVariants mechanism, exactly as push2u-signer-vault does;
+// this removes them from the PUBLICATION only — the testFixtures(...) dependencies above keep
+// working unchanged.
+(components["java"] as AdhocComponentWithVariants).apply {
+    withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+    withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
 }

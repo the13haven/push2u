@@ -38,6 +38,7 @@ implemented architecture is described in [`DESIGN.md`](DESIGN.md).
 | Module | Purpose | JPMS module name |
 |---|---|---|
 | `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
+| `push2u-testkit` | The `VapidSigner` conformance contract, for a **test** classpath | `com.the13haven.push2u.testkit` |
 | `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
 | `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
 | `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
@@ -60,8 +61,8 @@ something reads them reflectively at runtime, and then the module has to be adde
 (`--add-modules org.jspecify`), because a `static` requires is not resolved on its own.
 
 The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
-Boot's own artifacts are automatic modules and its auto-configuration is reflective. The published
-test fixtures of `push2u-core` are likewise automatic, under `com.the13haven.push2u.testkit`.
+Boot's own artifacts are automatic modules and its auto-configuration is reflective. `push2u-testkit`
+is likewise automatic: it carries JUnit and AssertJ, which are automatic modules themselves.
 
 ## Requirements
 
@@ -388,6 +389,34 @@ an opaque `401`/`403` on every send, with nothing pointing at the signer. If you
 signs through JCA, note that `SHA256withECDSA` produces DER: ask for
 `SHA256withECDSAinP1363Format` or convert before returning, and the rejection message will say so
 if you forget.
+
+### Conformance kit for a custom signer
+
+The check above is what your signer meets on every send; `push2u-testkit` is how it finds out in
+its own test suite instead. It is a test-scoped artifact holding one abstract JUnit 5 class:
+
+```kotlin
+dependencies {
+    testImplementation("com.the13haven:push2u-testkit:0.1.0")
+}
+```
+
+```java
+class MySignerContractTest extends VapidSignerContractTest {
+
+    @Override
+    protected VapidSigner signer() {
+        return new MySigner(...);
+    }
+}
+```
+
+Three checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
+coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
+by the JCA without complaint), and a signature is the raw 64-byte `r || s` that verifies against
+that key. It is the same contract `LocalEcVapidSigner` and the Vault Transit signer are held to.
+The kit brings JUnit 5 and AssertJ with it, which is why it is a separate artifact and never a
+dependency of `push2u-core`.
 
 ## Spring Boot
 

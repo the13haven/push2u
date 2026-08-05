@@ -20,8 +20,9 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
-    // The shared VapidSigner conformance contract (published from push2u-core's test fixtures).
-    testImplementation(testFixtures(project(":push2u-core")))
+    // The published VapidSigner conformance kit, consumed exactly as an outside implementation
+    // would consume it.
+    testImplementation(project(":push2u-testkit"))
     // This module's own fixture (RecordingHttpClient) for the transport tests. Named explicitly:
     // passing the Project object as a dependency notation is deprecated and fails in Gradle 10.
     testImplementation(testFixtures(project(":push2u-signer-vault")))

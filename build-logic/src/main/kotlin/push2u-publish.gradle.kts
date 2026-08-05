@@ -48,10 +48,12 @@ publishing {
         // syntax is deprecated and scheduled for removal in Gradle 10.
         register<MavenPublication>("maven") {
             // components["java"] carries the main jar plus the -sources/-javadoc variants added
-            // above — and any testFixtures variants a module declares. That default is exactly
-            // right for push2u-core (its fixtures ARE the published VapidSigner conformance kit)
-            // and wrong for push2u-signer-vault, which skips its internal fixture variants in its
-            // own build.gradle.kts rather than forcing an opt-in switch on every other module.
+            // above — and any testFixtures variants a module declares. Every set of fixtures in
+            // this build is internal scaffolding, so push2u-core and push2u-signer-vault each skip
+            // their variants in their own build.gradle.kts. That stays their decision rather than
+            // an opt-in switch here: the published conformance kit used to be a set of fixtures,
+            // and a module whose fixtures are meant to ship needs nothing from this plugin but the
+            // default.
             from(components["java"])
 
             pom {

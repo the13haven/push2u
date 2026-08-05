@@ -12,6 +12,7 @@ pluginManagement {
 rootProject.name = "push2u"
 
 include("push2u-core")
+include("push2u-testkit")
 include("push2u-signer-vault")
 include("push2u-spring-boot-starter")
 include("push2u-signer-vault-spring-boot-starter")

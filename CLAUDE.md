@@ -71,13 +71,15 @@ Notes that matter in practice:
 
 ```
 push2u-core                                  no runtime implementation dependencies (JSpecify only)
+  ├── push2u-testkit                         api(push2u-core) + JUnit/AssertJ — the published
+  │                                          conformance kit, for a consumer's TEST classpath
   ├── push2u-signer-vault                    api(push2u-core)
   │     └── push2u-signer-vault-spring-boot-starter
   └── push2u-spring-boot-starter             api(push2u-core) + Spring Boot 4 autoconfigure
 ```
 
 Packages are `com.the13haven.push2u` plus `.signer.vault`, `.spring`, `.signer.vault.spring`, and
-`.testkit` for the published conformance kit in `push2u-core`'s test fixtures.
+`.testkit` for the published conformance kit, which is the whole of `push2u-testkit`.
 
 `push2u-core` and `push2u-signer-vault` are explicit JPMS modules named after their package
 (ADR-014); the starters and the test kit are automatic modules with a fixed `Automatic-Module-Name`.
@@ -123,14 +125,17 @@ starter is ordered before the core starter and outranks the local signer.
 
 - **Nullness:** every package's `package-info.java` carries JSpecify `@NullMarked`. NullAway plus
   `RequireExplicitNullMarking` fail the build on a violation or a new unmarked package — a new
-  package needs its `package-info.java` with the mark. Both checks cover `main` and `testFixtures`
-  — `push2u-core`'s fixtures are published, so the contract has to hold there too — and stop at
-  `test`/`fipsTest`, where NullAway without annotations is noise.
+  package needs its `package-info.java` with the mark. Both checks cover `main` and stop there: the
+  contract is a promise to consumers, and every published package is a `main` one now that the
+  conformance kit is its own module. No test source set is covered, `testFixtures` included —
+  NullAway over unannotated test code is noise, and `push2u-core`'s fixtures deliberately share
+  `main`'s package, where a second `package-info.java` would be a duplicate class.
 - **A new public package in `push2u-core` or `push2u-signer-vault` needs an `exports` line** in that
   module's `module-info.java` (ADR-014). Nothing fails without it — tests run on the class path —
   but every module-path consumer gets "package … is not visible" once the version is published.
 - **Formatting:** Palantir Java Format via Spotless is authoritative. Import order is
-  `java`, everything else, `com.the13haven.push2u` (Checkstyle verifies the same grouping).
+  static imports, `java`, everything else, `com.the13haven.push2u` (Checkstyle verifies the same
+  grouping).
   Checkstyle requires Javadoc on the public API.
 - **Boolean naming** (CONTRIBUTING.md carries the full form, nothing enforces it): a record's
   component accessor keeps the component's name (`Health.enabled()`) because the language says so;
@@ -195,11 +200,17 @@ starter is ordered before the core starter and outranks the local signer.
   `CryptoServicesRegistrar` classes and can never share a classpath. `fipsTest` covers the ES256
   DER-fallback path; the regular `test` set carries bcprov for the raw-`r||s` path. It is wired into
   `check`, and its `jacoco/fipsTest.exec` is added to the aggregated coverage report explicitly.
-- `push2u-core`'s published test fixtures are the `VapidSignerContractTest` conformance kit, in its
-  own package `com.the13haven.push2u.testkit` — every signer implementation extends it. The package
-  is separate from the core's on purpose: the core is an explicit JPMS module, and a package split
-  across two artifacts cannot be resolved from the module path (ADR-014). `push2u-signer-vault`'s
-  fixtures (`RecordingHttpClient`) are internal and explicitly skipped from its publication.
+- **The shared test plumbing lives in `push2u-core`'s `testFixtures`** — `TestVectors`,
+  `MockPushReceiver`, `LoopbackTls`, `PushTestSupport`, in `main`'s package because they need
+  package-private access to `EcKeys`/`Jca`. `test` and `fipsTest` each depend on it as ordinary
+  consumers, which is what keeps the two BouncyCastle flavours apart; the fixtures themselves name
+  neither provider. They are **not** published: the variants are skipped from the publication, as
+  `push2u-signer-vault` does with its internal `RecordingHttpClient`.
+- `push2u-testkit` is the published `VapidSignerContractTest` conformance kit and nothing else —
+  every signer implementation extends it, from this build or outside it. Its package
+  `com.the13haven.push2u.testkit` is separate from the core's because the core is an explicit JPMS
+  module and cannot share a package with a second artifact on the module path (ADR-014). Being a
+  module's `main`, the kit is under the full analyser set.
 - Conformance is pinned by published RFC vectors (RFC 5869 HKDF, the RFC 8291 worked example,
   RFC 8292 structure). When touching crypto, the vectors are the specification — not the current
   output.

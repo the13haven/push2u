@@ -10,8 +10,9 @@
     configuration reports hundreds of Javadoc, naming and complexity violations that test code is
     not written to satisfy. But the licence header is required everywhere, and Spotless — which
     covers every source set — skips package-info.java and module-info.java by name. Without this
-    configuration such a file outside `main` would be checked by nothing at all, and push2u-core's
-    testFixtures are published, so it would reach Maven Central without a header.
+    configuration such a file would be checked by nothing at all, and one of them ships: `main`'s
+    module-info.java, which checkstyle.xml has to exclude because Checkstyle cannot parse a module
+    declaration. It would reach Maven Central without a header.
 
     The rule and the pattern file are the same ones checkstyle.xml uses; only the surrounding
     ruleset differs.

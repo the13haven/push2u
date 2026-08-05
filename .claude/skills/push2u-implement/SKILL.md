@@ -33,8 +33,9 @@ Because the gate will catch formatting, import order, missing Javadoc on public 
 package in `main` and unused imports, do not spend attention hand-checking them. Write the code, run
 the gate.
 
-That covers a new package under `testFixtures` too, not only `main` — those fixtures are published,
-so NullAway and `RequireExplicitNullMarking` run over them as well.
+NullAway and `RequireExplicitNullMarking` run over `main` and no test source set, `testFixtures`
+included — the contract is a promise to consumers, and every published package is a `main` one,
+`push2u-testkit`'s conformance kit included.
 
 One thing the gate does **not** catch: a new public package in `push2u-core` or
 `push2u-signer-vault` needs an `exports` line in that module's `module-info.java`. The tests run on
@@ -118,9 +119,9 @@ The contract is narrow and unforgiving: `sign` returns a raw 64-byte P-256 `r ||
 `publicKey` returns the 65-byte uncompressed point. A signer that returns DER, or a compressed
 point, will produce a JWT that push services reject with no useful diagnostic.
 
-- Extend `VapidSignerContractTest` (package `com.the13haven.push2u.testkit`) from `push2u-core`'s
-  published test fixtures. That is what the
-  fixtures are published for, and it is the cheapest way to find out you got the encoding wrong.
+- Extend `VapidSignerContractTest` from the published `push2u-testkit` module (package
+  `com.the13haven.push2u.testkit`). That is what the kit is published for, and it is the cheapest
+  way to find out you got the encoding wrong.
 - If the signer talks to a network service, give it **its own transport seam**. Do not reuse
   `PushHttpClient`: it exists for a domain where response bodies are never read, and a key service's
   responses must be read. Bound them by streamed byte count, fail closed rather than truncating, and
@@ -183,10 +184,12 @@ covering, and the two providers cannot share a classpath — `bc-fips` and stock
 shadows the FIPS one.
 
 So: a test needing stock BouncyCastle goes in `src/test`, a test needing BC-FIPS goes in
-`src/fipsTest`, and neither jar is ever added to the other's configuration. `fipsTest` reuses the
-compiled helpers from `test` but not its dependencies, which is what keeps them apart. It also fails
-on discovering zero tests, so a suite that silently stops compiling into that source set is a build
-failure rather than a green run.
+`src/fipsTest`, and neither jar is ever added to the other's configuration. The helpers both need —
+vectors, mock receiver, loopback TLS — are `push2u-core`'s test fixtures, and each source set
+depends on them separately, so no dependency of one set can reach the other. Shared plumbing
+therefore names no provider at all; a BouncyCastle import in `src/testFixtures` breaks one of the
+two by construction. `fipsTest` also fails on discovering zero tests, so a suite that silently stops
+compiling into that source set is a build failure rather than a green run.
 
 ## Before you call it done
 

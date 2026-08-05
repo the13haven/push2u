@@ -117,7 +117,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: the13haven/push2u
-          # The aggregated report merges all four modules; the per-module reports would double-count.
+          # The aggregated report merges every module; the per-module reports would double-count.
           files: build/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml
           disable_search: true
           fail_ci_if_error: true
