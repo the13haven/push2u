@@ -63,10 +63,10 @@ jobs:
           fi
 
       # Fail before anything is tagged or uploaded if a publishing secret is missing. The order of
-      # steps below makes this necessary: `release` pushes the tag first and only then does the
-      # publish step run, so a missing SIGNING_KEY would otherwise surface as an unsigned bundle
-      # rejected by the Central Portal — with the tag already pushed and the version burnt. A
-      # secret that is absent expands to the empty string, which is exactly what this checks.
+      # steps below makes this necessary: `release` pushes the commit and the tag first, and only
+      # then does the publish step run, so a missing SIGNING_KEY would otherwise surface as an
+      # unsigned bundle rejected by the Central Portal — with the tag already pushed and the version
+      # burnt. A secret that is absent expands to the empty string, which is exactly what this checks.
       - name: Verify release secrets are configured
         env:
           ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}

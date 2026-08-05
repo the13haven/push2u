@@ -244,7 +244,8 @@ progress, wait for it — it is a matter of tens of minutes. See
 Also update, when your change touches them:
 
 - `README.md` — the consumer-facing documentation. Keep Maven coordinates in the literal form
-  `com.the13haven:<module>:X.Y.Z`; a release hook rewrites exactly that string.
+  `com.the13haven:<module>:X.Y.Z`; a release hook rewrites every such coordinate to the released
+  version, matching any `X.Y.Z` — so do not write one to name a historical version.
 - `DESIGN.md` — the architecture and its ADRs.
 
 ## Public API

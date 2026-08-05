@@ -183,10 +183,13 @@ starter is ordered before the core starter and outranks the local signer.
 - **Versions:** never hardcode a version. `libs.versions.toml` holds every dependency and tool
   version; the project version comes from `vX.Y.Z` git tags via axion. The README's Maven
   coordinates must stay in the literal form `com.the13haven:<module>:X.Y.Z` — a pre-release hook
-  rewrites exactly that string. Some versions cannot live in the catalog and are not violations of
-  this rule: the JDK toolchain (root build and both workflows) and `--release 21` (root build);
-  GitHub Action versions, major-tag pinned and Dependabot-managed; the Testcontainers image tag in
-  the Vault test; and **Gradle's own version**, in `gradle/wrapper/gradle-wrapper.properties` beside
+  rewrites every one of them to the released version, matching any `X.Y.Z` — so a coordinate written
+  to name a *historical* version (in a migration note, say) would be silently bumped; put such a
+  version somewhere other than a `com.the13haven:<module>:` coordinate. Some versions cannot live in
+  the catalog and are not violations of this rule: the JDK toolchain (the root build and all five
+  workflows) and `--release 21` (the root build only); GitHub Action versions, major-tag pinned and
+  Dependabot-managed; the Testcontainers image tag in the Vault test; and **Gradle's own version**,
+  in `gradle/wrapper/gradle-wrapper.properties` beside
   a `distributionSha256Sum` — which makes bumping it a procedure, CONTRIBUTING.md, *Upgrading
   Gradle*. The `wrapper` task refuses to drop the checksum silently, so a wrong move there fails
   loudly rather than weakening the build.
