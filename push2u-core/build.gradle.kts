@@ -67,9 +67,15 @@ dependencies {
 
     // The test fixtures declare nothing of their own. They are the shared plumbing of the two test
     // source sets — mock receiver, loopback TLS identity, RFC vectors — and java-test-fixtures
-    // already puts this module's main classes on their classpath, which is all they use. No JUnit
-    // and no assertion library: they are plain helpers, not tests. Above all no BouncyCastle, in
-    // either flavour, because `test` and `fipsTest` load them on deliberately disjoint classpaths.
+    // already puts this module's main classes and its `api` dependencies on their classpath, which
+    // is all they use. That second half is load-bearing and easy to miss: the fixtures import
+    // JSpecify's @Nullable, and it reaches them only because the core declares `api(libs.jspecify)`
+    // (ADR-002). Demoting that to `implementation` would stop compileTestFixturesJava, so the
+    // fixtures would need their own declaration.
+    //
+    // No JUnit and no assertion library: they are plain helpers, not tests. Above all no
+    // BouncyCastle, in either flavour, because `test` and `fipsTest` load them on deliberately
+    // disjoint classpaths.
 }
 
 val fipsTestTask = tasks.register<Test>("fipsTest") {

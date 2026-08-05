@@ -138,9 +138,10 @@ point, will produce a JWT that push services reject with no useful diagnostic.
   and never answers would otherwise hang application startup.
 - A remote signer belongs in its own optional module (`api(project(":push2u-core"))`), never in the
   core.
-- If the module has test fixtures that are internal scaffolding rather than a published contract,
-  skip their variants from the publication the way `push2u-signer-vault` does — otherwise an
-  internal helper becomes frozen API on the next release.
+- If the module has test fixtures, skip their variants from the publication the way
+  `push2u-signer-vault` and `push2u-core` both do — otherwise an internal helper becomes frozen API
+  on the next release. Every set of fixtures in this build is internal scaffolding; a test artifact
+  meant for consumers is a published module of its own, which is what `push2u-testkit` is.
 
 ## Solving it without a new dependency
 
