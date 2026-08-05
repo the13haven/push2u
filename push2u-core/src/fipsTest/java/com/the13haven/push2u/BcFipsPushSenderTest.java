@@ -49,7 +49,7 @@ class BcFipsPushSenderTest {
                             .ttl(Duration.ofHours(1))
                             .build());
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(1);
 
             assertThat(receiver.requests()).hasSize(1);

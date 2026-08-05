@@ -206,7 +206,7 @@ class DomainTypesTest {
                 .hasMessageContaining("attempts");
 
         // The documented edges stay legal: 0 means "no status was obtained", 1 is the first POST.
-        assertThat(new PushResult(PushResult.Status.FAILED, 0, 1).delivered()).isFalse();
+        assertThat(new PushResult(PushResult.Status.FAILED, 0, 1).isDelivered()).isFalse();
     }
 
     @Test

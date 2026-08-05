@@ -60,7 +60,7 @@ public record PushResult(Status status, int statusCode, int attempts) {
      *
      * @return {@code true} if delivered
      */
-    public boolean delivered() {
+    public boolean isDelivered() {
         return status == Status.DELIVERED;
     }
 

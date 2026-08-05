@@ -48,7 +48,7 @@ class PushSenderTest {
                                     .ttl(Duration.ofHours(1))
                                     .build());
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(result.statusCode()).isEqualTo(201);
             assertThat(result.attempts()).isEqualTo(1);
 
@@ -83,7 +83,7 @@ class PushSenderTest {
                 .build()
                 .send(subscription, PushMessage.of(bytes("x")));
 
-        assertThat(result.delivered()).isTrue();
+        assertThat(result.isDelivered()).isTrue();
         String claims = claimsOf(captured.get().get("Authorization"));
         assertThat(claims)
                 .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
@@ -111,7 +111,7 @@ class PushSenderTest {
 
             PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
             assertThat(claims)
                     .as("exp is exactly now + 24h, the RFC 8292 §2 maximum (the trailing comma pins"
@@ -135,7 +135,7 @@ class PushSenderTest {
 
             PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
             assertThat(claims)
                     .contains("\"exp\":" + now.plus(Duration.ofHours(12)).getEpochSecond() + ",");
@@ -149,7 +149,7 @@ class PushSenderTest {
             receiver.enqueue(201);
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(2));
         }
@@ -162,7 +162,7 @@ class PushSenderTest {
             receiver.enqueue(201);
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(3));
         }
@@ -181,7 +181,7 @@ class PushSenderTest {
                     .build();
             PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(30));
         }
     }
@@ -193,7 +193,7 @@ class PushSenderTest {
             receiver.enqueue(201);
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(sleeper.sleeps)
                     .as("the first retry waits exactly RetryPolicy.defaults().initialBackoff()")
                     .containsExactly(RetryPolicy.defaults().initialBackoff());
@@ -207,7 +207,7 @@ class PushSenderTest {
             receiver.enqueue(201);
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(result.attempts()).isEqualTo(2);
             assertThat(sleeper.sleeps)
                     .as("overflow is treated as unparseable, not propagated")
@@ -222,7 +222,7 @@ class PushSenderTest {
             receiver.enqueue(201);
             PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(sleeper.sleeps).containsExactly(RetryPolicy.defaults().maxBackoff());
         }
     }
@@ -232,7 +232,7 @@ class PushSenderTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushResult result = pusher().sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
         }
     }
 
@@ -252,7 +252,7 @@ class PushSenderTest {
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             Thread thread = sendThread.get();
             assertThat(thread.isVirtual())
                     .as("the default async executor runs each send on a virtual thread")
@@ -286,7 +286,7 @@ class PushSenderTest {
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
 
-            assertThat(result.delivered()).isTrue();
+            assertThat(result.isDelivered()).isTrue();
             assertThat(sendThread.get())
                     .as("the send runs on the single thread of the executor passed to .executor(...)")
                     .isSameAs(executorThread.get());
@@ -329,7 +329,7 @@ class PushSenderTest {
                     .build();
 
             assertThat(pusher.send(subscription(receiver), PushMessage.of(bytes("x")))
-                            .delivered())
+                            .isDelivered())
                     .isTrue();
         }
     }

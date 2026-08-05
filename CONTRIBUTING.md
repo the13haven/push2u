@@ -84,6 +84,24 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   accepts any four digits, so a stale year copied from documentation would pass unnoticed.
 - A rule exclusion carries a comment saying why. A per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope that covers it, next to its reason.
+- **Boolean methods are named by what they are, in three kinds.** Checkstyle does not enforce this
+  and cannot; the point of writing it down is that one type should not end up with two habits, as
+  `PushResult` did before `delivered()` became `isDelivered()`.
+
+  1. **A record's component accessor** keeps the component's name — `status()`, `statusCode()`.
+     That is the language, not a preference: a `boolean delivered` component would have to be
+     `delivered()`, and there is nothing to decide.
+  2. **A question about state** is a predicate: `is…` for what something *is*
+     (`PushResult.isDelivered()`, `Es256Verifier.isSupported()`), `has…` for what it holds,
+     `can…` for what it is able to do. Whether the answer is stored, computed, or cached does not
+     enter into it — `String.isEmpty()` computes, `isSupported()` caches, both are `is`.
+  3. **An action or a relation keeps its verb**, with no prefix: `Es256Verifier.verify(...)`
+     performs a check and reports the outcome, `endsMember(json, end)` reads as its own sentence,
+     and a two-argument comparison like `sameCurve(actual, expected)` states a relation the way
+     `Objects.equals` does. `isVerify` would be nonsense, and that is the tell.
+
+  The distinction to get right is 2 against 3: a predicate answers *"is it so?"* about one thing,
+  while a verb *does* something or relates two things.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its
