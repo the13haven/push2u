@@ -136,7 +136,27 @@ every merged PR carries the right label:
 - `dependencies`
 - `documentation`
 
-### 2. Run the *Release* workflow
+A PR that should not appear in the notes at all carries `ignore-for-release` — housekeeping, and
+anything merged before the first tag, where "what changed" is a question about code no consumer
+has seen.
+
+### 2. Write the notes, if the release needs words of its own
+
+Optional, and usually skipped: the generated list of pull requests is the changelog. But a release
+whose changes need framing — the first one, a migration, a deprecation with a story behind it —
+gets a hand-written introduction from `.github/release-notes/<tag>.md`, for example
+`.github/release-notes/v0.1.0.md`. Commit it to `main` before releasing.
+
+Both *Release* and *Publish Existing Tag* pick the file up by tag name and pass it to
+`gh release create --notes-file … --generate-notes`, which **prepends** it: the hand-written text
+sits at the top and the generated categories follow underneath, so adding a file never costs the
+changelog. No file, and the notes are generated exactly as before.
+
+The notes can also be edited on GitHub afterwards — a GitHub Release is mutable, unlike the
+artifacts on Maven Central. The file exists so the text is reviewed with the code and is there the
+moment the release goes public, not so editing later becomes impossible.
+
+### 3. Run the *Release* workflow
 
 *Actions → Release → Run workflow* (on `main`). The workflow then:
 
@@ -161,7 +181,7 @@ The order is deliberate. Steps 1–3 run entirely on the runner, so a failure th
 behind at all. Step 4 pushes a tag, which can still be deleted. Step 5 creates a draft, which can
 still be deleted. **Step 6 is the point of no return** — everything reversible happens before it.
 
-### 3. Verify the result
+### 4. Verify the result
 
 - **Maven Central:** the deployment appears under *Publish → Deployments* in the
   [Central Portal](https://central.sonatype.com/publishing), and the artifact page

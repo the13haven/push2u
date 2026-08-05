@@ -161,6 +161,12 @@ jobs:
       # published yet and the tag can simply be deleted. A draft rather than a live release, so the
       # notes do not point at artifacts that are not on Central yet.
       #
+      # The notes are generated from pull request labels (.github/release.yml). A release that needs
+      # words of its own — the first one, or any version whose changes need framing that a list of
+      # merged PRs cannot give — gets them from .github/release-notes/<tag>.md, committed ahead of
+      # the release. `--notes-file` PREPENDS to the generated notes rather than replacing them, so
+      # the hand-written part sits above the usual categories and nothing is lost by adding it.
+      #
       # Idempotent on purpose — re-running the job must not fail on an existing release.
       - name: Create the draft GitHub release
         env:
@@ -169,6 +175,12 @@ jobs:
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; leaving it untouched."
+            exit 0
+          fi
+          NOTES_FILE=".github/release-notes/$TAG.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "Prepending hand-written notes from $NOTES_FILE."
+            gh release create "$TAG" --draft --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
           else
             gh release create "$TAG" --draft --title "$TAG" --generate-notes
           fi

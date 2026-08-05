@@ -161,7 +161,10 @@ jobs:
           fi
 
       # Covers both ways the original run could have stopped short: no release at all (it failed
-      # before creating the draft) and a draft that was never published.
+      # before creating the draft) and a draft that was never published. When it creates the release
+      # from scratch it reads .github/release-notes/<tag>.md the same way Release does — otherwise
+      # recovering from a failed run would silently drop the hand-written notes that run would have
+      # included.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,6 +172,12 @@ jobs:
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --draft=false
+            exit 0
+          fi
+          NOTES_FILE=".github/release-notes/$TAG.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "Prepending hand-written notes from $NOTES_FILE."
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
           else
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi
