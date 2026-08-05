@@ -8,17 +8,25 @@ package com.the13haven.push2u.signer.vault;
 import java.util.Objects;
 
 /**
- * A Vault token, valid by construction: any instance can travel in an {@code X-Vault-Token} HTTP header. Taking this
- * type — rather than a bare {@code String} — at {@link VaultTransitVapidSigner}'s factory methods is what lets the
- * signer skip re-validating the token on every path that offers it to a transport.
+ * A Vault token, valid by construction: any instance is non-empty, visible ASCII with no whitespace — and can therefore
+ * always travel in an {@code X-Vault-Token} HTTP header. Taking this type — rather than a bare {@code String} — at
+ * {@link VaultTransitVapidSigner}'s factory methods is what lets the signer skip re-validating the token on every path
+ * that offers it to a transport.
  *
- * <p>The constructor validates that the value can appear in an HTTP header before it is ever offered to a transport.
- * RFC 9110 limits a field value to HTAB, SP, visible ASCII and obs-text (0x80–0xFF); the character actually seen in the
- * wild is the trailing newline a token picks up from {@code kubectl create secret --from-file}, a Vault Agent sidecar
- * file, or a YAML block scalar. Left to the HTTP client, that token is rejected by the JDK's own header validation with
- * the WHOLE value in the {@code IllegalArgumentException} message — in the signer's fetched mode from inside
- * {@code build()}, i.e. straight into the application's startup stack trace and logs. Failing here makes the
- * misconfiguration fail at construction with a message that names the problem and no part of the value.
+ * <p>The constructor checks the token's <em>character set</em>, not its format: the value must not be empty, and every
+ * character must be visible ASCII excluding the space (0x21–0x7E). That rejects everything that actually breaks in the
+ * wild — the trailing newline a token picks up from {@code kubectl create secret --from-file}, a Vault Agent sidecar
+ * file or a YAML block scalar; a value pasted together with its {@code Bearer } prefix; a stray space; a HTAB;
+ * non-ASCII look-alikes. Left to the HTTP client, such a token is either rejected by the JDK's own header validation
+ * with the WHOLE value in the {@code IllegalArgumentException} message — in the signer's fetched mode from inside
+ * {@code build()}, i.e. straight into the application's startup stack trace and logs — or sent as-is and refused by
+ * Vault as a per-request 403, far from the misconfiguration. Failing here makes it fail at construction with a message
+ * that names the problem and no part of the value.
+ *
+ * <p>The token's <em>format</em> is deliberately not validated. Vault issues {@code hvs.}/{@code hvb.}/{@code hvr.}
+ * prefixes today, issued {@code s.}/{@code b.} before Vault 1.10, and a dev-mode server accepts an arbitrary string as
+ * its root token ({@code -dev-root-token-id=root}) — this repository's own tests use {@code test-token}. A prefix or
+ * shape check would break all of those while catching no real mistake the character-set check does not already catch.
  *
  * <p>{@link #toString()} is overridden to never print the value — the record-generated form would put the live token
  * into any log line or debugger dump that renders this object.
@@ -31,18 +39,21 @@ public record VaultToken(String value) {
      * Validates the token.
      *
      * @throws NullPointerException if {@code value} is {@code null}
-     * @throws IllegalArgumentException if {@code value} contains a character that cannot appear in an HTTP header
-     *     value; the message deliberately does not echo the value
+     * @throws IllegalArgumentException if {@code value} is empty or contains a character outside visible ASCII
+     *     (0x21–0x7E) — whitespace included; the message deliberately does not echo the value
      */
     public VaultToken {
         Objects.requireNonNull(value, "token");
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("token must not be empty");
+        }
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if (c != '\t' && (c < 0x20 || c == 0x7F || c > 0xFF)) {
+            if (c < 0x21 || c > 0x7E) {
                 throw new IllegalArgumentException("token contains a character (at index " + i + " of "
-                        + value.length() + ") that cannot appear in an HTTP header value — a token sourced from a"
-                        + " file or a YAML block scalar commonly carries a trailing newline. The value itself is"
-                        + " deliberately not echoed");
+                        + value.length() + ") outside visible ASCII (0x21-0x7E) — a token sourced from a file or a"
+                        + " YAML block scalar commonly carries a trailing newline, and one pasted with its"
+                        + " 'Bearer ' prefix carries a space. The value itself is deliberately not echoed");
             }
         }
     }

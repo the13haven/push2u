@@ -164,6 +164,47 @@ class VaultTransitVapidSignerErrorResponseTest {
         }
     }
 
+    /**
+     * {@code mount(...)} is validated where it is set, in both builders. The heaviest case is a {@code ..} segment: the
+     * mount is interpolated into {@code vaultAddress.resolve("/v1/" + mount + ...)}, so {@code ../sys} would resolve
+     * the request — {@code X-Vault-Token} header included — onto a different Vault path. The others would silently
+     * divert the path into a query/fragment or produce a URL no Vault mount can answer. Nested mounts stay legal: the
+     * accepted {@code secrets/transit} shape is asserted where it is observable, in
+     * {@link VaultTransitVapidSignerTransportTest}.
+     */
+    @Test
+    void aMountThatWouldAlterTheRequestUrlIsRejectedAtTheStep() {
+        byte[] publicKey = new byte[65];
+        publicKey[0] = 0x04;
+
+        for (String mount : new String[] {
+            "",
+            "   ",
+            "two words",
+            "with\ttab",
+            "q?uery",
+            "f#ragment",
+            "/transit",
+            "transit/",
+            "a//b",
+            "..",
+            "../sys",
+            "transit/../sys"
+        }) {
+            assertThatThrownBy(() -> suppliedBuilder(publicKey).mount(mount))
+                    .as("supplied builder, mount '%s'", mount)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("mount");
+            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                                    VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                            .transport(alwaysFails())
+                            .mount(mount))
+                    .as("fetched builder, mount '%s'", mount)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("mount");
+        }
+    }
+
     // ---- fixtures ---------------------------------------------------------------------------------
 
     /** A supplied-key builder for {@code publicKey}, wired to a transport that refuses every call. */

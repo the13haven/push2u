@@ -203,8 +203,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
         }
         this.signUri = vaultAddress.resolve("/v1/" + mount + "/sign/" + keyName.value());
-        // Unwrapped once, here: VaultToken is header-safe by construction, so nothing downstream
-        // re-validates it — and the raw String never reaches any toString() or exception message.
+        // Unwrapped once, here: a VaultToken is valid by construction (visible ASCII, hence
+        // header-safe), so nothing downstream re-validates it — and the raw String never
+        // reaches any toString() or exception message.
         this.token = Objects.requireNonNull(token, "token").value();
         this.publicKey = publicKey.clone();
         this.keyVersion = keyVersion;
@@ -266,7 +267,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(transport, "transport");
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName.value());
-        // No header-safety check here: a VaultToken is header-safe by construction, so this call —
+        // No token validation here: a VaultToken is valid by construction (visible ASCII,
+        // hence header-safe), so this call —
         // which in the fetched mode runs before the canonical constructor — cannot offer an
         // invalid value to the transport.
         VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token.value()));
@@ -812,6 +814,54 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
+     * Validate a Transit mount path where it is set (both builders' {@code mount(...)} step). The rule is looser than
+     * {@link TransitKeyName}'s because nested mounts are legal — {@code secrets/transit} names a Transit engine mounted
+     * under a namespace-like prefix — but every way the value could change <em>which URL</em> the signer calls is
+     * refused:
+     *
+     * <ul>
+     *   <li>whitespace anywhere (not valid in a URI path), and {@code ?} / {@code #}, which would silently divert the
+     *       rest of the path into the URL's query or fragment;
+     *   <li>a leading or trailing {@code /} or an empty {@code //} segment — the mount is spliced between {@code /v1/}
+     *       and {@code /keys|sign/}, so those produce a path Vault cannot have mounted;
+     *   <li>a {@code ..} segment — the mount is interpolated into {@code vaultAddress.resolve("/v1/" + mount + …)}, and
+     *       a {@code ..} resolves the request onto a <em>different</em> Vault path, carrying the {@code X-Vault-Token}
+     *       header with it. That must fail loudly at configuration, not travel.
+     * </ul>
+     */
+    private static String requireValidMount(String mount) {
+        Objects.requireNonNull(mount, "mount");
+        if (mount.isBlank()) {
+            throw new IllegalArgumentException("mount must not be blank");
+        }
+        for (int i = 0; i < mount.length(); i++) {
+            char c = mount.charAt(i);
+            if (Character.isWhitespace(c)) {
+                throw new IllegalArgumentException(
+                        "mount contains whitespace (at index " + i + "), which cannot appear in a URL path");
+            }
+            if (c == '?' || c == '#') {
+                throw new IllegalArgumentException("mount contains '" + c + "' (at index " + i + "), which would"
+                        + " silently divert the rest of the /v1/<mount>/... request path into the URL "
+                        + (c == '?' ? "query" : "fragment"));
+            }
+        }
+        if (mount.startsWith("/") || mount.endsWith("/") || mount.contains("//")) {
+            throw new IllegalArgumentException("mount must not begin or end with '/' or contain an empty '//'"
+                    + " segment — a nested mount is written like \"secrets/transit\"");
+        }
+        // Written as the four positions a ".." segment can occupy rather than a split(): the
+        // leading/trailing/empty-segment cases are already rejected above, so these cover exactly
+        // the remaining shapes.
+        if ("..".equals(mount) || mount.startsWith("../") || mount.endsWith("/..") || mount.contains("/../")) {
+            throw new IllegalArgumentException("mount must not contain a '..' segment — resolved against the"
+                    + " Vault address it would redirect the request, X-Vault-Token header included, onto a"
+                    + " different Vault path");
+        }
+        return mount;
+    }
+
+    /**
      * Builds a signer in the <b>fetched</b> mode, reading the public key and its key version from Vault. Obtained from
      * {@link VaultTransitVapidSigner#builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}, which takes
      * everything required — this builder holds only the optional steps, so {@code build()} can never refuse over a
@@ -840,13 +890,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         /**
          * Sets the Transit mount path. Optional — defaults to {@code "transit"}, Vault's own default mount for the
-         * Transit secrets engine.
+         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set — see
+         * {@link VaultTransitVapidSigner} — so a value that would alter the request URL (whitespace, {@code ?},
+         * {@code #}, a leading/trailing/empty or {@code ..} segment) fails at this call.
          *
          * @param mount the Transit mount path
          * @return this builder
+         * @throws IllegalArgumentException if {@code mount} is blank or would alter the request URL
          */
         public FetchedPublicKeyBuilder mount(String mount) {
-            this.mount = Objects.requireNonNull(mount, "mount");
+            this.mount = requireValidMount(mount);
             return this;
         }
 
@@ -923,13 +976,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         /**
          * Sets the Transit mount path. Optional — defaults to {@code "transit"}, Vault's own default mount for the
-         * Transit secrets engine.
+         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set — see
+         * {@link VaultTransitVapidSigner} — so a value that would alter the request URL (whitespace, {@code ?},
+         * {@code #}, a leading/trailing/empty or {@code ..} segment) fails at this call.
          *
          * @param mount the Transit mount path
          * @return this builder
+         * @throws IllegalArgumentException if {@code mount} is blank or would alter the request URL
          */
         public SuppliedPublicKeyBuilder mount(String mount) {
-            this.mount = Objects.requireNonNull(mount, "mount");
+            this.mount = requireValidMount(mount);
             return this;
         }
 

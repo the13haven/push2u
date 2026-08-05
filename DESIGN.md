@@ -304,14 +304,22 @@ two equal modes the default by omission.
 Everything required is a factory-method parameter, so an incomplete signer does not compile and
 `build()` never refuses over a missing value. The key name and the token travel as the value types
 `TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
-arguments impossible to transpose, and each carries its value's contract — `TransitKeyName`
-rejects a name that would alter the Transit request path (blank, `/`, `?`, `#`, space; Vault
-itself allows no `/` in a Transit key name), and `VaultToken` rejects a value that cannot travel
-in an HTTP header (the trailing-newline misconfiguration) while its `toString()` never prints the
-token. Because a `VaultToken` is valid by construction, the signer validates it exactly once — in
-the type — instead of re-checking it on every path that offers it to a transport. The builders
+arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
+enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
+Vault's `path_keys.go` — so no name Vault would accept is refused, while every URL-breaking
+character (`/`, `?`, `#`, `%`, whitespace, non-ASCII) is refused without being enumerated.
+`VaultToken` requires a non-empty, visible-ASCII value (0x21–0x7E) — rejecting the
+trailing-newline misconfiguration, a pasted `Bearer ` prefix and stray whitespace — while
+deliberately not validating the token's *format* (Vault issues `hvs.`/`hvb.`/`hvr.` today, issued
+`s.`/`b.` before 1.10, and dev mode accepts an arbitrary string); its `toString()` never prints
+the token. Because a `VaultToken` is valid by construction, the signer validates it exactly once —
+in the type — instead of re-checking it on every path that offers it to a transport. The builders
 hold only the optional steps: `mount` defaults to `transit` (Vault's own default mount),
 `transport` to a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
+`mount` is validated at its step: nested mounts (`secrets/transit`) are legal, but whitespace,
+`?`/`#`, a leading/trailing/empty `/` and any `..` segment are rejected — the mount is
+interpolated into `vaultAddress.resolve("/v1/" + mount + …)`, and a `..` segment would resolve
+the request, `X-Vault-Token` header included, onto a different Vault path.
 
 `VaultTransitVapidSigner` supports:
 

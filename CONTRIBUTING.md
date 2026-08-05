@@ -120,8 +120,9 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   When several required values are of the same type, what makes the positional list safe is types,
   not argument order: `VaultTransitVapidSigner`'s factory takes a `TransitKeyName` and a
   `VaultToken`, and swapping them does not compile. A value type earns its existence when it also
-  carries the value's validation or redaction — `VaultToken` carries the header-safety check and a
-  `toString()` that never prints the token, so every holder of one gets both for free.
+  carries the value's validation or redaction — `VaultToken` carries the token's character-set
+  validation and a `toString()` that never prints the token, so every holder of one gets both for
+  free.
 
   A staged builder — each required step its own type, `build()` reachable only on the last — is the
   answer when the required values are genuinely many, roughly four or five up. Its step types must

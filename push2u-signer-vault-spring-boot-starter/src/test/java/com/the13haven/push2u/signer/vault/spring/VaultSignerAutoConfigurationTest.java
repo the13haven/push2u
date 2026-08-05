@@ -126,21 +126,34 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
-    void aTokenWithAnEmbeddedNewlineFailsWithoutEchoingTheValue() {
-        // The same behaviour as before the VaultToken type existed: the IllegalArgumentException
-        // surfaces as-is, naming the problem and no part of the value. The newline is embedded
-        // rather than trailing because TestPropertyValues trims a trailing one before it ever
-        // reaches the binder — the real-world trailing-newline arrival is covered by
-        // VaultTokenTest in the signer module.
+    void anInvalidTokenFailsNamingThePropertyWithoutEchoingTheValue() {
+        // Translated like every other configuration failure — the message names the YAML property
+        // the operator wrote — and, because VaultToken's own message carries no part of the value,
+        // the translation cannot leak it either. The newline is embedded rather than trailing
+        // because TestPropertyValues trims a trailing one before it ever reaches the binder — the
+        // real-world trailing-newline arrival is covered by VaultTokenTest in the signer module.
         vaultRunner()
                 .withPropertyValues("push2u.signer.vault.token=secret-token-value\nsecond-line")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.token")
                             .hasStackTraceContaining("token contains a character")
                             .satisfies(
                                     failure -> assertThat(rootMessage(failure)).doesNotContain("secret-token-value"));
                 });
+    }
+
+    @Test
+    void aMountWithADotDotSegmentFailsNamingTheProperty() {
+        // The '..' segment is the load-bearing case: interpolated into the request URL it would
+        // resolve the call — X-Vault-Token included — onto a different Vault path.
+        vaultRunner().withPropertyValues("push2u.signer.vault.mount=../sys").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.mount")
+                    .hasStackTraceContaining("'..' segment");
+        });
     }
 
     /** The root cause's message, where the token rejection surfaces. */

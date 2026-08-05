@@ -539,14 +539,19 @@ VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
 Everything required — the address, the key name and the token — goes into the factory method, so
 an incomplete signer does not compile and `build()` never refuses over a missing value. The key
 name and the token are the value types `TransitKeyName` and `VaultToken` rather than bare strings:
-they cannot be swapped in the argument list, `TransitKeyName` rejects a name that would alter the
-Transit request path (Vault itself allows no `/` in a Transit key name), and `VaultToken` rejects
-a value that cannot travel in an HTTP header — typically the trailing newline picked up from a
-file or a YAML block scalar — without echoing the token, and its `toString()` prints
+they cannot be swapped in the argument list, and each enforces its value's contract.
+`TransitKeyName` applies Vault's own Transit key-name rule (letters, digits, `_`, `-` and `.`,
+beginning and ending with a word character — Vault's `GenericNameRegex`), so no name Vault would
+accept is refused while every URL-breaking character is. `VaultToken` requires non-empty visible
+ASCII — rejecting the trailing newline picked up from a file or a YAML block scalar, a pasted
+`Bearer ` prefix, or a stray space — without echoing the token; its format (`hvs.`, legacy `s.`,
+or a dev-mode arbitrary string) is deliberately not checked, and its `toString()` prints
 `VaultToken[REDACTED]`, never the value. The builder holds only the optional steps: `mount`
 defaults to `transit` (in both the builder and the properties), Vault's own default mount for the
 Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
-transport* below).
+transport* below). `mount` is validated where it is set: nested mounts like `secrets/transit` are
+legal, but whitespace, `?`, `#`, a leading/trailing/empty `/` and any `..` segment are rejected —
+a `..` would resolve the request, `X-Vault-Token` header included, onto a different Vault path.
 
 The equivalent Spring Boot configuration is:
 

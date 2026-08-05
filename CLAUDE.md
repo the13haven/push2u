@@ -146,7 +146,7 @@ starter is ordered before the core starter and outranks the local signer.
   present value still gets an `IllegalArgumentException` at the factory). Several same-typed
   required values are made swap-proof by value types, not by argument order — `TransitKeyName` and
   `VaultToken` cannot be transposed, and a value type earns its place by also carrying validation
-  or redaction, as `VaultToken` carries the header-safety check and a redacting `toString()`. A
+  or redaction, as `VaultToken` carries its character-set validation and a redacting `toString()`. A
   staged builder (one type per required step) is for genuinely many required values, four-five up;
   its steps must be public and exported, with `sealed` — not package-hiding — keeping them closed.
   One way to assemble a type means `builder()`; several ways that differ in *contract* get one

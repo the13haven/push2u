@@ -119,22 +119,36 @@ class VaultTransitVapidSignerTransportTest {
                 .containsExactly("/v1/transit/sign/vapid");
     }
 
-    /** A mount that is not Vault's default reaches the request path unchanged. */
+    /**
+     * A mount that is not Vault's default reaches the request path unchanged — including a nested one: mount validation
+     * refuses only what would alter the URL ({@code ..}, {@code //}, {@code ?}, {@code #}, whitespace, edge slashes),
+     * and {@code secrets/transit} is a legal Vault mount path.
+     */
     @Test
-    void anExplicitMountReplacesTheDefaultInTheRequestPath() throws Exception {
+    void anExplicitMountIncludingANestedOneReplacesTheDefaultInTheRequestPath() throws Exception {
         KeyPair keyPair = generateP256KeyPair();
-        RecordingVaultTransport transport = new RecordingVaultTransport(metadataBody(keyPair));
 
+        RecordingVaultTransport flat = new RecordingVaultTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithFetchedPublicKey(
                         URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("push-transit")
-                .transport(transport)
+                .transport(flat)
                 .build()
                 .sign("custom mount probe".getBytes(StandardCharsets.UTF_8));
-
-        assertThat(transport.calls)
+        assertThat(flat.calls)
                 .extracting(call -> call.uri().getPath())
                 .containsExactly("/v1/push-transit/keys/vapid", "/v1/push-transit/sign/vapid");
+
+        RecordingVaultTransport nested = new RecordingVaultTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .mount("secrets/transit")
+                .transport(nested)
+                .build()
+                .sign("nested mount probe".getBytes(StandardCharsets.UTF_8));
+        assertThat(nested.calls)
+                .extracting(call -> call.uri().getPath())
+                .containsExactly("/v1/secrets/transit/keys/vapid", "/v1/secrets/transit/sign/vapid");
     }
 
     /**
