@@ -53,11 +53,11 @@ import com.the13haven.push2u.VapidSigner;
  * the operator diagnosing the DOWN already looks — at WARN once per outage (on the transition into failure) and at
  * DEBUG while it persists, because health is polled and re-tracing an unchanged failure every few seconds helps nobody.
  *
- * <p>Registered only when both a {@link com.the13haven.push2u.PushSender} and the
- * {@link com.the13haven.push2u.VapidSigner} it probes with are configured as beans (see
- * {@link Push2uHealthAutoConfiguration}), so "the sender is wired and its signer is reachable from here" is the
- * precondition and "the signer can sign" is the live check. It participates in readiness-style checks only: Spring
- * Boot's {@code liveness} group contains just the application's own {@code LivenessState}, so a signer outage can never
+ * <p>Registered whenever the {@link VapidSigner} it probes with is a bean (see {@link Push2uHealthAutoConfiguration}),
+ * because the signer is the only part of a send that can stop working while the application runs — the rest of a
+ * {@link com.the13haven.push2u.PushSender} is immutable configuration validated at build time, and an incomplete
+ * configuration fails startup rather than surfacing here. It participates in readiness-style checks only: Spring Boot's
+ * {@code liveness} group contains just the application's own {@code LivenessState}, so a signer outage can never
  * restart pods — an unreachable Vault is not something a container restart fixes.
  */
 public final class Push2uHealthIndicator implements HealthIndicator {

@@ -200,6 +200,26 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void aSignerBeanAloneStillGetsAnIndicator() {
+        // The condition names the signer alone, so an application that keeps a signer bean and
+        // builds its PushSender by hand — not as a bean — still gets the probe. That is the whole
+        // point of asking about the signer rather than about the sender: the signer is what can
+        // stop answering while the application runs, and here it is present and reachable.
+        //
+        // The main autoconfiguration is excluded so no PushSender bean can appear, which also
+        // exercises the reason @EnableConfigurationProperties is restated on the health
+        // autoconfiguration: without it, push2u.health.* would not bind in this context.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uHealthAutoConfiguration.class))
+                .withUserConfiguration(CustomSignerConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(PushSender.class);
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                });
+    }
+
+    @Test
     void recordSizeAndMaxEncryptedBodyBytesReachTheSender() {
         // Both properties are optional pass-throughs to the builder; assert they are not silently
         // dropped by sending a payload that only fits under the raised limits. A stub transport
