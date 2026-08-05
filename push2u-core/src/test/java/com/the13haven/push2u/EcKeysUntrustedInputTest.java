@@ -10,9 +10,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
+import java.security.AlgorithmParametersSpi;
+import java.security.Provider;
 import java.security.interfaces.ECPublicKey;
+import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.ECFieldF2m;
+import java.security.spec.ECFieldFp;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
+import java.security.spec.EllipticCurve;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
@@ -23,8 +29,10 @@ import org.junit.jupiter.api.Test;
  * arrives in — a point off the curve, the point at infinity, coordinates outside the field — modelled on the classes of
  * case Project Wycheproof enumerates for {@code ecdh_secp256r1}.
  *
- * <p>What is being pinned is that each one is refused before it can reach ECDH, and refused as a
- * {@link PushCryptoException} rather than as whatever the provider happened to throw.
+ * <p>What is being pinned is that each one is refused at decode time, by the library's own check in
+ * {@code EcKeys.decodeP256PublicKey}, as a {@link PushCryptoException} — before the point ever reaches the provider's
+ * {@code KeyFactory}, and therefore independently of whether the provider would have caught it in
+ * {@code KeyAgreement.doPhase}.
  */
 class EcKeysUntrustedInputTest {
 
@@ -36,43 +44,81 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
-     * Where the refusal happens, measured rather than assumed: the JDK's {@code KeyFactory} imports these points
-     * without complaint — {@code ECPublicKeySpec} is a container, not a validator — and {@code KeyAgreement.doPhase} is
-     * what rejects them, with an {@code InvalidKeyException} this library reports as a {@link PushCryptoException}.
-     *
-     * <p>So the guarantee these tests pin is "no later than ECDH", which is early enough that no shared secret is ever
-     * derived from an attacker-chosen point. Note what it rests on: the provider. A provider configured through
-     * {@code Jca.using(...)} that skips point validation in {@code doPhase} would move the boundary, and nothing in
-     * this library would notice.
+     * The boundary these tests pin: {@code decodeP256PublicKey} itself checks the curve equation and refuses the point
+     * before the provider's {@code KeyFactory} sees it. The messages are asserted exactly because they are the evidence
+     * the refusal is the library's own — the old guarantee was "no later than ECDH", and that one rested on the
+     * provider: {@code ECPublicKeySpec} is a container, not a validator, so a provider configured through
+     * {@code Jca.using(...)} that skipped point validation in {@code doPhase} would silently have accepted the point.
      */
     @Test
-    void aPointOffTheCurveIsRefusedNoLaterThanEcdh() {
+    void aPointOffTheCurveIsRefusedAtDecodeTime() {
         byte[] offCurve = validPoint();
         offCurve[offCurve.length - 1] ^= 0x01; // Y is no longer a square root of x^3 - 3x + b
 
-        assertThatThrownBy(() -> agreeWith(offCurve))
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(offCurve, jca))
                 .as("an off-curve point is the entry ticket for an invalid-curve attack")
                 .isInstanceOf(PushCryptoException.class)
-                .satisfies(thrown -> assertThat(thrown.getMessage())
-                        .as("either refusal point satisfies the contract; which one is the provider's choice")
-                        .containsAnyOf("Invalid P-256 public key", "ECDH key agreement failed"));
+                .hasMessageContaining("does not satisfy the curve equation");
     }
 
+    /**
+     * The X9.62 wire format cannot express the point at infinity — it encodes infinity as a single {@code 0x00} byte,
+     * which fails the length check — so all-zero coordinates are merely the affine point {@code (0, 0)}, off the curve
+     * like any other because P-256's {@code b} is non-zero. Hence the same refusal, not a special one.
+     */
     @Test
-    void thePointAtInfinityEncodedAsZeroesIsRefusedNoLaterThanEcdh() {
+    void thePointAtInfinityEncodedAsZeroesIsRefusedAtDecodeTime() {
         byte[] infinity = new byte[EcKeys.UNCOMPRESSED_LENGTH];
         infinity[0] = 0x04; // 0x04 || 0^32 || 0^32
 
-        assertThatThrownBy(() -> agreeWith(infinity)).isInstanceOf(PushCryptoException.class);
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(infinity, jca))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("does not satisfy the curve equation");
     }
 
     @Test
-    void coordinatesOutsideTheFieldAreRefusedNoLaterThanEcdh() {
+    void coordinatesOutsideTheFieldAreRefusedAtDecodeTime() {
         byte[] outOfRange = new byte[EcKeys.UNCOMPRESSED_LENGTH];
         outOfRange[0] = 0x04;
         Arrays.fill(outOfRange, 1, EcKeys.UNCOMPRESSED_LENGTH, (byte) 0xFF); // X = Y = 2^256 - 1 > p
 
-        assertThatThrownBy(() -> agreeWith(outOfRange)).isInstanceOf(PushCryptoException.class);
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(outOfRange, jca))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("coordinate outside the field");
+    }
+
+    /**
+     * The exact boundary of the field check: {@code x = p} is one past the last representable field element. It is
+     * congruent to zero mod p, so an implementation that reduced before comparing would let it through — the check must
+     * compare the raw coordinate.
+     */
+    @Test
+    void aCoordinateAtExactlyTheFieldPrimeIsRefusedAtDecodeTime() {
+        byte[] atPrime = validPoint();
+        System.arraycopy(rightAligned(fieldPrime()), 0, atPrime, 1, EcKeys.COORDINATE_LENGTH); // X = p, Y kept valid
+
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(atPrime, jca))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("coordinate outside the field");
+    }
+
+    /**
+     * The decode-time check needs the field prime, so it can only run over a prime field. {@code Jca.using(...)} means
+     * the parameters come from an arbitrary provider, and a provider answering the {@code secp256r1} lookup with a
+     * binary-field ({@code ECFieldF2m}) parameter set is defective — the pinned behaviour is failing closed on a point
+     * that cannot be validated, not skipping the check.
+     */
+    @Test
+    void parametersOverANonPrimeFieldFailClosedInsteadOfSkippingTheCheck() {
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), Jca.using(new BinaryFieldProvider())))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("non-prime field");
+    }
+
+    /** A valid point still decodes and feeds ECDH — the RFC 8291 vector in {@link EcKeysTest} pins the exact secret. */
+    @Test
+    void theRfc8291WorkedExamplePointPassesTheDecodeTimeCheck() {
+        assertThat(agreeWith(validPoint())).hasSize(32);
     }
 
     /** Decodes the point and runs the agreement it would feed — the full path a subscription key takes. */
@@ -81,6 +127,84 @@ class EcKeysUntrustedInputTest {
                 EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca),
                 EcKeys.decodeP256PublicKey(uaPublicKey, jca),
                 jca);
+    }
+
+    /** P-256's field prime, taken from the platform parameters the production check reads it from. */
+    private BigInteger fieldPrime() {
+        return ((ECFieldFp) jca.p256Parameters().getCurve().getField()).getP();
+    }
+
+    /**
+     * A provider whose only registration answers the {@code secp256r1} {@code AlgorithmParameters} lookup with
+     * parameters over a binary field — the defective-provider shape the fail-closed test above needs.
+     * {@code Service.newInstance} is overridden, so the SPI needs no reflective access.
+     */
+    private static final class BinaryFieldProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        BinaryFieldProvider() {
+            super("push2u-binary-field", "1.0", "answers secp256r1 with a binary field");
+            putService(
+                    new Service(
+                            this,
+                            "AlgorithmParameters",
+                            Algorithms.EC,
+                            BinaryFieldParameters.class.getName(),
+                            null,
+                            null) {
+                        @Override
+                        public Object newInstance(Object constructorParameter) {
+                            return new BinaryFieldParameters();
+                        }
+                    });
+        }
+    }
+
+    /**
+     * An {@code AlgorithmParameters} SPI reporting a binary-field ({@code ECFieldF2m}) parameter set —
+     * {@code sect163}-shaped, the details are irrelevant, only the field type matters.
+     */
+    public static final class BinaryFieldParameters extends AlgorithmParametersSpi {
+
+        @Override
+        protected void engineInit(AlgorithmParameterSpec paramSpec) {
+            // Accept the ECGenParameterSpec("secp256r1") init and misreport the parameters anyway.
+        }
+
+        @Override
+        protected void engineInit(byte[] params) {
+            // Unused by Jca.p256Parameters().
+        }
+
+        @Override
+        protected void engineInit(byte[] params, String format) {
+            // Unused by Jca.p256Parameters().
+        }
+
+        @Override
+        protected <T extends AlgorithmParameterSpec> T engineGetParameterSpec(Class<T> paramSpec) {
+            EllipticCurve binaryCurve =
+                    new EllipticCurve(new ECFieldF2m(163, new int[] {7, 6, 3}), BigInteger.ONE, BigInteger.ONE);
+            return paramSpec.cast(new ECParameterSpec(
+                    binaryCurve, new ECPoint(BigInteger.ONE, BigInteger.ONE), BigInteger.valueOf(2), 1));
+        }
+
+        @Override
+        protected byte[] engineGetEncoded() {
+            return new byte[0];
+        }
+
+        @Override
+        protected byte[] engineGetEncoded(String format) {
+            return new byte[0];
+        }
+
+        @Override
+        protected String engineToString() {
+            return "binary-field parameters";
+        }
     }
 
     @Test
@@ -127,7 +251,7 @@ class EcKeysUntrustedInputTest {
      */
     @Test
     void everyKeyOperationReportsAProviderFailureAsACryptoException() {
-        Jca crippled = Jca.using(new java.security.Provider("push2u-empty", "1.0", "registers no algorithms") {});
+        Jca crippled = Jca.using(new Provider("push2u-empty", "1.0", "registers no algorithms") {});
 
         assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), crippled))
                 .isInstanceOf(PushCryptoException.class);
