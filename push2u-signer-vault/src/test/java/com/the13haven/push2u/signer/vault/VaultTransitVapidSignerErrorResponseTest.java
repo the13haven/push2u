@@ -165,12 +165,16 @@ class VaultTransitVapidSignerErrorResponseTest {
     }
 
     /**
-     * {@code mount(...)} is validated where it is set, in both builders. The heaviest case is a {@code ..} segment: the
-     * mount is interpolated into {@code vaultAddress.resolve("/v1/" + mount + ...)}, so {@code ../sys} would resolve
-     * the request — {@code X-Vault-Token} header included — onto a different Vault path. The others would silently
-     * divert the path into a query/fragment or produce a URL no Vault mount can answer. Nested mounts stay legal: the
-     * accepted {@code secrets/transit} shape is asserted where it is observable, in
-     * {@link VaultTransitVapidSignerTransportTest}.
+     * {@code mount(...)} is validated where it is set, in both builders — per segment, against the explicit allowed set
+     * {@code [A-Za-z0-9_.-]}. The heaviest cases are the dot segments and their percent-encoded doubles:
+     * {@link java.net.URI#resolve} does <em>not</em> normalize dot segments, so a {@code ..} — or a {@code %2e%2e} that
+     * a literal check would miss — travels in the raw request path until a decoding or normalizing hop (Vault's own Go
+     * router decodes the path before routing; a proxy in front of Vault may normalize it earlier) collapses it and
+     * lands the request, {@code X-Vault-Token} header included, on a different Vault path. The allowed set also refuses
+     * at this step ({@code alwaysFails()} proves no request is made) what would otherwise surface later in
+     * {@code build()} as {@code URI.create}'s raw "Malformed escape pair" ({@code 50%off}) or as a query/fragment
+     * diversion. Nested mounts stay legal: the accepted {@code secrets/transit} shape is asserted where it is
+     * observable, in {@link VaultTransitVapidSignerTransportTest}.
      */
     @Test
     void aMountThatWouldAlterTheRequestUrlIsRejectedAtTheStep() {
@@ -189,7 +193,15 @@ class VaultTransitVapidSignerErrorResponseTest {
             "a//b",
             "..",
             "../sys",
-            "transit/../sys"
+            "transit/../sys",
+            ".",
+            "transit/./sys",
+            "transit/%2e%2e/sys",
+            "a%2Fb",
+            "50%off",
+            "a|b",
+            "a\\b",
+            "a[b"
         }) {
             assertThatThrownBy(() -> suppliedBuilder(publicKey).mount(mount))
                     .as("supplied builder, mount '%s'", mount)

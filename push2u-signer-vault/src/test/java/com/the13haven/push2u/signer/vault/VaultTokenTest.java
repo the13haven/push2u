@@ -34,11 +34,14 @@ class VaultTokenTest {
 
     @Test
     void aTokenWithACharacterOutsideVisibleAsciiIsRejectedWithoutEchoingTheValue() {
-        // The wild-caught misconfigurations, each fatal only later without this check: the
-        // trailing newline from `kubectl create secret --from-file` or a YAML block scalar, the
-        // `Bearer ` prefix pasted along with the value, an internal space, a HTAB, obs-text and
-        // non-ASCII look-alikes. Sent as-is, the JDK header validation would echo the WHOLE value
-        // into the exception message — or Vault would answer 403 per request, far from the cause.
+        // A Vault-issued token contains none of these, so each is the signature of a transfer
+        // accident: the trailing newline from `kubectl create secret --from-file` or a YAML block
+        // scalar, the `Bearer ` prefix pasted along with the value, control characters, non-ASCII
+        // mojibake. The interior space is the one deliberate over-reach — a space is legal in a
+        // header and `vault token create -id='has space'` works, but no self-generated token has
+        // one, so in configuration it is overwhelmingly a paste accident. Sent as-is, the JDK
+        // header validation would echo the WHOLE value into the exception message — or Vault
+        // would answer 403 per request, far from the cause.
         for (String value : new String[] {
             TOKEN + "\n",
             TOKEN + "\r",

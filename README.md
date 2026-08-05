@@ -549,9 +549,14 @@ or a dev-mode arbitrary string) is deliberately not checked, and its `toString()
 `VaultToken[REDACTED]`, never the value. The builder holds only the optional steps: `mount`
 defaults to `transit` (in both the builder and the properties), Vault's own default mount for the
 Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
-transport* below). `mount` is validated where it is set: nested mounts like `secrets/transit` are
-legal, but whitespace, `?`, `#`, a leading/trailing/empty `/` and any `..` segment are rejected —
-a `..` would resolve the request, `X-Vault-Token` header included, onto a different Vault path.
+transport* below). `mount` is validated where it is set, per segment: nested mounts like
+`secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
+and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
+reopened by encoding: a `%2e%2e` segment travels in the raw request path (`URI.resolve` does not
+normalize dot segments) until a decoding or normalizing hop — Vault's own router decodes the path
+before routing, and a proxy in front of Vault may normalize it earlier — collapses it and lands
+the request, `X-Vault-Token` header included, on a different Vault path. The signer never
+percent-encodes, so a mount name outside the set could not be addressed through it anyway.
 
 The equivalent Spring Boot configuration is:
 

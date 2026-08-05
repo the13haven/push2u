@@ -816,18 +816,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     /**
      * Validate a Transit mount path where it is set (both builders' {@code mount(...)} step). The rule is looser than
      * {@link TransitKeyName}'s because nested mounts are legal — {@code secrets/transit} names a Transit engine mounted
-     * under a namespace-like prefix — but every way the value could change <em>which URL</em> the signer calls is
-     * refused:
+     * under a namespace-like prefix — and is applied per segment: split on {@code /}, every segment must be non-empty,
+     * not {@code .} or {@code ..}, and drawn from {@code [A-Za-z0-9_.-]} only.
      *
-     * <ul>
-     *   <li>whitespace anywhere (not valid in a URI path), and {@code ?} / {@code #}, which would silently divert the
-     *       rest of the path into the URL's query or fragment;
-     *   <li>a leading or trailing {@code /} or an empty {@code //} segment — the mount is spliced between {@code /v1/}
-     *       and {@code /keys|sign/}, so those produce a path Vault cannot have mounted;
-     *   <li>a {@code ..} segment — the mount is interpolated into {@code vaultAddress.resolve("/v1/" + mount + …)}, and
-     *       a {@code ..} resolves the request onto a <em>different</em> Vault path, carrying the {@code X-Vault-Token}
-     *       header with it. That must fail loudly at configuration, not travel.
-     * </ul>
+     * <p>An explicit allowed set, not a blacklist, because a blacklist here is reopenable by encoding: a
+     * percent-encoded {@code %2e%2e} or {@code %2F} passes any literal {@code ..}/{@code /} check and travels in the
+     * raw request path — {@link URI#resolve} does <em>not</em> normalize dot segments, so the path goes onto the wire
+     * exactly as written — until whichever hop decodes or normalizes the URL collapses it: Go's {@code net/url} decodes
+     * the path before Vault routes it, and a normalizing proxy in front of Vault (nginx {@code proxy_pass} with a URI
+     * part, HAProxy {@code normalize-uri}) rewrites it even earlier. Either way the request — its {@code X-Vault-Token}
+     * header included — lands on a <em>different</em> Vault path. The literal {@code .}/ {@code ..} segments are
+     * refused for the same hops. That must fail loudly at configuration, not travel.
+     *
+     * <p>The allowed set costs nothing real: this signer never percent-encodes, so a mount name containing {@code %}
+     * (or any other character outside the set) is unaddressable through it anyway — better refused at the step, with
+     * the property named, than surfacing later as {@code URI.create}'s raw "Malformed escape pair". Every real Vault
+     * mount shape — {@code transit}, {@code transit-prod}, {@code team_a/secrets/transit} — fits the set.
      */
     private static String requireValidMount(String mount) {
         Objects.requireNonNull(mount, "mount");
@@ -835,30 +839,38 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new IllegalArgumentException("mount must not be blank");
         }
         for (int i = 0; i < mount.length(); i++) {
-            char c = mount.charAt(i);
-            if (Character.isWhitespace(c)) {
-                throw new IllegalArgumentException(
-                        "mount contains whitespace (at index " + i + "), which cannot appear in a URL path");
-            }
-            if (c == '?' || c == '#') {
-                throw new IllegalArgumentException("mount contains '" + c + "' (at index " + i + "), which would"
-                        + " silently divert the rest of the /v1/<mount>/... request path into the URL "
-                        + (c == '?' ? "query" : "fragment"));
+            if (!allowedMountCharacter(mount.charAt(i))) {
+                throw new IllegalArgumentException("mount contains a character (at index " + i + ") outside the"
+                        + " allowed set [A-Za-z0-9_.-] and '/' — anything else either breaks the request URL"
+                        + " outright or, percent-encoded, survives to a decoding hop that rewrites the path. A"
+                        + " mount named outside this set is unaddressable through this signer, which never"
+                        + " percent-encodes");
             }
         }
-        if (mount.startsWith("/") || mount.endsWith("/") || mount.contains("//")) {
-            throw new IllegalArgumentException("mount must not begin or end with '/' or contain an empty '//'"
-                    + " segment — a nested mount is written like \"secrets/transit\"");
-        }
-        // Written as the four positions a ".." segment can occupy rather than a split(): the
-        // leading/trailing/empty-segment cases are already rejected above, so these cover exactly
-        // the remaining shapes.
-        if ("..".equals(mount) || mount.startsWith("../") || mount.endsWith("/..") || mount.contains("/../")) {
-            throw new IllegalArgumentException("mount must not contain a '..' segment — resolved against the"
-                    + " Vault address it would redirect the request, X-Vault-Token header included, onto a"
-                    + " different Vault path");
+        for (String segment : mount.split("/", -1)) {
+            if (segment.isEmpty()) {
+                throw new IllegalArgumentException("mount must not begin or end with '/' or contain an empty '//'"
+                        + " segment — a nested mount is written like \"secrets/transit\"");
+            }
+            if (".".equals(segment) || "..".equals(segment)) {
+                throw new IllegalArgumentException("mount must not contain a '" + segment + "' segment — a decoding"
+                        + " or normalizing HTTP hop (Vault's own Go router decodes the path before routing; a proxy"
+                        + " may normalize it earlier) would collapse it and land the request, X-Vault-Token header"
+                        + " included, on a different Vault path");
+            }
         }
         return mount;
+    }
+
+    /** Whether {@code c} may appear in a mount path: the {@code [A-Za-z0-9_.-]} segment set plus the separator. */
+    private static boolean allowedMountCharacter(char c) {
+        return (c >= 'A' && c <= 'Z')
+                || (c >= 'a' && c <= 'z')
+                || (c >= '0' && c <= '9')
+                || c == '_'
+                || c == '.'
+                || c == '-'
+                || c == '/';
     }
 
     /**
@@ -890,13 +902,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         /**
          * Sets the Transit mount path. Optional — defaults to {@code "transit"}, Vault's own default mount for the
-         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set — see
-         * {@link VaultTransitVapidSigner} — so a value that would alter the request URL (whitespace, {@code ?},
-         * {@code #}, a leading/trailing/empty or {@code ..} segment) fails at this call.
+         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set, per
+         * segment: every {@code /}-separated segment must be non-empty, not {@code .} or {@code ..}, and drawn from
+         * {@code [A-Za-z0-9_.-]} — an allowed set rather than a blacklist, because a percent-encoded {@code %2e%2e}
+         * would otherwise reopen what the literal check closes. The rationale lives on the validator in
+         * {@link VaultTransitVapidSigner}.
          *
          * @param mount the Transit mount path
          * @return this builder
-         * @throws IllegalArgumentException if {@code mount} is blank or would alter the request URL
+         * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public FetchedPublicKeyBuilder mount(String mount) {
             this.mount = requireValidMount(mount);
@@ -976,13 +990,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         /**
          * Sets the Transit mount path. Optional — defaults to {@code "transit"}, Vault's own default mount for the
-         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set — see
-         * {@link VaultTransitVapidSigner} — so a value that would alter the request URL (whitespace, {@code ?},
-         * {@code #}, a leading/trailing/empty or {@code ..} segment) fails at this call.
+         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set, per
+         * segment: every {@code /}-separated segment must be non-empty, not {@code .} or {@code ..}, and drawn from
+         * {@code [A-Za-z0-9_.-]} — an allowed set rather than a blacklist, because a percent-encoded {@code %2e%2e}
+         * would otherwise reopen what the literal check closes. The rationale lives on the validator in
+         * {@link VaultTransitVapidSigner}.
          *
          * @param mount the Transit mount path
          * @return this builder
-         * @throws IllegalArgumentException if {@code mount} is blank or would alter the request URL
+         * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public SuppliedPublicKeyBuilder mount(String mount) {
             this.mount = requireValidMount(mount);

@@ -14,14 +14,19 @@ import java.util.Objects;
  * that offers it to a transport.
  *
  * <p>The constructor checks the token's <em>character set</em>, not its format: the value must not be empty, and every
- * character must be visible ASCII excluding the space (0x21–0x7E). That rejects everything that actually breaks in the
- * wild — the trailing newline a token picks up from {@code kubectl create secret --from-file}, a Vault Agent sidecar
- * file or a YAML block scalar; a value pasted together with its {@code Bearer } prefix; a stray space; a HTAB;
- * non-ASCII look-alikes. Left to the HTTP client, such a token is either rejected by the JDK's own header validation
- * with the WHOLE value in the {@code IllegalArgumentException} message — in the signer's fetched mode from inside
- * {@code build()}, i.e. straight into the application's startup stack trace and logs — or sent as-is and refused by
- * Vault as a per-request 403, far from the misconfiguration. Failing here makes it fail at construction with a message
- * that names the problem and no part of the value.
+ * character must be visible ASCII excluding the space (0x21–0x7E). Every token Vault issues on its own satisfies this,
+ * so the rule rejects a Vault-issued token exactly when it was damaged in transfer — the trailing newline picked up
+ * from {@code kubectl create secret --from-file}, a Vault Agent sidecar file or a YAML block scalar; the {@code Bearer
+ * } prefix pasted along with the value; control characters; non-ASCII mojibake. It is deliberately a little stricter
+ * than "what would break": a space is a legal HTTP field-value character, and {@code vault token create -id='has
+ * space'} does produce a working token containing one — but no token Vault generates itself contains a space, so an
+ * interior space in configuration is overwhelmingly a transfer accident, and refusing the space-bearing custom-ID token
+ * (which production setups do not use) is the accepted cost of catching the accident. Left to the HTTP client, a
+ * damaged token is either rejected by the JDK's own header validation with the WHOLE value in the
+ * {@code IllegalArgumentException} message — in the signer's fetched mode from inside {@code build()}, i.e. straight
+ * into the application's startup stack trace and logs — or sent as-is and refused by Vault as a per-request 403, far
+ * from the misconfiguration. Failing here makes it fail at construction with a message that names the problem and no
+ * part of the value.
  *
  * <p>The token's <em>format</em> is deliberately not validated. Vault issues {@code hvs.}/{@code hvb.}/{@code hvr.}
  * prefixes today, issued {@code s.}/{@code b.} before Vault 1.10, and a dev-mode server accepts an arbitrary string as

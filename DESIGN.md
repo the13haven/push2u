@@ -316,10 +316,17 @@ the token. Because a `VaultToken` is valid by construction, the signer validates
 in the type — instead of re-checking it on every path that offers it to a transport. The builders
 hold only the optional steps: `mount` defaults to `transit` (Vault's own default mount),
 `transport` to a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
-`mount` is validated at its step: nested mounts (`secrets/transit`) are legal, but whitespace,
-`?`/`#`, a leading/trailing/empty `/` and any `..` segment are rejected — the mount is
-interpolated into `vaultAddress.resolve("/v1/" + mount + …)`, and a `..` segment would resolve
-the request, `X-Vault-Token` header included, onto a different Vault path.
+`mount` is validated at its step, per segment: nested mounts (`secrets/transit`) are legal, and
+every `/`-separated segment must be non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
+The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
+literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
+`URI.resolve` does *not* normalize dot segments, the path goes onto the wire as written — until a
+decoding or normalizing hop collapses it: Vault's own Go router decodes the path before routing,
+and a normalizing proxy in front of Vault (nginx `proxy_pass` with a URI part, HAProxy
+`normalize-uri`) rewrites it even earlier. Either way the request lands, `X-Vault-Token` header
+included, on a different Vault path. The signer never percent-encodes, so a mount name outside
+the allowed set is unaddressable through it anyway — refusing it at the step costs nothing and
+replaces `URI.create`'s later raw "Malformed escape pair" failure.
 
 `VaultTransitVapidSigner` supports:
 

@@ -146,13 +146,27 @@ class VaultSignerAutoConfigurationTest {
 
     @Test
     void aMountWithADotDotSegmentFailsNamingTheProperty() {
-        // The '..' segment is the load-bearing case: interpolated into the request URL it would
-        // resolve the call — X-Vault-Token included — onto a different Vault path.
+        // The '..' segment is the load-bearing case: it travels in the raw request path until a
+        // decoding or normalizing hop (Vault's own router, or a proxy in front of it) collapses
+        // it and lands the call — X-Vault-Token included — on a different Vault path.
         vaultRunner().withPropertyValues("push2u.signer.vault.mount=../sys").run(context -> {
             assertThat(context).hasFailed();
             assertThat(context.getStartupFailure())
                     .hasStackTraceContaining("push2u.signer.vault.mount")
                     .hasStackTraceContaining("'..' segment");
+        });
+    }
+
+    @Test
+    void aMountOutsideTheAllowedCharacterSetFailsNamingTheProperty() {
+        // Before the allowed-set rule this value survived the mount(...) step — which the starter
+        // translates — and failed later inside build(), as URI.create's raw "Malformed escape
+        // pair" with no YAML property named. The step must be where it dies.
+        vaultRunner().withPropertyValues("push2u.signer.vault.mount=50%off").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.mount")
+                    .hasStackTraceContaining("allowed set");
         });
     }
 
