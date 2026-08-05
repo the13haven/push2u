@@ -664,7 +664,9 @@ push2u:
       namespace: "team-a"
 ```
 
-Nested namespaces (`team-a/sub`) are legal. The value is validated where it is set, by the same
+Nested namespaces (`team-a/sub`) are legal. Note that Vault's own CLI prints namespace paths with
+a trailing slash (`team-a/`) — drop it here, since the value must not begin or end with `/`. The
+value is validated where it is set, by the same
 per-segment rule as `mount`: every `/`-separated segment must be non-empty, not `.` or `..`, and
 use only `[A-Za-z0-9_.-]`. The rule matters twice here — Vault resolves the header by prefixing
 its value to the request path before routing, so a traversal segment would steer a token-bearing

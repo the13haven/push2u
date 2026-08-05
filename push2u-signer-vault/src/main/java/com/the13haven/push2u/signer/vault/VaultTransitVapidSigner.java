@@ -886,8 +886,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * anyway: some of that punctuation is treated specially by intermediaries (a {@code ;} reads as a path parameter to
      * some hops), and a set admitting only what every hop treats literally can be widened later without breaking anyone
      * — the reverse is not true. Every common mount shape — {@code transit}, {@code transit-prod},
-     * {@code team_a/secrets/transit} — and every namespace path Vault itself accepts (whose own segment charset is
-     * alphanumerics plus {@code -}, {@code _} and {@code .}) fits the set.
+     * {@code team_a/secrets/transit} — and every common namespace shape — {@code team-a}, {@code team-a/sub} — fits the
+     * set. For namespaces as for mounts the narrowness is policy, not a claim about what Vault accepts: Vault's
+     * documentation forbids only spaces, a trailing {@code /} and a few reserved names in a namespace path, so a wider
+     * name may exist in a deployment and be refused here until the set is widened.
      */
     private static String requireValidVaultPath(String value, String name, String nestedExample) {
         Objects.requireNonNull(value, name);
