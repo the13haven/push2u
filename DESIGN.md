@@ -363,7 +363,9 @@ bound properties.
 - a local `VapidSigner` when both local keys are configured;
 - a default `JdkPushHttpClient`;
 - an autoconfigured `PushSender` when a signer is available and `push2u.vapid.subject` is set;
-- a health indicator when Spring Boot health support is present.
+- a health indicator when Spring Boot health support is present and both a `PushSender` and a
+  `VapidSigner` bean exist — the probe signs with the signer, so without one there is nothing to
+  check and no indicator is registered.
 
 Application beans override these defaults; in particular, an application-supplied `PushSender`
 bean bypasses the `pushSender` factory method entirely, so `push2u.vapid.subject` is not required

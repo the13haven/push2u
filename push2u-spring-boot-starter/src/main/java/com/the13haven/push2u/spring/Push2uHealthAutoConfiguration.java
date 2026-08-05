@@ -26,6 +26,14 @@ import com.the13haven.push2u.VapidSigner;
  * backend answers. An application that supplies its own {@code PushSender} and no signer — the sender carries one
  * internally, so it never has to be a bean — gets no indicator rather than a context that fails to start: there is
  * nothing here to probe, and an indicator reporting health it never established would be worse than its absence.
+ * {@code /actuator/conditions} (or {@code --debug}) names the missing bean when the indicator is not there.
+ *
+ * <p>Two consequences of probing a <em>bean</em> rather than the sender's own signer. A signer registered by an
+ * autoconfiguration ordered after this one is invisible to the condition, so an application combining its own
+ * {@code PushSender} with such a signer gets no indicator; a signer that is a bean by the time this runs is fine, which
+ * covers the local one, the Vault one and any the application declares itself. And when an application supplies both
+ * its own {@code PushSender} and {@code push2u.vapid.*}, the probe exercises the bean built from those properties, not
+ * whatever signer that sender was built with — the health entry then describes a signer the sender does not use.
  *
  * <p>A separate autoconfiguration ordered {@link AutoConfiguration#after() after} {@link Push2uAutoConfiguration} so
  * the {@code PushSender} and the local {@code VapidSigner} beans already exist when {@link ConditionalOnBean} is

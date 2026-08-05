@@ -458,7 +458,10 @@ The indicator needs a `VapidSigner` bean to probe with, so it is registered only
 An application that supplies its own `PushSender` bean and configures no `push2u.vapid.*` keeps its
 signer inside that sender, where the starter cannot reach it — the context starts normally and the
 health endpoint simply carries no push2u entry. Exposing one anyway would mean reporting health
-that was never established.
+that was never established. When the entry is missing and you expected it, `/actuator/conditions`
+(or starting with `--debug`) names the bean the condition did not find. Note the flip side of
+probing a bean: an application that supplies both its own `PushSender` *and* `push2u.vapid.*` gets
+an indicator that exercises the signer built from those properties, not the one inside its sender.
 
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
