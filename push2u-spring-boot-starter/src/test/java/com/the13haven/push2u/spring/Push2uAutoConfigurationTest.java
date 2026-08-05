@@ -287,6 +287,44 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void invalidJwtExpiryFailsTheContextNamingTheProperty() {
+        // Same convention as push2u.record-size: PushSender.Builder#jwtExpiry's own message names
+        // its camelCase parameter ("jwtExpiry"), not the YAML property.
+        keyedRunner().withPropertyValues("push2u.jwt-expiry=25h").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-expiry:"))
+                    .hasMessageContaining("push2u.jwt-expiry:")
+                    .hasMessageContaining("jwtExpiry must be > 0 and <= 24h");
+        });
+    }
+
+    @Test
+    void invalidDefaultTtlFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.default-ttl=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.default-ttl:"))
+                    .hasMessageContaining("push2u.default-ttl:")
+                    .hasMessageContaining("defaultTtl must not be negative");
+        });
+    }
+
+    @Test
+    void invalidRetryMaxAttemptsFailsTheContextNamingTheProperty() {
+        // The worst offender before this fix: RetryPolicy's own message ("maxAttempts must be >=
+        // 1") does not even mention "retry", let alone the YAML property — an operator reading it
+        // has nothing to go on.
+        keyedRunner().withPropertyValues("push2u.retry.max-attempts=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-attempts:"))
+                    .hasMessageContaining("push2u.retry.max-attempts:")
+                    .hasMessageContaining("maxAttempts must be >= 1");
+        });
+    }
+
+    @Test
     void allowedOriginsPropertyEnforcesThePolicyOnTheWiredSender() {
         // Positive and negative halves of the same property: the allowlisted origin delivers
         // (through the stub transport), a foreign one is rejected before any transport call —

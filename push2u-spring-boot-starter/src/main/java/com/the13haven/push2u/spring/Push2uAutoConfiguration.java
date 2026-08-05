@@ -8,6 +8,7 @@ package com.the13haven.push2u.spring;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.ListableBeanFactory;
@@ -89,10 +90,13 @@ public final class Push2uAutoConfiguration {
      * it is checked here, with a message naming the property, so a missing subject fails with an actionable diagnostic
      * rather than {@link PushSender#builder(VapidSigner, String)}'s generic {@code "contact is required"}.
      *
-     * <p>{@code push2u.record-size} / {@code push2u.max-encrypted-body-bytes} failures from
-     * {@link PushSender.Builder#recordSize(int)} / {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown
-     * with the property name prefixed, since the builder's own message names its camelCase parameter, not the YAML
-     * property.
+     * <p>{@code push2u.jwt-expiry}, {@code push2u.default-ttl}, {@code push2u.record-size} and
+     * {@code push2u.max-encrypted-body-bytes} failures from {@link PushSender.Builder#jwtExpiry(Duration)},
+     * {@link PushSender.Builder#defaultTtl(Duration)}, {@link PushSender.Builder#recordSize(int)} and
+     * {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown with the property name prefixed, since the
+     * builder's own message names its camelCase parameter, not the YAML property. {@code push2u.retry.max-attempts}
+     * gets the same treatment ahead of {@link RetryPolicy}'s own constructor, which validates the attempt count and the
+     * backoff bounds together and so cannot be blamed on one property by its message alone.
      *
      * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
      * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
@@ -112,8 +116,10 @@ public final class Push2uAutoConfiguration {
      * @return the configured sender
      * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both a non-empty
      *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured
-     * @throws IllegalArgumentException if {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes} or
-     *     {@code push2u.allowed-origins} is set to a value the builder or the policy factory rejects
+     * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.default-ttl},
+     *     {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes}, {@code push2u.retry.max-attempts} or
+     *     {@code push2u.allowed-origins} is set to a value the builder, {@link RetryPolicy} or the policy factory
+     *     rejects
      */
     @Bean
     @ConditionalOnMissingBean
@@ -132,41 +138,55 @@ public final class Push2uAutoConfiguration {
                             + " starter, e.g. the Vault Transit signer starter, which supplies only key"
                             + " custody, not a contact address");
         }
-        Push2uProperties.Retry retry = properties.retry();
-        PushSender.Builder builder = PushSender.builder(signer, subject)
-                .httpClient(httpClient)
-                .retryPolicy(new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff()));
-        // Every optional property is read once into a local — see the same pattern in
-        // PushSender.requestHeaders: a @Nullable accessor called twice is two reads.
-        Duration jwtExpiry = properties.jwtExpiry();
-        if (jwtExpiry != null) {
-            builder.jwtExpiry(jwtExpiry);
-        }
-        Duration defaultTtl = properties.defaultTtl();
-        if (defaultTtl != null) {
-            builder.defaultTtl(defaultTtl);
-        }
-        Integer recordSize = properties.recordSize();
-        if (recordSize != null) {
-            try {
-                builder.recordSize(recordSize);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("push2u.record-size: " + e.getMessage(), e);
-            }
-        }
-        Integer maxEncryptedBodyBytes = properties.maxEncryptedBodyBytes();
-        if (maxEncryptedBodyBytes != null) {
-            try {
-                builder.maxEncryptedBodyBytes(maxEncryptedBodyBytes);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("push2u.max-encrypted-body-bytes: " + e.getMessage(), e);
-            }
-        }
+        PushSender.Builder builder =
+                PushSender.builder(signer, subject).httpClient(httpClient).retryPolicy(retryPolicy(properties.retry()));
+        // Every optional property is applied through the same translate-the-error helper, so a
+        // rejected value fails naming the YAML key instead of the builder's camelCase parameter.
+        applyIfPresent(properties.jwtExpiry(), builder::jwtExpiry, "push2u.jwt-expiry");
+        applyIfPresent(properties.defaultTtl(), builder::defaultTtl, "push2u.default-ttl");
+        applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
+        applyIfPresent(
+                properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
         EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, beanFactory, properties.allowedOrigins());
         if (policy != null) {
             builder.endpointPolicy(policy);
         }
         return builder.build();
+    }
+
+    /**
+     * Builds the {@link RetryPolicy} from {@code push2u.retry.*}, naming {@code push2u.retry.max-attempts} specifically
+     * if it is the reason the policy is rejected.
+     *
+     * <p>{@link RetryPolicy}'s compact constructor validates the attempt count and the backoff bounds together, and
+     * checks the attempt count first — so probing it with {@link Duration#ZERO} for both backoffs isolates that one
+     * check: a failure from the probe can only be about {@code maxAttempts}, attributable to
+     * {@code push2u.retry.max-attempts} without re-implementing its {@code >= 1} bound here. A backoff-bound failure
+     * surfaces from the real construction below, unprefixed, exactly as it did before this method existed — that
+     * failure mode is unchanged, only the attempt-count one is named.
+     */
+    private static RetryPolicy retryPolicy(Push2uProperties.Retry retry) {
+        try {
+            new RetryPolicy(retry.maxAttempts(), Duration.ZERO, Duration.ZERO);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("push2u.retry.max-attempts: " + e.getMessage(), e);
+        }
+        return new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
+    }
+
+    /**
+     * Applies {@code value} to {@code setter} unless it is {@code null} (meaning the property was left unset, so the
+     * {@link PushSender} default applies), re-throwing a rejection with {@code property} prefixed — the builder step's
+     * own message names its camelCase parameter, not the YAML property.
+     */
+    private static <T> void applyIfPresent(@Nullable T value, Consumer<T> setter, String property) {
+        if (value != null) {
+            try {
+                setter.accept(value);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(property + ": " + e.getMessage(), e);
+            }
+        }
     }
 
     /**

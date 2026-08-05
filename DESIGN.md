@@ -473,14 +473,22 @@ signer starter supplies only key custody, not a contact address. The `pushSender
 explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing the
 `PushSender.builder(…)` factory's generic `"contact is required"`.
 
-`push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
-pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,
-set forwards the value to `Builder#recordSize(int)` / `Builder#maxEncryptedBodyBytes(int)`. Their
-own validation — the RFC 8188 §2 18-byte floor for `recordSize`, checked at startup, separately
-from the RFC 8291 §4 per-payload rule checked on each `send()`; and the fixed 103-byte
-`aes128gcm` overhead for `maxEncryptedBodyBytes` — governs context startup; the starter re-throws
-an invalid value's `IllegalArgumentException` with the YAML property name prefixed, since the
-builder's own message names its camelCase parameter instead.
+`push2u.jwt-expiry`, `push2u.default-ttl`, `push2u.record-size`, `push2u.max-encrypted-body-bytes`
+and `push2u.retry.max-attempts` share one optional-property pattern: unset (`null`, or for
+`retry.max-attempts` its `@DefaultValue`) leaves the `PushSender`/`RetryPolicy` default, set
+forwards the value to `Builder#jwtExpiry(Duration)`, `Builder#defaultTtl(Duration)`,
+`Builder#recordSize(int)`, `Builder#maxEncryptedBodyBytes(int)`, or — for the retry count — directly
+to `new RetryPolicy(…)`. Each one's own validation governs context startup, not just the send-time
+path: `jwtExpiry` must be strictly positive and at most 24h (RFC 8292 §2); `defaultTtl` must not be
+negative; `recordSize` enforces the RFC 8188 §2 18-byte floor at startup, separately from the RFC
+8291 §4 per-payload rule checked on each `send()`; `maxEncryptedBodyBytes` enforces the fixed
+103-byte `aes128gcm` overhead; `maxAttempts` must be at least 1. The starter re-throws each
+`IllegalArgumentException` with the YAML property name prefixed, since the builder's — and
+`RetryPolicy`'s — own message names its camelCase parameter instead. `retry.max-attempts` needs one
+extra step: `RetryPolicy`'s constructor validates the attempt count and the backoff bounds together,
+so the starter probes it with `Duration.ZERO` for both backoffs first, isolating the attempt-count
+check so a failure there can be attributed to `push2u.retry.max-attempts` specifically rather than
+to the constructor call as a whole.
 
 `push2u.allowed-origins` binds to `EndpointPolicies.allowedOrigins` and follows the same
 fail-at-startup pattern: a malformed entry's `IllegalArgumentException` is re-thrown with the

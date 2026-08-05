@@ -511,11 +511,14 @@ the `VapidSigner` comes from; leaving it unset fails the context with a message 
 property. It is not required when the application supplies its own `PushSender` bean — that bean
 bypasses the starter's checks entirely.
 
-`record-size` and `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s
-defaults (4096 bytes each — see [Payload size limits](#payload-size-limits)) untouched. Setting
-either to a value the builder rejects (`record-size` below 18, or `max-encrypted-body-bytes` below
-the fixed 103-byte `aes128gcm` overhead) fails the context with the builder's message,
-prefixed with the YAML property name (the builder itself only names its Java parameter).
+`jwt-expiry`, `default-ttl`, `record-size`, `max-encrypted-body-bytes` and `retry.max-attempts` are
+all optional; unset, they leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes, 4096 bytes
+and 3 attempts respectively — see [Payload size limits](#payload-size-limits) for the two size
+properties). Setting one to a value the builder — or, for `retry.max-attempts`, `RetryPolicy` itself
+— rejects (`jwt-expiry` not strictly positive or over 24h, `default-ttl` negative, `record-size`
+below 18, `max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead, or
+`retry.max-attempts` below 1) fails the context with that message, prefixed by the YAML property
+name (the builder and `RetryPolicy` only name their Java parameters).
 
 `allowed-origins` binds to `EndpointPolicies.allowedOrigins` — see
 [Endpoint policy (SSRF hardening)](#endpoint-policy-ssrf-hardening). Unset, it leaves the

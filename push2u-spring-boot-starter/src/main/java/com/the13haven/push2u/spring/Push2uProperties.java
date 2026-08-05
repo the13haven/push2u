@@ -17,9 +17,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *
  * @param vapid the VAPID identity (keys + subject); always present, its fields may be unset
  * @param jwtExpiry how far ahead the VAPID JWT {@code exp} is set; {@code null} keeps the {@code PushSender} default
- *     (12h)
+ *     (12h). Rejected at startup if not strictly positive or more than 24h (RFC 8292 §2)
  * @param defaultTtl the push {@code TTL} used when a message sets none; {@code null} keeps the {@code PushSender}
- *     default (24h)
+ *     default (24h). Rejected at startup if negative
  * @param recordSize the {@code aes128gcm} record size (RFC 8188 {@code rs}); {@code null} keeps the {@code PushSender}
  *     default (4096 bytes). Rejected at startup if below 18 (RFC 8188 §2); separately, a send fails if the value does
  *     not exceed that particular payload plus 17 bytes (RFC 8291 §4) — a per-payload check this property cannot
@@ -90,7 +90,7 @@ public record Push2uProperties(
     /**
      * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
      *
-     * @param maxAttempts the maximum number of POSTs including the first (≥ 1)
+     * @param maxAttempts the maximum number of POSTs including the first (≥ 1). Rejected at startup if below 1
      * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry
      * @param maxBackoff the ceiling for the backoff (and any honoured {@code Retry-After})
      */
