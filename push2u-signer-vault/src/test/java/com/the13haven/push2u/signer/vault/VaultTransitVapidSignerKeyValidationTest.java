@@ -250,11 +250,9 @@ class VaultTransitVapidSignerKeyValidationTest {
     }
 
     private static VaultTransitVapidSigner signerFor(String metadataBody) {
-        return VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(new MetadataTransport(metadataBody))
                 .build();
     }

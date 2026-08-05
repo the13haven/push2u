@@ -51,11 +51,12 @@ class VaultTransitVapidSignerSignResponseTest {
                 return new VaultHttpResponse(200, responseBody);
             }
         };
-        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                .address(URI.create("http://vault.test:8200"))
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("http://vault.test:8200"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        publicKey)
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(stub)
                 .build();
     }
@@ -79,11 +80,12 @@ class VaultTransitVapidSignerSignResponseTest {
                 return new VaultHttpResponse(200, responseBody);
             }
         };
-        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                .address(URI.create("http://vault.test:8200"))
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("http://vault.test:8200"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        publicKey)
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .keyVersion(keyVersion)
                 .transport(stub)
                 .build();

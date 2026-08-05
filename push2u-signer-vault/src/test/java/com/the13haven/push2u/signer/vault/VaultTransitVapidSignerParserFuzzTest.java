@@ -546,11 +546,9 @@ class VaultTransitVapidSignerParserFuzzTest {
     private static byte[] signAgainst(String responseBody) {
         byte[] publicKey = new byte[65];
         publicKey[0] = 0x04;
-        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), publicKey)
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(canned(responseBody))
                 .build()
                 .sign(PROBE);
@@ -558,11 +556,9 @@ class VaultTransitVapidSignerParserFuzzTest {
 
     /** Run a whole fetched-mode construction against a Vault whose key read answers {@code responseBody}. */
     private static VaultTransitVapidSigner constructAgainst(String responseBody) {
-        return VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(canned(responseBody))
                 .build();
     }

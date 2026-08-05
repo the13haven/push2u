@@ -41,20 +41,21 @@ import com.the13haven.push2u.VapidSigner;
  * contract, not merely in parameters, which is why neither is the default:
  *
  * <ul>
- *   <li><b>Explicit</b> ({@link #builderWithSuppliedPublicKey(byte[])} — the builder is named for what the caller does,
- *       supply the key) — pass the 65-byte X9.62 uncompressed point. {@code build()} performs no I/O. The Vault token
- *       then needs only the {@code sign} capability ({@code update} on {@code transit/sign/<key>}); the public key is
- *       never read from Vault. Use this for a strict sign-only token or an air-gapped public key.
+ *   <li><b>Explicit</b> ({@link #builderWithSuppliedPublicKey(URI, TransitKeyName, VaultToken, byte[])} — the builder
+ *       is named for what the caller does, supply the key) — pass the 65-byte X9.62 uncompressed point. {@code build()}
+ *       performs no I/O. The Vault token then needs only the {@code sign} capability ({@code update} on
+ *       {@code transit/sign/<key>}); the public key is never read from Vault. Use this for a strict sign-only token or
+ *       an air-gapped public key.
  *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04} uncompressed tag. It
  *       is not verified to be a point on P-256, and nothing here can check that it is the public half of the Transit
  *       key being signed with: that remains the caller's responsibility. The P-256 validation described below applies
  *       to the fetched mode alone.
- *   <li><b>Fetched</b> ({@link #builderWithFetchedPublicKey()}) — omit the public key. The signer reads
- *       {@code transit/keys/<key>} once, inside {@code build()} (a {@code GET}), takes the {@code latest_version} and
- *       <em>that version's</em> public key as an atomic pair, and reduces the PEM to the uncompressed point. This keeps
- *       a <em>single source of truth</em> — the Transit key — so the published key can never drift from the signing
- *       key. The token additionally needs {@code read} on {@code transit/keys/<key>} (which exposes only the public
- *       keys + metadata, never private material). This is the recommended mode.
+ *   <li><b>Fetched</b> ({@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}) — omit the public key.
+ *       The signer reads {@code transit/keys/<key>} once, inside {@code build()} (a {@code GET}), takes the
+ *       {@code latest_version} and <em>that version's</em> public key as an atomic pair, and reduces the PEM to the
+ *       uncompressed point. This keeps a <em>single source of truth</em> — the Transit key — so the published key can
+ *       never drift from the signing key. The token additionally needs {@code read} on {@code transit/keys/<key>}
+ *       (which exposes only the public keys + metadata, never private material). This is the recommended mode.
  *       <p>Construction fails fast unless the key really is P-256: the response's {@code type} must be
  *       {@code ecdsa-p256} (or Vault Enterprise's {@code managed_key}), and the parsed public key must carry P-256's
  *       domain parameters <em>and</em> be a point that satisfies the curve equation. The checks are independent — the
@@ -70,10 +71,12 @@ import com.the13haven.push2u.VapidSigner;
  * response bodies, while Vault's responses must be read — buffered under the transport's size cap and per-request
  * timeout. The small Vault request/response JSON is built and parsed by hand — no JSON library.
  *
- * <p>Both builders share the same steps: {@code address}, {@code keyName} and {@code token} are required and
- * {@code build()} refuses without them, while {@code mount} (default {@code "transit"}) and {@code transport} (default
- * {@link JdkVaultHttpTransport}) are optional. Only the supplied-key builder has {@code keyVersion} — in the fetched
- * mode the version is Vault's to state, not the caller's.
+ * <p>Both factory methods take everything required — the Vault base address, the {@link TransitKeyName} and the
+ * {@link VaultToken} — so an incomplete signer cannot be expressed and {@code build()} never refuses over a missing
+ * value; the value types keep the arguments impossible to swap and carry their own validation. The builders hold only
+ * the optional steps: {@code mount} (default {@code "transit"}) and {@code transport} (default
+ * {@link JdkVaultHttpTransport}). Only the supplied-key builder has {@code keyVersion} — in the fetched mode the
+ * version is Vault's to state, not the caller's.
  *
  * <p><b>Key rotation:</b> the fetched mode captures the key version together with its public key at construction and
  * pins that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
@@ -153,28 +156,39 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * from Vault, so it performs I/O and can fail with a {@link PushCryptoException}. It has no {@code keyVersion} step
      * — the version comes from Vault together with the public key it belongs to, as one atomic pair.
      *
+     * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
+     *     (this mode reads the key metadata)
      * @return a new builder
      */
-    public static FetchedPublicKeyBuilder builderWithFetchedPublicKey() {
-        return new FetchedPublicKeyBuilder();
+    public static FetchedPublicKeyBuilder builderWithFetchedPublicKey(
+            URI address, TransitKeyName keyName, VaultToken token) {
+        return new FetchedPublicKeyBuilder(address, keyName, token);
     }
 
     /**
      * A builder for the <b>explicit</b> mode: the caller supplies the published VAPID public key, and
      * {@link SuppliedPublicKeyBuilder#build()} contacts nothing. The Vault token then needs only {@code sign}.
      *
+     * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key — this mode never reads the key metadata, so a
+     *     sign-only token is enough
      * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
      * @return a new builder
+     * @throws IllegalArgumentException if {@code publicKey} is not a 65-byte uncompressed point
      */
-    public static SuppliedPublicKeyBuilder builderWithSuppliedPublicKey(byte[] publicKey) {
-        return new SuppliedPublicKeyBuilder(publicKey);
+    public static SuppliedPublicKeyBuilder builderWithSuppliedPublicKey(
+            URI address, TransitKeyName keyName, VaultToken token, byte[] publicKey) {
+        return new SuppliedPublicKeyBuilder(address, keyName, token, publicKey);
     }
 
     private VaultTransitVapidSigner(
             URI vaultAddress,
             String mount,
-            String keyName,
-            String token,
+            TransitKeyName keyName,
+            VaultToken token,
             @Nullable Integer keyVersion,
             byte[] publicKey,
             VaultHttpTransport transport) {
@@ -188,34 +202,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         if (keyVersion != null && keyVersion < 1) {
             throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
         }
-        this.signUri = vaultAddress.resolve("/v1/" + mount + "/sign/" + keyName);
-        this.token = headerSafeToken(token);
+        this.signUri = vaultAddress.resolve("/v1/" + mount + "/sign/" + keyName.value());
+        // Unwrapped once, here: VaultToken is header-safe by construction, so nothing downstream
+        // re-validates it — and the raw String never reaches any toString() or exception message.
+        this.token = Objects.requireNonNull(token, "token").value();
         this.publicKey = publicKey.clone();
         this.keyVersion = keyVersion;
         this.transport = Objects.requireNonNull(transport, "transport");
-    }
-
-    /**
-     * Validate that {@code token} can travel in an HTTP header before it is ever offered to a transport. RFC 9110
-     * limits a field value to HTAB, SP, visible ASCII and obs-text (0x80–0xFF); the character actually seen in the wild
-     * is the trailing newline a token picks up from {@code kubectl create secret --from-file}, a Vault Agent sidecar
-     * file, or a YAML block scalar. Left to the HTTP client, that token is rejected by the JDK's own header validation
-     * with the WHOLE value in the {@code IllegalArgumentException} message — in the fetched mode from inside
-     * {@code build()}, i.e. straight into the application's startup stack trace and logs. Failing here makes the
-     * misconfiguration fail at construction with a message that names the problem and no part of the value.
-     */
-    private static String headerSafeToken(String token) {
-        Objects.requireNonNull(token, "token");
-        for (int i = 0; i < token.length(); i++) {
-            char c = token.charAt(i);
-            if (c != '\t' && (c < 0x20 || c == 0x7F || c > 0xFF)) {
-                throw new IllegalArgumentException("token contains a character (at index " + i + " of "
-                        + token.length() + ") that cannot appear in an HTTP header value — a token sourced from a"
-                        + " file or a YAML block scalar commonly carries a trailing newline. The value itself is"
-                        + " deliberately not echoed");
-            }
-        }
-        return token;
     }
 
     @Override
@@ -266,18 +259,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * key that fails much later, as an opaque push-service rejection.
      */
     private static VaultKeyMetadata fetchKeyMetadata(
-            URI vaultAddress, String mount, String keyName, String token, VaultHttpTransport transport) {
+            URI vaultAddress, String mount, TransitKeyName keyName, VaultToken token, VaultHttpTransport transport) {
         Objects.requireNonNull(vaultAddress, "vaultAddress");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
-        // Validated here as well as in the canonical constructor: in the fetched mode this runs
-        // FIRST (FetchedPublicKeyBuilder.build() reads the key metadata before it constructs
-        // anything), and the token must be rejected before it is ever offered to a transport as a
-        // header value.
-        headerSafeToken(token);
+        Objects.requireNonNull(token, "token");
         Objects.requireNonNull(transport, "transport");
-        URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName);
-        VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token));
+        URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName.value());
+        // No header-safety check here: a VaultToken is header-safe by construction, so this call —
+        // which in the fetched mode runs before the canonical constructor — cannot offer an
+        // invalid value to the transport.
+        VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token.value()));
         if (response.statusCode() != 200) {
             throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode() + " — "
                     + abbreviated(response.body()));
@@ -814,30 +806,6 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         return signature.group(2);
     }
 
-    /**
-     * A required builder step that was never called. The message names the <em>step</em> rather than the constructor
-     * parameter it ends up as, because the step is what the caller has to add; the Spring starter translates it further
-     * into the YAML property name it binds from.
-     */
-    private static <T> T required(@Nullable T value, String step, String what) {
-        if (value == null) {
-            throw new IllegalStateException(step + "(...) is required: " + what);
-        }
-        return value;
-    }
-
-    private static URI requiredAddress(@Nullable URI address) {
-        return required(address, "address", "the Vault base address, e.g. https://vault.example:8200");
-    }
-
-    private static String requiredKeyName(@Nullable String keyName) {
-        return required(keyName, "keyName", "the ecdsa-p256 Transit key name");
-    }
-
-    private static String requiredToken(@Nullable String token) {
-        return required(token, "token", "the Vault token authorising the Transit calls");
-    }
-
     /** The transport a builder was given, or a fresh default one — never shared between signers. */
     private static VaultHttpTransport orDefaultTransport(@Nullable VaultHttpTransport transport) {
         return transport == null ? new JdkVaultHttpTransport() : transport;
@@ -845,40 +813,29 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * Builds a signer in the <b>fetched</b> mode, reading the public key and its key version from Vault. Obtained from
-     * {@link VaultTransitVapidSigner#builderWithFetchedPublicKey()}.
+     * {@link VaultTransitVapidSigner#builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}, which takes
+     * everything required — this builder holds only the optional steps, so {@code build()} can never refuse over a
+     * missing value.
      *
-     * <p>{@link #address(URI)}, {@link #keyName(String)} and {@link #token(String)} are required;
-     * {@link #mount(String)} defaults to {@code "transit"} and {@link #transport(VaultHttpTransport)} to a fresh
+     * <p>{@link #mount(String)} defaults to {@code "transit"} and {@link #transport(VaultHttpTransport)} to a fresh
      * {@link JdkVaultHttpTransport}. There is deliberately no {@code keyVersion} step: this mode takes the version from
      * the same {@code transit/keys/<key>} response as the public key, which is what keeps the two in step.
      */
     public static final class FetchedPublicKeyBuilder {
 
-        @Nullable
-        private URI address;
+        private final URI address;
+        private final TransitKeyName keyName;
+        private final VaultToken token;
 
         private String mount = DEFAULT_MOUNT;
 
         @Nullable
-        private String keyName;
-
-        @Nullable
-        private String token;
-
-        @Nullable
         private VaultHttpTransport transport;
 
-        private FetchedPublicKeyBuilder() {}
-
-        /**
-         * Sets the Vault base address, e.g. {@code https://vault.example:8200}. Required.
-         *
-         * @param address the Vault base address
-         * @return this builder
-         */
-        public FetchedPublicKeyBuilder address(URI address) {
+        private FetchedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token) {
             this.address = Objects.requireNonNull(address, "address");
-            return this;
+            this.keyName = Objects.requireNonNull(keyName, "keyName");
+            this.token = Objects.requireNonNull(token, "token");
         }
 
         /**
@@ -890,29 +847,6 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          */
         public FetchedPublicKeyBuilder mount(String mount) {
             this.mount = Objects.requireNonNull(mount, "mount");
-            return this;
-        }
-
-        /**
-         * Sets the {@code ecdsa-p256} Transit key name. Required.
-         *
-         * @param keyName the Transit key name
-         * @return this builder
-         */
-        public FetchedPublicKeyBuilder keyName(String keyName) {
-            this.keyName = Objects.requireNonNull(keyName, "keyName");
-            return this;
-        }
-
-        /**
-         * Sets the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
-         * (this mode reads the key metadata). Required.
-         *
-         * @param token the Vault token
-         * @return this builder
-         */
-        public FetchedPublicKeyBuilder token(String token) {
-            this.token = Objects.requireNonNull(token, "token");
             return this;
         }
 
@@ -934,51 +868,34 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * advertised as latest.
          *
          * @return the signer
-         * @throws IllegalStateException if a required step was not called
-         * @throws IllegalArgumentException if the token cannot travel in an HTTP header
          * @throws PushCryptoException if the key read fails or the key is not a usable P-256 key
          */
         public VaultTransitVapidSigner build() {
-            URI resolvedAddress = requiredAddress(address);
-            String resolvedKeyName = requiredKeyName(keyName);
-            String resolvedToken = requiredToken(token);
             VaultHttpTransport resolvedTransport = orDefaultTransport(transport);
-            VaultKeyMetadata metadata =
-                    fetchKeyMetadata(resolvedAddress, mount, resolvedKeyName, resolvedToken, resolvedTransport);
+            VaultKeyMetadata metadata = fetchKeyMetadata(address, mount, keyName, token, resolvedTransport);
             return new VaultTransitVapidSigner(
-                    resolvedAddress,
-                    mount,
-                    resolvedKeyName,
-                    resolvedToken,
-                    metadata.version(),
-                    metadata.publicKey(),
-                    resolvedTransport);
+                    address, mount, keyName, token, metadata.version(), metadata.publicKey(), resolvedTransport);
         }
     }
 
     /**
      * Builds a signer in the <b>explicit</b> mode, from a public key the caller already holds — hence the name.
-     * Obtained from {@link VaultTransitVapidSigner#builderWithSuppliedPublicKey(byte[])}, which takes that key.
+     * Obtained from {@link VaultTransitVapidSigner#builderWithSuppliedPublicKey(URI, TransitKeyName, VaultToken,
+     * byte[])}, which takes everything required — this builder holds only the optional steps, so {@code build()} can
+     * never refuse over a missing value.
      *
-     * <p>{@link #address(URI)}, {@link #keyName(String)} and {@link #token(String)} are required;
-     * {@link #mount(String)} defaults to {@code "transit"}, {@link #transport(VaultHttpTransport)} to a fresh
+     * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #transport(VaultHttpTransport)} to a fresh
      * {@link JdkVaultHttpTransport}, and {@link #keyVersion(int)} is optional but strongly recommended — see its own
      * documentation. {@link #build()} makes no Vault call.
      */
     public static final class SuppliedPublicKeyBuilder {
 
+        private final URI address;
+        private final TransitKeyName keyName;
+        private final VaultToken token;
         private final byte[] publicKey;
 
-        @Nullable
-        private URI address;
-
         private String mount = DEFAULT_MOUNT;
-
-        @Nullable
-        private String keyName;
-
-        @Nullable
-        private String token;
 
         @Nullable
         private Integer keyVersion;
@@ -986,22 +903,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         @Nullable
         private VaultHttpTransport transport;
 
-        // Copied at the factory method, not only in the constructor the builder eventually calls:
-        // otherwise the caller's array stays live for as long as the builder does, and a mutation
-        // between builderWithSuppliedPublicKey(...) and build() would change the advertised key.
-        private SuppliedPublicKeyBuilder(byte[] publicKey) {
-            this.publicKey = Objects.requireNonNull(publicKey, "publicKey").clone();
-        }
-
-        /**
-         * Sets the Vault base address, e.g. {@code https://vault.example:8200}. Required.
-         *
-         * @param address the Vault base address
-         * @return this builder
-         */
-        public SuppliedPublicKeyBuilder address(URI address) {
+        // The key is copied at the factory method, not only in the constructor the builder
+        // eventually calls: otherwise the caller's array stays live for as long as the builder
+        // does, and a mutation between builderWithSuppliedPublicKey(...) and build() would change
+        // the advertised key. Its shape is also checked here, so an invalid key fails at the
+        // factory call that supplied it (the canonical constructor re-checks the same invariant
+        // for the fetched mode's array).
+        private SuppliedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token, byte[] publicKey) {
             this.address = Objects.requireNonNull(address, "address");
-            return this;
+            this.keyName = Objects.requireNonNull(keyName, "keyName");
+            this.token = Objects.requireNonNull(token, "token");
+            Objects.requireNonNull(publicKey, "publicKey");
+            if (publicKey.length != UNCOMPRESSED_LENGTH || publicKey[0] != UNCOMPRESSED_TAG) {
+                throw new IllegalArgumentException(
+                        "publicKey must be a 65-byte uncompressed P-256 point (0x04 prefix)");
+            }
+            this.publicKey = publicKey.clone();
         }
 
         /**
@@ -1017,29 +934,6 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
 
         /**
-         * Sets the {@code ecdsa-p256} Transit key name. Required.
-         *
-         * @param keyName the Transit key name
-         * @return this builder
-         */
-        public SuppliedPublicKeyBuilder keyName(String keyName) {
-            this.keyName = Objects.requireNonNull(keyName, "keyName");
-            return this;
-        }
-
-        /**
-         * Sets the Vault token authorising {@code sign} on the key. Required. This mode never reads the key metadata,
-         * so a sign-only token is enough.
-         *
-         * @param token the Vault token
-         * @return this builder
-         */
-        public SuppliedPublicKeyBuilder token(String token) {
-            this.token = Objects.requireNonNull(token, "token");
-            return this;
-        }
-
-        /**
          * Pins the Transit key version the supplied public key belongs to, sent as {@code key_version} on every
          * {@code sign} request. Optional, and <b>omitting it is unsafe under key rotation</b>: without a pin Vault
          * signs with the key's latest version, so after a rotation it signs with the new private key while this signer
@@ -1048,8 +942,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          *
          * @param keyVersion the Transit key version the supplied public key belongs to ({@code >= 1})
          * @return this builder
+         * @throws IllegalArgumentException if {@code keyVersion} is below 1
          */
         public SuppliedPublicKeyBuilder keyVersion(int keyVersion) {
+            // Validated where it is set, so the failure points at the call that supplied the value
+            // (the canonical constructor re-checks the same invariant).
+            if (keyVersion < 1) {
+                throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
+            }
             this.keyVersion = keyVersion;
             return this;
         }
@@ -1070,19 +970,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * Builds the signer. Contacts nothing.
          *
          * @return the signer
-         * @throws IllegalStateException if a required step was not called
-         * @throws IllegalArgumentException if the public key is not a 65-byte uncompressed point, the key version is
-         *     below 1, or the token cannot travel in an HTTP header
          */
         public VaultTransitVapidSigner build() {
             return new VaultTransitVapidSigner(
-                    requiredAddress(address),
-                    mount,
-                    requiredKeyName(keyName),
-                    requiredToken(token),
-                    keyVersion,
-                    publicKey,
-                    orDefaultTransport(transport));
+                    address, mount, keyName, token, keyVersion, publicKey, orDefaultTransport(transport));
         }
     }
 }

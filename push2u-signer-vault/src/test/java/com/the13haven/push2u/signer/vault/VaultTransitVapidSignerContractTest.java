@@ -73,11 +73,11 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     /** Fetched mode — the signer reads its own public key from Vault. */
     @Override
     protected VapidSigner signer() {
-        return VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                .address(URI.create(vault.getHttpHostAddress()))
+        return VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create(vault.getHttpHostAddress()),
+                        new TransitKeyName(KEY_NAME),
+                        new VaultToken(ROOT_TOKEN))
                 .mount(MOUNT)
-                .keyName(KEY_NAME)
-                .token(ROOT_TOKEN)
                 .build();
     }
 
@@ -90,11 +90,12 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
 
     @Test
     void explicitMode_advertisesTheSuppliedKeyAndSigns() {
-        VapidSigner explicit = VaultTransitVapidSigner.builderWithSuppliedPublicKey(vapidPublicKey)
-                .address(URI.create(vault.getHttpHostAddress()))
+        VapidSigner explicit = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create(vault.getHttpHostAddress()),
+                        new TransitKeyName(KEY_NAME),
+                        new VaultToken(ROOT_TOKEN),
+                        vapidPublicKey)
                 .mount(MOUNT)
-                .keyName(KEY_NAME)
-                .token(ROOT_TOKEN)
                 .build();
         assertThat(explicit.publicKey()).isEqualTo(vapidPublicKey);
         // Same Vault sign path as the fetched mode the contract already verifies — assert it produces
@@ -114,11 +115,9 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     void fetchedMode_keepsSigningWithItsPinnedVersionAfterKeyRotation() throws Exception {
         String keyName = "vapid-rotation";
         createTransitKey(keyName);
-        VapidSigner pinned = VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                .address(URI.create(vault.getHttpHostAddress()))
+        VapidSigner pinned = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create(vault.getHttpHostAddress()), new TransitKeyName(keyName), new VaultToken(ROOT_TOKEN))
                 .mount(MOUNT)
-                .keyName(keyName)
-                .token(ROOT_TOKEN)
                 .build();
         byte[] advertised = pinned.publicKey();
 
@@ -165,11 +164,12 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
                 .as("rotation produced a new latest key")
                 .isNotEqualTo(v1PublicKey);
 
-        VapidSigner pinned = VaultTransitVapidSigner.builderWithSuppliedPublicKey(v1PublicKey)
-                .address(URI.create(vault.getHttpHostAddress()))
+        VapidSigner pinned = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create(vault.getHttpHostAddress()),
+                        new TransitKeyName(keyName),
+                        new VaultToken(ROOT_TOKEN),
+                        v1PublicKey)
                 .mount(MOUNT)
-                .keyName(keyName)
-                .token(ROOT_TOKEN)
                 .keyVersion(1)
                 .build();
         assertThat(pinned.publicKey()).isEqualTo(v1PublicKey);

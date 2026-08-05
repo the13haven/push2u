@@ -20,7 +20,9 @@ import org.springframework.context.annotation.Bean;
 
 import com.the13haven.push2u.VapidSigner;
 import com.the13haven.push2u.signer.vault.JdkVaultHttpTransport;
+import com.the13haven.push2u.signer.vault.TransitKeyName;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
+import com.the13haven.push2u.signer.vault.VaultToken;
 import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 
 /**
@@ -92,8 +94,17 @@ public final class VaultSignerAutoConfiguration {
         // so the contract holds in the type system too, and so a future change to the condition
         // fails here naming the property rather than with a NullPointerException.
         URI address = Objects.requireNonNull(properties.address(), "push2u.signer.vault.address");
-        String keyName = Objects.requireNonNull(properties.keyName(), "push2u.signer.vault.key-name");
-        String token = Objects.requireNonNull(properties.token(), "push2u.signer.vault.token");
+        // The value types validate on construction. The key-name failure is translated to name the
+        // YAML property (this validation is new — nothing failed at startup for these values
+        // before); the token's own IllegalArgumentException is deliberately left as-is: its message
+        // already names the problem without echoing the value, exactly as it always surfaced here.
+        TransitKeyName keyName;
+        try {
+            keyName = new TransitKeyName(Objects.requireNonNull(properties.keyName(), "push2u.signer.vault.key-name"));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("push2u.signer.vault.key-name: " + e.getMessage(), e);
+        }
+        VaultToken token = new VaultToken(Objects.requireNonNull(properties.token(), "push2u.signer.vault.token"));
         String publicKey = properties.publicKey();
         Integer keyVersion = properties.keyVersion();
         if (publicKey == null || publicKey.isBlank()) {
@@ -105,22 +116,16 @@ public final class VaultSignerAutoConfiguration {
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
             // (the token needs `read` on the key).
-            return VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                    .address(address)
+            return VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token)
                     .mount(properties.mount())
-                    .keyName(keyName)
-                    .token(token)
                     .transport(resolved)
                     .build();
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
         VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        decodePublicKey(publicKey))
-                .address(address)
+                        address, keyName, token, decodePublicKey(publicKey))
                 .mount(properties.mount())
-                .keyName(keyName)
-                .token(token)
                 .transport(resolved);
         if (keyVersion != null) {
             builder.keyVersion(keyVersion);

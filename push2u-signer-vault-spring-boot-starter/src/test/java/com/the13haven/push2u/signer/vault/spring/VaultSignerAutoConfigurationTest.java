@@ -112,6 +112,47 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void aKeyNameThatWouldAlterTheRequestPathFailsNamingTheProperty() {
+        // TransitKeyName's own message names the constructor's viewpoint, not the YAML the
+        // operator wrote — the starter prefixes the property, like every other translated failure.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.key-name=vapid/../other")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.key-name")
+                            .hasStackTraceContaining("request path");
+                });
+    }
+
+    @Test
+    void aTokenWithAnEmbeddedNewlineFailsWithoutEchoingTheValue() {
+        // The same behaviour as before the VaultToken type existed: the IllegalArgumentException
+        // surfaces as-is, naming the problem and no part of the value. The newline is embedded
+        // rather than trailing because TestPropertyValues trims a trailing one before it ever
+        // reaches the binder — the real-world trailing-newline arrival is covered by
+        // VaultTokenTest in the signer module.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.token=secret-token-value\nsecond-line")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("token contains a character")
+                            .satisfies(
+                                    failure -> assertThat(rootMessage(failure)).doesNotContain("secret-token-value"));
+                });
+    }
+
+    /** The root cause's message, where the token rejection surfaces. */
+    private static String rootMessage(Throwable failure) {
+        Throwable cursor = failure;
+        while (cursor.getCause() != null) {
+            cursor = cursor.getCause();
+        }
+        return String.valueOf(cursor.getMessage());
+    }
+
+    @Test
     void keyVersionPinsTheExplicitSigner() {
         // Observe the actual sign request through a recording transport: the wired signer must
         // send the configured key_version to Vault. A bean-type assertion alone would stay green

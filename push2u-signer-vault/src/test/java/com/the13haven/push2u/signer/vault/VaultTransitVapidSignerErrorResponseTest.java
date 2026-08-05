@@ -130,138 +130,37 @@ class VaultTransitVapidSignerErrorResponseTest {
                 .isInstanceOf(PushCryptoException.class);
     }
 
-    // ---- builder argument validation --------------------------------------------------------------
+    // ---- factory argument validation --------------------------------------------------------------
+    //
+    // A missing required value no longer has a test because it no longer has a runtime failure:
+    // the factory methods take the address, the key name and the token, so an incomplete builder
+    // does not compile. A token or key name that is present but invalid is rejected by VaultToken /
+    // TransitKeyName at construction — see VaultTokenTest and TransitKeyNameTest.
 
+    /** The supplied public key is validated at the factory call that supplies it, before any Vault request. */
     @Test
-    void anExplicitPublicKeyOfTheWrongShapeIsRejected() {
+    void anExplicitPublicKeyOfTheWrongShapeIsRejectedAtTheFactory() {
         byte[] wrongPrefix = new byte[65];
         wrongPrefix[0] = 0x03;
 
-        assertThatThrownBy(() -> suppliedBuilder(wrongPrefix).build())
+        assertThatThrownBy(() -> suppliedBuilder(wrongPrefix))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("0x04");
 
-        assertThatThrownBy(() -> suppliedBuilder(new byte[64]).build()).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> suppliedBuilder(new byte[64])).isInstanceOf(IllegalArgumentException.class);
     }
 
+    /** {@code keyVersion} is validated where it is set, so the failure points at the offending call. */
     @Test
     void aKeyVersionBelowOneIsRejected() {
         byte[] publicKey = new byte[65];
         publicKey[0] = 0x04;
 
         for (int version : new int[] {0, -1}) {
-            assertThatThrownBy(
-                            () -> suppliedBuilder(publicKey).keyVersion(version).build())
+            assertThatThrownBy(() -> suppliedBuilder(publicKey).keyVersion(version))
                     .as("key_version %d", version)
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("keyVersion must be >= 1");
-        }
-    }
-
-    /**
-     * Each required step of the fetched-mode builder, left out one at a time. {@code build()} must name the step that
-     * is missing — the whole point of replacing the positional constructors — and must do so before any Vault call.
-     */
-    @Test
-    void theFetchedBuilderNamesEachMissingRequiredStep() {
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                        .keyName("vapid")
-                        .token(TOKEN)
-                        .transport(alwaysFails())
-                        .build())
-                .as("no address(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("address(...) is required");
-
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                        .address(VAULT)
-                        .token(TOKEN)
-                        .transport(alwaysFails())
-                        .build())
-                .as("no keyName(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("keyName(...) is required");
-
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                        .address(VAULT)
-                        .keyName("vapid")
-                        .transport(alwaysFails())
-                        .build())
-                .as("no token(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("token(...) is required");
-    }
-
-    /** The same, for the supplied-key builder — the public key itself is a factory argument, so it cannot be missed. */
-    @Test
-    void theSuppliedBuilderNamesEachMissingRequiredStep() {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
-
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                        .keyName("vapid")
-                        .token(TOKEN)
-                        .transport(alwaysFails())
-                        .build())
-                .as("no address(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("address(...) is required");
-
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                        .address(VAULT)
-                        .token(TOKEN)
-                        .transport(alwaysFails())
-                        .build())
-                .as("no keyName(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("keyName(...) is required");
-
-        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                        .address(VAULT)
-                        .keyName("vapid")
-                        .transport(alwaysFails())
-                        .build())
-                .as("no token(...)")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("token(...) is required");
-    }
-
-    @Test
-    void aTokenWithACharacterIllegalInAHeaderIsRejectedBeforeAnyRequest() {
-        // A token with a trailing newline is exactly how it arrives from `kubectl create secret
-        // --from-file`, a Vault Agent sidecar file, or a YAML block scalar. Sent as-is, the JDK
-        // header validation rejects it with the WHOLE token in the exception message — in
-        // fetched mode inside the constructor, i.e. in the application's startup stack trace.
-        // The misconfiguration must instead fail here, before any request, with a message that
-        // names the problem and no part of the value.
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
-
-        for (String token : new String[] {TOKEN + "\n", TOKEN + "\r", "hvs.embedded\0nul"}) {
-            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                            .address(VAULT)
-                            .mount("transit")
-                            .keyName("vapid")
-                            .token(token)
-                            .transport(alwaysFails())
-                            .build())
-                    .as("explicit mode")
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("token")
-                    .satisfies(e ->
-                            assertThat(e.getMessage()).doesNotContain(TOKEN).doesNotContain("hvs.embedded"));
-            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                            .address(VAULT)
-                            .mount("transit")
-                            .keyName("vapid")
-                            .token(token)
-                            .transport(alwaysFails())
-                            .build())
-                    .as("fetched mode")
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("token")
-                    .satisfies(e ->
-                            assertThat(e.getMessage()).doesNotContain(TOKEN).doesNotContain("hvs.embedded"));
         }
     }
 
@@ -269,11 +168,9 @@ class VaultTransitVapidSignerErrorResponseTest {
 
     /** A supplied-key builder for {@code publicKey}, wired to a transport that refuses every call. */
     private static VaultTransitVapidSigner.SuppliedPublicKeyBuilder suppliedBuilder(byte[] publicKey) {
-        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), publicKey)
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(alwaysFails());
     }
 
@@ -281,11 +178,9 @@ class VaultTransitVapidSignerErrorResponseTest {
     private static VaultTransitVapidSigner explicitSigner(VaultHttpResponse response) {
         byte[] publicKey = new byte[65];
         publicKey[0] = 0x04;
-        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(publicKey)
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), publicKey)
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(new VaultHttpTransport() {
                     @Override
                     public VaultHttpResponse get(URI uri, Map<String, String> headers) {
@@ -302,11 +197,9 @@ class VaultTransitVapidSignerErrorResponseTest {
 
     /** A fetched-mode signer whose key read always answers {@code response}. */
     private static VaultTransitVapidSigner fetchedSigner(VaultHttpResponse response) {
-        return VaultTransitVapidSigner.builderWithFetchedPublicKey()
-                .address(VAULT)
+        return VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("transit")
-                .keyName("vapid")
-                .token(TOKEN)
                 .transport(new VaultHttpTransport() {
                     @Override
                     public VaultHttpResponse get(URI uri, Map<String, String> headers) {
