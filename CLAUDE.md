@@ -186,13 +186,14 @@ starter is ordered before the core starter and outranks the local signer.
   rewrites every one of them to the released version, matching any `X.Y.Z` — so a coordinate written
   to name a *historical* version (in a migration note, say) would be silently bumped; put such a
   version somewhere other than a `com.the13haven:<module>:` coordinate. Some versions cannot live in
-  the catalog and are not violations of this rule: the JDK toolchain (the root build and all five
-  workflows) and `--release 21` (the root build only); GitHub Action versions, major-tag pinned and
-  Dependabot-managed; the Testcontainers image tag in the Vault test; and **Gradle's own version**,
-  in `gradle/wrapper/gradle-wrapper.properties` beside
-  a `distributionSha256Sum` — which makes bumping it a procedure, CONTRIBUTING.md, *Upgrading
-  Gradle*. The `wrapper` task refuses to drop the checksum silently, so a wrong move there fails
-  loudly rather than weakening the build.
+  the catalog and are not violations of this rule: the JDK toolchain (the root build plus each of
+  the five workflows that set up a JDK) and `--release 21` (the root build only); GitHub Action
+  versions, major-tag pinned and Dependabot-managed; the Testcontainers image tag in the Vault test;
+  and **Gradle's own version**, in `gradle/wrapper/gradle-wrapper.properties` beside a
+  `distributionSha256Sum` — which makes bumping it a procedure, CONTRIBUTING.md, *Upgrading Gradle*.
+  The `wrapper` task refuses to drop the checksum silently, so a wrong move there fails loudly
+  rather than weakening the build. Those are the *declaration* sites; a JDK bump also stales the
+  prose in `README.md` and `CONTRIBUTING.md` that names the toolchain.
 - **Security pins:** vulnerable transitives are pinned with dependency *constraints*, never
   `resolutionStrategy.force` (force leaks the originally requested version into the submitted
   dependency graph and Dependabot alerts on that phantom node). Each pin names its advisory.
