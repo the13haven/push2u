@@ -237,8 +237,10 @@ tasks.named<JacocoReport>("jacocoTestReport") {
 //
 // Unlike Checkstyle/PMD/SpotBugs, Error Prone runs on the test compilations too: its checks are
 // about defects, not style, and they catch real ones there (a `return` inside a `finally`, a
-// String.split call with surprising trailing-empty behaviour). NullAway is the exception — without
-// annotations it reports every builder field, which on test sources is noise and nothing else.
+// String.split call with surprising trailing-empty behaviour). NullAway is the partial exception:
+// it covers `main` and `testFixtures` but stops before `test`/`fipsTest`, where a nullness
+// complaint is mostly scaffolding written to fail. See the predicate below for why that line falls
+// there and not somewhere else.
 // ---------------------------------------------------------------------------------------------
 dependencies {
     add("errorprone", toolLibrary("errorprone-core"))

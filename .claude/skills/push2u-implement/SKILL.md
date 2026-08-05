@@ -30,16 +30,21 @@ While iterating, run the narrowest thing that answers your question:
 ```
 
 Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
-package in `main` and unused imports, do not spend attention hand-checking them. Write the code, run
-the gate.
+package in a checked source set and unused imports, do not spend attention hand-checking them. Write
+the code, run the gate.
 
 NullAway and `RequireExplicitNullMarking` run over `main` **and `testFixtures`**, and stop before
 `test`/`fipsTest`. NullAway is in `OnlyNullMarked` mode, so coverage follows the `@NullMarked` scope
-rather than the source set: both modules' fixtures sit in the package of their own `main` and
-inherit the mark from its `package-info.class` on the compile classpath. **A fixtures package
-therefore needs no `package-info.java` of its own — adding one is a duplicate class for a package
-`main` already marks.** If `RequireExplicitNullMarking` fires on fixtures, the fix is to put the
-class in a package `main` marks, not to mark it again.
+rather than the source set, and the scope comes from a `package-info.java` — wherever it lives.
+
+Every fixtures package that exists today sits in the package of its own `main` and inherits the
+mark from its `package-info.class` on the compile classpath, so **do not add a `package-info.java`
+beside them**: it would be a second class file for a package `main` already marks, which javac
+compiles silently rather than refusing. If you put a fixtures class in a package `main` does *not*
+have, `RequireExplicitNullMarking` will fire — and then the fix is the ordinary one, a
+`package-info.java` for that new package. Move the class into `main`'s package only if it actually
+needs package-private access to internals, which is the sole reason the current fixtures live
+there; doing it to satisfy the check would deepen a split package across two jars for nothing.
 
 One thing the gate does **not** catch: a new public package in `push2u-core` or
 `push2u-signer-vault` needs an `exports` line in that module's `module-info.java`. The tests run on
@@ -58,12 +63,12 @@ Checkstyle fails the build if you forget.
 changing and cite it in the code comment or the test name. Every existing rule here does this, and
 it is what makes the next reader able to tell a deliberate choice from an accident.
 
-**Then start from the vector.** `push2u-core/src/testFixtures/java/com/the13haven/push2u/TestVectors.java`
-holds the published vectors transcribed verbatim — the RFC 8291 §5 worked example, the RFC 8292 §2.4
-example, RFC 5869 HKDF. They are the specification: if your change alters output, the vectors are
-what decide whether the new output is right. Extend them when you cover a new case; never adjust one
-to match what the code now produces. A vector that moves because code moved has stopped being
-evidence of anything.
+**Then start from the vector.** `TestVectors` (in `push2u-core`'s `testFixtures`, package
+`com.the13haven.push2u`) holds the published vectors transcribed verbatim — the RFC 8291 §5 worked
+example, the RFC 8292 §2.4 example, RFC 5869 HKDF. They are the specification: if your change alters
+output, the vectors are what decide whether the new output is right. Extend them when you cover a
+new case; never adjust one to match what the code now produces. A vector that moves because code
+moved has stopped being evidence of anything.
 
 Write the failing test before the fix — specifically the test that would have caught the bug. For
 security-relevant behaviour, aim the test at the bad outcome being impossible, not at the good path

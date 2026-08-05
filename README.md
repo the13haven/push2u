@@ -815,8 +815,7 @@ test only:
 Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
 the test compilations as well, since its checks are about defects rather than style; NullAway runs
 on `main` and on `testFixtures`, which share `main`'s packages and so its nullness contract. Reports
-land in
-`<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
+land in `<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
 `build/reports/jacoco/testCodeCoverageReport/`.
 
 Rule exclusions carry a comment stating why, and a per-file exception is a `@SuppressWarnings`
