@@ -28,6 +28,7 @@ body:
       multiple: true
       options:
         - push2u-core
+        - push2u-testkit
         - push2u-signer-vault
         - push2u-spring-boot-starter
         - push2u-signer-vault-spring-boot-starter

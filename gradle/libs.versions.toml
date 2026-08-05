@@ -104,9 +104,9 @@ errorprone = { id = "net.ltgt.errorprone", version.ref = "errorpronePlugin" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotlessPlugin" }
 
 # Release/publishing plugins. axion-release and nmcp-aggregation are applied at the root only —
-# versioning and the Central upload are whole-build concerns (Central validates one bundle with all
-# four modules together, so publishing cannot end half-done). Plain nmcp is applied per module by
-# the push2u-publish convention plugin (via build-logic), where it exposes that module's
+# versioning and the Central upload are whole-build concerns (Central validates one bundle with
+# every published module together, so publishing cannot end half-done). Plain nmcp is applied per
+# module by the push2u-publish convention plugin (via build-logic), where it exposes that module's
 # publication to the root's aggregation.
 axion-release = { id = "pl.allegro.tech.build.axion-release", version.ref = "axion" }
 nmcp = { id = "com.gradleup.nmcp", version.ref = "nmcp" }

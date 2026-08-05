@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.Signature;
 import java.security.interfaces.ECPublicKey;
@@ -33,8 +34,22 @@ import com.the13haven.push2u.VapidSigner;
  *
  * <p>Verification uses only the JDK and the public {@link VapidSigner} surface, so the contract is self-contained and
  * carries no push2u-internal dependency.
+ *
+ * <p>Put {@code com.the13haven:push2u-testkit} on the test classpath and extend this class:
+ *
+ * <pre>{@code
+ * class MySignerContractTest extends VapidSignerContractTest {
+ *     @Override
+ *     protected VapidSigner signer() {
+ *         return new MySigner(...);
+ *     }
+ * }
+ * }</pre>
  */
 public abstract class VapidSignerContractTest {
+
+    /** For subclasses: the kit is extended, never instantiated on its own. */
+    protected VapidSignerContractTest() {}
 
     /**
      * The signer under test.
@@ -43,6 +58,10 @@ public abstract class VapidSignerContractTest {
      */
     protected abstract VapidSigner signer();
 
+    // UnitTestContainsTooManyAsserts: PMD analyses this module's main sources, and this is main
+    // source that happens to be a test. Length and prefix are the two halves of one claim — "this
+    // is an X9.62 uncompressed point" — and neither half means anything alone.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void publicKeyIsA65ByteUncompressedPoint() {
         byte[] publicKey = signer().publicKey();
@@ -56,8 +75,13 @@ public abstract class VapidSignerContractTest {
      * checks the point against P-256 itself — coordinates inside the prime field, then the curve equation {@code y² ≡
      * x³ + ax + b (mod p)}.
      */
+    // UnitTestContainsTooManyAsserts: "the point is on P-256" is one claim, and its assertions are
+    // a chain rather than a list — the length guard is what makes the coordinate split meaningful,
+    // the field bounds are what make the curve equation meaningful. Split across methods they would
+    // re-derive the same key and report one broken signer as several unrelated failures.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
-    void publicKeyIsAPointOnTheP256Curve() throws Exception {
+    void publicKeyIsAPointOnTheP256Curve() throws GeneralSecurityException {
         byte[] publicKey = signer().publicKey();
         assertThat(publicKey).hasSize(65);
 
@@ -79,8 +103,12 @@ public abstract class VapidSignerContractTest {
                 .isEqualTo(right);
     }
 
+    // UnitTestContainsTooManyAsserts: the signature's length and its verification are one claim —
+    // raw r||s that verifies — and asserting the length first is what turns a DER signature into
+    // "expected 64 bytes" instead of an opaque `verify() == false`.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
-    void signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey() throws Exception {
+    void signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey() throws GeneralSecurityException {
         VapidSigner signer = signer();
         byte[] signingInput = "push2u VapidSigner conformance".getBytes(StandardCharsets.US_ASCII);
 
@@ -95,7 +123,7 @@ public abstract class VapidSignerContractTest {
                 .isTrue();
     }
 
-    private static ECPublicKey decodeP256PublicKey(byte[] uncompressed) throws Exception {
+    private static ECPublicKey decodeP256PublicKey(byte[] uncompressed) throws GeneralSecurityException {
         BigInteger x = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1, 33));
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(uncompressed, 33, 65));
         return (ECPublicKey)
@@ -103,7 +131,7 @@ public abstract class VapidSignerContractTest {
     }
 
     /** The canonical {@code secp256r1} (NIST P-256) domain parameters, from the platform JCE providers. */
-    private static ECParameterSpec p256Parameters() throws Exception {
+    private static ECParameterSpec p256Parameters() throws GeneralSecurityException {
         AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
         parameters.init(new ECGenParameterSpec("secp256r1"));
         return parameters.getParameterSpec(ECParameterSpec.class);

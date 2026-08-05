@@ -53,6 +53,9 @@ push2u-core
 ├── LocalEcVapidSigner
 └── JdkPushHttpClient
 
+push2u-testkit
+└── VapidSignerContractTest (the published conformance kit, for a test classpath)
+
 push2u-signer-vault
 ├── VaultTransitVapidSigner
 └── VaultHttpTransport / JdkVaultHttpTransport
@@ -67,7 +70,9 @@ push2u-signer-vault-spring-boot-starter
 
 `push2u-core` has no runtime implementation dependencies (only JSpecify's annotations, ADR-012).
 The Spring Boot modules and Vault integration are
-opt-in and cannot leak framework types into the core API.
+opt-in and cannot leak framework types into the core API. `push2u-testkit` carries JUnit and
+AssertJ, which is why it is a module of its own and not part of the core: it belongs on a
+consumer's test classpath and never on an application's runtime one.
 
 Each artifact carries a JPMS identity (ADR-014). `push2u-core` and `push2u-signer-vault` are
 explicit modules with a `module-info.java`; the two starters and the published test kit are
@@ -79,7 +84,7 @@ automatic modules with a fixed `Automatic-Module-Name`:
 | `push2u-signer-vault` | `com.the13haven.push2u.signer.vault` | explicit |
 | `push2u-spring-boot-starter` | `com.the13haven.push2u.spring` | automatic |
 | `push2u-signer-vault-spring-boot-starter` | `com.the13haven.push2u.signer.vault.spring` | automatic |
-| `push2u-core` test fixtures | `com.the13haven.push2u.testkit` | automatic |
+| `push2u-testkit` | `com.the13haven.push2u.testkit` | automatic |
 
 ## 4. Send pipeline
 
@@ -607,13 +612,19 @@ The build enforces both halves: NullAway fails on a contract violation, and Erro
 `JSpecifyMode` (generic nullness) is deliberately not enabled yet — its authors still describe it
 as evolving.
 
-Both run over `main` **and** `testFixtures`, and stop there. `push2u-core`'s fixtures are the
-published conformance kit, so their nullness contract reaches consumers exactly as the library's
-does; `test` and `fipsTest` stay out, where NullAway over unannotated code reports every builder
-field and nothing worth reading. The gap was not theoretical: moving the kit to its own package
-(ADR-014) left it outside any `@NullMarked` and nothing failed, because a `package-info.java`
-carrying no annotation does not compile to a class file at all — the omission is invisible in the
-published jar rather than merely unchecked.
+Both run over `main` and `testFixtures`, and stop before `test`/`fipsTest`. NullAway is configured
+in `OnlyNullMarked` mode, so what decides coverage is whether the code sits in a `@NullMarked`
+scope, not which source set holds it. Both modules' fixtures deliberately share the package of
+their `main`, whose `package-info.java` carries the mark — they inherit it from the classpath, need
+no `package-info.java` of their own, and covering them therefore costs nothing. `test` and
+`fipsTest` are excluded on their own merits: that is where a nullness complaint is least likely to
+be a defect and most likely to be scaffolding written to fail. They inherit the same mark, so if
+covering them is ever measured to pay for itself, only the source-set predicate has to change.
+
+The check the kit's coverage buys is not theoretical: moving it to its own package (ADR-014) left it
+outside any `@NullMarked` and nothing failed, because a `package-info.java` carrying no annotation
+does not compile to a class file at all — the omission is invisible in the published jar rather than
+merely unchecked. In `push2u-testkit` that same check is the module's ordinary `compileJava`.
 
 ### ADR-013 — Release and publication process
 
@@ -711,6 +722,31 @@ substance: naming, Javadoc and import-order rules are all about type declaration
 header of ADR-008 is the exception, and it is checked by `checkstyleLicenseHeader`, whose
 configuration has no `TreeWalker` and so reads the descriptor as lines rather than parsing it.
 
+**Amended: the kit is `push2u-testkit`, an artifact of its own, and it too is an automatic module.**
+It was `push2u-core`'s published test fixtures, which made one source set carry two things that
+cannot travel together: the kit, meant for a consumer's test classpath, and the plumbing the core's
+own suites share — an in-process mock push service, a self-signed loopback certificate factory, the
+RFC vectors — which has no business on Maven Central. A source set cannot be half published, so the
+split had to be an artifact boundary. `push2u-core`'s fixtures now skip their variants from the
+publication (the mechanism `push2u-signer-vault` already used for `RecordingHttpClient`), and
+`fipsTest` reaches them through an ordinary `testFixtures(project(":push2u-core"))` dependency
+rather than by borrowing `test`'s compiled output on its classpath.
+
+The package name does not change, but its reason does. It is no longer that the core's own artifact
+would collide with itself: the collision it avoids is the same one, now between two artifacts a
+consumer genuinely puts on the module path together. `com.the13haven.push2u.testkit` was already
+right, and stays right for a reason that outlives the layout that produced it.
+
+Automatic, not explicit, and for the reason the starters are: the kit's API carries JUnit and
+AssertJ, themselves automatic modules, so a `module-info.java` here would `requires` names derived
+from jar files. `Automatic-Module-Name` in the manifest is what keeps the kit's own name from being
+derived that way — without it the jar name would make it `push2u.testkit`.
+
+Timing, again, is why this happened before the first release rather than after: the repository
+carried no release tag, so the kit's coordinates were still free to choose. A consumer would
+otherwise have reached it through a `test-fixtures` classifier on `push2u-core`, and moving it later
+would break every one of them.
+
 ## 10. Verification
 
 The automated suite covers:
@@ -720,7 +756,9 @@ The automated suite covers:
 - RFC 8292 VAPID structure and signature verification;
 - the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
   non-default ports, address literals, userinfo (`OriginTest`);
-- signer contract tests;
+- signer contract tests, and the kit checking itself — each of its three checks run once against a
+  conforming signer and once against one that breaks exactly what that check is about, a DER
+  signature or a compressed or off-curve point (`VapidSignerContractSelfTest`);
 - the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`);

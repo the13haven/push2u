@@ -203,9 +203,11 @@ one *silently* is, because it leaves `DESIGN.md` describing a design the code no
 
 - `push2u-core` declares no runtime implementation dependency; JSpecify (annotations only) is the
   single exception (ADR-002). Read the build-file diffs, not just the Java.
-- Test fixtures: `push2u-core` publishes its conformance kit on purpose; `push2u-signer-vault`
-  explicitly skips its fixture variants from publication so an internal helper does not become
-  frozen API. Removing that skip publishes API by accident.
+- Test fixtures: the published conformance kit is the `push2u-testkit` module; every set of
+  `testFixtures` in this build is internal scaffolding, and both `push2u-core` and
+  `push2u-signer-vault` explicitly skip their fixture variants from publication so an internal
+  helper does not become frozen API. Removing a skip publishes API by accident — including, in the
+  core's case, a mock push service and a self-signed-certificate factory.
 - A vulnerable transitive is pinned with a dependency **constraint** carrying its advisory ID and
   reason — never `resolutionStrategy.force`, which leaves the originally requested version in the
   submitted dependency graph as a phantom node Dependabot then alerts on.
@@ -221,7 +223,7 @@ one *silently* is, because it leaves `DESIGN.md` describing a design the code no
   ship incompatible `org.bouncycastle.crypto` classes and cannot share a classpath. A BC-FIPS test
   added to `test` may appear to pass while exercising the wrong provider.
 - A new `VapidSigner` implementation extends the published conformance kit,
-  `com.the13haven.push2u.testkit.VapidSignerContractTest`.
+  `com.the13haven.push2u.testkit.VapidSignerContractTest`, from the `push2u-testkit` module.
 - Aggregated coverage must stay ≥ 80 %, but the threshold is a floor, not a target — a large
   untested branch is a finding even when the number holds.
 

@@ -30,11 +30,21 @@ While iterating, run the narrowest thing that answers your question:
 ```
 
 Because the gate will catch formatting, import order, missing Javadoc on public API, an unmarked new
-package in `main` and unused imports, do not spend attention hand-checking them. Write the code, run
-the gate.
+package in a checked source set and unused imports, do not spend attention hand-checking them. Write
+the code, run the gate.
 
-That covers a new package under `testFixtures` too, not only `main` — those fixtures are published,
-so NullAway and `RequireExplicitNullMarking` run over them as well.
+NullAway and `RequireExplicitNullMarking` run over `main` **and `testFixtures`**, and stop before
+`test`/`fipsTest`. NullAway is in `OnlyNullMarked` mode, so coverage follows the `@NullMarked` scope
+rather than the source set, and the scope comes from a `package-info.java` — wherever it lives.
+
+Every fixtures package that exists today sits in the package of its own `main` and inherits the
+mark from its `package-info.class` on the compile classpath, so **do not add a `package-info.java`
+beside them**: it would be a second class file for a package `main` already marks, which javac
+compiles silently rather than refusing. If you put a fixtures class in a package `main` does *not*
+have, `RequireExplicitNullMarking` will fire — and then the fix is the ordinary one, a
+`package-info.java` for that new package. Move the class into `main`'s package only if it actually
+needs package-private access to internals, which is the sole reason the current fixtures live
+there; doing it to satisfy the check would deepen a split package across two jars for nothing.
 
 One thing the gate does **not** catch: a new public package in `push2u-core` or
 `push2u-signer-vault` needs an `exports` line in that module's `module-info.java`. The tests run on
@@ -53,12 +63,12 @@ Checkstyle fails the build if you forget.
 changing and cite it in the code comment or the test name. Every existing rule here does this, and
 it is what makes the next reader able to tell a deliberate choice from an accident.
 
-**Then start from the vector.** `push2u-core/src/test/java/com/the13haven/push2u/TestVectors.java`
-holds the published vectors transcribed verbatim — the RFC 8291 §5 worked example, the RFC 8292 §2.4
-example, RFC 5869 HKDF. They are the specification: if your change alters output, the vectors are
-what decide whether the new output is right. Extend them when you cover a new case; never adjust one
-to match what the code now produces. A vector that moves because code moved has stopped being
-evidence of anything.
+**Then start from the vector.** `TestVectors` (in `push2u-core`'s `testFixtures`, package
+`com.the13haven.push2u`) holds the published vectors transcribed verbatim — the RFC 8291 §5 worked
+example, the RFC 8292 §2.4 example, RFC 5869 HKDF. They are the specification: if your change alters
+output, the vectors are what decide whether the new output is right. Extend them when you cover a
+new case; never adjust one to match what the code now produces. A vector that moves because code
+moved has stopped being evidence of anything.
 
 Write the failing test before the fix — specifically the test that would have caught the bug. For
 security-relevant behaviour, aim the test at the bad outcome being impossible, not at the good path
@@ -118,9 +128,9 @@ The contract is narrow and unforgiving: `sign` returns a raw 64-byte P-256 `r ||
 `publicKey` returns the 65-byte uncompressed point. A signer that returns DER, or a compressed
 point, will produce a JWT that push services reject with no useful diagnostic.
 
-- Extend `VapidSignerContractTest` (package `com.the13haven.push2u.testkit`) from `push2u-core`'s
-  published test fixtures. That is what the
-  fixtures are published for, and it is the cheapest way to find out you got the encoding wrong.
+- Extend `VapidSignerContractTest` from the published `push2u-testkit` module (package
+  `com.the13haven.push2u.testkit`). That is what the kit is published for, and it is the cheapest
+  way to find out you got the encoding wrong.
 - If the signer talks to a network service, give it **its own transport seam**. Do not reuse
   `PushHttpClient`: it exists for a domain where response bodies are never read, and a key service's
   responses must be read. Bound them by streamed byte count, fail closed rather than truncating, and
@@ -128,9 +138,10 @@ point, will produce a JWT that push services reject with no useful diagnostic.
   and never answers would otherwise hang application startup.
 - A remote signer belongs in its own optional module (`api(project(":push2u-core"))`), never in the
   core.
-- If the module has test fixtures that are internal scaffolding rather than a published contract,
-  skip their variants from the publication the way `push2u-signer-vault` does — otherwise an
-  internal helper becomes frozen API on the next release.
+- If the module has test fixtures, skip their variants from the publication the way
+  `push2u-signer-vault` and `push2u-core` both do — otherwise an internal helper becomes frozen API
+  on the next release. Every set of fixtures in this build is internal scaffolding; a test artifact
+  meant for consumers is a published module of its own, which is what `push2u-testkit` is.
 
 ## Solving it without a new dependency
 
@@ -183,10 +194,12 @@ covering, and the two providers cannot share a classpath — `bc-fips` and stock
 shadows the FIPS one.
 
 So: a test needing stock BouncyCastle goes in `src/test`, a test needing BC-FIPS goes in
-`src/fipsTest`, and neither jar is ever added to the other's configuration. `fipsTest` reuses the
-compiled helpers from `test` but not its dependencies, which is what keeps them apart. It also fails
-on discovering zero tests, so a suite that silently stops compiling into that source set is a build
-failure rather than a green run.
+`src/fipsTest`, and neither jar is ever added to the other's configuration. The helpers both need —
+vectors, mock receiver, loopback TLS — are `push2u-core`'s test fixtures, and each source set
+depends on them separately, so no dependency of one set can reach the other. Shared plumbing
+therefore names no provider at all; a BouncyCastle import in `src/testFixtures` breaks one of the
+two by construction. `fipsTest` also fails on discovering zero tests, so a suite that silently stops
+compiling into that source set is a build failure rather than a green run.
 
 ## Before you call it done
 

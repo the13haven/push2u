@@ -19,6 +19,7 @@ import java.util.Map;
 
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpsServer} that replies with a
@@ -67,7 +68,8 @@ final class MockPushReceiver implements AutoCloseable {
         enqueue(status, null);
     }
 
-    void enqueue(int status, String retryAfter) {
+    /** Queue one reply carrying a {@code Retry-After} header; {@code null} sends none. */
+    void enqueue(int status, @Nullable String retryAfter) {
         synchronized (this) {
             responses.add(new Response(status, retryAfter));
         }
@@ -86,7 +88,8 @@ final class MockPushReceiver implements AutoCloseable {
         server.stop(0);
     }
 
-    record Response(int status, String retryAfter) {}
+    /** A queued reply. {@code retryAfter} is nullable because most replies carry no such header. */
+    record Response(int status, @Nullable String retryAfter) {}
 
     record RecordedRequest(String method, Map<String, String> headers, int bodyLength) {}
 }

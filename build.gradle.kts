@@ -123,6 +123,7 @@ scmVersion {
             // per module with a fully literal (Regex.escape'd) pattern. Boring and robust.
             listOf(
                 "push2u-core",
+                "push2u-testkit",
                 "push2u-signer-vault",
                 "push2u-spring-boot-starter",
                 "push2u-signer-vault-spring-boot-starter",
@@ -204,11 +205,12 @@ subprojects {
 // which are the configurations Gradle publishes — it lands in the module metadata as
 // dependencyConstraints and in the POM as dependencyManagement, and Gradle applies it to every
 // consumer's graph. That is the transitive surface ADR-002 exists to keep out, and published
-// metadata cannot be taken back. The same holds for testFixturesApi/testFixturesImplementation in
-// push2u-core, whose fixtures are published as the conformance kit.
+// metadata cannot be taken back. The same holds for push2u-testkit's `api`: the kit is published,
+// so a constraint declared there would reach every consumer that puts it on a test classpath.
 //
 // So a vulnerable transitive gets pinned where it actually resolves and where the pin stays private:
-// a non-published bucket (testImplementation, fipsTestImplementation), a tool configuration (as
+// a non-published bucket (testImplementation, fipsTestImplementation, and now push2u-core's
+// testFixtures buckets, whose variants are skipped from its publication), a tool configuration (as
 // push2u-quality.gradle.kts does for the Checkstyle classpath), or the buildscript. Each pin names
 // its advisory — the convention in CONTRIBUTING.md.
 //
@@ -325,7 +327,7 @@ tasks.register("qualityCheckCi") {
 // ---------------------------------------------------------------------------------------------
 dependencies {
     // project(path), not the Project object: passing a Project as a dependency notation is
-    // deprecated and fails in Gradle 10. All four subprojects are published modules; if one ever
+    // deprecated and fails in Gradle 10. Every subproject is a published module; if one ever
     // stops applying nmcp, the aggregation simply ignores it.
     subprojects.forEach { nmcpAggregation(project(it.path)) }
 }

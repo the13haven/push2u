@@ -148,8 +148,9 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   `api` and `implementation` are inherited by `apiElements`/`runtimeElements`, so a constraint
   there is published — as `dependencyConstraints` in the module metadata and `dependencyManagement`
   in the POM — and Gradle applies it to every consumer's graph, which is the transitive surface
-  ADR-002 exists to keep out. `push2u-core`'s `testFixturesApi`/`testFixturesImplementation` are
-  published too, as the conformance kit. Pin in `testImplementation`, `fipsTestImplementation`, a
+  ADR-002 exists to keep out. `push2u-testkit`'s `api` is published too — the kit reaches every
+  consumer that puts it on a test classpath. Pin in `testImplementation`, `fipsTestImplementation`,
+  `push2u-core`'s `testFixtures` buckets (whose variants are skipped from its publication), a
   tool configuration, or the buildscript instead, and check the result: no variant of any module
   should carry `dependencyConstraints` (`./gradlew generateMetadataFileForMavenPublication`, then
   read `<module>/build/publications/maven/module.json`).
@@ -161,9 +162,18 @@ the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a c
 vector fail, the change is wrong until proven otherwise.
 
 Every `VapidSigner` implementation extends the published conformance kit
-`com.the13haven.push2u.testkit.VapidSignerContractTest`, from `push2u-core`'s test fixtures. `push2u-core` also has a separate `fipsTest` source set on
-a bcprov-free classpath — `bc-fips` and stock `bcprov` ship incompatible `org.bouncycastle.crypto`
-classes and can never share one. Add BC-FIPS tests there, never to `test`.
+`com.the13haven.push2u.testkit.VapidSignerContractTest`, the whole of the `push2u-testkit` module.
+It is a module's `main` source set, so the full analyser set applies to it — treat it as published
+API, because it is.
+
+The plumbing the suites share — the RFC vectors, the in-process mock push receiver, its loopback
+TLS identity — lives in `push2u-core`'s `src/testFixtures`, in `main`'s package because it needs
+package-private access. Those fixtures are internal: their variants are skipped from the
+publication, and they must stay free of both BouncyCastle flavours, because `test` and `fipsTest`
+load them on deliberately disjoint classpaths. `push2u-core` has a separate `fipsTest` source set
+on a bcprov-free classpath — `bc-fips` and stock `bcprov` ship incompatible
+`org.bouncycastle.crypto` classes and can never share one. Add BC-FIPS tests there, never to
+`test`.
 
 New behaviour needs a test that fails without the change. Security-relevant behaviour needs a test
 that demonstrates the bad outcome is now impossible, not merely that the good path still works.

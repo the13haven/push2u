@@ -31,8 +31,8 @@ fun toolLibrary(alias: String): Provider<MinimalExternalModuleDependency> =
     libs.findLibrary(alias).orElseThrow { IllegalStateException("missing catalog library: $alias") }
 
 // Checkstyle, PMD and SpotBugs analyse production code only — see the task-graph hook at the
-// bottom. Measured on the current tree, running them over the test sources (`test`, `fipsTest` and
-// the published `testFixtures`) reports 210 Checkstyle and 191 PMD violations — Javadoc, naming and
+// bottom. Measured on the tree of the day, running them over the test sources (`test`, `fipsTest`
+// and `testFixtures`) reports 210 Checkstyle and 191 PMD violations — Javadoc, naming and
 // complexity rules that test code is not written to satisfy — and 0 from SpotBugs, which alone
 // costs ~17s of the ~37s CI run. Error Prone is the exception and does cover the test compilations;
 // see its section below.
@@ -131,9 +131,10 @@ dependencies {
 // The one Checkstyle task that is not main-only. Checkstyle skips the test source sets because the
 // full ruleset does not apply to them, and Spotless — which does cover every source set — skips
 // package-info.java and module-info.java by name (LicenseHeaderStep would eat their leading
-// Javadoc). The overlap of the two exclusions is a file nothing checks, and push2u-core's
-// testFixtures are PUBLISHED, so such a file would ship to Maven Central without a licence header.
-// This task closes that gap with a configuration holding RegexpHeader and nothing else.
+// Javadoc). The overlap of the two exclusions is a file nothing checks, and one of those files does
+// ship to Maven Central: main's module-info.java, which checkstyleMain cannot even parse. This task
+// closes that gap with a configuration holding RegexpHeader and nothing else, and it covers the
+// test source sets in the same pass — ADR-008 puts the header on every file, published or not.
 // Resolved here, against the project: inside the task-configuration lambda below, `extensions`
 // would be the task's own and `SourceSetContainer` is not among them.
 val javaSourceSets = extensions.getByType<SourceSetContainer>()
@@ -236,8 +237,10 @@ tasks.named<JacocoReport>("jacocoTestReport") {
 //
 // Unlike Checkstyle/PMD/SpotBugs, Error Prone runs on the test compilations too: its checks are
 // about defects, not style, and they catch real ones there (a `return` inside a `finally`, a
-// String.split call with surprising trailing-empty behaviour). NullAway is the exception — without
-// annotations it reports every builder field, which on test sources is noise and nothing else.
+// String.split call with surprising trailing-empty behaviour). NullAway is the partial exception:
+// it covers `main` and `testFixtures` but stops before `test`/`fipsTest`, where a nullness
+// complaint is mostly scaffolding written to fail. See the predicate below for why that line falls
+// there and not somewhere else.
 // ---------------------------------------------------------------------------------------------
 dependencies {
     add("errorprone", toolLibrary("errorprone-core"))
@@ -262,13 +265,22 @@ val blockingChecks = listOf(
 )
 
 tasks.withType<JavaCompile>().configureEach {
-    // testFixtures counts as production for the nullness contract, `test` and `fipsTest` do not.
-    // push2u-core's fixtures are the PUBLISHED conformance kit (ADR-012 applies to them exactly as
-    // it does to the library), and the failure this catches has already happened once: moving the
-    // kit into its own package left it outside any @NullMarked, and nothing said so — a
+    // `main` plus `testFixtures`; `test` and `fipsTest` stay out. NullAway runs in OnlyNullMarked
+    // mode, so what decides coverage is whether the code sits in a @NullMarked scope, not which
+    // source set it is in — and both modules' fixtures deliberately share the package of `main`,
+    // whose package-info.java marks it. They inherit the mark from the classpath and need no
+    // package-info.java of their own; covering them costs nothing and is not optional to keep,
+    // because dropping it silently retires enforcement that already worked.
+    //
+    // `test` and `fipsTest` are excluded on their own merits, not for lack of a mark: they are
+    // where a nullness complaint is least likely to be a defect and most likely to be scaffolding
+    // written to fail. Whether they would pay for themselves has not been measured; if it ever is,
+    // this is the line to change.
+    //
+    // The failure this catches is real and has happened once: moving the conformance kit into its
+    // own package (ADR-014) left it outside any @NullMarked, and nothing said so — a
     // package-info.java carrying no annotation does not even compile to a class file, so the loss
-    // is invisible in the jar. The reason `test` and `fipsTest` stay out is unchanged: NullAway
-    // over unannotated test code reports every builder field and nothing useful.
+    // is invisible in the jar. In push2u-testkit that check is now simply `compileJava`.
     val productionCompile = name == "compileJava" || name == "compileTestFixturesJava"
     options.errorprone {
         enabled = provider {
@@ -376,8 +388,8 @@ gradle.taskGraph.whenReady {
     //   * something resolves, but not everything. Replace the Callable at the top of this file with
     //     a list built where it stands, and it evaluates while `plugins.withId("java")` is firing —
     //     before push2u-core applies java-test-fixtures and creates fipsTest. What you get is
-    //     src/test alone: not empty, so a non-emptiness check passes, and the published conformance
-    //     kit — the whole reason this task exists — goes unchecked.
+    //     src/test alone: not empty, so a non-emptiness check passes, while src/testFixtures and
+    //     src/fipsTest — two source sets this task is the only header check for — go unread.
     //
     // So the assertion is coverage, not non-emptiness: every non-main Java file the source sets
     // hold now must be one this task is about to read. `whenReady` is where that can be asked —
@@ -414,8 +426,8 @@ gradle.taskGraph.whenReady {
 
         // `nonMain`, not `expected`: a module carrying a module-info.java has a non-empty `expected`
         // from that one file alone, so testing the union would leave this tripwire alive only in
-        // the modules without a descriptor — and silent in push2u-core, which holds the published
-        // conformance kit and most of the non-main sources.
+        // the modules without a descriptor — and silent in push2u-core, which holds three non-main
+        // source sets and most of the non-main sources.
         //
         // This plugin is applied reactively to `java` modules, so a java-platform BOM never gets
         // here and every module that does has test sources. Nothing to check therefore means

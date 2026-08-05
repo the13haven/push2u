@@ -25,9 +25,10 @@
         Every Java file opens with the Apache-2.0 SPDX header (ADR-008). Spotless writes and
         verifies it across all source sets, but skips package-info.java and module-info.java by
         name — there the header is written by hand and a RegexpHeader rule is the only thing
-        checking it. This configuration covers `main`; the same rule reaches the other source sets
-        through checkstyle-header.xml and the `checkstyleLicenseHeader` task, because a headerless
-        package-info.java under src/testFixtures would otherwise go out to Maven Central unchecked.
+        checking it. This configuration covers `main`; the same rule reaches the other source sets —
+        and main's module-info.java, which the TreeWalker below cannot parse — through
+        checkstyle-header.xml and the `checkstyleLicenseHeader` task, because that descriptor is
+        published and would otherwise go out to Maven Central unchecked.
 
         The year is `\d{4}` rather than a literal: a file keeps the year it was created in and is
         never rewritten, so the tree holds a spread of years by design.
@@ -126,16 +127,24 @@
 
         <!--
             Verifies the order Spotless produces:
-            java.* / javax.* → blank line → third-party → blank line → com.the13haven.push2u.*
+            static → blank line → java.* / javax.* → blank line → third-party → blank line →
+            com.the13haven.push2u.*
 
             Spotless is authoritative; Checkstyle only proves the result is what we expect.
-            javax.* belongs to the first group because Spotless's "java" import-order entry matches
+            javax.* belongs to the JDK group because Spotless's "java" import-order entry matches
             by prefix, so javax.crypto sorts with the JDK packages (and the crypto code uses it
             heavily).
+
+            STATIC comes first because that is where Spotless puts static imports, and naming it is
+            not optional: without the group in this list a static import falls through to the last
+            rule, and every ordinary import after it is then reported as misplaced. The library's
+            own main sources have none, so the omission stayed invisible until push2u-testkit — a
+            published module whose code is test scaffolding, and therefore full of statically
+            imported assertions — brought them under checkstyleMain.
         -->
         <module name="CustomImportOrder">
             <property name="customImportOrderRules"
-                      value="STANDARD_JAVA_PACKAGE###THIRD_PARTY_PACKAGE###SPECIAL_IMPORTS"/>
+                      value="STATIC###STANDARD_JAVA_PACKAGE###THIRD_PARTY_PACKAGE###SPECIAL_IMPORTS"/>
             <property name="standardPackageRegExp" value="^javax?\."/>
             <property name="specialImportsRegExp" value="^com\.the13haven\.push2u\."/>
             <property name="sortImportsInGroupAlphabetically" value="true"/>
