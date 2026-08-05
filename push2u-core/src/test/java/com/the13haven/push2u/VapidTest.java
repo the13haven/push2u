@@ -169,6 +169,24 @@ class VapidTest {
                 .hasMessageContaining("0x04");
     }
 
+    @Test
+    void anSpkiWrappedKeySaysSoRatherThanJustCountingBytes() {
+        // The key half's counterpart to the DER case: ECPublicKey.getEncoded() returns a
+        // SubjectPublicKeyInfo, 91 bytes for P-256 and also opening with 0x30, so a signer that
+        // publishes getEncoded() directly gets told what it actually returned.
+        byte[] spki = new byte[91];
+        spki[0] = 0x30;
+
+        assertThatThrownBy(() -> Vapid.authorizationHeader(
+                        signerReturning(new byte[64], spki),
+                        TestVectors.VAPID_AUDIENCE,
+                        TestVectors.VAPID_SUBJECT,
+                        EXPIRY))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("looks wrapped")
+                .hasMessageContaining("SubjectPublicKeyInfo");
+    }
+
     private static byte[] validPoint() {
         byte[] point = new byte[65];
         point[0] = 0x04;

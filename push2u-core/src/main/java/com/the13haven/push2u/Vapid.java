@@ -80,9 +80,14 @@ final class Vapid {
     private static byte[] requireUncompressedPoint(byte[] publicKey) {
         Objects.requireNonNull(publicKey, "publicKey");
         if (publicKey.length != UNCOMPRESSED_P256_POINT_LENGTH) {
+            String wrapped = publicKey.length > 0 && publicKey[0] == DER_SEQUENCE_TAG
+                    ? " It opens with 0x30, so it looks wrapped — a SubjectPublicKeyInfo (what"
+                            + " ECPublicKey.getEncoded() returns, 91 bytes for P-256) has to be reduced to the raw"
+                            + " point."
+                    : "";
             throw new PushCryptoException("VapidSigner.publicKey returned " + publicKey.length + " bytes; VAPID needs"
                     + " the X9.62 uncompressed P-256 point of " + UNCOMPRESSED_P256_POINT_LENGTH
-                    + " (RFC 8292 §3.2)");
+                    + " (RFC 8292 §3.2)." + wrapped);
         }
         if (publicKey[0] != UNCOMPRESSED_POINT_TAG) {
             throw new PushCryptoException("VapidSigner.publicKey is not an uncompressed point: it begins with 0x"
