@@ -870,13 +870,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * all. The literal {@code .}/{@code ..} segments are refused for the same hops. A token-bearing request whose
      * destination depends on which of those hops is deployed must fail loudly at configuration instead.
      *
-     * <p>A <em>namespace</em> travels differently — in the {@code X-Vault-Namespace} HTTP header, not the URL — and the
-     * same rule still holds on both of that route's counts. First, Vault prepends the header's value to the request
-     * path before routing ({@code namespace.Canonicalize}), so a {@code ..} or percent-encoded segment in it steers the
-     * request between namespaces exactly the way a mount segment steers it between mounts. Second, a header value must
-     * be header-safe: the allowed set is a strict subset of visible ASCII with no CR/LF or any other control character,
-     * so a validated value cannot terminate the header or inject another one — and no transport is handed a value whose
-     * safety it would otherwise have to enforce itself.
+     * <p>A <em>namespace</em> travels differently — in the {@code X-Vault-Namespace} HTTP header, not the URL — so the
+     * hops above do not act on it, and the same rule is applied for two other reasons. The first is definite: a header
+     * value must be header-safe, and the allowed set is a strict subset of visible ASCII with no CR/LF or any other
+     * control character, so a validated value cannot terminate the header or inject another one — no transport is
+     * handed a value whose safety it would otherwise have to enforce itself.
+     *
+     * <p>The second is defence in depth rather than a known route. A {@code ..} cannot name a real namespace —
+     * {@code namespace.Canonicalize} in Vault's {@code helper/namespace} only trims a leading slash and appends a
+     * trailing one, with no dot-segment collapsing and no decoding, and the closed-source resolution that follows looks
+     * the canonical value up rather than walking a path. So such a value is a configuration mistake either way, and
+     * refusing it at construction costs nothing while removing the need to know what every future hop does with a
+     * composite path. Do not read this as a described traversal: no such route through OSS Vault is established here.
      *
      * <p>The allowed set is deliberately narrower than either Vault or a URL requires — that is policy, not necessity.
      * Vault accepts any printable Unicode in a mount path ({@code validateMountPath} in
@@ -891,7 +896,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * documentation forbids only spaces, a trailing {@code /} and a few reserved names in a namespace path, so a wider
      * name may exist in a deployment and be refused here until the set is widened.
      */
-    private static String requireValidVaultPath(String value, String name, String nestedExample) {
+    private static String requireValidVaultPath(
+            String value, String name, String nestedExample, String dotSegmentReason) {
         Objects.requireNonNull(value, name);
         if (value.isBlank()) {
             throw new IllegalArgumentException(name + " must not be blank");
@@ -914,11 +920,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                         + "/\"); the configured value does not carry it");
             }
             if (".".equals(segment) || "..".equals(segment)) {
-                throw new IllegalArgumentException(name + " must not contain a '" + segment + "' segment — a"
-                        + " normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own"
-                        + " handler answers the decoded form with a 307 redirect to the collapsed path, which a"
-                        + " redirect-following transport would re-send, X-Vault-Token header included, to a"
-                        + " different Vault path");
+                throw new IllegalArgumentException(
+                        name + " must not contain a '" + segment + "' segment — " + dotSegmentReason);
             }
         }
         return value;
@@ -981,7 +984,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public FetchedPublicKeyBuilder mount(String mount) {
-            this.mount = requireValidVaultPath(mount, "mount", "secrets/transit");
+            this.mount = requireValidVaultPath(
+                    mount,
+                    "mount",
+                    "secrets/transit",
+                    "a normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own handler answers the decoded form with a 307 redirect to the collapsed path, which a redirect-following transport would re-send, X-Vault-Token header included, to a different Vault path");
             return this;
         }
 
@@ -1001,7 +1008,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code namespace} is blank or violates the per-segment rule
          */
         public FetchedPublicKeyBuilder namespace(String namespace) {
-            this.namespace = requireValidVaultPath(namespace, "namespace", "team-a/sub");
+            this.namespace = requireValidVaultPath(
+                    namespace,
+                    "namespace",
+                    "team-a/sub",
+                    "a namespace travels in the X-Vault-Namespace header rather than the URL, so no path-collapsing hop acts on it and no such value can name a real namespace — it is a configuration mistake, refused here rather than sent");
             return this;
         }
 
@@ -1100,7 +1111,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public SuppliedPublicKeyBuilder mount(String mount) {
-            this.mount = requireValidVaultPath(mount, "mount", "secrets/transit");
+            this.mount = requireValidVaultPath(
+                    mount,
+                    "mount",
+                    "secrets/transit",
+                    "a normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own handler answers the decoded form with a 307 redirect to the collapsed path, which a redirect-following transport would re-send, X-Vault-Token header included, to a different Vault path");
             return this;
         }
 
@@ -1120,7 +1135,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code namespace} is blank or violates the per-segment rule
          */
         public SuppliedPublicKeyBuilder namespace(String namespace) {
-            this.namespace = requireValidVaultPath(namespace, "namespace", "team-a/sub");
+            this.namespace = requireValidVaultPath(
+                    namespace,
+                    "namespace",
+                    "team-a/sub",
+                    "a namespace travels in the X-Vault-Namespace header rather than the URL, so no path-collapsing hop acts on it and no such value can name a real namespace — it is a configuration mistake, refused here rather than sent");
             return this;
         }
 

@@ -338,13 +338,14 @@ the rule. It is refused anyway because some of that punctuation is treated speci
 intermediaries (`;` reads as a path parameter to some hops), and admitting only what every hop
 treats literally can be widened later without breaking anyone — the reverse is not true.
 Refusing at the step also replaces `URI.create`'s later raw "Malformed escape pair" failure.
-The namespace travels differently — in the `X-Vault-Namespace` HTTP header, not the URL — and the
-same rule holds on both of that route's counts: Vault resolves the header by prefixing its value
-to the request path before routing, so a traversal segment steers a token-bearing request between
-namespaces the way a mount segment steers it between mounts; and a header value must be
-header-safe, which the allowed set guarantees — it is a strict subset of visible ASCII with no
-CR/LF or other control characters, so a validated namespace can never terminate the header or
-inject another.
+The namespace travels differently — in the `X-Vault-Namespace` HTTP header, not the URL — so none
+of those hops act on it, and the same rule is applied for two other reasons. Definite: a header
+value must be header-safe, which the allowed set guarantees — a strict subset of visible ASCII with
+no CR/LF or other control characters, so a validated namespace can never terminate the header or
+inject another. Defence in depth: a traversal segment cannot name a real namespace either
+(`namespace.Canonicalize` trims a leading slash and appends a trailing one, collapsing nothing),
+so such a value is a configuration mistake whichever hop sees it, and refusing it costs nothing.
+No traversal route through OSS Vault is claimed here.
 
 `VaultTransitVapidSigner` supports:
 

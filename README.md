@@ -668,10 +668,10 @@ Nested namespaces (`team-a/sub`) are legal. Note that Vault's own CLI prints nam
 a trailing slash (`team-a/`) — drop it here, since the value must not begin or end with `/`. The
 value is validated where it is set, by the same
 per-segment rule as `mount`: every `/`-separated segment must be non-empty, not `.` or `..`, and
-use only `[A-Za-z0-9_.-]`. The rule matters twice here — Vault resolves the header by prefixing
-its value to the request path before routing, so a traversal segment would steer a token-bearing
-request between namespaces, and the value lands in an HTTP header, which the allowed set keeps
-safe by construction (visible ASCII only, no control characters).
+use only `[A-Za-z0-9_.-]`. Two reasons, one definite: the value lands in an HTTP header, which the
+allowed set keeps safe by construction (visible ASCII only, no control characters). The other is
+defence in depth — a `..` cannot name a real namespace, so a value carrying one is a configuration
+mistake worth refusing at startup rather than sending.
 
 ### Vault HTTP transport
 

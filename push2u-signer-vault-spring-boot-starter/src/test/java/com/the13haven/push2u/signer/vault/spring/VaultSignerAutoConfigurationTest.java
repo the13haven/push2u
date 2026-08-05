@@ -243,9 +243,9 @@ class VaultSignerAutoConfigurationTest {
     @Test
     void anInvalidNamespaceFailsStartupNamingTheProperty() {
         // The builder's own message says "namespace", not the YAML the operator wrote — the
-        // starter translates it like every other configuration failure. The '..' segment is the
-        // load-bearing case: Vault resolves the header by prefixing it to the request path, so a
-        // traversal segment steers a token-bearing request between namespaces.
+        // starter translates it like every other configuration failure. '..' is the case worth
+        // pinning: it cannot name a real namespace, so it is a configuration mistake that should
+        // stop startup rather than travel.
         vaultRunner()
                 .withPropertyValues("push2u.signer.vault.namespace=../root")
                 .run(context -> {

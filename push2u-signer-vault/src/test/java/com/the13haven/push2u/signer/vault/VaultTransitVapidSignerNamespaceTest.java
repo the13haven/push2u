@@ -151,11 +151,11 @@ class VaultTransitVapidSignerNamespaceTest {
 
     /**
      * {@code namespace(...)} is validated where it is set, in both builders, by the same per-segment rule as
-     * {@code mount(...)} — and no rejected value ever reaches the transport ({@code alwaysFails()}). The stakes are the
-     * mount's plus one: Vault resolves the header by prefixing it to the request path before routing, so a {@code ..}
-     * or a percent-encoded {@code %2e} steers a token-bearing request between namespaces the way a mount segment steers
-     * it between mounts — and the value additionally lands in an HTTP header, where anything outside the allowed set is
-     * one hop away from splitting the header itself.
+     * {@code mount(...)} — and no rejected value ever reaches the transport ({@code alwaysFails()}). The reason is not
+     * the mount's: a namespace rides in a header, where none of the path-collapsing hops act on it. It is that the
+     * value lands in an HTTP header, where anything outside the allowed set is one hop away from splitting the header
+     * itself, and that a {@code ..} cannot name a real namespace anyway — a configuration mistake worth refusing where
+     * it is written.
      */
     @Test
     void aNamespaceThatWouldAlterTheRequestIsRejectedAtTheStep() {
