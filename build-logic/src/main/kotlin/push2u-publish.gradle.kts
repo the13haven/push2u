@@ -39,8 +39,8 @@ extensions.configure<JavaPluginExtension> {
 // withType<Jar>, so the -sources and -javadoc jars carry it too — they are distributed artifacts
 // like any other. It also reaches jars that are never published (the internal test fixtures of
 // push2u-core and push2u-signer-vault), which is harmless: a licence in an artifact that stays
-// inside the build costs
-// nothing, and narrowing the rule would cost the guarantee that every jar leaving here has one.
+// inside the build costs nothing, and narrowing the rule would cost the guarantee that every jar
+// leaving here has one.
 tasks.withType<Jar>().configureEach { metaInf { from(rootProject.file("LICENSE")) } }
 
 publishing {

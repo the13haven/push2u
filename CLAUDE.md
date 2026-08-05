@@ -59,7 +59,7 @@ Notes that matter in practice:
   and NullAway are disabled unless `qualityCheck`/`qualityCheckCi` is in the task graph (or the tool
   task is named explicitly on the command line). Run `qualityCheck` before considering a change done.
 - Checkstyle/PMD/SpotBugs analyse `main` sources only. Error Prone also covers test compilations
-  (defects, not style); NullAway is `main`-only.
+  (defects, not style); NullAway covers `main` and `testFixtures`.
 - Aggregated JaCoCo threshold is 80 % of instructions, enforced by `testCodeCoverageVerification`,
   which both quality lifecycle tasks depend on.
 - The Vault integration test needs a Docker daemon. `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` defaults

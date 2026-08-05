@@ -60,8 +60,7 @@ public abstract class VapidSignerContractTest {
 
     // UnitTestContainsTooManyAsserts: PMD analyses this module's main sources, and this is main
     // source that happens to be a test. Length and prefix are the two halves of one claim — "this
-    // is an X9.62 uncompressed point" — and each assertion carries its own `as(...)`, so a failure
-    // still names which half broke.
+    // is an X9.62 uncompressed point" — and neither half means anything alone.
     @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void publicKeyIsA65ByteUncompressedPoint() {
@@ -76,10 +75,10 @@ public abstract class VapidSignerContractTest {
      * checks the point against P-256 itself — coordinates inside the prime field, then the curve equation {@code y² ≡
      * x³ + ax + b (mod p)}.
      */
-    // UnitTestContainsTooManyAsserts: "the point is on P-256" is one claim with three conditions —
-    // both coordinates inside the prime field, then the curve equation — and the equation is only
-    // meaningful once the coordinates are. Split across methods they would re-derive the same key
-    // and report one broken signer as three unrelated failures.
+    // UnitTestContainsTooManyAsserts: "the point is on P-256" is one claim, and its assertions are
+    // a chain rather than a list — the length guard is what makes the coordinate split meaningful,
+    // the field bounds are what make the curve equation meaningful. Split across methods they would
+    // re-derive the same key and report one broken signer as several unrelated failures.
     @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void publicKeyIsAPointOnTheP256Curve() throws GeneralSecurityException {
