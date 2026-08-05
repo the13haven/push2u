@@ -108,26 +108,37 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   A name fixed by an interface or superclass is not ours to choose — `getBody()` in
   `JdkVaultHttpTransport` overrides the JDK's `BodySubscriber` and stays as the JDK named it.
 - **Required parameters go into the factory method, optional ones become builder steps.** That is a
-  firm rule, not a preference: `PushMessage.builder(payload)` takes the payload because there is no
-  message without one, and everything the builder still exposes is genuinely optional. Likewise
-  `builderWithSuppliedPublicKey(point)` — that key is what distinguishes the mode, so it is an
-  argument, not a step.
+  firm rule, not a preference, and its firm consequence is this: `build()` must not be able to
+  refuse over a missing required value — making an incomplete object inexpressible is the
+  compiler's job, not the runtime's. `PushMessage.builder(payload)` takes the payload because there
+  is no message without one; `PushSender.builder(keys, contact)` takes the key source and the
+  contact for the same reason; and everything either builder still exposes is genuinely optional.
+  What remains legitimate at the factory is rejecting a value that is present but *invalid* — a
+  blank contact, a malformed key — with an `IllegalArgumentException`. What is never acceptable is
+  an optional value smuggled into the factory method.
 
-  The bound on it is the shape the builder exists to replace. Where several required values would
-  reassemble a positional argument list — `VaultTransitVapidSigner`'s `address`, `keyName` and
-  `token`, three interchangeable strings; `PushSender`'s contact and key source — they stay steps
-  and `build()` refuses without them, naming the step it is missing. What is never acceptable is a
-  required value that `build()` accepts silently, or an optional one smuggled into the factory
-  method.
+  When several required values are of the same type, what makes the positional list safe is types,
+  not argument order: `VaultTransitVapidSigner`'s factory takes a `TransitKeyName` and a
+  `VaultToken`, and swapping them does not compile. A value type earns its existence when it also
+  carries the value's validation or redaction — `VaultToken` carries the header-safety check and a
+  `toString()` that never prints the token, so every holder of one gets both for free.
+
+  A staged builder — each required step its own type, `build()` reachable only on the last — is the
+  answer when the required values are genuinely many, roughly four or five up. Its step types must
+  be public and exported: hiding them in a non-exported package breaks every module-path consumer,
+  whose chained calls fail to compile with "package … is not exported" (verified by experiment, not
+  assumed). `sealed` is the right tool there instead — it forbids foreign implementations of the
+  steps without hiding anything.
 
   When a type has one way to be assembled, the method is `builder()`. When it has several and they
   differ in *contract* rather than only in their parameters, each is named
   `builderWith<what exactly>()`, in one consistent form, and a bare `builder()` is not offered — it
   would silently promote one of several equal ways to the default. The example is the Vault signer:
-  `builderWithFetchedPublicKey()` reads Vault inside `build()` and can fail there, while
-  `builderWithSuppliedPublicKey(point)` does nothing over the network — different contracts, so
-  different names. Had the two entry points differed only in whether a required parameter is
-  present, the right answer would have been an overloaded `builder()` / `builder(x)` instead.
+  `builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
+  `builderWithSuppliedPublicKey(…)` does nothing over the network — different contracts, so
+  different names. Entry points that differ only in a required parameter are overloads of one
+  `builder(…)` instead: `PushSender.builder(keys, contact)` and `PushSender.builder(signer,
+  contact)` share one contract, so they share one name.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its

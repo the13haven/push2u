@@ -159,10 +159,16 @@ delay at the retry policy's maximum backoff.
 
 ### Facade
 
-`PushSender` is the primary facade. Its builder requires exactly one VAPID key source:
+`PushSender` is the primary facade. Its two required values — exactly one VAPID key source, plus
+the contact — are the factory method's parameters, so an incomplete sender does not compile and
+`build()` has nothing left to refuse:
 
-- `vapid(VapidKeys)` creates `LocalEcVapidSigner`; or
-- `signer(VapidSigner)` delegates signing and public-key publication.
+- `builder(VapidKeys, String contact)` creates `LocalEcVapidSigner`; or
+- `builder(VapidSigner, String contact)` delegates signing and public-key publication.
+
+The two are overloads of one `builder(…)` rather than differently named methods: they differ only
+in which required key source they take, not in contract — and the overload choosing the key source
+is what makes "no key source" and "both key sources" inexpressible rather than runtime errors.
 
 The VAPID contact is required in both modes and must be non-blank. RFC 8292 §2.1 leaves the `sub`
 claim optional; requiring it is a push2u contract, on the grounds that a push service reporting a
@@ -287,14 +293,25 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 ## 7. Vault Transit integration
 
 `VaultTransitVapidSigner` has no public constructor: each mode has its own builder, obtained from
-`builderWithFetchedPublicKey()` or `builderWithSuppliedPublicKey(point)`. Two builders rather than
-one overloaded family because the modes differ in *contract*, not only in parameters — the fetched
-one performs a Vault read inside `build()` and can fail there, the supplied one contacts nothing —
-and because `keyVersion` belongs to exactly one of them: in the fetched mode the version is Vault's
-to state, taken from the same response as the public key. A bare `builder()` would have made one of
-two equal modes the default by omission. `address`, `keyName` and `token` are required steps and
-`build()` refuses without them, naming the step; `mount` defaults to `transit` (Vault's own default
-mount) and `transport` to a `JdkVaultHttpTransport`.
+`builderWithFetchedPublicKey(address, keyName, token)` or
+`builderWithSuppliedPublicKey(address, keyName, token, point)`. Two builders rather than one
+overloaded family because the modes differ in *contract*, not only in parameters — the fetched one
+performs a Vault read inside `build()` and can fail there, the supplied one contacts nothing — and
+because `keyVersion` belongs to exactly one of them: in the fetched mode the version is Vault's to
+state, taken from the same response as the public key. A bare `builder()` would have made one of
+two equal modes the default by omission.
+
+Everything required is a factory-method parameter, so an incomplete signer does not compile and
+`build()` never refuses over a missing value. The key name and the token travel as the value types
+`TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
+arguments impossible to transpose, and each carries its value's contract — `TransitKeyName`
+rejects a name that would alter the Transit request path (blank, `/`, `?`, `#`, space; Vault
+itself allows no `/` in a Transit key name), and `VaultToken` rejects a value that cannot travel
+in an HTTP header (the trailing-newline misconfiguration) while its `toString()` never prints the
+token. Because a `VaultToken` is valid by construction, the signer validates it exactly once — in
+the type — instead of re-checking it on every path that offers it to a transport. The builders
+hold only the optional steps: `mount` defaults to `transit` (Vault's own default mount),
+`transport` to a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
 
 `VaultTransitVapidSigner` supports:
 
@@ -384,8 +401,8 @@ in that case — the requirement below is specific to the *autoconfigured* sende
 `push2u.vapid.subject` (the VAPID `sub` claim) is required to build the autoconfigured
 `PushSender`, including when the `VapidSigner` bean comes from another starter — the Vault Transit
 signer starter supplies only key custody, not a contact address. The `pushSender` bean checks this
-explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing
-`PushSender.Builder#build()`'s generic `"contact is required"`.
+explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing the
+`PushSender.builder(…)` factory's generic `"contact is required"`.
 
 `push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
 pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,
