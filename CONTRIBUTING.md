@@ -88,9 +88,9 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   and cannot; the point of writing it down is that one type should not end up with two habits, as
   `PushResult` did before `delivered()` became `isDelivered()`.
 
-  1. **A record's component accessor** keeps the component's name — `status()`, `statusCode()`.
-     That is the language, not a preference: a `boolean delivered` component would have to be
-     `delivered()`, and there is nothing to decide.
+  1. **A record's component accessor** keeps the component's name — `Push2uProperties.Health`
+     holds a `boolean enabled`, so its accessor is `enabled()`. That is the language, not a
+     preference: the component names the method, and there is nothing to decide.
   2. **A question about state** is a predicate: `is…` for what something *is*
      (`PushResult.isDelivered()`, `Es256Verifier.isSupported()`), `has…` for what it holds,
      `can…` for what it is able to do. Whether the answer is stored, computed, or cached does not
@@ -100,8 +100,13 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
      and a two-argument comparison like `sameCurve(actual, expected)` states a relation the way
      `Objects.equals` does. `isVerify` would be nonsense, and that is the tell.
 
-  The distinction to get right is 2 against 3: a predicate answers *"is it so?"* about one thing,
-  while a verb *does* something or relates two things.
+  The failure this exists to prevent is 1 against 2 — a derived predicate wearing a component
+  accessor's name, which is what `delivered()` did next to `status()` and `attempts()` until it
+  became `isDelivered()`. The pair that takes judgement to apply is 2 against 3: one subject and a
+  question about it is a predicate; two subjects, or something performed, is a verb.
+
+  A name fixed by an interface or superclass is not ours to choose — `getBody()` in
+  `JdkVaultHttpTransport` overrides the JDK's `BodySubscriber` and stays as the JDK named it.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its
