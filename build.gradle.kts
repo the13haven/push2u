@@ -76,8 +76,12 @@ plugins {
 // `./gradlew release` tags (and pushes) the next one.
 // ---------------------------------------------------------------------------------------------
 scmVersion {
-    // Consult the remote, don't trust the local clone alone: a release must not mint a version
-    // that ignores tags pushed from elsewhere (another machine, the CI runner).
+    // Release for real: push the release commit and tag to origin, and run the `aheadOfRemote`
+    // precondition rather than skipping it. Note what this does NOT do — it is not what makes the
+    // version resolution see tags pushed from elsewhere. `localOnly` is read only by the push and
+    // by whether that precondition runs; tag visibility comes from the clone (`fetch-depth: 0` in
+    // the workflows) plus axion's own unshallow on CI. `fetchTags` would be the setting for that,
+    // and it is deliberately left at its default.
     localOnly.set(false)
     // Highest tag overall, not the nearest reachable one — keeps the version monotonic even if
     // release and maintenance branches diverge.

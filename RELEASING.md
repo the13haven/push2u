@@ -99,8 +99,9 @@ the three-argument form that names the key ID.
 
 ### 4. Generate the release bot's SSH deploy key
 
-The release workflows push tags back to the repository. `GITHUB_TOKEN` cannot be handed to
-axion's JGit transport, so the push goes over SSH with a dedicated deploy key:
+The release workflows push back to the repository — the release commit onto `main` as well as the
+tags. `GITHUB_TOKEN` cannot be handed to axion's JGit transport, so the push goes over SSH with a
+dedicated deploy key:
 
 ```bash
 ssh-keygen -t ed25519 -C "release-bot@noreply.the13haven.com" -f push2u-deploy-key -N ""
@@ -154,7 +155,7 @@ is missing — on a fork, on a restored repository, or after the ruleset was edi
 
 | Secret | Purpose | How to obtain |
 |---|---|---|
-| `ACTIONS_WRITE_KEY` | Private SSH deploy key; the workflows use it to push the release tag and the next-version marker tag | `ssh-keygen` as above; the matching public key must be a repository Deploy key with write access |
+| `ACTIONS_WRITE_KEY` | Private SSH deploy key; the workflows use it to push the release commit to `main`, the release tag, and the next-version marker tag — the commit is why it needs the ruleset bypass | `ssh-keygen` as above; the matching public key must be a repository Deploy key with write access |
 | `SIGNING_KEY` | ASCII-armored GPG private key that signs every published artifact | `gpg --armor --export-secret-keys <KEYID>` |
 | `SIGNING_PASSWORD` | Passphrase of the GPG signing key | Chosen when the key was generated |
 | `MAVEN_CENTRAL_USERNAME` | Username half of the Central Portal user token | Central Portal → *View Account* → *Generate User Token* |
@@ -246,7 +247,8 @@ The order is deliberate. Steps 1–4 run entirely on the runner, so a failure th
 behind at all. Step 5 pushes a commit and a tag: the tag can simply be deleted, the commit cannot
 — the ruleset blocks non-fast-forward pushes to `main`, so only the deploy key could rewrite it,
 and in practice you move forward rather than back. Step 6 creates a draft, which can still be
-deleted. **Step 7 is the point of no return** — everything reversible happens before it.
+deleted. **Step 7 is where reversibility ends entirely** — after it the artifacts are on Maven
+Central, which is immutable.
 
 ### 4. Verify the result
 
