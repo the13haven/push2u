@@ -27,7 +27,8 @@ existed. It is a map, not a verdict.
 ## What a migration removes
 
 `web-push` declares five dependencies; resolved, its runtime graph is **26 artifacts** beyond the
-library itself. Reproduce it with `mvn dependency:tree` on a POM whose only dependency is
+library itself. Reproduce the list with `mvn dependency:tree`, and the size below with
+`mvn dependency:copy-dependencies -DincludeScope=runtime`, on a POM whose only dependency is
 `nl.martijndwars:web-push:5.1.2`:
 
 | What it brings | Artifacts |
@@ -64,8 +65,7 @@ push2u's side of the same table: `push2u-core` declares exactly one dependency,
 consumers, and as `requires static` on the module path so nothing resolves it at runtime
 ([ADR-002](DESIGN.md#adr-002--zero-dependency-core) and
 [ADR-012](DESIGN.md#adr-012--nullness-declared-with-jspecify) in `DESIGN.md`). The Vault signer
-and the Spring Boot starters
-are separate optional modules; neither can reach the core.
+and the Spring Boot starters are separate optional modules; neither can reach the core.
 
 ```diff
  dependencies {
@@ -89,9 +89,10 @@ deliberately carries no version number, so it cannot go stale against a release.
   application; push2u brings no JSON parser either.
 - **The wire protocol**, when you were already sending `aes128gcm`. Same RFC 8291 encryption, same
   RFC 8292 VAPID header — a push service validates the body and the authorization identically. The
-  requests are not byte-identical, though: web-push also sends `Content-Type` and a `Crypto-Key`
-  header, and rewrites FCM's legacy `fcm/send` path (below), while push2u sends only
-  `Authorization`, `Content-Encoding`, `TTL` and the optional `Urgency`/`Topic`.
+  requests are not byte-identical, though: web-push also sets `Content-Type` and a `Crypto-Key`
+  header, and rewrites FCM's legacy `fcm/send` path (below), while push2u sets only
+  `Authorization`, `Content-Encoding`, `TTL` and the optional `Urgency`/`Topic`. (Both leave the
+  transport to add its own `Host`, `Content-Length` and `User-Agent`.)
 
 ## Side by side
 
@@ -300,10 +301,12 @@ integrations therefore wrapped it in a retry loop of their own.
 push2u retries `429` and `5xx` by default — up to three attempts, exponential backoff from one
 second, capped at 60 seconds, with a valid `Retry-After` (delta-seconds or any RFC 9110 HTTP-date
 form) overriding the computed delay under the same cap. **An application retry loop on top of that
-multiplies**: three attempts inside your three is nine POSTs, and the blocking adds up faster than
-it looks — a push service answering `429` with `Retry-After: 60` costs two minutes of sleeping per
-outer attempt, and `JdkPushHttpClient`'s 30-second request timeout alone puts nine dead POSTs at
-four and a half minutes. Either delete yours or configure `RetryPolicy.none()`:
+multiplies**, but only for a push service that *answers*: a `429` carrying `Retry-After: 60` costs
+two minutes of sleeping per outer attempt, so three attempts inside your three is nine POSTs and up
+to six minutes of blocking. A service that accepts the connection and never replies is the other
+shape — the request times out after 30 seconds, and push2u does **not** retry a transport failure
+(it retries statuses), so each of your outer attempts costs one POST, not three. Either delete
+yours or configure `RetryPolicy.none()`:
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
@@ -452,9 +455,12 @@ public interface VapidSigner {
 The contract is narrow, and push2u checks both halves of it on every send *before* the POST goes
 out: a signature that is not 64 bytes is refused with a `PushCryptoException` that names DER when
 the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is refused
-the same way. So a broken signer fails loudly at the first send rather than collecting opaque
-`401`/`403` answers — but it still fails at the first send. Extend the published conformance kit in
-your own test suite instead:
+the same way. So a *wrongly encoded* signer fails loudly at the first send rather than collecting
+opaque `401`/`403` answers. What those checks cannot see is a signer whose output is well-formed
+but wrong — one signing with a key that does not match the public point it advertises, the
+mistake `builderWithSuppliedPublicKey` invites. That one still collects `401`/`403`, and it is why
+the conformance kit verifies the signature against the advertised key rather than only measuring
+it. Extend the kit in your own test suite instead:
 
 ```kotlin
 dependencies {
