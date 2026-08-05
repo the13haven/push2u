@@ -511,14 +511,19 @@ the `VapidSigner` comes from; leaving it unset fails the context with a message 
 property. It is not required when the application supplies its own `PushSender` bean — that bean
 bypasses the starter's checks entirely.
 
-`jwt-expiry`, `default-ttl`, `record-size`, `max-encrypted-body-bytes` and `retry.max-attempts` are
-all optional; unset, they leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes, 4096 bytes
-and 3 attempts respectively — see [Payload size limits](#payload-size-limits) for the two size
-properties). Setting one to a value the builder — or, for `retry.max-attempts`, `RetryPolicy` itself
-— rejects (`jwt-expiry` not strictly positive or over 24h, `default-ttl` negative, `record-size`
-below 18, `max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead, or
-`retry.max-attempts` below 1) fails the context with that message, prefixed by the YAML property
-name (the builder and `RetryPolicy` only name their Java parameters).
+`jwt-expiry`, `default-ttl`, `record-size` and `max-encrypted-body-bytes` are optional; unset, they
+leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes and 4096 bytes respectively — see
+[Payload size limits](#payload-size-limits) for the two size properties). The three `retry.*`
+properties carry their own defaults instead (3 attempts, 1s initial backoff, 60s ceiling), which
+match `RetryPolicy.defaults()`, so a `RetryPolicy` is always built explicitly.
+
+Setting any of them to a value the builder — or, for `retry.*`, `RetryPolicy` itself — rejects
+(`jwt-expiry` not strictly positive or over 24h, `default-ttl` negative, `record-size` below 18,
+`max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead, `retry.max-attempts`
+below 1, or either `retry.*` backoff negative) fails the context with that message, prefixed by the
+YAML property name (the builder and `RetryPolicy` only name their Java parameters). Both backoff
+bounds share one message in `RetryPolicy`, so the prefix is the only thing that says which of the
+two you got wrong.
 
 `allowed-origins` binds to `EndpointPolicies.allowedOrigins` — see
 [Endpoint policy (SSRF hardening)](#endpoint-policy-ssrf-hardening). Unset, it leaves the

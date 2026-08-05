@@ -94,9 +94,10 @@ public final class Push2uAutoConfiguration {
      * {@code push2u.max-encrypted-body-bytes} failures from {@link PushSender.Builder#jwtExpiry(Duration)},
      * {@link PushSender.Builder#defaultTtl(Duration)}, {@link PushSender.Builder#recordSize(int)} and
      * {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown with the property name prefixed, since the
-     * builder's own message names its camelCase parameter, not the YAML property. {@code push2u.retry.max-attempts}
-     * gets the same treatment ahead of {@link RetryPolicy}'s own constructor, which validates the attempt count and the
-     * backoff bounds together and so cannot be blamed on one property by its message alone.
+     * builder's own message names its camelCase parameter, not the YAML property. All three {@code push2u.retry.*} keys
+     * get the same treatment ahead of {@link RetryPolicy}'s own constructor, which validates the attempt count and both
+     * backoff bounds together — and reports the two bounds through one shared message — so it cannot be blamed on a
+     * single property by its message alone; see {@link #retryPolicy}.
      *
      * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
      * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
@@ -117,7 +118,7 @@ public final class Push2uAutoConfiguration {
      * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both a non-empty
      *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured
      * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.default-ttl},
-     *     {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes}, {@code push2u.retry.max-attempts} or
+     *     {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes}, any {@code push2u.retry.*} key or
      *     {@code push2u.allowed-origins} is set to a value the builder, {@link RetryPolicy} or the policy factory
      *     rejects
      */
@@ -155,23 +156,39 @@ public final class Push2uAutoConfiguration {
     }
 
     /**
-     * Builds the {@link RetryPolicy} from {@code push2u.retry.*}, naming {@code push2u.retry.max-attempts} specifically
-     * if it is the reason the policy is rejected.
+     * Builds the {@link RetryPolicy} from {@code push2u.retry.*}, naming whichever of the three keys is the reason a
+     * value is rejected. {@link RetryPolicy}'s compact constructor validates all three components together and reports
+     * both backoff bounds through one shared message, so the only way to attribute a failure to a key is to offer the
+     * constructor one real value at a time.
      *
-     * <p>{@link RetryPolicy}'s compact constructor validates the attempt count and the backoff bounds together, and
-     * checks the attempt count first — so probing it with {@link Duration#ZERO} for both backoffs isolates that one
-     * check: a failure from the probe can only be about {@code maxAttempts}, attributable to
-     * {@code push2u.retry.max-attempts} without re-implementing its {@code >= 1} bound here. A backoff-bound failure
-     * surfaces from the real construction below, unprefixed, exactly as it did before this method existed — that
-     * failure mode is unchanged, only the attempt-count one is named.
+     * <p>Each probe fills the two components it is <em>not</em> testing with {@code 1} and {@link Duration#ZERO} — the
+     * triple {@link RetryPolicy#none()} is built from. That is the invariant this rests on: those filler values must
+     * stay unconditionally acceptable, including in combination with any {@code maxAttempts}. It does <em>not</em> rest
+     * on the order of the checks inside the compact constructor; reordering them changes nothing here. Were
+     * {@code RetryPolicy} ever to gain a constraint <em>between</em> components, a probe would blame the wrong key —
+     * {@code probeFillerValuesAreUnconditionallyAccepted} in the starter's tests exists to fail when that happens.
+     *
+     * <p>Probing rather than restating the bounds keeps the core the authority on what a legal value is: no {@code >=
+     * 1} or non-negative check is duplicated here, so none can drift.
      */
     private static RetryPolicy retryPolicy(Push2uProperties.Retry retry) {
-        try {
-            new RetryPolicy(retry.maxAttempts(), Duration.ZERO, Duration.ZERO);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("push2u.retry.max-attempts: " + e.getMessage(), e);
-        }
+        requireValid(
+                "push2u.retry.max-attempts", () -> new RetryPolicy(retry.maxAttempts(), Duration.ZERO, Duration.ZERO));
+        requireValid("push2u.retry.initial-backoff", () -> new RetryPolicy(1, retry.initialBackoff(), Duration.ZERO));
+        requireValid("push2u.retry.max-backoff", () -> new RetryPolicy(1, Duration.ZERO, retry.maxBackoff()));
         return new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
+    }
+
+    /**
+     * Runs one {@link #retryPolicy} probe, re-throwing its rejection with {@code property} prefixed. The probe's result
+     * is deliberately discarded — it is constructed to make the compact constructor speak, not to be used.
+     */
+    private static void requireValid(String property, Runnable probe) {
+        try {
+            probe.run();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(property + ": " + e.getMessage(), e);
+        }
     }
 
     /**

@@ -6,6 +6,7 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
@@ -14,6 +15,7 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +50,7 @@ import com.the13haven.push2u.PushMessage;
 import com.the13haven.push2u.PushResponse;
 import com.the13haven.push2u.PushResult;
 import com.the13haven.push2u.PushSender;
+import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.Subscription;
 import com.the13haven.push2u.VapidSigner;
 
@@ -322,6 +325,53 @@ class Push2uAutoConfigurationTest {
                     .hasMessageContaining("push2u.retry.max-attempts:")
                     .hasMessageContaining("maxAttempts must be >= 1");
         });
+    }
+
+    @Test
+    void invalidRetryInitialBackoffFailsTheContextNamingTheProperty() {
+        // RetryPolicy reports both backoff bounds through one message, so without the per-key probe
+        // an operator cannot tell which of the two durations it is complaining about.
+        keyedRunner().withPropertyValues("push2u.retry.initial-backoff=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(),
+                            IllegalArgumentException.class,
+                            "push2u.retry.initial-backoff:"))
+                    .hasMessageContaining("push2u.retry.initial-backoff:")
+                    .hasMessageContaining("backoff durations must not be negative");
+        });
+    }
+
+    @Test
+    void invalidRetryMaxBackoffFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.retry.max-backoff=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-backoff:"))
+                    .hasMessageContaining("push2u.retry.max-backoff:")
+                    .hasMessageContaining("backoff durations must not be negative");
+        });
+    }
+
+    /**
+     * The tripwire for the probes in {@code Push2uAutoConfiguration.retryPolicy}. Each of them fills the components it
+     * is not testing with {@code 1} and {@code Duration.ZERO}, and attributes any rejection to the one real value it
+     * passed. That attribution is only sound while those filler values are accepted unconditionally — in particular in
+     * combination with an arbitrary {@code maxAttempts}, which {@link RetryPolicy#none()} alone does not witness. A
+     * constraint <em>between</em> components would leave the probes blaming the wrong YAML key with every test still
+     * green, so the invariant is asserted here rather than left to a comment.
+     */
+    @Test
+    void probeFillerValuesAreUnconditionallyAccepted() {
+        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ZERO))
+                .as("the triple RetryPolicy.none() is built from")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(Integer.MAX_VALUE, Duration.ZERO, Duration.ZERO))
+                .as("zero backoffs stay legal for any attempt count — what the max-attempts probe assumes")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new RetryPolicy(1, Duration.ofSeconds(1), Duration.ZERO))
+                .as("a zero max-backoff stays legal beside a real initial-backoff")
+                .doesNotThrowAnyException();
     }
 
     @Test
