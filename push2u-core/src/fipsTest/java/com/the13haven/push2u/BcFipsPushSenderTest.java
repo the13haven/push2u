@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.PushTestSupport.subscription;
+import static com.the13haven.push2u.PushTestSupport.trustingPushHttpClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
@@ -35,6 +36,10 @@ class BcFipsPushSenderTest {
 
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    // Real TLS to the receiver, trusting its per-JVM certificate. The TLS stack
+                    // stays SunJSSE — .cryptoProvider(...) scopes BC-FIPS to the message crypto
+                    // only, and LoopbackTls itself is provider-free by the shared-plumbing rule.
+                    .httpClient(trustingPushHttpClient())
                     .cryptoProvider(bcFips)
                     // No-op sleeper: the happy path never retries, but if this scenario ever grows a
                     // retry the test must not fall back to real wall-clock backoff.

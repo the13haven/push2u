@@ -19,7 +19,8 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -60,12 +61,18 @@ class JdkPushHttpClientRedirectTest {
     }
 
     @Test
-    void theDefaultClientReturnsARedirectInsteadOfFollowingIt() throws Exception {
-        // Pins the safe default: the 3xx comes back as an ordinary status (PushSender classifies
-        // it as a failure) instead of the redirect target's 200, and the target is never contacted.
+    void theClientReturnsARedirectInsteadOfFollowingIt() throws Exception {
+        // Pins the safe behaviour every accepted client shares (the constructor tests above prove
+        // no other kind can be constructed): the 3xx comes back as an ordinary status (PushSender
+        // classifies it as a failure) instead of the redirect target's 200, and the target is
+        // never contacted. The fixture models a real push endpoint answering a redirect, so it
+        // serves TLS like one — which is also why the client here is the trusting test client
+        // rather than the no-arg constructor's, whose trust store rightly refuses the test
+        // certificate; both are built with Redirect.NEVER.
         AtomicInteger targetHits = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        HttpsServer server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
+            server.setHttpsConfigurator(new HttpsConfigurator(LoopbackTls.serverContext()));
             server.createContext("/push", exchange -> {
                 exchange.getRequestBody().readAllBytes();
                 exchange.getResponseHeaders().add("Location", "/stolen");
@@ -83,9 +90,11 @@ class JdkPushHttpClientRedirectTest {
                 }
             });
             server.start();
-            URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
+            URI endpoint = URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/push");
 
-            PushResponse response = new JdkPushHttpClient().post(endpoint, Map.of("TTL", "60"), BODY);
+            PushResponse response = new JdkPushHttpClient(
+                            PushTestSupport.trustingJavaHttpClient(), Duration.ofSeconds(30))
+                    .post(endpoint, Map.of("TTL", "60"), BODY);
 
             assertThat(response.statusCode())
                     .as("the redirect itself is the result, not the redirect target's 201")

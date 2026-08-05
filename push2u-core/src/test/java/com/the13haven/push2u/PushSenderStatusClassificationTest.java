@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.PushTestSupport.subscription;
+import static com.the13haven.push2u.PushTestSupport.trustingPushHttpClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
@@ -156,6 +157,7 @@ class PushSenderStatusClassificationTest {
             receiver.enqueue(503);
             RetryPolicy policy = new RetryPolicy(4, Duration.ofSeconds(1), Duration.ofSeconds(60));
             PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .retryPolicy(policy)
                     .sleeper(sleeper)
                     .build();
@@ -203,6 +205,7 @@ class PushSenderStatusClassificationTest {
 
     private PushSender pusher() {
         return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                .httpClient(trustingPushHttpClient())
                 .sleeper(sleeper)
                 .build();
     }

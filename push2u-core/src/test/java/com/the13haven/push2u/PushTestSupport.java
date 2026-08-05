@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.TestVectors.b64;
 
+import java.net.http.HttpClient;
 import java.security.KeyPair;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
@@ -27,24 +28,36 @@ final class PushTestSupport {
 
     private PushTestSupport() {}
 
-    /** A {@link Subscription} pointing at the in-process receiver, through the plaintext test seam. */
+    /**
+     * A {@link Subscription} pointing at the in-process receiver. An ordinary construction: the receiver serves TLS, so
+     * its {@code https://127.0.0.1:<port>/push} endpoint satisfies the same {@link Endpoints#requireSecure} contract a
+     * production endpoint does — no seam, no special case.
+     */
     static Subscription subscription(MockPushReceiver receiver) {
-        // The in-process receiver listens on plain http://127.0.0.1 — allowed only through the
-        // package-private test seam; the public Subscription contract stays https-only.
-        // try-with-resources, not a finally that throws: if the Subscription construction below
-        // fails, a close() failure must be attached as suppressed rather than replace it.
-        try (AutoCloseable plaintextSeam = Endpoints.allowPlaintextEndpointsForTests()) {
-            return new Subscription(
-                    receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
-        } catch (RuntimeException e) {
-            // Rethrown unchanged: if Subscription validation ever regresses, its
-            // IllegalArgumentException must surface as itself, not be renamed to a seam failure.
-            throw e;
-        } catch (Exception e) {
-            // Only close() can get here — it merely restores a ThreadLocal (AutoCloseable forces
-            // the checked signature), so a throw is a broken test fixture.
-            throw new IllegalStateException("plaintext endpoint seam failed to close", e);
-        }
+        return new Subscription(
+                receiver.endpoint().toString(), b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
+    }
+
+    /**
+     * A {@code java.net.http} client that trusts exactly the {@link LoopbackTls} certificate the receiver presents (via
+     * {@link LoopbackTls#clientContext()} — no trust-all manager, no relaxed hostname verification) and never follows
+     * redirects, which {@link JdkPushHttpClient} requires of any supplied client.
+     */
+    static HttpClient trustingJavaHttpClient() {
+        return HttpClient.newBuilder()
+                .sslContext(LoopbackTls.clientContext())
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+    }
+
+    /**
+     * The production transport, {@link JdkPushHttpClient}, wired through its public constructor to trust the receiver's
+     * certificate. Tests that send through a {@link MockPushReceiver} pass this to
+     * {@code PushSender.Builder.httpClient(...)}; the sender's default client rightly refuses a certificate no CA
+     * vouches for.
+     */
+    static JdkPushHttpClient trustingPushHttpClient() {
+        return new JdkPushHttpClient(trustingJavaHttpClient(), Duration.ofSeconds(30));
     }
 
     /** A fresh VAPID key pair, generated with the platform provider. */

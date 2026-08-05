@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.PushTestSupport.subscription;
+import static com.the13haven.push2u.PushTestSupport.trustingPushHttpClient;
 import static com.the13haven.push2u.TestVectors.b64;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -100,6 +101,7 @@ class PushSenderTest {
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .jwtExpiry(Duration.ofHours(24))
@@ -123,6 +125,7 @@ class PushSenderTest {
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .build();
@@ -168,6 +171,7 @@ class PushSenderTest {
             receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
             receiver.enqueue(201);
             PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
                     .build();
@@ -309,6 +313,7 @@ class PushSenderTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             VapidSigner externalSigner = new LocalEcVapidSigner(generateVapidKeys());
             PushSender pusher = PushSender.builder(externalSigner, "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .build();
 
@@ -347,6 +352,9 @@ class PushSenderTest {
 
     private PushSender pusher() {
         return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                // The real JdkPushHttpClient, trusting the receiver's per-JVM TLS certificate —
+                // the sends here traverse an actual https handshake, same as production.
+                .httpClient(trustingPushHttpClient())
                 .sleeper(sleeper)
                 .build();
     }

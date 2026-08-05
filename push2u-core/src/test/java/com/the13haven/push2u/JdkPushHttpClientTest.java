@@ -11,18 +11,22 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
 
-import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link JdkPushHttpClient} against a live JDK {@link HttpServer}. The scenario the discarding body handler exists for:
- * the endpoint is a capability URL from the (untrusted) subscription, so a hostile push service may answer with an
+ * {@link JdkPushHttpClient} against a live JDK {@link HttpsServer}. The scenario the discarding body handler exists
+ * for: the endpoint is a capability URL from the (untrusted) subscription, so a hostile push service may answer with an
  * arbitrarily large body. The client must drain it without buffering and still hand the pipeline the status and headers
  * it needs.
+ *
+ * <p>The server is a bespoke streaming handler rather than the {@link MockPushReceiver} (which cannot stream a
+ * 64&nbsp;MiB body), but it serves the same TLS identity ({@link LoopbackTls}) — the fixture models a real push
+ * endpoint, so it speaks the protocol a real one does.
  */
 class JdkPushHttpClientTest {
 
@@ -31,8 +35,9 @@ class JdkPushHttpClientTest {
 
     @Test
     void aHugeResponseBodyIsDiscardedAndTheStatusAndHeadersStillArrive() throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        HttpsServer server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try {
+            server.setHttpsConfigurator(new HttpsConfigurator(LoopbackTls.serverContext()));
             byte[] chunk = new byte[64 * 1024];
             server.createContext("/push", exchange -> {
                 exchange.getRequestBody().readAllBytes();
@@ -48,9 +53,10 @@ class JdkPushHttpClientTest {
                 }
             });
             server.start();
-            URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
+            URI endpoint = URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/push");
 
-            PushResponse response = new JdkPushHttpClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
+            PushResponse response = new JdkPushHttpClient(
+                            PushTestSupport.trustingJavaHttpClient(), Duration.ofSeconds(30))
                     .post(endpoint, Map.of("TTL", "60"), new byte[] {1, 2, 3});
 
             assertThat(response.statusCode()).isEqualTo(429);
