@@ -146,9 +146,10 @@ class VaultSignerAutoConfigurationTest {
 
     @Test
     void aMountWithADotDotSegmentFailsNamingTheProperty() {
-        // The '..' segment is the load-bearing case: it travels in the raw request path until a
-        // decoding or normalizing hop (Vault's own router, or a proxy in front of it) collapses
-        // it and lands the call — X-Vault-Token included — on a different Vault path.
+        // The '..' segment is the load-bearing case: a normalizing proxy in front of Vault
+        // collapses it before Vault sees it, and Vault's own handler answers the decoded form
+        // with a 307 redirect to the collapsed path — which a redirect-following transport would
+        // re-send, X-Vault-Token included, to a different Vault path.
         vaultRunner().withPropertyValues("push2u.signer.vault.mount=../sys").run(context -> {
             assertThat(context).hasFailed();
             assertThat(context.getStartupFailure())

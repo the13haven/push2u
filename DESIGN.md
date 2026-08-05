@@ -320,13 +320,21 @@ hold only the optional steps: `mount` defaults to `transit` (Vault's own default
 every `/`-separated segment must be non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
 The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
 literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
-`URI.resolve` does *not* normalize dot segments, the path goes onto the wire as written — until a
-decoding or normalizing hop collapses it: Vault's own Go router decodes the path before routing,
-and a normalizing proxy in front of Vault (nginx `proxy_pass` with a URI part, HAProxy
-`normalize-uri`) rewrites it even earlier. Either way the request lands, `X-Vault-Token` header
-included, on a different Vault path. The signer never percent-encodes, so a mount name outside
-the allowed set is unaddressable through it anyway — refusing it at the step costs nothing and
-replaces `URI.create`'s later raw "Malformed escape pair" failure.
+`URI.resolve` does *not* normalize dot segments, the path goes onto the wire as written. What
+happens next depends on the hops: Vault's own Go router decodes the path before routing, so a
+`%2F` addresses a different mount inside Vault itself; a decoded dot segment draws a *307
+redirect* to the collapsed path from Vault's handler (`cleanPath` in `http/handler.go`) — the
+default `Redirect.NEVER` transport refuses it loudly, but a redirect-following custom transport
+would execute it, re-sending `X-Vault-Token` to the other path; and a normalizing proxy in front
+of Vault (nginx `proxy_pass` with a URI part, HAProxy `normalize-uri`) collapses the path before
+Vault sees it at all. The set is deliberately narrower than either Vault or a URL requires —
+policy, not necessity: Vault accepts any printable Unicode in a mount path (`validateMountPath`,
+canonical per `path.Clean`), and `~ ! $ & ' ( ) * + , ; = : @` are legal raw in a URI path
+segment, so a mount like `transit+prod` is real and was addressable through this signer before
+the rule. It is refused anyway because some of that punctuation is treated specially by
+intermediaries (`;` reads as a path parameter to some hops), and admitting only what every hop
+treats literally can be widened later without breaking anyone — the reverse is not true.
+Refusing at the step also replaces `URI.create`'s later raw "Malformed escape pair" failure.
 
 `VaultTransitVapidSigner` supports:
 

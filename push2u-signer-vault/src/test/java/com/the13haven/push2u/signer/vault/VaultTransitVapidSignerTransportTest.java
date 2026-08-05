@@ -121,8 +121,8 @@ class VaultTransitVapidSignerTransportTest {
 
     /**
      * A mount that is not Vault's default reaches the request path unchanged — including a nested one: mount validation
-     * refuses only what would alter the URL ({@code ..}, {@code //}, {@code ?}, {@code #}, whitespace, edge slashes),
-     * and {@code secrets/transit} is a legal Vault mount path.
+     * is per segment against the allowed set {@code [A-Za-z0-9_.-]} (each segment non-empty, not {@code .}/{@code ..}),
+     * and both {@code push-transit} and the nested {@code secrets/transit} satisfy it.
      */
     @Test
     void anExplicitMountIncludingANestedOneReplacesTheDefaultInTheRequestPath() throws Exception {

@@ -552,11 +552,16 @@ Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (s
 transport* below). `mount` is validated where it is set, per segment: nested mounts like
 `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
 and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
-reopened by encoding: a `%2e%2e` segment travels in the raw request path (`URI.resolve` does not
-normalize dot segments) until a decoding or normalizing hop — Vault's own router decodes the path
-before routing, and a proxy in front of Vault may normalize it earlier — collapses it and lands
-the request, `X-Vault-Token` header included, on a different Vault path. The signer never
-percent-encodes, so a mount name outside the set could not be addressed through it anyway.
+reopened by encoding: a `%2e%2e` or `%2F` segment travels in the raw request path (`URI.resolve`
+does not normalize dot segments) — Vault's own router decodes a `%2F` before routing and addresses
+a different mount, a decoded dot segment draws a 307 redirect to the collapsed path from Vault's
+handler (harmless under the default `Redirect.NEVER` transport, executed — `X-Vault-Token`
+included — by a redirect-following custom one), and a normalizing proxy in front of Vault
+collapses the path before Vault sees it. The set is deliberately narrower than Vault and URLs
+allow: URL-legal punctuation like `+` or `~` in a mount name is refused by this validator's
+policy, not because such a mount could not be addressed — some of that punctuation is treated
+specially by intermediaries, and a conservative set can be widened later without breaking
+compatibility.
 
 The equivalent Spring Boot configuration is:
 

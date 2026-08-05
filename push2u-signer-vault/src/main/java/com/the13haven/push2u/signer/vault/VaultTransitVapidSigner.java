@@ -822,16 +822,24 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * <p>An explicit allowed set, not a blacklist, because a blacklist here is reopenable by encoding: a
      * percent-encoded {@code %2e%2e} or {@code %2F} passes any literal {@code ..}/{@code /} check and travels in the
      * raw request path — {@link URI#resolve} does <em>not</em> normalize dot segments, so the path goes onto the wire
-     * exactly as written — until whichever hop decodes or normalizes the URL collapses it: Go's {@code net/url} decodes
-     * the path before Vault routes it, and a normalizing proxy in front of Vault (nginx {@code proxy_pass} with a URI
-     * part, HAProxy {@code normalize-uri}) rewrites it even earlier. Either way the request — its {@code X-Vault-Token}
-     * header included — lands on a <em>different</em> Vault path. The literal {@code .}/ {@code ..} segments are
-     * refused for the same hops. That must fail loudly at configuration, not travel.
+     * exactly as written. What happens next depends on the hops. Go's {@code net/url} decodes the path before Vault
+     * routes it, so a {@code %2F} addresses a different mount inside Vault itself. A decoded dot segment makes Vault's
+     * own handler ({@code cleanPath} in {@code http/handler.go}) answer a <em>307 redirect</em> to the collapsed path —
+     * the default transport ({@code Redirect.NEVER}) refuses it loudly, but a redirect-following custom transport would
+     * execute it, re-sending {@code X-Vault-Token} to the other path. And a normalizing proxy in front of Vault (nginx
+     * {@code proxy_pass} with a URI part, HAProxy {@code normalize-uri}) collapses the path before Vault sees it at
+     * all. The literal {@code .}/{@code ..} segments are refused for the same hops. A token-bearing request whose
+     * destination depends on which of those hops is deployed must fail loudly at configuration instead.
      *
-     * <p>The allowed set costs nothing real: this signer never percent-encodes, so a mount name containing {@code %}
-     * (or any other character outside the set) is unaddressable through it anyway — better refused at the step, with
-     * the property named, than surfacing later as {@code URI.create}'s raw "Malformed escape pair". Every real Vault
-     * mount shape — {@code transit}, {@code transit-prod}, {@code team_a/secrets/transit} — fits the set.
+     * <p>The allowed set is deliberately narrower than either Vault or a URL requires — that is policy, not necessity.
+     * Vault accepts any printable Unicode in a mount path ({@code validateMountPath} in
+     * {@code vault/logical_system.go}: canonical per {@code path.Clean}, no unprintables), and thirteen further
+     * characters ({@code ~ ! $ & ' ( ) * + , ; = : @}) are legal <em>raw</em> in a URI path segment — a mount like
+     * {@code transit+prod} is real and was addressable through this signer before this rule existed. They are excluded
+     * anyway: some of that punctuation is treated specially by intermediaries (a {@code ;} reads as a path parameter to
+     * some hops), and a set admitting only what every hop treats literally can be widened later without breaking anyone
+     * — the reverse is not true. Every common mount shape — {@code transit}, {@code transit-prod},
+     * {@code team_a/secrets/transit} — fits the set.
      */
     private static String requireValidMount(String mount) {
         Objects.requireNonNull(mount, "mount");
@@ -841,10 +849,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         for (int i = 0; i < mount.length(); i++) {
             if (!allowedMountCharacter(mount.charAt(i))) {
                 throw new IllegalArgumentException("mount contains a character (at index " + i + ") outside the"
-                        + " allowed set [A-Za-z0-9_.-] and '/' — anything else either breaks the request URL"
-                        + " outright or, percent-encoded, survives to a decoding hop that rewrites the path. A"
-                        + " mount named outside this set is unaddressable through this signer, which never"
-                        + " percent-encodes");
+                        + " allowed set [A-Za-z0-9_.-] and '/'. The set is deliberately narrower than Vault and"
+                        + " URLs allow: a percent-encoded sequence would survive to a decoding hop that rewrites"
+                        + " the request path, and some URL-legal punctuation is treated specially by"
+                        + " intermediaries — the conservative set can be widened later without breaking"
+                        + " compatibility");
             }
         }
         for (String segment : mount.split("/", -1)) {
@@ -853,10 +862,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                         + " segment — a nested mount is written like \"secrets/transit\"");
             }
             if (".".equals(segment) || "..".equals(segment)) {
-                throw new IllegalArgumentException("mount must not contain a '" + segment + "' segment — a decoding"
-                        + " or normalizing HTTP hop (Vault's own Go router decodes the path before routing; a proxy"
-                        + " may normalize it earlier) would collapse it and land the request, X-Vault-Token header"
-                        + " included, on a different Vault path");
+                throw new IllegalArgumentException("mount must not contain a '" + segment + "' segment — a"
+                        + " normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own"
+                        + " handler answers the decoded form with a 307 redirect to the collapsed path, which a"
+                        + " redirect-following transport would re-send, X-Vault-Token header included, to a"
+                        + " different Vault path");
             }
         }
         return mount;
