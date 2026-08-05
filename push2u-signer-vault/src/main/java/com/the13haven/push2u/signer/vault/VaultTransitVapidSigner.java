@@ -909,7 +909,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         for (String segment : value.split("/", -1)) {
             if (segment.isEmpty()) {
                 throw new IllegalArgumentException(name + " must not begin or end with '/' or contain an empty '//'"
-                        + " segment — a nested " + name + " is written like \"" + nestedExample + "\"");
+                        + " segment — a nested " + name + " is written like \"" + nestedExample + "\". Vault's CLI"
+                        + " prints these paths with a trailing slash as a hierarchy marker (\"" + nestedExample
+                        + "/\"); the configured value does not carry it");
             }
             if (".".equals(segment) || "..".equals(segment)) {
                 throw new IllegalArgumentException(name + " must not contain a '" + segment + "' segment — a"
