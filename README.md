@@ -454,6 +454,25 @@ The indicator participates in the health endpoint's primary group only. Spring B
 group contains just the application's own liveness state, so a signer outage can never restart
 pods — an unreachable Vault is not something a container restart fixes.
 
+The indicator is registered when a `VapidSigner` bean exists, and asks about nothing else. The
+signer is the only part of a send that can stop working while the application runs — it reaches a
+backend that can go down, holds a token that can expire, names a key that can be deleted. The rest
+of a `PushSender` is immutable configuration the builder already validated, and an incomplete
+configuration fails startup rather than showing up here: health answers "what broke", not "what was
+set up wrong".
+
+While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
+a startup failure naming `push2u.vapid.subject`), so this changes nothing there. Where it matters
+is a context that *excludes* `Push2uAutoConfiguration` and wires its own `PushSender` around a
+signer kept as a bean: the probe then applies to exactly the signer that sender uses. An
+application that supplies its own `PushSender` and no `push2u.vapid.*` gets no indicator — that
+sender's signer lives inside it, where the starter cannot reach it, and an indicator reporting
+health it never established would be worse than its absence. When the entry is missing and you
+expected it, `/actuator/conditions` (or starting with `--debug`) names the bean the condition did
+not find. Note the flip side of probing a bean: an application that supplies both its own
+`PushSender` *and* `push2u.vapid.*` gets an indicator that exercises the signer built from those
+properties, not the one inside its sender.
+
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
 property. It is not required when the application supplies its own `PushSender` bean — that bean

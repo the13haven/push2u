@@ -166,9 +166,9 @@ class Push2uAutoConfigurationTest {
         // precondition, @ConditionalOnBean(VapidSigner.class), is also satisfied here — otherwise
         // the factory method would never run regardless of @ConditionalOnMissingBean, and the test
         // would pass for the wrong reason (pinned by mutation testing: with no keys configured, the
-        // test stayed green even with @ConditionalOnMissingBean deleted entirely). With a local
-        // signer present, the health indicator has the VapidSigner it needs, so the field runner
-        // (which includes Push2uHealthAutoConfiguration) works unmodified.
+        // test stayed green even with @ConditionalOnMissingBean deleted entirely). The keyless
+        // variant of this setup is a case of its own — see
+        // anApplicationSenderWithoutASignerBeanStartsWithoutTheIndicator.
         runner.withPropertyValues(
                         "push2u.vapid.public-key=" + publicKeyB64, "push2u.vapid.private-key=" + privateKeyB64)
                 .withUserConfiguration(CustomSenderConfiguration.class)
@@ -176,6 +176,46 @@ class Push2uAutoConfigurationTest {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(PushSender.class);
                     assertThat(context.getBean(PushSender.class)).isSameAs(CustomSenderConfiguration.SENDER);
+                });
+    }
+
+    @Test
+    void anApplicationSenderWithoutASignerBeanStartsWithoutTheIndicator() {
+        // The documented setup this used to break: an application builds its own PushSender and
+        // configures no push2u.vapid.* at all, so the signer lives inside that sender and never
+        // becomes a bean. The health indicator's condition asked only for a PushSender while its
+        // factory method took a VapidSigner, so the context failed to start with an
+        // UnsatisfiedDependencyException on a bean the application never had reason to declare.
+        //
+        // Conditioning on the signer bean makes the indicator absent instead: its probe signs to learn whether
+        // the signing backend answers, and there is nothing here to sign with. Actuator's health
+        // endpoint simply carries no push2u entry. The sender itself is untouched and usable.
+        runner.withUserConfiguration(CustomSenderConfiguration.class).run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(PushSender.class);
+            assertThat(context.getBean(PushSender.class)).isSameAs(CustomSenderConfiguration.SENDER);
+            assertThat(context).doesNotHaveBean(VapidSigner.class);
+            assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+        });
+    }
+
+    @Test
+    void aSignerBeanAloneStillGetsAnIndicator() {
+        // The condition names the signer alone, so an application that keeps a signer bean and
+        // builds its PushSender by hand — not as a bean — still gets the probe. That is the whole
+        // point of asking about the signer rather than about the sender: the signer is what can
+        // stop answering while the application runs, and here it is present and reachable.
+        //
+        // The main autoconfiguration is excluded so no PushSender bean can appear, which also
+        // exercises the reason @EnableConfigurationProperties is restated on the health
+        // autoconfiguration: without it, push2u.health.* would not bind in this context.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uHealthAutoConfiguration.class))
+                .withUserConfiguration(CustomSignerConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(PushSender.class);
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
                 });
     }
 
