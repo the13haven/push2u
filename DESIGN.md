@@ -213,6 +213,12 @@ provider's output unconverted looks correct until the wire. The library converts
 signer (above) but cannot here — the provider and encoding behind an external signer are unknown,
 and a valid 64-byte signature may itself begin with `0x30`.
 
+Both methods return arrays, and the arrays are the caller's. `publicKey()` in particular must
+return a fresh copy on every call: a signer handing out its internal array is corrupted for every
+later send by the first caller that writes into the returned bytes, and nothing would notice — the
+mutated key is still a well-formed point. Both shipped signers return a `clone()`, and the
+conformance kit pins the copy; the per-send shape check above cannot see aliasing.
+
 ### PushHttpClient
 
 ```java
@@ -756,9 +762,11 @@ The automated suite covers:
 - RFC 8292 VAPID structure and signature verification;
 - the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
   non-default ports, address literals, userinfo (`OriginTest`);
-- signer contract tests, and the kit checking itself — each of its three checks run once against a
-  conforming signer and once against one that breaks exactly what that check is about, a DER
-  signature or a compressed or off-curve point (`VapidSignerContractSelfTest`);
+- signer contract tests, and the kit checking itself — each of its four checks run once against a
+  conforming signer and once against one that breaks exactly what that check is about: a DER
+  signature, a compressed or off-curve point, or a shared internal key array — plus the kit's
+  DER-fallback verification and its minimal-DER re-encoding, exercised directly because no CI
+  platform lacks the P1363 signature name (`VapidSignerContractSelfTest`);
 - the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`);

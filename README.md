@@ -411,12 +411,16 @@ class MySignerContractTest extends VapidSignerContractTest {
 }
 ```
 
-Three checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
+Four checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
 coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
-by the JCA without complaint), and a signature is the raw 64-byte `r || s` that verifies against
-that key. It is the same contract `LocalEcVapidSigner` and the Vault Transit signer are held to.
-The kit brings JUnit 5 and AssertJ with it, which is why it is a separate artifact and never a
-dependency of `push2u-core`.
+by the JCA without complaint), the array `publicKey()` returns is a fresh copy — mutating it must
+not change what the next call returns — and a signature is the raw 64-byte `r || s` that verifies
+against that key. Verification uses the JDK alone and runs on a FIPS-only JVM: the kit prefers
+`SHA256withECDSAinP1363Format` and, where a provider registers only DER-form `SHA256withECDSA`
+(BC-FIPS), re-encodes the raw signature to minimal DER and verifies through that name — the same
+fallback the library itself makes. It is the same contract `LocalEcVapidSigner` and the Vault
+Transit signer are held to. The kit brings JUnit 5 and AssertJ with it, which is why it is a
+separate artifact and never a dependency of `push2u-core`.
 
 ## Spring Boot
 

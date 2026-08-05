@@ -105,7 +105,7 @@ exception — ADR-007); other → `FAILED`; transport → `PushDeliveryException
 Three SPIs, and only three (ADR-005):
 
 - `VapidSigner` — key custody. Contract: raw 64-byte `r||s` ES256 signature, 65-byte uncompressed
-  P-256 public point. Implementations: `LocalEcVapidSigner`, `VaultTransitVapidSigner`.
+  P-256 public point, both returned as fresh arrays the caller owns. Implementations: `LocalEcVapidSigner`, `VaultTransitVapidSigner`.
 - `PushHttpClient` — push transport. Response bodies are never read (untrusted capability URLs).
 - `EndpointPolicy` — deployment egress policy (SSRF control). Off by default;
   `EndpointPolicies.allowedOrigins` is the standard implementation.
