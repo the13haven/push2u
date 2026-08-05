@@ -88,7 +88,7 @@ PushSender.send(subscription, message)
     │
     ├─ Check the payload against the body limit and the record size
     ├─ Validate the endpoint against the configured EndpointPolicy (no policy by default)
-    ├─ Decode the subscription P-256 public key
+    ├─ Decode the subscription P-256 public key, checking the point is on the curve
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
     ├─ Encrypt one RFC 8188 record with AES-128-GCM
@@ -291,6 +291,14 @@ RFC 8188 record. The default record size is 4096 bytes. Because a single record 
 payload, `rs` must be strictly greater than the plaintext plus the padding delimiter plus the
 authentication tag (RFC 8291 §4); equality is rejected. The record is not zero-padded up to `rs`,
 so the body size depends only on the payload.
+
+The subscription public key (`p256dh`) is attacker-reachable input, and the library validates the
+point itself at decode time — coordinates inside the prime field, then the P-256 curve equation —
+before it reaches the provider's `KeyFactory`. Refusing an invalid-curve point therefore does not
+depend on whether the configured provider validates in `KeyAgreement.doPhase`; with a provider
+whose `secp256r1` parameters are not over a prime field, the check fails closed. The Vault signer
+performs its own, deliberately separate check on the key it fetches (§7), which additionally
+compares domain parameters by value because there the parameters come from the input.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
