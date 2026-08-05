@@ -88,9 +88,13 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
-     * The exact boundary of the field check: {@code x = p} is one past the last representable field element. It is
-     * congruent to zero mod p, so an implementation that reduced before comparing would let it through — the check must
-     * compare the raw coordinate.
+     * The exact boundary of the field check: {@code x = p} is one past the last representable field element, and
+     * congruent to zero mod p. What is pinned is the <em>message</em>: an implementation that reduced before comparing
+     * would also refuse this point, but through the curve equation rather than through the field check, so only the
+     * message distinguishes a raw comparison from a reducing one. The case such an implementation would genuinely
+     * accept — {@code x = p + x₀} with {@code (x₀, y)} on the curve — needs an {@code x₀} below 2^224 and cannot be
+     * built from the RFC 8291 point, which makes {@code x = p} the practical proxy for "the raw coordinate is what is
+     * compared".
      */
     @Test
     void aCoordinateAtExactlyTheFieldPrimeIsRefusedAtDecodeTime() {
