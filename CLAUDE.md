@@ -183,7 +183,10 @@ starter is ordered before the core starter and outranks the local signer.
 - **Versions:** never hardcode a version. `libs.versions.toml` holds every dependency and tool
   version; the project version comes from `vX.Y.Z` git tags via axion. The README's Maven
   coordinates must stay in the literal form `com.the13haven:<module>:X.Y.Z` — a pre-release hook
-  rewrites exactly that string.
+  rewrites exactly that string. **Gradle's own version is the exception**: it lives in
+  `gradle/wrapper/gradle-wrapper.properties` beside a `distributionSha256Sum`, so bumping it has a
+  procedure — CONTRIBUTING.md, *Upgrading Gradle*. The `wrapper` task refuses to drop the checksum
+  silently, so a wrong move fails loudly rather than weakening the build.
 - **Security pins:** vulnerable transitives are pinned with dependency *constraints*, never
   `resolutionStrategy.force` (force leaks the originally requested version into the submitted
   dependency graph and Dependabot alerts on that phantom node). Each pin names its advisory.

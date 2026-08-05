@@ -24,13 +24,25 @@ jobs:
     runs-on: ubuntu-latest
     # Must exceed this job's worst case, not its typical one: a timeout is a cancellation, and a
     # cancellation between the tag and the upload leaves a version burnt with nothing on Central.
-    # The budget is the sum of the parts that can each take their own maximum in the same run:
-    # `qualityCheckCi` alone is allowed 30 minutes in ci.yml (and runs here on a cold cache), the
-    # deployment bundle is then built and signed, and the tagged version is built a second time
-    # from scratch before it is uploaded. 60 leaves room for all of it.
     #
-    # **If ci.yml's 30 moves, this number moves with it** — it is derived from that one, not
-    # chosen independently.
+    # This job is the two other release-path jobs back to back, so the budget is theirs added up:
+    #     ci.yml `quality`                 30   (checkout, wrapper validation, setup, qualityCheckCi,
+    #                                            result aggregation, Codecov — the whole job, not
+    #                                            just the Gradle task, and here on a cold cache)
+    #   + publish-existing-tag.yml         30   (checkout, setup, a second from-scratch build of
+    #                                            every jar, sign, upload, gh release — exactly the
+    #                                            work this job's tail does)
+    #   ------------------------------------
+    #                                      60
+    #
+    # The bundle build (`nmcpZipAggregation`, below) rides inside the second term's slack rather
+    # than adding a third, so 60 is a sum of two budgets, not three. That is deliberate but tight:
+    # if both halves ever really took their maximum, the cancellation would land inside the upload.
+    # It is survivable — `Publish Existing Tag` exists to finish a run that tagged but did not
+    # publish — and it is the reason this number is a sum rather than a guess.
+    #
+    # **Keep it equal to ci.yml's `quality` budget plus publish-existing-tag.yml's.** If either of
+    # those moves, recompute; this number is derived, not chosen.
     timeout-minutes: 60
 
     steps:
@@ -169,10 +181,12 @@ jobs:
       # this is the half that does not depend on anyone remembering.
       #
       # Late on purpose. Everything above is reversible and can take half an hour, so checking
-      # early would leave exactly the window it is meant to close; checking here narrows it to the
-      # seconds between this step and the tag. It cannot be narrowed to zero — that would need an
-      # atomic compare-and-swap the git transport does not offer — but a release that refuses to
-      # start is a non-event, and this turns the expensive failure into that.
+      # early would leave exactly the window it is meant to close; checking here narrows it to
+      # what the next step needs before it tags — a cold JVM, configuration (which reaches the
+      # remote, `localOnly=false`), axion's own preconditions and its five README rewrites. That
+      # is minutes, not seconds, and it cannot be narrowed to zero either: closing it would need
+      # an atomic compare-and-swap the git transport does not offer. What this buys is turning an
+      # expensive failure into a cheap one — a release that refuses to start is a non-event.
       #
       # axion's own preconditions do not cover this. `aheadOfRemote` fails when the LOCAL branch
       # has commits the remote lacks; here the remote is the side that moved, which that check
@@ -182,7 +196,10 @@ jobs:
       # as old as the checkout itself, so comparing against it would compare the base commit with
       # itself. The fetch goes over SSH with the deploy key, which makes this the first step to
       # exercise that credential — a key that cannot reach the repository now fails here, one step
-      # before the tag, instead of during the push.
+      # before the tag, instead of during the push. Only partly, though: this reaches the remote
+      # through OpenSSH, while the push below hands the same file to axion's JGit
+      # (`-Prelease.customKeyFile`). A key OpenSSH accepts and JGit cannot parse still fails at the
+      # push, so do not read a green step here as proof the credential works end to end.
       #
       # Nothing after this deserves the same guard: from the step below onwards main is SUPPOSED
       # to have moved, because axion moved it. Tags need no equivalent check either — the two

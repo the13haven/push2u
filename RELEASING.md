@@ -230,8 +230,9 @@ moment the release goes public, not so editing later becomes impossible.
 4. checks that `origin/main` still points at the commit the run was cut from, and fails if it
    moved (see *Freeze main while a release runs* above) — the last step that can still fail
    without consequences;
-5. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
-   with the deploy key;
+5. has axion write the `Release v<X.Y.Z>` commit (the `preRelease` hooks rewrite the README
+   coordinates), create the tag `v<X.Y.Z>` from it, and push **both the commit to `main` and the
+   tag** over SSH with the deploy key — the commit is what needs the ruleset bypass above;
 6. creates a **draft** GitHub Release for the tag, with notes generated from the merged pull
    requests — prefixed by `.github/release-notes/<tag>.md` when that file exists (step 2);
 7. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
@@ -242,8 +243,10 @@ moment the release goes public, not so editing later becomes impossible.
 8. takes the GitHub Release out of draft, now that the artifacts it describes actually exist.
 
 The order is deliberate. Steps 1–4 run entirely on the runner, so a failure there leaves nothing
-behind at all. Step 5 pushes a tag, which can still be deleted. Step 6 creates a draft, which can
-still be deleted. **Step 7 is the point of no return** — everything reversible happens before it.
+behind at all. Step 5 pushes a commit and a tag: the tag can simply be deleted, the commit cannot
+— the ruleset blocks non-fast-forward pushes to `main`, so only the deploy key could rewrite it,
+and in practice you move forward rather than back. Step 6 creates a draft, which can still be
+deleted. **Step 7 is the point of no return** — everything reversible happens before it.
 
 ### 4. Verify the result
 
