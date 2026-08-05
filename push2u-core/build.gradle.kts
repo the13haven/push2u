@@ -28,8 +28,9 @@ val fipsTest: SourceSet = sourceSets.create("fipsTest")
 // constraint of the core (JSpecify, the lone `api` entry below, ships annotations and no code) —
 // the library replaces nl.martijndwars:web-push precisely because it
 // dragged a heavy transitive surface (EOL Apache HttpClient 4.x, plus jose4j and BouncyCastle)
-// and leaked it into its public API. The only declared deps are the test stack (JUnit + AssertJ)
-// from the version catalog.
+// and leaked it into its public API. Everything else declared below is test-only: the test stack
+// from the version catalog, the two BouncyCastle providers on their disjoint classpaths, this
+// module's own fixtures and the conformance kit.
 dependencies {
     // JSpecify: annotations only, no code. `api` so the nullness contract travels with the
     // published API — consumers' analysers read the same @NullMarked/@Nullable the core is built
