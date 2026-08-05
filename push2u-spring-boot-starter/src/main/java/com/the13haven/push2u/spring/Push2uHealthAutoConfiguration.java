@@ -18,14 +18,24 @@ import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.VapidSigner;
 
 /**
- * Registers a push2u {@link HealthIndicator} when Spring Boot Actuator is on the classpath and a {@link PushSender} has
- * been configured, unless {@code push2u.health.enabled=false} opts out.
+ * Registers a push2u {@link HealthIndicator} when Spring Boot Actuator is on the classpath and both a
+ * {@link PushSender} and a {@link VapidSigner} have been configured, unless {@code push2u.health.enabled=false} opts
+ * out.
+ *
+ * <p>Both beans are required because the probe signs with the {@code VapidSigner} to find out whether the signing
+ * backend answers. An application that supplies its own {@code PushSender} and no signer — the sender carries one
+ * internally, so it never has to be a bean — gets no indicator rather than a context that fails to start: there is
+ * nothing here to probe, and an indicator reporting health it never established would be worse than its absence.
  *
  * <p>A separate autoconfiguration ordered {@link AutoConfiguration#after() after} {@link Push2uAutoConfiguration} so
- * the {@code PushSender} bean already exists when {@link ConditionalOnBean} is evaluated; {@link ConditionalOnClass}
- * keeps the starter usable without Actuator on the classpath. {@link EnableConfigurationProperties} is restated here
- * (not only on {@link Push2uAutoConfiguration}) so the indicator's configuration binds even in a context that supplies
- * its own {@code PushSender}/{@code VapidSigner} beans and excludes the main autoconfiguration.
+ * the {@code PushSender} and the local {@code VapidSigner} beans already exist when {@link ConditionalOnBean} is
+ * evaluated — a condition sees only what is registered by the time it runs. The Vault signer comes from a starter
+ * ordered ahead of {@code Push2uAutoConfiguration}, so it is registered by then too; the Vault starter's test suite
+ * pins that composition, because a signer arriving too late makes the indicator vanish silently rather than fail.
+ * {@link ConditionalOnClass} keeps the starter usable without Actuator on the classpath.
+ * {@link EnableConfigurationProperties} is restated here (not only on {@link Push2uAutoConfiguration}) so the
+ * indicator's configuration binds even in a context that supplies its own {@code PushSender}/{@code VapidSigner} beans
+ * and excludes the main autoconfiguration.
  *
  * <p>The indicator is an ordinary application-scoped contributor: it lands in the health endpoint's primary group (and
  * in {@code readiness} only if the operator includes it there), never in {@code liveness} — Spring Boot's liveness
@@ -45,7 +55,8 @@ public final class Push2uHealthAutoConfiguration {
     }
 
     /**
-     * The push2u health indicator, created once a {@link PushSender} is configured and the probe is not disabled.
+     * The push2u health indicator, created once a {@link PushSender} and a {@link VapidSigner} are configured and the
+     * probe is not disabled.
      *
      * <p>{@code push2u.health.cache-ttl} failures from the indicator's own validation are re-thrown with the property
      * name prefixed, since the constructor's message cannot know the YAML property — the same convention as
@@ -57,7 +68,7 @@ public final class Push2uHealthAutoConfiguration {
      * @throws IllegalArgumentException if {@code push2u.health.cache-ttl} is negative
      */
     @Bean
-    @ConditionalOnBean(PushSender.class)
+    @ConditionalOnBean({PushSender.class, VapidSigner.class})
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "push2u.health", name = "enabled", matchIfMissing = true)
     public Push2uHealthIndicator push2uHealthIndicator(VapidSigner signer, Push2uProperties properties) {

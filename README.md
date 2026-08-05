@@ -454,6 +454,12 @@ The indicator participates in the health endpoint's primary group only. Spring B
 group contains just the application's own liveness state, so a signer outage can never restart
 pods — an unreachable Vault is not something a container restart fixes.
 
+The indicator needs a `VapidSigner` bean to probe with, so it is registered only when there is one.
+An application that supplies its own `PushSender` bean and configures no `push2u.vapid.*` keeps its
+signer inside that sender, where the starter cannot reach it — the context starts normally and the
+health endpoint simply carries no push2u entry. Exposing one anyway would mean reporting health
+that was never established.
+
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
 property. It is not required when the application supplies its own `PushSender` bean — that bean

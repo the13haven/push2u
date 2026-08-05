@@ -43,6 +43,8 @@ import com.the13haven.push2u.signer.vault.VaultHttpResponse;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
 import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 import com.the13haven.push2u.spring.Push2uAutoConfiguration;
+import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
+import com.the13haven.push2u.spring.Push2uHealthIndicator;
 
 /**
  * {@link VaultSignerAutoConfiguration} wires a {@link VaultTransitVapidSigner} from {@code push2u.signer.vault.*},
@@ -172,6 +174,39 @@ class VaultSignerAutoConfigurationTest {
             assertThat(context).hasSingleBean(VapidSigner.class);
             assertThat(context.getBean(VapidSigner.class)).isSameAs(CustomSignerConfiguration.SIGNER);
         });
+    }
+
+    @Test
+    void theHealthIndicatorStillAppearsWhenTheSignerIsTheVaultOne() {
+        // The health indicator is @ConditionalOnBean({PushSender.class, VapidSigner.class}), and a
+        // condition sees only the beans registered by the time it runs. When the only signer is the
+        // Vault one, this module has to have been evaluated first, or the condition finds nothing
+        // and the indicator disappears for every Vault deployment — silently, with no error to
+        // notice. This pins the outcome: all three autoconfigurations together still produce it.
+        //
+        // What it does not pin is the beforeName on this class. Dropping it leaves the test green,
+        // because the sorter falls back to class name and ...signer.vault.spring.VaultSigner...
+        // happens to sort ahead of ...spring.Push2uAutoConfiguration anyway. The declaration stays
+        // because relying on that coincidence would be worse than stating the order.
+        //
+        // No local VAPID keys here: the Vault signer is the only one, so the assertion cannot pass
+        // through the core starter's fallback.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.signer.vault.address=http://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(VapidSigner.class)).isInstanceOf(VaultTransitVapidSigner.class);
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                });
     }
 
     @Test
