@@ -42,6 +42,11 @@ public final class JdkPushHttpClient implements PushHttpClient {
      * Uses a fresh {@link HttpClient} that never follows redirects, and a 30-second per-request timeout. The redirect
      * policy is set explicitly rather than inherited: it is this class's own invariant, not a JDK default to rely on.
      */
+    // The delegation to the validating constructor is load-bearing, not a convenience: it is what
+    // makes "no instance of this class can follow redirects" true of every instance rather than
+    // only of the ones a caller configured. `httpClient` is assigned there and nowhere else, so a
+    // future constructor that sets the field directly would silently drop the guarantee — no test
+    // can catch that, because the wrapped client is not observable from outside.
     public JdkPushHttpClient() {
         this(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), DEFAULT_REQUEST_TIMEOUT);
     }

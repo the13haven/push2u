@@ -191,7 +191,14 @@ final class LoopbackTls {
         } else if (content.length <= 0xFF) {
             length = new byte[] {(byte) 0x81, (byte) content.length};
         } else {
-            // Nothing this class encodes exceeds 65535 bytes.
+            // Only the two-byte long form is implemented, which is enough for everything this
+            // class encodes. Refusing anything larger rather than writing a truncated length: a
+            // silently mis-encoded TLV would produce a certificate that parses into the wrong
+            // shape, and this helper is exactly the kind of thing that gets copied elsewhere.
+            if (content.length > 0xFFFF) {
+                throw new IllegalArgumentException(
+                        "DER content of " + content.length + " bytes exceeds the 65535 this helper can encode");
+            }
             length = new byte[] {(byte) 0x82, (byte) (content.length >>> 8), (byte) content.length};
         }
         byte[] encoded = new byte[1 + length.length + content.length];
