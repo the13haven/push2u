@@ -39,7 +39,8 @@ library itself. Reproduce it with `mvn dependency:tree` on a POM whose only depe
 
 Both HTTP stacks arrive whichever one you use — `PushService` needs Apache, `PushAsyncService`
 needs Netty, and the dependencies are declared unconditionally. Together with `web-push` itself
-that is 27 jars and 6.2 MB on the classpath, two of them platform-specific native transports.
+that is 27 jars and 6,406,226 bytes on the classpath, two of them platform-specific native
+transports.
 
 **BouncyCastle is the one you have to add yourself, and it does not leave silently.**
 `org.bouncycastle:bcprov-jdk15on:1.70` is declared `<optional>true</optional>` in the POM (and in
@@ -61,7 +62,9 @@ an artifact that receives no further releases.
 push2u's side of the same table: `push2u-core` declares exactly one dependency,
 [JSpecify][jspecify] — annotations, no code — carried as `api` so the nullness contract reaches
 consumers, and as `requires static` on the module path so nothing resolves it at runtime
-([ADR-002 and ADR-012 in `DESIGN.md`](DESIGN.md)). The Vault signer and the Spring Boot starters
+([ADR-002](DESIGN.md#adr-002--zero-dependency-core) and
+[ADR-012](DESIGN.md#adr-012--nullness-declared-with-jspecify) in `DESIGN.md`). The Vault signer
+and the Spring Boot starters
 are separate optional modules; neither can reach the core.
 
 ```diff
@@ -85,7 +88,10 @@ deliberately carries no version number, so it cannot go stale against a release.
   unchanged. Both libraries leave the parsing of the browser's `PushSubscription` JSON to the
   application; push2u brings no JSON parser either.
 - **The wire protocol**, when you were already sending `aes128gcm`. Same RFC 8291 encryption, same
-  RFC 8292 VAPID header. Push services cannot tell the two senders apart.
+  RFC 8292 VAPID header — a push service validates the body and the authorization identically. The
+  requests are not byte-identical, though: web-push also sends `Content-Type` and a `Crypto-Key`
+  header, and rewrites FCM's legacy `fcm/send` path (below), while push2u sends only
+  `Authorization`, `Content-Encoding`, `TTL` and the optional `Urgency`/`Topic`.
 
 ## Side by side
 
@@ -190,7 +196,9 @@ if (result.isDelivered()) {
 `PushDeliveryException`, a cryptographic failure `PushCryptoException`, a policy rejection
 `EndpointRejectedException` — all unchecked, all extending `RuntimeException` directly. The five
 checked exceptions on `PushService.send` have no counterpart; a `try`/`catch` block written for
-them will not compile against push2u and should be rewritten around the two runtime exceptions.
+them will not compile against push2u and should be rewritten around those three — or around the
+first two, if you configure no `EndpointPolicy`, since `EndpointRejectedException` cannot be thrown
+until you do.
 
 ### Asynchronous sending
 
@@ -223,7 +231,7 @@ JDK one.
 | `Notification` | `PushMessage` + `Subscription` | The target and the message are separate values |
 | `Notification.builder()` | `PushMessage.builder(payload)` | Payload is required, so it is a factory parameter |
 | `Encoding.AES128GCM` | (implicit) | `aes128gcm` is the only content coding |
-| `Encoding.AESGCM` | — | Not supported ([ADR-006](DESIGN.md)) |
+| `Encoding.AESGCM` | — | Not supported ([ADR-006](DESIGN.md#adr-006--aes128gcm-only)) |
 | `Urgency.NORMAL`, `.getHeaderValue()` | `Urgency.NORMAL`, `.headerValue()` | Same four values |
 | `org.apache.http.HttpResponse` / `org.asynchttpclient.Response` | `PushResult` | Status interpreted, body never read |
 | `Utils.loadPublicKey`, `Utils.loadPrivateKey` | `VapidKeys.fromBase64` / `VapidKeys.of` | No BouncyCastle types in the API |
@@ -246,12 +254,12 @@ the legacy content coding, not `aes128gcm`. (The other entry points differ:
 whether or not you meant to be.
 
 push2u implements `aes128gcm` only, deliberately and permanently: RFC 8291 is the standard, and
-there is no builder option to change it (ADR-006 in [`DESIGN.md`](DESIGN.md)). For anything running
-a current browser this is a no-op — `aes128gcm` is what the user agents that matter negotiate. But
-the encryption is end-to-end to the *user agent*, so if you knowingly serve clients old enough to
-understand only `aesgcm`, push2u cannot reach them and is not a drop-in for that traffic. We have
-not measured which user agents in the wild still require `aesgcm`; if that population matters to
-you, measure it before switching rather than trusting either library's docs.
+there is no builder option to change it ([ADR-006](DESIGN.md#adr-006--aes128gcm-only)). For
+anything running a current browser this is a no-op — `aes128gcm` is what the user agents that
+matter negotiate. But the encryption is end-to-end to the *user agent*, so if you knowingly serve
+clients old enough to understand only `aesgcm`, push2u cannot reach them and is not a drop-in for
+that traffic. We have not measured which user agents in the wild still require `aesgcm`; if that
+population matters to you, measure it before switching rather than trusting either library's docs.
 
 ### Endpoints must be `https`, with no loopback exception
 
@@ -270,7 +278,8 @@ a loopback HTTPS receiver rather than relaxing the rule.
 Neither library throws on `404`/`410`. The difference is who interprets the status: `web-push`
 hands back the transport's response object and you write the mapping; push2u has already made it
 (`DELIVERED` / `SUBSCRIPTION_EXPIRED` / `FAILED`), and expiry is deliberately not an exception so
-that pruning a dead subscription stays ordinary control flow (ADR-007).
+that pruning a dead subscription stays ordinary control flow
+([ADR-007](DESIGN.md#adr-007--expired-subscription-is-a-result)).
 
 Two consequences for a port:
 
@@ -291,8 +300,10 @@ integrations therefore wrapped it in a retry loop of their own.
 push2u retries `429` and `5xx` by default — up to three attempts, exponential backoff from one
 second, capped at 60 seconds, with a valid `Retry-After` (delta-seconds or any RFC 9110 HTTP-date
 form) overriding the computed delay under the same cap. **An application retry loop on top of that
-multiplies**: three attempts inside your three is nine POSTs and up to three minutes of blocking.
-Either delete yours or configure `RetryPolicy.none()`:
+multiplies**: three attempts inside your three is nine POSTs, and the blocking adds up faster than
+it looks — a push service answering `429` with `Retry-After: 60` costs two minutes of sleeping per
+outer attempt, and `JdkPushHttpClient`'s 30-second request timeout alone puts nine dead POSTs at
+four and a half minutes. Either delete yours or configure `RetryPolicy.none()`:
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
@@ -438,9 +449,12 @@ public interface VapidSigner {
 }
 ```
 
-The contract is narrow and unforgiving: return DER instead of `r || s`, or a compressed point, and
-every send draws an opaque `401`/`403`. Extend the published conformance kit in your own test suite
-rather than finding out in production:
+The contract is narrow, and push2u checks both halves of it on every send *before* the POST goes
+out: a signature that is not 64 bytes is refused with a `PushCryptoException` that names DER when
+the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is refused
+the same way. So a broken signer fails loudly at the first send rather than collecting opaque
+`401`/`403` answers — but it still fails at the first send. Extend the published conformance kit in
+your own test suite instead:
 
 ```kotlin
 dependencies {
@@ -459,8 +473,9 @@ class MySignerContractTest extends VapidSignerContractTest {
 ```
 
 `push2u-signer-vault` is a ready-made implementation over HashiCorp Vault Transit, so the private
-key never enters the JVM at all. Both are documented in
-[`README.md`](README.md#conformance-kit-for-a-custom-signer).
+key never enters the JVM at all. The kit is documented under
+[Conformance kit for a custom signer](README.md#conformance-kit-for-a-custom-signer), the Vault
+signer under [Vault Transit signer](README.md#vault-transit-signer).
 
 ## Migration checklist
 
