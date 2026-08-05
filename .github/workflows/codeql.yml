@@ -42,9 +42,18 @@ jobs:
   changes:
     uses: ./.github/workflows/detect-changes.yml
 
+  # The documentation-only filter gates the STEPS here, not the job — unlike the quality gate, where
+  # skipping the job is enough. A skipped job reports its check as passed, but a skipped MATRIX job
+  # never expands `${{ matrix.language }}`: GitHub registers one check literally named
+  # "Analyze ${{ matrix.language }}", and the two the ruleset requires — "Analyze java-kotlin" and
+  # "Analyze actions" — never appear at all. Their requirement can then never be met, so a
+  # documentation-only pull request stays BLOCKED forever (#45 was the first one to prove it: every
+  # earlier docs change happened to carry a non-prose file alongside).
+  #
+  # Letting the job start and skipping its steps costs a runner for a few seconds and gives both
+  # checks their real names and a passing conclusion.
   analyze:
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -74,15 +83,18 @@ jobs:
 
     steps:
       - name: Check out repository
+        if: ${{ needs.changes.outputs.code == 'true' }}
         uses: actions/checkout@v7
 
       - name: Initialize CodeQL
+        if: ${{ needs.changes.outputs.code == 'true' }}
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - name: Perform CodeQL analysis
+        if: ${{ needs.changes.outputs.code == 'true' }}
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
