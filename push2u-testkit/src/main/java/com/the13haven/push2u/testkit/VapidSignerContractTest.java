@@ -129,19 +129,47 @@ public abstract class VapidSignerContractTest {
 
     /**
      * A 65-byte array of the right shape can still be the signer's own state: {@link VapidSigner#publicKey()} requires
-     * a fresh copy on every call, because a signer handing out its internal array is corrupted for every later
-     * signature by the first caller that writes into the returned bytes — and nothing else would notice, the mutated
-     * key still being a well-framed point.
+     * a fresh copy on every call, because a signer handing out one shared array is corrupted for every later signature
+     * by the first caller that writes into the returned bytes — and nothing else would notice, the mutated key still
+     * being a well-framed point.
+     *
+     * <p>Checked by identity rather than by mutating and looking: two distinct arrays cannot alias, so this catches
+     * every single-buffer signer including one that refills its buffer per call, which a mutation probe would miss
+     * because the refill overwrites the probe before the second call is compared. It also leaves a non-conforming
+     * signer's key intact — a mutation probe would zero it, and the three checks above would then fail as well, for a
+     * reason that has nothing to do with what they test. A signer rotating a pool of buffers defeats this and any other
+     * check made from outside; the contract is what binds there.
      */
     @Test
     void publicKeyIsAFreshCopyOnEveryCall() {
         VapidSigner signer = signer();
-        byte[] returned = signer.publicKey();
-        byte[] advertised = returned.clone();
-        Arrays.fill(returned, (byte) 0);
-        assertThat(signer.publicKey())
-                .as("mutating the array publicKey() returned must not change what the next call returns")
-                .isEqualTo(advertised);
+
+        byte[] first = signer.publicKey();
+        byte[] second = signer.publicKey();
+
+        assertThat(second)
+                .as("publicKey() must hand out a fresh array, not a reference to the signer's own")
+                .isNotSameAs(first)
+                .as("and every call must still describe the same key")
+                .isEqualTo(first);
+    }
+
+    /**
+     * The same ownership rule on the other half of the SPI: {@link VapidSigner#sign(byte[])}'s bytes become the
+     * caller's. Identity is all that can be checked here — ES256 is randomized, so two signatures over the same input
+     * differ in content by design, and comparing them would pin nothing.
+     */
+    @Test
+    void signHandsOutAFreshArrayOnEveryCall() {
+        VapidSigner signer = signer();
+        byte[] signingInput = "push2u VapidSigner conformance".getBytes(StandardCharsets.US_ASCII);
+
+        byte[] first = signer.sign(signingInput);
+        byte[] second = signer.sign(signingInput);
+
+        assertThat(second)
+                .as("sign() must hand out a fresh array, not a buffer the signer keeps reusing")
+                .isNotSameAs(first);
     }
 
     /**

@@ -61,6 +61,7 @@ final class VapidSignerContractSelfTest {
         assertThatCode(contract::publicKeyIsA65ByteUncompressedPoint).doesNotThrowAnyException();
         assertThatCode(contract::publicKeyIsAPointOnTheP256Curve).doesNotThrowAnyException();
         assertThatCode(contract::publicKeyIsAFreshCopyOnEveryCall).doesNotThrowAnyException();
+        assertThatCode(contract::signHandsOutAFreshArrayOnEveryCall).doesNotThrowAnyException();
         assertThatCode(contract::signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey)
                 .doesNotThrowAnyException();
     }
@@ -93,6 +94,38 @@ final class VapidSignerContractSelfTest {
                 .doesNotThrowAnyException();
         assertThatThrownBy(contract::publicKeyIsAFreshCopyOnEveryCall)
                 .as("a signer handing out its internal array is what the fresh-copy check exists to catch")
+                .isInstanceOf(AssertionError.class);
+    }
+
+    /**
+     * The aliasing a mutation probe cannot see. This signer hands out one buffer and refills it with the key on every
+     * call, so writing into what it returned is undone before the next call — yet two callers still hold the same
+     * object, which is exactly what the contract forbids. Checking identity rather than consequences is what makes it
+     * catchable, and this is the case that decided that choice.
+     */
+    @Test
+    void aRefilledSharedBufferAlsoFailsTheFreshCopyCheck() throws Exception {
+        Contract contract = new Contract(
+                new RefillingBufferKeySigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)));
+
+        assertThatCode(contract::publicKeyIsA65ByteUncompressedPoint)
+                .as("every call reports the right key — the refill sees to that")
+                .doesNotThrowAnyException();
+        assertThatThrownBy(contract::publicKeyIsAFreshCopyOnEveryCall)
+                .as("one buffer handed to two callers is aliasing however faithfully it is refilled")
+                .isInstanceOf(AssertionError.class);
+    }
+
+    @Test
+    void aReusedSignatureBufferFailsTheSignOwnershipCheck() throws Exception {
+        Contract contract = new Contract(
+                new ReusedSignatureBufferSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)));
+
+        assertThatCode(contract::signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey)
+                .as("each signature is genuine and verifies — only the buffer is shared")
+                .doesNotThrowAnyException();
+        assertThatThrownBy(contract::signHandsOutAFreshArrayOnEveryCall)
+                .as("a signer reusing one signature buffer is what the ownership check exists to catch")
                 .isInstanceOf(AssertionError.class);
     }
 
@@ -242,6 +275,56 @@ final class VapidSignerContractSelfTest {
         @Override
         public byte[] publicKey() {
             return publicKey;
+        }
+    }
+
+    /**
+     * Hands out one buffer, refilled with the key on every call. Conforming by content and by every observable
+     * consequence of a mutation, aliasing all the same — see {@link #aRefilledSharedBufferAlsoFailsTheFreshCopyCheck}.
+     */
+    private static final class RefillingBufferKeySigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final byte[] buffer;
+
+        RefillingBufferKeySigner(VapidSigner delegate) {
+            this.delegate = delegate;
+            this.buffer = new byte[delegate.publicKey().length];
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            byte[] current = delegate.publicKey();
+            System.arraycopy(current, 0, buffer, 0, current.length);
+            return buffer;
+        }
+    }
+
+    /** Signs correctly but returns the same array every time — the {@code sign()} half of the ownership rule. */
+    private static final class ReusedSignatureBufferSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final byte[] buffer = new byte[64];
+
+        ReusedSignatureBufferSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            byte[] signature = delegate.sign(signingInput);
+            System.arraycopy(signature, 0, buffer, 0, signature.length);
+            return buffer;
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
         }
     }
 

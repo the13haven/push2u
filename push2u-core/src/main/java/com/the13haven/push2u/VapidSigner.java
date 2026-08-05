@@ -41,10 +41,10 @@ public interface VapidSigner {
     /**
      * The application server's VAPID public key as a 65-byte X9.62 uncompressed point.
      *
-     * <p>Every call must return a fresh copy, never a reference to the signer's own array: the caller owns the returned
-     * bytes, and a signer handing out its internal state is silently corrupted for every later send the moment anything
-     * writes into a returned array. Both shipped signers return a {@code clone()}, and the {@code push2u-testkit}
-     * conformance kit checks the copy.
+     * <p>Every call must return a fresh array, never a reference to one the signer keeps — not even a shared buffer
+     * refilled per call. The caller owns the returned bytes, and a signer handing out its internal state is silently
+     * corrupted for every later send the moment anything writes into a returned array. Both shipped signers return a
+     * {@code clone()}, and the {@code push2u-testkit} conformance kit checks it by array identity.
      *
      * @return the 65-byte uncompressed public key, a fresh copy owned by the caller
      */
