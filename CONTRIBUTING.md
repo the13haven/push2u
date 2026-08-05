@@ -88,6 +88,15 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its
   advisory.
+- A pin goes where the dependency actually resolves, and never in a bucket that is published.
+  `api` and `implementation` are inherited by `apiElements`/`runtimeElements`, so a constraint
+  there is published — as `dependencyConstraints` in the module metadata and `dependencyManagement`
+  in the POM — and Gradle applies it to every consumer's graph, which is the transitive surface
+  ADR-002 exists to keep out. `push2u-core`'s `testFixturesApi`/`testFixturesImplementation` are
+  published too, as the conformance kit. Pin in `testImplementation`, `fipsTestImplementation`, a
+  tool configuration, or the buildscript instead, and check the result: no variant of any module
+  should carry `dependencyConstraints` (`./gradlew generateMetadataFileForMavenPublication`, then
+  read `<module>/build/publications/maven/module.json`).
 
 ## Tests
 

@@ -12,9 +12,12 @@ testcontainers = "2.0.5"
 # web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
 springBoot = "4.1.0"
 
-# BouncyCastle security pin applied as a dependency constraint across all push2u subprojects
-# (see build.gradle.kts). 1.85 patches the relevant BC CVEs. Jackson is not pinned — Spring Boot's
-# managed jackson-2-bom governs it (2.21.4).
+# BouncyCastle 1.85, patching the relevant BC CVEs. This one key serves two unrelated things: the
+# buildscript pin that raises JGit's 1.81/1.82 request on the build's own classpath (read
+# textually, `startsWith("bouncycastle = ")` — see build.gradle.kts), and the version of the test
+# provider push2u-core's `test` source set declares directly. No module-level constraint applies it
+# any more; a constraint on a published module travels into its metadata. Jackson is not pinned —
+# Spring Boot's managed jackson-2-bom governs it (2.21.4).
 bouncycastle = "1.85"
 # BC-FIPS — test-only provider for the ES256 provider matrix (registers only DER-format ECDSA,
 # exercising the DER fallback). Isolated in push2u-core's fipsTest source set: bc-fips and stock
@@ -77,10 +80,12 @@ spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
 jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations" }
 
 
-# Pinned to a patched version via a dependency constraint (see build.gradle.kts).
-bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+# The stock provider, test-only: push2u-core's `test` source set declares it for the raw r||s ES256
+# path. Nothing else in the build uses it, and no constraint applies it anywhere. (bcpkix has no
+# alias: the buildscript pin spells its coordinate out literally, since `libs` accessors do not
+# exist inside buildscript {}.)
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
-# BC-FIPS test provider (separate artifact line from bcprov, so outside the pin above).
+# BC-FIPS test provider (separate artifact line from bcprov, hence its own version).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }
 
 jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
