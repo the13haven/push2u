@@ -58,6 +58,13 @@ fork of the one that wrote the code, since a fork inherits the parent's context 
 The same holds when this session wrote the change itself — review it in a subagent that has to read
 the code rather than remember writing it.
 
+**Every subagent is spawned by this session, and a subagent spawns none.** Tell the implementing
+agent what it does when the work is done — open the pull request, report back — and that reviewing
+is not its job. A reviewer it spawns itself reports to it, so its findings reach this session as the
+author's summary of them: the one who is checked and the one who retells the check become the same
+agent, and a finding can be softened without anyone intending it. Keeping every spawn here also
+keeps the choice of who is asked, and with what brief, where the decisions are made.
+
 ## Choosing the model for a subagent
 
 | Kind of task | Model |
