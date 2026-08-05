@@ -5,6 +5,12 @@
 
 version: 2
 updates:
+  # Covers the declared dependencies AND the Gradle wrapper itself: since the ecosystem gained
+  # wrapper support it reads gradle/wrapper/gradle-wrapper.properties — in the ROOT directory
+  # only, which is why `directory` has to stay "/" — and rewrites distributionUrl together with
+  # distributionSha256Sum whenever the file already carries a sum. Ours does, deliberately: see
+  # CONTRIBUTING.md, "Upgrading Gradle". Do not add an `ignore` for patch updates here; that is
+  # where both the security fixes and the wrapper bumps arrive.
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:

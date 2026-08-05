@@ -22,7 +22,16 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Must exceed this job's worst case, not its typical one: a timeout is a cancellation, and a
+    # cancellation between the tag and the upload leaves a version burnt with nothing on Central.
+    # The budget is the sum of the parts that can each take their own maximum in the same run:
+    # `qualityCheckCi` alone is allowed 30 minutes in ci.yml (and runs here on a cold cache), the
+    # deployment bundle is then built and signed, and the tagged version is built a second time
+    # from scratch before it is uploaded. 60 leaves room for all of it.
+    #
+    # **If ci.yml's 30 moves, this number moves with it** — it is derived from that one, not
+    # chosen independently.
+    timeout-minutes: 60
 
     steps:
       # workflow_dispatch lets the caller pick any branch in the UI, but the build only releases
@@ -91,6 +100,13 @@ jobs:
           # plugin would fall back to its default 0.1.0-SNAPSHOT.
           fetch-depth: 0
 
+      # The commit this release is cut from. Everything below — the quality gate, the signed
+      # bundle, the tag — is about THIS tree, and the guard just before the tag compares the state
+      # of origin/main against it. Reading HEAD of the checkout is exact: the checkout pins the
+      # tree, so this records what was actually built no matter when the step runs.
+      - name: Record the commit the release is cut from
+        run: echo "RELEASE_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
       # checkout leaves origin on HTTPS with the workflow token; switch it to SSH so axion's tag
       # push uses the deploy key configured above. The bot identity is what ends up as the tagger.
       - name: Set git to use SSH
@@ -142,6 +158,46 @@ jobs:
           echo "artifacts: $artifacts, signatures: $signatures"
           if [ "$artifacts" -eq 0 ] || [ "$artifacts" -ne "$signatures" ]; then
             echo "Expected exactly one .asc per artifact — the signing key is not usable." >&2
+            exit 1
+          fi
+
+      # The last gap before the first irreversible step, and the only place this check is worth
+      # anything. A pull request merged into main while this job runs makes axion's push
+      # non-fast-forward, and that failure lands AFTER the release commit and the tag have been
+      # created locally: a burnt version number, no artifacts, and a repository that has to be
+      # untangled by hand. RELEASING.md asks for a merge freeze for the duration of a release run;
+      # this is the half that does not depend on anyone remembering.
+      #
+      # Late on purpose. Everything above is reversible and can take half an hour, so checking
+      # early would leave exactly the window it is meant to close; checking here narrows it to the
+      # seconds between this step and the tag. It cannot be narrowed to zero — that would need an
+      # atomic compare-and-swap the git transport does not offer — but a release that refuses to
+      # start is a non-event, and this turns the expensive failure into that.
+      #
+      # axion's own preconditions do not cover this. `aheadOfRemote` fails when the LOCAL branch
+      # has commits the remote lacks; here the remote is the side that moved, which that check
+      # reads as clean.
+      #
+      # `git fetch` rather than reading origin/main from the checkout: the remote-tracking ref is
+      # as old as the checkout itself, so comparing against it would compare the base commit with
+      # itself. The fetch goes over SSH with the deploy key, which makes this the first step to
+      # exercise that credential — a key that cannot reach the repository now fails here, one step
+      # before the tag, instead of during the push.
+      #
+      # Nothing after this deserves the same guard: from the step below onwards main is SUPPOSED
+      # to have moved, because axion moved it. Tags need no equivalent check either — the two
+      # workflows that push them share this file's concurrency group and cannot interleave.
+      - name: Verify main has not moved since the run started
+        run: |
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy_key_rsa -o IdentitiesOnly=yes"
+          git fetch --no-tags origin main
+          remote_head=$(git rev-parse FETCH_HEAD)
+          if [ "$remote_head" != "$RELEASE_BASE_SHA" ]; then
+            echo "main moved while this release was running:" >&2
+            echo "  cut from: $RELEASE_BASE_SHA" >&2
+            echo "  now at:   $remote_head" >&2
+            echo "Nothing has been tagged or published. Re-run Release once main is quiet; see" >&2
+            echo "RELEASING.md, 'Freeze main while a release runs'." >&2
             exit 1
           fi
 
