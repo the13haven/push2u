@@ -74,9 +74,15 @@ import com.the13haven.push2u.VapidSigner;
  * <p>Both factory methods take everything required — the Vault base address, the {@link TransitKeyName} and the
  * {@link VaultToken} — so an incomplete signer cannot be expressed and {@code build()} never refuses over a missing
  * value; the value types keep the arguments impossible to swap and carry their own validation. The builders hold only
- * the optional steps: {@code mount} (default {@code "transit"}) and {@code transport} (default
- * {@link JdkVaultHttpTransport}). Only the supplied-key builder has {@code keyVersion} — in the fetched mode the
- * version is Vault's to state, not the caller's.
+ * the optional steps: {@code mount} (default {@code "transit"}), {@code namespace} (default none — see below) and
+ * {@code transport} (default {@link JdkVaultHttpTransport}). Only the supplied-key builder has {@code keyVersion} — in
+ * the fetched mode the version is Vault's to state, not the caller's.
+ *
+ * <p><b>Vault namespaces (Enterprise/HCP):</b> when the Transit engine lives inside a <a
+ * href="https://developer.hashicorp.com/vault/docs/enterprise/namespaces">Vault Enterprise or HCP Vault namespace</a>,
+ * set it with the builders' {@code namespace(...)} step. The signer then sends the {@code X-Vault-Namespace} header on
+ * <em>both</em> Vault calls — every Transit {@code sign} POST and the fetched mode's one-time {@code transit/keys}
+ * read. Without the step no such header is sent at all, which is what Vault OSS (which has no namespaces) expects.
  *
  * <p><b>Key rotation:</b> the fetched mode captures the key version together with its public key at construction and
  * pins that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
@@ -136,10 +142,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final int SIGNATURE_LENGTH = 2 * COORDINATE_LENGTH;
     /** The Transit mount path both builders assume unless {@code mount(...)} says otherwise — Vault's own default. */
     private static final String DEFAULT_MOUNT = "transit";
+    /** The header carrying the Vault token on every Vault call. */
+    private static final String TOKEN_HEADER = "X-Vault-Token";
+    /** The header addressing a Vault Enterprise/HCP namespace — sent only when {@code namespace(...)} was set. */
+    private static final String NAMESPACE_HEADER = "X-Vault-Namespace";
 
     private final VaultHttpTransport transport;
     private final URI signUri;
     private final String token;
+    /** The Vault Enterprise/HCP namespace every call addresses; {@code null} sends no namespace header. */
+    @Nullable
+    private final String namespace;
+
     private final byte[] publicKey;
     /** The Transit key version every {@code sign} call pins; {@code null} sends no {@code key_version}. */
     @Nullable
@@ -187,6 +201,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private VaultTransitVapidSigner(
             URI vaultAddress,
             String mount,
+            @Nullable String namespace,
             TransitKeyName keyName,
             VaultToken token,
             @Nullable Integer keyVersion,
@@ -207,6 +222,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // header-safe), so nothing downstream re-validates it — and the raw String never
         // reaches any toString() or exception message.
         this.token = Objects.requireNonNull(token, "token").value();
+        // Validated at the namespace(...) step that set it (allowed set [A-Za-z0-9_.-] plus '/'),
+        // so by construction the value is visible ASCII and header-safe — see requireValidVaultPath.
+        this.namespace = namespace;
         this.publicKey = publicKey.clone();
         this.keyVersion = keyVersion;
         this.transport = Objects.requireNonNull(transport, "transport");
@@ -218,7 +236,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 + "\",\"marshaling_algorithm\":\"jws\""
                 + (keyVersion == null ? "" : ",\"key_version\":" + keyVersion) + "}";
         VaultHttpResponse response =
-                transport.post(signUri, Map.of("X-Vault-Token", token), request.getBytes(StandardCharsets.UTF_8));
+                transport.post(signUri, vaultHeaders(token, namespace), request.getBytes(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
             throw new PushCryptoException(
                     "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
@@ -260,18 +278,23 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * key that fails much later, as an opaque push-service rejection.
      */
     private static VaultKeyMetadata fetchKeyMetadata(
-            URI vaultAddress, String mount, TransitKeyName keyName, VaultToken token, VaultHttpTransport transport) {
+            URI vaultAddress,
+            String mount,
+            @Nullable String namespace,
+            TransitKeyName keyName,
+            VaultToken token,
+            VaultHttpTransport transport) {
         Objects.requireNonNull(vaultAddress, "vaultAddress");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(transport, "transport");
         URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName.value());
-        // No token validation here: a VaultToken is valid by construction (visible ASCII,
-        // hence header-safe), so this call —
-        // which in the fetched mode runs before the canonical constructor — cannot offer an
-        // invalid value to the transport.
-        VaultHttpResponse response = transport.get(keyUri, Map.of("X-Vault-Token", token.value()));
+        // No token or namespace validation here: a VaultToken is valid by construction (visible
+        // ASCII, hence header-safe), and the namespace was validated at the namespace(...) step
+        // that set it — so this call, which in the fetched mode runs before the canonical
+        // constructor, cannot offer an invalid value to the transport.
+        VaultHttpResponse response = transport.get(keyUri, vaultHeaders(token.value(), namespace));
         if (response.statusCode() != 200) {
             throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode() + " — "
                     + abbreviated(response.body()));
@@ -814,10 +837,25 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Validate a Transit mount path where it is set (both builders' {@code mount(...)} step). The rule is looser than
-     * {@link TransitKeyName}'s because nested mounts are legal — {@code secrets/transit} names a Transit engine mounted
-     * under a namespace-like prefix — and is applied per segment: split on {@code /}, every segment must be non-empty,
-     * not {@code .} or {@code ..}, and drawn from {@code [A-Za-z0-9_.-]} only.
+     * The headers every Vault call carries: the token, plus the {@code X-Vault-Namespace} header when — and only when —
+     * a namespace was set. Both values are safe for an HTTP header field by construction: a {@link VaultToken} is
+     * visible ASCII by its own contract, and a namespace passed {@link #requireValidVaultPath}, whose allowed set is a
+     * strict subset of visible ASCII with no CR/LF or other control characters — so neither can smuggle a header
+     * terminator or a second header into the request.
+     */
+    private static Map<String, String> vaultHeaders(String token, @Nullable String namespace) {
+        return namespace == null
+                ? Map.of(TOKEN_HEADER, token)
+                : Map.of(TOKEN_HEADER, token, NAMESPACE_HEADER, namespace);
+    }
+
+    /**
+     * Validate a slash-separated Vault path value where it is set — both builders' {@code mount(...)} and
+     * {@code namespace(...)} steps share this one rule, with {@code name} naming the offending value in the failure and
+     * {@code nestedExample} showing the legal nested shape. The rule is looser than {@link TransitKeyName}'s because
+     * nesting is legal — {@code secrets/transit} names a Transit engine mounted under a prefix, {@code team-a/sub} a
+     * child namespace — and is applied per segment: split on {@code /}, every segment must be non-empty, not {@code .}
+     * or {@code ..}, and drawn from {@code [A-Za-z0-9_.-]} only.
      *
      * <p>An explicit allowed set, not a blacklist, because a blacklist here is reopenable by encoding: a
      * percent-encoded {@code %2e%2e} or {@code %2F} passes any literal {@code ..}/{@code /} check and travels in the
@@ -832,6 +870,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * all. The literal {@code .}/{@code ..} segments are refused for the same hops. A token-bearing request whose
      * destination depends on which of those hops is deployed must fail loudly at configuration instead.
      *
+     * <p>A <em>namespace</em> travels differently — in the {@code X-Vault-Namespace} HTTP header, not the URL — and the
+     * same rule still holds on both of that route's counts. First, Vault prepends the header's value to the request
+     * path before routing ({@code namespace.Canonicalize}), so a {@code ..} or percent-encoded segment in it steers the
+     * request between namespaces exactly the way a mount segment steers it between mounts. Second, a header value must
+     * be header-safe: the allowed set is a strict subset of visible ASCII with no CR/LF or any other control character,
+     * so a validated value cannot terminate the header or inject another one — and no transport is handed a value whose
+     * safety it would otherwise have to enforce itself.
+     *
      * <p>The allowed set is deliberately narrower than either Vault or a URL requires — that is policy, not necessity.
      * Vault accepts any printable Unicode in a mount path ({@code validateMountPath} in
      * {@code vault/logical_system.go}: canonical per {@code path.Clean}, no unprintables), and fourteen further
@@ -840,16 +886,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * anyway: some of that punctuation is treated specially by intermediaries (a {@code ;} reads as a path parameter to
      * some hops), and a set admitting only what every hop treats literally can be widened later without breaking anyone
      * — the reverse is not true. Every common mount shape — {@code transit}, {@code transit-prod},
-     * {@code team_a/secrets/transit} — fits the set.
+     * {@code team_a/secrets/transit} — and every namespace path Vault itself accepts (whose own segment charset is
+     * alphanumerics plus {@code -}, {@code _} and {@code .}) fits the set.
      */
-    private static String requireValidMount(String mount) {
-        Objects.requireNonNull(mount, "mount");
-        if (mount.isBlank()) {
-            throw new IllegalArgumentException("mount must not be blank");
+    private static String requireValidVaultPath(String value, String name, String nestedExample) {
+        Objects.requireNonNull(value, name);
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
         }
-        for (int i = 0; i < mount.length(); i++) {
-            if (!allowedMountCharacter(mount.charAt(i))) {
-                throw new IllegalArgumentException("mount contains a character (at index " + i + ") outside the"
+        for (int i = 0; i < value.length(); i++) {
+            if (!allowedVaultPathCharacter(value.charAt(i))) {
+                throw new IllegalArgumentException(name + " contains a character (at index " + i + ") outside the"
                         + " allowed set [A-Za-z0-9_.-] and '/'. The set is deliberately narrower than Vault and"
                         + " URLs allow: a percent-encoded sequence would survive to a decoding hop that rewrites"
                         + " the request path, and some URL-legal punctuation is treated specially by"
@@ -857,24 +904,26 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                         + " compatibility");
             }
         }
-        for (String segment : mount.split("/", -1)) {
+        for (String segment : value.split("/", -1)) {
             if (segment.isEmpty()) {
-                throw new IllegalArgumentException("mount must not begin or end with '/' or contain an empty '//'"
-                        + " segment — a nested mount is written like \"secrets/transit\"");
+                throw new IllegalArgumentException(name + " must not begin or end with '/' or contain an empty '//'"
+                        + " segment — a nested " + name + " is written like \"" + nestedExample + "\"");
             }
             if (".".equals(segment) || "..".equals(segment)) {
-                throw new IllegalArgumentException("mount must not contain a '" + segment + "' segment — a"
+                throw new IllegalArgumentException(name + " must not contain a '" + segment + "' segment — a"
                         + " normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own"
                         + " handler answers the decoded form with a 307 redirect to the collapsed path, which a"
                         + " redirect-following transport would re-send, X-Vault-Token header included, to a"
                         + " different Vault path");
             }
         }
-        return mount;
+        return value;
     }
 
-    /** Whether {@code c} may appear in a mount path: the {@code [A-Za-z0-9_.-]} segment set plus the separator. */
-    private static boolean allowedMountCharacter(char c) {
+    /**
+     * Whether {@code c} may appear in a Vault path value: the {@code [A-Za-z0-9_.-]} segment set plus the separator.
+     */
+    private static boolean allowedVaultPathCharacter(char c) {
         return (c >= 'A' && c <= 'Z')
                 || (c >= 'a' && c <= 'z')
                 || (c >= '0' && c <= '9')
@@ -890,7 +939,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * everything required — this builder holds only the optional steps, so {@code build()} can never refuse over a
      * missing value.
      *
-     * <p>{@link #mount(String)} defaults to {@code "transit"} and {@link #transport(VaultHttpTransport)} to a fresh
+     * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #namespace(String)} to none (no
+     * {@code X-Vault-Namespace} header is sent) and {@link #transport(VaultHttpTransport)} to a fresh
      * {@link JdkVaultHttpTransport}. There is deliberately no {@code keyVersion} step: this mode takes the version from
      * the same {@code transit/keys/<key>} response as the public key, which is what keeps the two in step.
      */
@@ -901,6 +951,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         private final VaultToken token;
 
         private String mount = DEFAULT_MOUNT;
+
+        @Nullable
+        private String namespace;
 
         @Nullable
         private VaultHttpTransport transport;
@@ -924,7 +977,27 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public FetchedPublicKeyBuilder mount(String mount) {
-            this.mount = requireValidMount(mount);
+            this.mount = requireValidVaultPath(mount, "mount", "secrets/transit");
+            return this;
+        }
+
+        /**
+         * Sets the Vault Enterprise/HCP namespace the Transit engine lives in, sent as the {@code X-Vault-Namespace}
+         * header on <em>both</em> Vault calls — the one-time {@code transit/keys/<key>} read inside {@link #build()}
+         * and every {@code sign}. Optional — when unset, no such header is sent at all, which is what Vault OSS (no
+         * namespaces) expects. Nested namespaces ({@code team-a/sub}) are legal; validated where it is set, by the same
+         * per-segment rule as {@link #mount(String)}: every {@code /}-separated segment must be non-empty, not
+         * {@code .} or {@code ..}, and drawn from {@code [A-Za-z0-9_.-]}. The value travels in an HTTP <em>header</em>,
+         * which the rule also keeps safe: the allowed set is a strict subset of visible ASCII with no control
+         * characters, so a validated namespace can never terminate the header or inject another. The full rationale
+         * lives on the validator in {@link VaultTransitVapidSigner}.
+         *
+         * @param namespace the Vault namespace path, e.g. {@code team-a} or {@code team-a/sub}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code namespace} is blank or violates the per-segment rule
+         */
+        public FetchedPublicKeyBuilder namespace(String namespace) {
+            this.namespace = requireValidVaultPath(namespace, "namespace", "team-a/sub");
             return this;
         }
 
@@ -950,9 +1023,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          */
         public VaultTransitVapidSigner build() {
             VaultHttpTransport resolvedTransport = orDefaultTransport(transport);
-            VaultKeyMetadata metadata = fetchKeyMetadata(address, mount, keyName, token, resolvedTransport);
+            VaultKeyMetadata metadata = fetchKeyMetadata(address, mount, namespace, keyName, token, resolvedTransport);
             return new VaultTransitVapidSigner(
-                    address, mount, keyName, token, metadata.version(), metadata.publicKey(), resolvedTransport);
+                    address,
+                    mount,
+                    namespace,
+                    keyName,
+                    token,
+                    metadata.version(),
+                    metadata.publicKey(),
+                    resolvedTransport);
         }
     }
 
@@ -962,7 +1042,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * byte[])}, which takes everything required — this builder holds only the optional steps, so {@code build()} can
      * never refuse over a missing value.
      *
-     * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #transport(VaultHttpTransport)} to a fresh
+     * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #namespace(String)} to none (no
+     * {@code X-Vault-Namespace} header is sent), {@link #transport(VaultHttpTransport)} to a fresh
      * {@link JdkVaultHttpTransport}, and {@link #keyVersion(int)} is optional but strongly recommended — see its own
      * documentation. {@link #build()} makes no Vault call.
      */
@@ -974,6 +1055,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         private final byte[] publicKey;
 
         private String mount = DEFAULT_MOUNT;
+
+        @Nullable
+        private String namespace;
 
         @Nullable
         private Integer keyVersion;
@@ -1012,7 +1096,27 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
          */
         public SuppliedPublicKeyBuilder mount(String mount) {
-            this.mount = requireValidMount(mount);
+            this.mount = requireValidVaultPath(mount, "mount", "secrets/transit");
+            return this;
+        }
+
+        /**
+         * Sets the Vault Enterprise/HCP namespace the Transit engine lives in, sent as the {@code X-Vault-Namespace}
+         * header on every {@code sign} call (this mode makes no other Vault call). Optional — when unset, no such
+         * header is sent at all, which is what Vault OSS (no namespaces) expects. Nested namespaces
+         * ({@code team-a/sub}) are legal; validated where it is set, by the same per-segment rule as
+         * {@link #mount(String)}: every {@code /}-separated segment must be non-empty, not {@code .} or {@code ..}, and
+         * drawn from {@code [A-Za-z0-9_.-]}. The value travels in an HTTP <em>header</em>, which the rule also keeps
+         * safe: the allowed set is a strict subset of visible ASCII with no control characters, so a validated
+         * namespace can never terminate the header or inject another. The full rationale lives on the validator in
+         * {@link VaultTransitVapidSigner}.
+         *
+         * @param namespace the Vault namespace path, e.g. {@code team-a} or {@code team-a/sub}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code namespace} is blank or violates the per-segment rule
+         */
+        public SuppliedPublicKeyBuilder namespace(String namespace) {
+            this.namespace = requireValidVaultPath(namespace, "namespace", "team-a/sub");
             return this;
         }
 
@@ -1056,7 +1160,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          */
         public VaultTransitVapidSigner build() {
             return new VaultTransitVapidSigner(
-                    address, mount, keyName, token, keyVersion, publicKey, orDefaultTransport(transport));
+                    address, mount, namespace, keyName, token, keyVersion, publicKey, orDefaultTransport(transport));
         }
     }
 }

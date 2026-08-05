@@ -548,7 +548,8 @@ ASCII — rejecting the trailing newline picked up from a file or a YAML block s
 or a dev-mode arbitrary string) is deliberately not checked, and its `toString()` prints
 `VaultToken[REDACTED]`, never the value. The builder holds only the optional steps: `mount`
 defaults to `transit` (in both the builder and the properties), Vault's own default mount for the
-Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
+Transit secrets engine, `namespace` defaults to none (see *Vault namespaces* below), and
+`transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
 transport* below). `mount` is validated where it is set, per segment: nested mounts like
 `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
 and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
@@ -631,6 +632,44 @@ An explicitly supplied `public-key` is checked structurally only — 65 bytes wi
 uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is
 the public half of the Transit key being signed with; both remain the caller's responsibility. The
 P-256 validation described under *Fetched public key* applies to that mode alone.
+
+### Vault namespaces (Enterprise / HCP)
+
+Vault Enterprise and HCP Vault partition a server into
+[namespaces](https://developer.hashicorp.com/vault/docs/enterprise/namespaces), addressed by the
+`X-Vault-Namespace` request header. When the Transit engine lives inside one, set the namespace
+and the signer sends that header on **both** Vault calls — the Transit `sign` POST and, in fetched
+mode, the startup `transit/keys/<key>` GET — so no custom `VaultHttpTransport` is needed just to
+add the header. When it is not set, no such header is sent at all, which is what Vault OSS (no
+namespaces) expects.
+
+In the builder it is the optional `namespace(...)` step, on both builders:
+
+```java
+VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+        URI.create("https://vault.example:8200"),
+        new TransitKeyName("vapid"),
+        new VaultToken(vaultToken))
+    .namespace("team-a")
+    .build();
+```
+
+In Spring Boot it is the optional `namespace` property:
+
+```yaml
+push2u:
+  signer:
+    vault:
+      # ... address, key-name, token ...
+      namespace: "team-a"
+```
+
+Nested namespaces (`team-a/sub`) are legal. The value is validated where it is set, by the same
+per-segment rule as `mount`: every `/`-separated segment must be non-empty, not `.` or `..`, and
+use only `[A-Za-z0-9_.-]`. The rule matters twice here — Vault resolves the header by prefixing
+its value to the request path before routing, so a traversal segment would steer a token-bearing
+request between namespaces, and the value lands in an HTTP header, which the allowed set keeps
+safe by construction (visible ASCII only, no control characters).
 
 ### Vault HTTP transport
 

@@ -171,6 +171,97 @@ class VaultSignerAutoConfigurationTest {
         });
     }
 
+    @Test
+    void theNamespacePropertyReachesEveryVaultCallInFetchedMode() {
+        // Observe the actual requests: the bound namespace must ride as X-Vault-Namespace on both
+        // Vault calls — the startup transit/keys/<key> GET (made inside build(), the one easy to
+        // miss) and the sign POST. A nested namespace doubles as the shape check.
+        HeaderRecordingTransportConfiguration.CALLS.clear();
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.namespace=team-a/sub")
+                .withUserConfiguration(HeaderRecordingTransportConfiguration.class)
+                .run(context -> {
+                    context.getBean(VapidSigner.class)
+                            .sign("starter fetched namespace probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(HeaderRecordingTransportConfiguration.CALLS)
+                            .extracting(HeaderRecordingTransportConfiguration.RecordedCall::method)
+                            .containsExactly("GET", "POST");
+                    assertThat(HeaderRecordingTransportConfiguration.CALLS)
+                            .allSatisfy(call -> assertThat(call.headers())
+                                    .as("%s carries the bound namespace", call.method())
+                                    .containsEntry("X-Vault-Namespace", "team-a/sub"));
+                });
+    }
+
+    @Test
+    void theNamespacePropertyReachesTheExplicitModeSignRequest() {
+        // The explicit mode wires the namespace through a separate builder call in the starter —
+        // this pins that second wiring site.
+        HeaderRecordingTransportConfiguration.CALLS.clear();
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.namespace=team-a")
+                .withUserConfiguration(HeaderRecordingTransportConfiguration.class)
+                .run(context -> {
+                    context.getBean(VapidSigner.class)
+                            .sign("starter explicit namespace probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(HeaderRecordingTransportConfiguration.CALLS)
+                            .singleElement()
+                            .satisfies(call -> {
+                                assertThat(call.method()).isEqualTo("POST");
+                                assertThat(call.headers()).containsEntry("X-Vault-Namespace", "team-a");
+                            });
+                });
+    }
+
+    @Test
+    void withoutTheNamespacePropertyNoVaultCallCarriesTheHeader() {
+        // The default must stay byte-identical to the pre-namespace behaviour: no property, no
+        // X-Vault-Namespace header on any call — not an empty one, none (Vault OSS has no
+        // namespaces).
+        HeaderRecordingTransportConfiguration.CALLS.clear();
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token")
+                .withUserConfiguration(HeaderRecordingTransportConfiguration.class)
+                .run(context -> {
+                    context.getBean(VapidSigner.class)
+                            .sign("starter no-namespace probe".getBytes(StandardCharsets.UTF_8));
+                    assertThat(HeaderRecordingTransportConfiguration.CALLS)
+                            .extracting(HeaderRecordingTransportConfiguration.RecordedCall::method)
+                            .containsExactly("GET", "POST");
+                    assertThat(HeaderRecordingTransportConfiguration.CALLS)
+                            .allSatisfy(call -> assertThat(call.headers())
+                                    .as("%s must not carry any namespace header", call.method())
+                                    .doesNotContainKey("X-Vault-Namespace"));
+                });
+    }
+
+    @Test
+    void anInvalidNamespaceFailsStartupNamingTheProperty() {
+        // The builder's own message says "namespace", not the YAML the operator wrote — the
+        // starter translates it like every other configuration failure. The '..' segment is the
+        // load-bearing case: Vault resolves the header by prefixing it to the request path, so a
+        // traversal segment steers a token-bearing request between namespaces.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.namespace=../root")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.namespace")
+                            .hasStackTraceContaining("'..' segment");
+                });
+        vaultRunner().withPropertyValues("push2u.signer.vault.namespace=a|b").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.namespace")
+                    .hasStackTraceContaining("allowed set");
+        });
+    }
+
     /** The root cause's message, where the token rejection surfaces. */
     private static String rootMessage(Throwable failure) {
         Throwable cursor = failure;
@@ -713,6 +804,38 @@ class VaultSignerAutoConfigurationTest {
                     + "\n-----END PUBLIC KEY-----\n";
             return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
                     + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
+        }
+    }
+
+    /**
+     * A {@link VaultHttpTransport} stub that records the <em>headers</em> of every call while answering both the
+     * fetched mode's {@code transit/keys/<key>} {@code GET} (with {@code latest_version} + a PEM public key) and the
+     * {@code sign} {@code POST} — so tests can assert exactly which headers each Vault call carried.
+     */
+    @Configuration(proxyBeanMethods = false)
+    static class HeaderRecordingTransportConfiguration {
+
+        record RecordedCall(String method, Map<String, String> headers) {}
+
+        private static final KeyPair KEY_PAIR = FetchedMetadataTransportConfiguration.generateKeyPair();
+        static final List<RecordedCall> CALLS = new ArrayList<>();
+
+        @Bean
+        VaultHttpTransport headerRecordingTransport() {
+            return new VaultHttpTransport() {
+                @Override
+                public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                    CALLS.add(new RecordedCall("GET", Map.copyOf(headers)));
+                    return new VaultHttpResponse(200, FetchedMetadataTransportConfiguration.metadataBody(KEY_PAIR));
+                }
+
+                @Override
+                public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                    CALLS.add(new RecordedCall("POST", Map.copyOf(headers)));
+                    String signature = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
+                    return new VaultHttpResponse(200, "{\"data\":{\"signature\":\"vault:v1:" + signature + "\"}}");
+                }
+            };
         }
     }
 
