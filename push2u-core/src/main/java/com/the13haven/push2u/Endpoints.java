@@ -28,12 +28,6 @@ public final class Endpoints {
     private static final String OPAQUE_ENDPOINT = "<opaque endpoint>";
     private static final int FINGERPRINT_HEX_LENGTH = 16;
 
-    /**
-     * When set to {@code TRUE}, {@link #requireSecure} accepts {@code http} endpoints on the current thread. Test-only;
-     * see {@link #allowPlaintextEndpointsForTests()}.
-     */
-    private static final ThreadLocal<Boolean> PLAINTEXT_ALLOWED = ThreadLocal.withInitial(() -> Boolean.FALSE);
-
     private Endpoints() {}
 
     /**
@@ -100,28 +94,10 @@ public final class Endpoints {
         // Rejecting those here is intentional: underscores are invalid in hostnames (RFC 1123)
         // and no real push service uses them, so the null-host check doubles as syntax hygiene.
         String host = uri.getHost();
-        boolean secureScheme =
-                "https".equalsIgnoreCase(scheme) || (PLAINTEXT_ALLOWED.get() && "http".equalsIgnoreCase(scheme));
-        if (!uri.isAbsolute() || host == null || host.isEmpty() || !secureScheme) {
+        if (!uri.isAbsolute() || host == null || host.isEmpty() || !"https".equalsIgnoreCase(scheme)) {
             throw new IllegalArgumentException(
                     "subscription endpoint must be an absolute https URL (RFC 8030): " + redact(endpoint));
         }
-    }
-
-    /**
-     * Lets {@link #requireSecure} accept {@code http} endpoints on the current thread until the returned handle is
-     * closed (try-with-resources; the previous state is restored on {@code close()}, so nested use is safe).
-     *
-     * <p>Package-private on purpose: it exists solely for this library's own tests, which run an in-process HTTP
-     * receiver on {@code http://127.0.0.1}. The public {@link Subscription} contract stays strictly https — there is no
-     * plaintext dev mode for consumers.
-     *
-     * @return a handle whose {@code close()} restores the previous per-thread setting
-     */
-    static AutoCloseable allowPlaintextEndpointsForTests() {
-        Boolean previous = PLAINTEXT_ALLOWED.get();
-        PLAINTEXT_ALLOWED.set(Boolean.TRUE);
-        return () -> PLAINTEXT_ALLOWED.set(previous);
     }
 
     /** First 16 lowercase hex characters of SHA-256 over the raw endpoint string. */

@@ -21,7 +21,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -57,7 +58,10 @@ class JdkPushHttpClientFailureTest {
     void interruptionDuringASendBecomesADeliveryFailureWithTheFlagRestored() throws Exception {
         CountDownLatch requestArrived = new CountDownLatch(1);
         CountDownLatch releaseServer = new CountDownLatch(1);
-        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        // A stalled push service is still a push service, so the fixture serves TLS: the request
+        // completes a real handshake and hangs at the HTTP layer, where a production stall lives.
+        HttpsServer server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.setHttpsConfigurator(new HttpsConfigurator(LoopbackTls.serverContext()));
         server.createContext("/push", exchange -> {
             requestArrived.countDown();
             try {
@@ -72,12 +76,12 @@ class JdkPushHttpClientFailureTest {
 
         AtomicReference<Throwable> thrown = new AtomicReference<>();
         AtomicBoolean flagStillSet = new AtomicBoolean();
-        URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
+        URI endpoint = URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/push");
 
         try {
             Thread sender = new Thread(() -> {
                 try {
-                    new JdkPushHttpClient(HttpClient.newHttpClient(), Duration.ofSeconds(30))
+                    new JdkPushHttpClient(PushTestSupport.trustingJavaHttpClient(), Duration.ofSeconds(30))
                             .post(endpoint, Map.of(), BODY);
                 } catch (RuntimeException e) {
                     thrown.set(e);

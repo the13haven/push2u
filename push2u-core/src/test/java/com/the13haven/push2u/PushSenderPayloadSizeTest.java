@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.PushTestSupport.subscription;
+import static com.the13haven.push2u.PushTestSupport.trustingPushHttpClient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -167,7 +168,7 @@ class PushSenderPayloadSizeTest {
 
     /** A builder pre-loaded with the required key source and contact — these tests exercise only optional steps. */
     private static PushSender.Builder builder() {
-        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com");
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com").httpClient(trustingPushHttpClient());
     }
 
     private static PushSender sender(PushSender.Builder builder) {

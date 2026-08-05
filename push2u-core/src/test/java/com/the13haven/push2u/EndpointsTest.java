@@ -142,31 +142,17 @@ class EndpointsTest {
     }
 
     @Test
-    void plaintextSeamAllowsHttpAndRestoresStateOnClose() throws Exception {
-        try (AutoCloseable seam = Endpoints.allowPlaintextEndpointsForTests()) {
-            assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1:8080/push"))
-                    .doesNotThrowAnyException();
-            assertThatThrownBy(() -> Endpoints.requireSecure("/still/not/absolute"))
-                    .as("absoluteness and host checks stay active under the seam")
-                    .isInstanceOf(IllegalArgumentException.class);
+    void requireSecureRejectsPlaintextLoopbackLikeAnyOtherHttpEndpoint() {
+        // RFC 8030 requires TLS between the application server and the push service, and this
+        // library grants no loopback exception — not even for its own tests, which run their
+        // in-process receiver over real TLS (MockPushReceiver + LoopbackTls). Pinned so a
+        // "harmless" localhost carve-out cannot quietly reintroduce a plaintext escape hatch.
+        for (String plaintextLoopback :
+                new String[] {"http://127.0.0.1/push", "http://127.0.0.1:8443/push", "http://localhost:8443/push"}) {
+            assertThatThrownBy(() -> Endpoints.requireSecure(plaintextLoopback))
+                    .as("%s", plaintextLoopback)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("absolute https URL");
         }
-        assertThatThrownBy(() -> Endpoints.requireSecure("http://127.0.0.1:8080/push"))
-                .as("http is rejected again after close()")
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void plaintextSeamNestsCorrectly() throws Exception {
-        try (AutoCloseable outer = Endpoints.allowPlaintextEndpointsForTests()) {
-            try (AutoCloseable inner = Endpoints.allowPlaintextEndpointsForTests()) {
-                assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-                        .doesNotThrowAnyException();
-            }
-            assertThatCode(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-                    .as("closing the inner seam keeps the outer one active")
-                    .doesNotThrowAnyException();
-        }
-        assertThatThrownBy(() -> Endpoints.requireSecure("http://127.0.0.1/push"))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 }

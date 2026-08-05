@@ -17,21 +17,29 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 
 /**
- * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpServer} that replies with a
+ * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpsServer} that replies with a
  * pre-queued sequence of status codes (defaulting to 201 once the queue drains) and records every request it receives.
  * No third-party HTTP mock — the test stack stays as dependency-free as the library.
+ *
+ * <p>It serves real TLS, presenting the per-JVM {@link LoopbackTls} certificate, so {@link #endpoint()} is an
+ * {@code https://127.0.0.1:<port>/push} URI that passes {@link Endpoints#requireSecure} exactly as a production
+ * endpoint does — the tests traverse the same protocol the production path does, with no plaintext escape hatch
+ * anywhere. Clients trust the certificate via {@link LoopbackTls#clientContext()}; see
+ * {@link PushTestSupport#trustingPushHttpClient()}.
  */
 final class MockPushReceiver implements AutoCloseable {
 
-    private final HttpServer server;
+    private final HttpsServer server;
     private final Deque<Response> responses = new ArrayDeque<>();
     private final List<RecordedRequest> requests = new ArrayList<>();
 
     MockPushReceiver() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.setHttpsConfigurator(new HttpsConfigurator(LoopbackTls.serverContext()));
         server.createContext("/push", exchange -> {
             int bodyLength = exchange.getRequestBody().readAllBytes().length;
             Map<String, String> headers = new HashMap<>();
@@ -66,7 +74,7 @@ final class MockPushReceiver implements AutoCloseable {
     }
 
     URI endpoint() {
-        return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/push");
+        return URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/push");
     }
 
     synchronized List<RecordedRequest> requests() {

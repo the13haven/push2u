@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.PushTestSupport.subscription;
+import static com.the13haven.push2u.PushTestSupport.trustingPushHttpClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
@@ -75,6 +76,7 @@ class PushSenderOptionsTest {
     void aMessageWithoutATtlFallsBackToTheSenderDefault() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                    .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .defaultTtl(Duration.ofMinutes(5))
                     .build()
@@ -136,6 +138,7 @@ class PushSenderOptionsTest {
 
     private PushSender pusher() {
         return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+                .httpClient(trustingPushHttpClient())
                 .sleeper(sleeper)
                 .build();
     }
