@@ -304,9 +304,10 @@ form) overriding the computed delay under the same cap. **An application retry l
 multiplies**, but only for a push service that *answers*: a `429` carrying `Retry-After: 60` costs
 two minutes of sleeping per outer attempt, so three attempts inside your three is nine POSTs and up
 to six minutes of blocking. A service that accepts the connection and never replies is the other
-shape — the request times out after 30 seconds, and push2u does **not** retry a transport failure
-(it retries statuses), so each of your outer attempts costs one POST, not three. Either delete
-yours or configure `RetryPolicy.none()`:
+shape — the request times out after `JdkPushHttpClient`'s default 30 seconds (your own timeout if
+you supplied a client), and push2u does **not** retry a transport failure (it retries statuses), so
+each of your outer attempts costs one POST, not three. Either delete yours or configure
+`RetryPolicy.none()`:
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
