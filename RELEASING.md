@@ -152,6 +152,10 @@ Both *Release* and *Publish Existing Tag* pick the file up by tag name and pass 
 sits at the top and the generated categories follow underneath, so adding a file never costs the
 changelog. No file, and the notes are generated exactly as before.
 
+Write any version number in it by hand: the pre-release hook that rewrites Maven coordinates
+(`build.gradle.kts`) touches `README.md` only, so a snippet in these notes is nobody's job but
+yours.
+
 The notes can also be edited on GitHub afterwards — a GitHub Release is mutable, unlike the
 artifacts on Maven Central. The file exists so the text is reviewed with the code and is there the
 moment the release goes public, not so editing later becomes impossible.
@@ -169,7 +173,7 @@ moment the release goes public, not so editing later becomes impossible.
 4. has axion create the release tag `v<X.Y.Z>` from the current version and push it over SSH
    with the deploy key;
 5. creates a **draft** GitHub Release for the tag, with notes generated from the merged pull
-   requests;
+   requests — prefixed by `.github/release-notes/<tag>.md` when that file exists (step 2);
 6. in a fresh Gradle invocation (so the version resolves from the new tag, not as a snapshot),
    builds each module's `jar`, `-sources.jar` and `-javadoc.jar`, signs everything with the GPG
    key, and uploads the bundle to the Central Portal via `publishAggregationToCentralPortal`.

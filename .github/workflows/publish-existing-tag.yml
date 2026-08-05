@@ -164,7 +164,9 @@ jobs:
       # before creating the draft) and a draft that was never published. When it creates the release
       # from scratch it reads .github/release-notes/<tag>.md the same way Release does — otherwise
       # recovering from a failed run would silently drop the hand-written notes that run would have
-      # included.
+      # included. --verify-tag for the same reason as in Release: `gh release create` would
+      # otherwise create a missing tag rather than refuse, and this workflow exists to finish a
+      # release whose tag is already there.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,7 +179,7 @@ jobs:
           NOTES_FILE=".github/release-notes/$TAG.md"
           if [ -f "$NOTES_FILE" ]; then
             echo "Prepending hand-written notes from $NOTES_FILE."
-            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           fi

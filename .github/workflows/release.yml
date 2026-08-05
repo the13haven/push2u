@@ -167,6 +167,10 @@ jobs:
       # the release. `--notes-file` PREPENDS to the generated notes rather than replacing them, so
       # the hand-written part sits above the usual categories and nothing is lost by adding it.
       #
+      # --verify-tag because `gh release create` otherwise CREATES a missing tag from the default
+      # branch: were the axion step ever to leave its output empty, "$TAG" would be the bare "v" and
+      # a release would be invented rather than refused. The tag always exists by this point.
+      #
       # Idempotent on purpose — re-running the job must not fail on an existing release.
       - name: Create the draft GitHub release
         env:
@@ -180,9 +184,9 @@ jobs:
           NOTES_FILE=".github/release-notes/$TAG.md"
           if [ -f "$NOTES_FILE" ]; then
             echo "Prepending hand-written notes from $NOTES_FILE."
-            gh release create "$TAG" --draft --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file "$NOTES_FILE" --generate-notes
           else
-            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
           fi
 
       # The point of no return. Deliberately a separate Gradle invocation, not chained after
