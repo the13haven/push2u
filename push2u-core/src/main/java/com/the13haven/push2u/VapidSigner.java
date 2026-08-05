@@ -30,15 +30,23 @@ public interface VapidSigner {
      * Sign the JWT signing input (the ASCII {@code base64url(header) || "." || base64url(claims)}) with ES256,
      * returning the raw {@code r || s} pair (64 bytes for P-256) that JOSE expects — not a DER-encoded signature.
      *
+     * <p>The returned array becomes the caller's: return freshly produced bytes, never a buffer the implementation
+     * retains for reuse.
+     *
      * @param signingInput the ASCII JWT signing input
-     * @return the raw {@code r || s} ES256 signature (64 bytes for P-256)
+     * @return the raw {@code r || s} ES256 signature (64 bytes for P-256), owned by the caller
      */
     byte[] sign(byte[] signingInput);
 
     /**
      * The application server's VAPID public key as a 65-byte X9.62 uncompressed point.
      *
-     * @return the 65-byte uncompressed public key
+     * <p>Every call must return a fresh array, never a reference to one the signer keeps — not even a shared buffer
+     * refilled per call. The caller owns the returned bytes, and a signer handing out its internal state is silently
+     * corrupted for every later send the moment anything writes into a returned array. Both shipped signers return a
+     * {@code clone()}, and the {@code push2u-testkit} conformance kit checks it by array identity.
+     *
+     * @return the 65-byte uncompressed public key, a fresh copy owned by the caller
      */
     byte[] publicKey();
 }
