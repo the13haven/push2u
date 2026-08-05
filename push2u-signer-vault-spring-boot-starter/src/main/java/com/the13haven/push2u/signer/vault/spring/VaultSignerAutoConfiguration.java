@@ -33,7 +33,9 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  * pins that version for signing (the recommended single-source-of-truth mode; the token then needs {@code read} on the
  * key), and when supplied the signer uses it verbatim (token needs only {@code sign}). With an explicit
  * {@code public-key}, set {@code key-version} to pin the matching Transit key version — without it Vault signs with the
- * latest version, which stops matching the configured public key after a key rotation.
+ * latest version, which stops matching the configured public key after a key rotation. {@code namespace} is likewise
+ * optional: set it when the Transit engine lives in a Vault Enterprise/HCP namespace, and the signer sends it as the
+ * {@code X-Vault-Namespace} header on every Vault call; unset, no such header is sent at all.
  *
  * <p>Ordered before the core starter's {@code Push2uAutoConfiguration} (by name, so this module need not depend on it)
  * and {@link ConditionalOnMissingBean}: when both starters are present this remote signer wins over the in-JVM local
@@ -108,6 +110,7 @@ public final class VaultSignerAutoConfiguration {
                 () -> new VaultToken(Objects.requireNonNull(properties.token(), "push2u.signer.vault.token")));
         String publicKey = properties.publicKey();
         Integer keyVersion = properties.keyVersion();
+        String namespace = properties.namespace();
         if (publicKey == null || publicKey.isBlank()) {
             if (keyVersion != null) {
                 throw new IllegalStateException(
@@ -120,6 +123,9 @@ public final class VaultSignerAutoConfiguration {
             VaultTransitVapidSigner.FetchedPublicKeyBuilder fetched =
                     VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token);
             translated("push2u.signer.vault.mount", () -> fetched.mount(properties.mount()));
+            if (namespace != null) {
+                translated("push2u.signer.vault.namespace", () -> fetched.namespace(namespace));
+            }
             return fetched.transport(resolved).build();
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
@@ -127,6 +133,9 @@ public final class VaultSignerAutoConfiguration {
         VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
                 address, keyName, token, decodePublicKey(publicKey));
         translated("push2u.signer.vault.mount", () -> builder.mount(properties.mount()));
+        if (namespace != null) {
+            translated("push2u.signer.vault.namespace", () -> builder.namespace(namespace));
+        }
         builder.transport(resolved);
         if (keyVersion != null) {
             builder.keyVersion(keyVersion);

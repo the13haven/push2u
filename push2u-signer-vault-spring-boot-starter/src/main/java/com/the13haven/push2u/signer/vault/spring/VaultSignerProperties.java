@@ -22,6 +22,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *
  * @param address the Vault base address, e.g. {@code https://vault.example:8200}
  * @param mount the Transit mount path (default {@code transit})
+ * @param namespace the Vault Enterprise/HCP namespace the Transit engine lives in, possibly nested
+ *     ({@code team-a/sub}), sent as the {@code X-Vault-Namespace} header on every Vault call; <b>optional</b> — when
+ *     unset no such header is sent at all, which is what Vault OSS (no namespaces) expects
  * @param keyName the {@code ecdsa-p256} Transit key name
  * @param token the Vault token authorising {@code sign} on the key (plus {@code read} on {@code transit/keys/<key>}
  *     when {@code publicKey} is omitted)
@@ -44,6 +47,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record VaultSignerProperties(
         @Nullable URI address,
         @DefaultValue("transit") String mount,
+        @Nullable String namespace,
         @Nullable String keyName,
         @Nullable String token,
         @Nullable String publicKey,
@@ -82,6 +86,7 @@ public record VaultSignerProperties(
     public String toString() {
         return "VaultSignerProperties[address=" + address
                 + ", mount=" + mount
+                + ", namespace=" + namespace
                 + ", keyName=" + keyName
                 + ", token=" + (token == null ? null : "***")
                 + ", publicKey=" + publicKey

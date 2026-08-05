@@ -315,9 +315,11 @@ deliberately not validating the token's *format* (Vault issues `hvs.`/`hvb.`/`hv
 the token. Because a `VaultToken` is valid by construction, the signer validates it exactly once —
 in the type — instead of re-checking it on every path that offers it to a transport. The builders
 hold only the optional steps: `mount` defaults to `transit` (Vault's own default mount),
-`transport` to a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
-`mount` is validated at its step, per segment: nested mounts (`secrets/transit`) are legal, and
-every `/`-separated segment must be non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
+`namespace` to none (no `X-Vault-Namespace` header is sent — the Vault OSS shape), `transport` to
+a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
+`mount` and `namespace` are validated at their steps by one shared per-segment rule: nesting
+(`secrets/transit`, `team-a/sub`) is legal, and every `/`-separated segment must be non-empty, not
+`.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
 The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
 literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
 `URI.resolve` does *not* normalize dot segments in the absolute-path references this signer
@@ -336,6 +338,14 @@ the rule. It is refused anyway because some of that punctuation is treated speci
 intermediaries (`;` reads as a path parameter to some hops), and admitting only what every hop
 treats literally can be widened later without breaking anyone — the reverse is not true.
 Refusing at the step also replaces `URI.create`'s later raw "Malformed escape pair" failure.
+The namespace travels differently — in the `X-Vault-Namespace` HTTP header, not the URL — so none
+of those hops act on it, and the same rule is applied for two other reasons. Definite: a header
+value must be header-safe, which the allowed set guarantees — a strict subset of visible ASCII with
+no CR/LF or other control characters, so a validated namespace can never terminate the header or
+inject another. Defence in depth: a traversal segment cannot name a real namespace either
+(`namespace.Canonicalize` trims a leading slash and appends a trailing one, collapsing nothing),
+so such a value is a configuration mistake whichever hop sees it, and refusing it costs nothing.
+No traversal route through OSS Vault is claimed here.
 
 `VaultTransitVapidSigner` supports:
 
@@ -378,7 +388,9 @@ returning `VaultHttpResponse`), deliberately separate from `PushHttpClient`: pus
 to untrusted capability URLs and discards response bodies, while the Vault API is an
 operator-configured service whose JSON responses must be read. Both Vault calls — the Transit
 `sign` POST and the fetched mode's startup metadata GET — go through the same transport, so an
-application's mTLS, proxy, or observability configuration is never bypassed.
+application's mTLS, proxy, or observability configuration is never bypassed. Each call carries
+`X-Vault-Token`, plus `X-Vault-Namespace` on both calls when a namespace (Vault Enterprise/HCP)
+is configured — and no namespace header at all when it is not.
 
 The default `JdkVaultHttpTransport` enforces three invariants:
 
@@ -401,7 +413,8 @@ messages carry the HTTP method and the query-less request URI, never the `X-Vaul
 
 The Vault Spring Boot starter exposes the same model through `push2u.signer.vault.*`: omitting
 `public-key` selects fetched mode; providing `public-key` selects explicit mode, where
-`key-version` should also be set whenever the Transit key can rotate. The transport is
+`key-version` should also be set whenever the Transit key can rotate. The optional `namespace`
+property maps to the builders' `namespace(...)` step. The transport is
 configurable through `request-timeout`, `connect-timeout`, and `max-response-bytes`, and
 replaceable with (in priority order) an application `VaultHttpTransport` bean or a
 `push2uVaultHttpClient`-qualified `java.net.http.HttpClient` bean that the starter wraps with the

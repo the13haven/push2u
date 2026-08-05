@@ -25,6 +25,7 @@ class VaultSignerPropertiesTest {
         VaultSignerProperties properties = new VaultSignerProperties(
                 URI.create("https://vault.example:8200"),
                 "transit",
+                "team-a/sub",
                 "vapid",
                 "hvs.SECRET-TOKEN-MARKER",
                 "BPublicKeyMarker",
@@ -38,6 +39,7 @@ class VaultSignerPropertiesTest {
                 .contains("***")
                 .as("non-secret components stay readable")
                 .contains("https://vault.example:8200")
+                .contains("team-a/sub")
                 .contains("vapid")
                 .contains("BPublicKeyMarker");
     }
@@ -47,7 +49,7 @@ class VaultSignerPropertiesTest {
         // "***" for an unset token would read as "a token is configured" — the mask must only
         // stand in for an actual value.
         VaultSignerProperties properties = new VaultSignerProperties(
-                null, "transit", null, null, null, null, Duration.ofSeconds(30), Duration.ofSeconds(10), 1024);
+                null, "transit", null, null, null, null, null, Duration.ofSeconds(30), Duration.ofSeconds(10), 1024);
 
         assertThat(properties.toString()).contains("token=null");
     }
