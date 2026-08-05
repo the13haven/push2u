@@ -493,7 +493,8 @@ time. The starter probes each key separately, filling the other two components w
 `Duration.ZERO`, the triple `RetryPolicy.none()` is built from. The attribution rests on those
 filler values staying acceptable beside any value of the key being probed — which `none()` alone
 does not witness, since it fixes all three — and **not** on the order of the checks inside the
-compact constructor. A test asserts the filler combinations directly, one per probe, rather than
+compact constructor. A test asserts the filler combinations directly — the `RetryPolicy.none()` baseline
+plus one per probe — rather than
 leaving the invariant to a comment; it *samples* the invariant rather than deciding it, since a
 constraint biting only above some threshold would pass those points, and no black-box check can do
 better. Restating the bounds in the starter was rejected for the usual reason: two copies of a

@@ -361,14 +361,14 @@ class Push2uAutoConfigurationTest {
      * constraint <em>between</em> components would otherwise leave the probes blaming the wrong YAML key with every
      * other test still green.
      *
-     * <p>One assertion per probe, each pairing that probe's filler with a non-trivial value of its own component — the
-     * shape a cross-component constraint would break. <b>This samples the invariant, it does not decide it:</b> a
-     * constraint that only bites above some threshold would survive these points. What it buys is that the cheap and
-     * likely versions of that mistake fail here rather than in an operator's log, and that the invariant is written
-     * down as something executable rather than as a comment nobody re-checks.
+     * <p>Four assertions: the {@link RetryPolicy#none()} baseline, then one per probe pairing that probe's filler with
+     * a non-trivial value of its own component — the shape a cross-component constraint would break. <b>This samples
+     * the invariant, it does not decide it:</b> a constraint that only bites above some threshold would survive these
+     * points. What it buys is that the cheap and likely versions of that mistake fail here rather than in an operator's
+     * log, and that the invariant is written down as something executable rather than as a comment nobody re-checks.
      */
     @Test
-    void probeFillerValuesAreUnconditionallyAccepted() {
+    void probeFillersStayAcceptableBesideARealValue() {
         assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ZERO))
                 .as("the triple RetryPolicy.none() is built from")
                 .doesNotThrowAnyException();
@@ -385,7 +385,7 @@ class Push2uAutoConfigurationTest {
     }
 
     /**
-     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be `RetryPolicy.defaults()`
+     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be {@code RetryPolicy.defaults()}
      * restated in YAML terms — that equality is what lets the README and DESIGN.md describe an unset retry block as
      * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
      * either side would make both documents quietly wrong.

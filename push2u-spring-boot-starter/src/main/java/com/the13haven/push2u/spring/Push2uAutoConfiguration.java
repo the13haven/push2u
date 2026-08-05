@@ -167,7 +167,7 @@ public final class Push2uAutoConfiguration {
      * checks inside the compact constructor; reordering them changes nothing here.
      *
      * <p>A constraint <em>between</em> components would make a probe blame the wrong key.
-     * {@code probeFillerValuesAreUnconditionallyAccepted} in the starter's tests samples that invariant at the point
+     * {@code probeFillersStayAcceptableBesideARealValue} in the starter's tests samples that invariant at the point
      * each probe depends on, so the cheap version of that mistake fails the build — but it samples rather than decides,
      * and a constraint that only bites above some threshold would pass it. No black-box check can do better; changing
      * {@code RetryPolicy}'s constructor means revisiting this method.
