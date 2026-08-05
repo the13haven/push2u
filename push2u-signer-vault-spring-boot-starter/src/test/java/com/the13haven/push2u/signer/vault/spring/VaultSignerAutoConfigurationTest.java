@@ -112,6 +112,75 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void aKeyNameThatWouldAlterTheRequestPathFailsNamingTheProperty() {
+        // TransitKeyName's own message names the constructor's viewpoint, not the YAML the
+        // operator wrote — the starter prefixes the property, like every other translated failure.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.key-name=vapid/../other")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.key-name")
+                            .hasStackTraceContaining("request path");
+                });
+    }
+
+    @Test
+    void anInvalidTokenFailsNamingThePropertyWithoutEchoingTheValue() {
+        // Translated like every other configuration failure — the message names the YAML property
+        // the operator wrote — and, because VaultToken's own message carries no part of the value,
+        // the translation cannot leak it either. The newline is embedded rather than trailing
+        // because TestPropertyValues trims a trailing one before it ever reaches the binder — the
+        // real-world trailing-newline arrival is covered by VaultTokenTest in the signer module.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.token=secret-token-value\nsecond-line")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.token")
+                            .hasStackTraceContaining("token contains a character")
+                            .satisfies(
+                                    failure -> assertThat(rootMessage(failure)).doesNotContain("secret-token-value"));
+                });
+    }
+
+    @Test
+    void aMountWithADotDotSegmentFailsNamingTheProperty() {
+        // The '..' segment is the load-bearing case: a normalizing proxy in front of Vault
+        // collapses it before Vault sees it, and Vault's own handler answers the decoded form
+        // with a 307 redirect to the collapsed path — which a redirect-following transport would
+        // re-send, X-Vault-Token included, to a different Vault path.
+        vaultRunner().withPropertyValues("push2u.signer.vault.mount=../sys").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.mount")
+                    .hasStackTraceContaining("'..' segment");
+        });
+    }
+
+    @Test
+    void aMountOutsideTheAllowedCharacterSetFailsNamingTheProperty() {
+        // Before the allowed-set rule this value survived the mount(...) step — which the starter
+        // translates — and failed later inside build(), as URI.create's raw "Malformed escape
+        // pair" with no YAML property named. The step must be where it dies.
+        vaultRunner().withPropertyValues("push2u.signer.vault.mount=50%off").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.mount")
+                    .hasStackTraceContaining("allowed set");
+        });
+    }
+
+    /** The root cause's message, where the token rejection surfaces. */
+    private static String rootMessage(Throwable failure) {
+        Throwable cursor = failure;
+        while (cursor.getCause() != null) {
+            cursor = cursor.getCause();
+        }
+        return String.valueOf(cursor.getMessage());
+    }
+
+    @Test
     void keyVersionPinsTheExplicitSigner() {
         // Observe the actual sign request through a recording transport: the wired signer must
         // send the configured key_version to Vault. A bean-type assertion alone would stay green

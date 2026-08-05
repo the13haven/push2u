@@ -66,8 +66,11 @@ class VaultTransitVapidSignerTransportTest {
         KeyPair keyPair = generateP256KeyPair();
         RecordingVaultTransport transport = new RecordingVaultTransport(metadataBody(keyPair));
 
-        VaultTransitVapidSigner signer =
-                new VaultTransitVapidSigner(URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, transport);
+        VaultTransitVapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .mount("transit")
+                .transport(transport)
+                .build();
         byte[] signature = signer.sign("transport probe".getBytes(StandardCharsets.UTF_8));
 
         assertThat(signature).hasSize(64);
@@ -81,6 +84,71 @@ class VaultTransitVapidSignerTransportTest {
                 .allSatisfy(call -> assertThat(call.tokenHeader())
                         .as("every Vault call authenticates via X-Vault-Token")
                         .isTrue());
+    }
+
+    /**
+     * {@code mount(...)} is optional and defaults to {@code "transit"}, Vault's own default mount. Asserted where it is
+     * observable — the request paths the transport actually saw — rather than by reading a field back.
+     */
+    @Test
+    void anOmittedMountDefaultsToTransitInBothBuilders() throws Exception {
+        KeyPair keyPair = generateP256KeyPair();
+
+        RecordingVaultTransport fetched = new RecordingVaultTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .transport(fetched)
+                .build()
+                .sign("default mount probe".getBytes(StandardCharsets.UTF_8));
+        assertThat(fetched.calls)
+                .extracting(call -> call.uri().getPath())
+                .containsExactly("/v1/transit/keys/vapid", "/v1/transit/sign/vapid");
+
+        RecordingVaultTransport supplied = new RecordingVaultTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("http://vault.test:8200"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        uncompressed((ECPublicKey) keyPair.getPublic()))
+                .transport(supplied)
+                .build()
+                .sign("default mount probe".getBytes(StandardCharsets.UTF_8));
+        assertThat(supplied.calls)
+                .as("the supplied-key mode reads no metadata, so only the sign call carries the mount")
+                .extracting(call -> call.uri().getPath())
+                .containsExactly("/v1/transit/sign/vapid");
+    }
+
+    /**
+     * A mount that is not Vault's default reaches the request path unchanged — including a nested one: mount validation
+     * is per segment against the allowed set {@code [A-Za-z0-9_.-]} (each segment non-empty, not {@code .}/{@code ..}),
+     * and both {@code push-transit} and the nested {@code secrets/transit} satisfy it.
+     */
+    @Test
+    void anExplicitMountIncludingANestedOneReplacesTheDefaultInTheRequestPath() throws Exception {
+        KeyPair keyPair = generateP256KeyPair();
+
+        RecordingVaultTransport flat = new RecordingVaultTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .mount("push-transit")
+                .transport(flat)
+                .build()
+                .sign("custom mount probe".getBytes(StandardCharsets.UTF_8));
+        assertThat(flat.calls)
+                .extracting(call -> call.uri().getPath())
+                .containsExactly("/v1/push-transit/keys/vapid", "/v1/push-transit/sign/vapid");
+
+        RecordingVaultTransport nested = new RecordingVaultTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .mount("secrets/transit")
+                .transport(nested)
+                .build()
+                .sign("nested mount probe".getBytes(StandardCharsets.UTF_8));
+        assertThat(nested.calls)
+                .extracting(call -> call.uri().getPath())
+                .containsExactly("/v1/secrets/transit/keys/vapid", "/v1/secrets/transit/sign/vapid");
     }
 
     /**

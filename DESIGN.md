@@ -159,10 +159,16 @@ delay at the retry policy's maximum backoff.
 
 ### Facade
 
-`PushSender` is the primary facade. Its builder requires exactly one VAPID key source:
+`PushSender` is the primary facade. Its two required values — exactly one VAPID key source, plus
+the contact — are the factory method's parameters, so an incomplete sender does not compile and
+`build()` has nothing left to refuse:
 
-- `vapid(VapidKeys)` creates `LocalEcVapidSigner`; or
-- `signer(VapidSigner)` delegates signing and public-key publication.
+- `builder(VapidKeys, String contact)` creates `LocalEcVapidSigner`; or
+- `builder(VapidSigner, String contact)` delegates signing and public-key publication.
+
+The two are overloads of one `builder(…)` rather than differently named methods: they differ only
+in which required key source they take, not in contract — and the overload choosing the key source
+is what makes "no key source" and "both key sources" inexpressible rather than runtime errors.
 
 The VAPID contact is required in both modes and must be non-blank. RFC 8292 §2.1 leaves the `sub`
 claim optional; requiring it is a push2u contract, on the grounds that a push service reporting a
@@ -286,6 +292,51 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 
 ## 7. Vault Transit integration
 
+`VaultTransitVapidSigner` has no public constructor: each mode has its own builder, obtained from
+`builderWithFetchedPublicKey(address, keyName, token)` or
+`builderWithSuppliedPublicKey(address, keyName, token, point)`. Two builders rather than one
+overloaded family because the modes differ in *contract*, not only in parameters — the fetched one
+performs a Vault read inside `build()` and can fail there, the supplied one contacts nothing — and
+because `keyVersion` belongs to exactly one of them: in the fetched mode the version is Vault's to
+state, taken from the same response as the public key. A bare `builder()` would have made one of
+two equal modes the default by omission.
+
+Everything required is a factory-method parameter, so an incomplete signer does not compile and
+`build()` never refuses over a missing value. The key name and the token travel as the value types
+`TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
+arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
+enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
+Vault's `path_keys.go` — so no name Vault would accept is refused, while every URL-breaking
+character (`/`, `?`, `#`, `%`, whitespace, non-ASCII) is refused without being enumerated.
+`VaultToken` requires a non-empty, visible-ASCII value (0x21–0x7E) — rejecting the
+trailing-newline misconfiguration, a pasted `Bearer ` prefix and stray whitespace — while
+deliberately not validating the token's *format* (Vault issues `hvs.`/`hvb.`/`hvr.` today, issued
+`s.`/`b.` before 1.10, and dev mode accepts an arbitrary string); its `toString()` never prints
+the token. Because a `VaultToken` is valid by construction, the signer validates it exactly once —
+in the type — instead of re-checking it on every path that offers it to a transport. The builders
+hold only the optional steps: `mount` defaults to `transit` (Vault's own default mount),
+`transport` to a `JdkVaultHttpTransport`, and the supplied-key builder alone has `keyVersion`.
+`mount` is validated at its step, per segment: nested mounts (`secrets/transit`) are legal, and
+every `/`-separated segment must be non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
+The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
+literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
+`URI.resolve` does *not* normalize dot segments in the absolute-path references this signer
+builds, so the path goes onto the wire as written. What
+happens next depends on the hops: Vault's own Go router decodes the path before routing, so a
+`%2F` addresses a different mount inside Vault itself; a decoded dot segment draws a *307
+redirect* to the collapsed path from Vault's handler (`cleanPath` in `http/handler.go`) — the
+default `Redirect.NEVER` transport refuses it loudly, but a redirect-following custom transport
+would execute it, re-sending `X-Vault-Token` to the other path; and a normalizing proxy in front
+of Vault (nginx `proxy_pass` with a URI part, HAProxy `normalize-uri`) collapses the path before
+Vault sees it at all. The set is deliberately narrower than either Vault or a URL requires —
+policy, not necessity: Vault accepts any printable Unicode in a mount path (`validateMountPath`,
+canonical per `path.Clean`), and `~ ! $ & ' ( ) * + , ; = : @` are legal raw in a URI path
+segment, so a mount like `transit+prod` is real and was addressable through this signer before
+the rule. It is refused anyway because some of that punctuation is treated specially by
+intermediaries (`;` reads as a path parameter to some hops), and admitting only what every hop
+treats literally can be widened later without breaking anyone — the reverse is not true.
+Refusing at the step also replaces `URI.create`'s later raw "Malformed escape pair" failure.
+
 `VaultTransitVapidSigner` supports:
 
 - **Fetched mode:** reads `latest_version` and that version's public key atomically from one
@@ -302,8 +353,8 @@ Applications must still treat the complete endpoint as a credential and avoid lo
   syntactically valid but unusable VAPID key, and the misconfiguration surfaced only as an
   unexplained push-service rejection on the first send.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
-  Supplying the matching Transit key version pins signing to that version. The compatibility form
-  without a version uses Vault's latest version and is safe only for a key that never rotates.
+  Supplying the matching Transit key version pins signing to that version. Omitting `keyVersion`
+  uses Vault's latest version and is safe only for a key that never rotates.
   The supplied key is checked structurally only (65 bytes, `0x04` tag) — neither its point nor its
   correspondence to the Transit key can be established here; both stay with the caller.
 
@@ -374,8 +425,8 @@ in that case — the requirement below is specific to the *autoconfigured* sende
 `push2u.vapid.subject` (the VAPID `sub` claim) is required to build the autoconfigured
 `PushSender`, including when the `VapidSigner` bean comes from another starter — the Vault Transit
 signer starter supplies only key custody, not a contact address. The `pushSender` bean checks this
-explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing
-`PushSender.Builder#build()`'s generic `"contact is required"`.
+explicitly and fails with a message naming `push2u.vapid.subject`, rather than surfacing the
+`PushSender.builder(…)` factory's generic `"contact is required"`.
 
 `push2u.record-size` and `push2u.max-encrypted-body-bytes` follow the same optional-property
 pattern as `jwt-expiry` and `default-ttl`: unset (`null`) leaves the `PushSender` builder default,

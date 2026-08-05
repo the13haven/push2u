@@ -27,8 +27,8 @@ class PushSenderPayloadSizeTest {
     @Test
     void theLargestPayloadThatFitsTheDefaultBodyLimitIsDelivered() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = sender(PushSender.builder())
-                    .send(subscription(receiver), PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD]));
+            PushResult result =
+                    sender(builder()).send(subscription(receiver), PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD]));
 
             assertThat(result.isDelivered()).isTrue();
             assertThat(receiver.requests().getFirst().bodyLength())
@@ -40,7 +40,7 @@ class PushSenderPayloadSizeTest {
     @Test
     void onePayloadByteOverTheBodyLimitIsRejectedBeforeAnyRequest() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender sender = sender(PushSender.builder());
+            PushSender sender = sender(builder());
             Subscription subscription = subscription(receiver);
             PushMessage message = PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD + 1]);
 
@@ -57,7 +57,7 @@ class PushSenderPayloadSizeTest {
     @Test
     void raisingTheBodyLimitAloneFailsOnRecordSizeWithItsOwnMessage() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender sender = sender(PushSender.builder().maxEncryptedBodyBytes(8192));
+            PushSender sender = sender(builder().maxEncryptedBodyBytes(8192));
             Subscription subscription = subscription(receiver);
             PushMessage message = PushMessage.of(new byte[5000]);
 
@@ -74,8 +74,7 @@ class PushSenderPayloadSizeTest {
     @Test
     void raisingBothTheBodyLimitAndTheRecordSizeDelivers() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = sender(
-                            PushSender.builder().maxEncryptedBodyBytes(8192).recordSize(8192))
+            PushResult result = sender(builder().maxEncryptedBodyBytes(8192).recordSize(8192))
                     .send(subscription(receiver), PushMessage.of(new byte[5000]));
 
             assertThat(result.isDelivered()).isTrue();
@@ -89,13 +88,13 @@ class PushSenderPayloadSizeTest {
             Subscription subscription = subscription(receiver);
             PushMessage message = PushMessage.of(new byte[100]);
 
-            PushSender tooSmall = sender(PushSender.builder().recordSize(117));
+            PushSender tooSmall = sender(builder().recordSize(117));
             assertThatThrownBy(() -> tooSmall.send(subscription, message))
                     .as("rs == plaintext(100) + delimiter(1) + tag(16) is not *greater than* the sum")
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("recordSize 117 is too small");
 
-            assertThat(sender(PushSender.builder().recordSize(118))
+            assertThat(sender(builder().recordSize(118))
                             .send(subscription, message)
                             .isDelivered())
                     .as("one octet more is the smallest legal rs")
@@ -106,33 +105,31 @@ class PushSenderPayloadSizeTest {
     @Test
     void builderRejectsARecordSizeBelowTheRfc8188Minimum() {
         for (int invalid : new int[] {Integer.MIN_VALUE, -1, 0, 17}) {
-            assertThatThrownBy(() -> PushSender.builder().recordSize(invalid))
+            assertThatThrownBy(() -> builder().recordSize(invalid))
                     .as("rs %d", invalid)
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("recordSize must be at least 18");
         }
-        assertThat(PushSender.builder().recordSize(18))
-                .as("18 is legal (RFC 8188 §2)")
-                .isNotNull();
+        assertThat(builder().recordSize(18)).as("18 is legal (RFC 8188 §2)").isNotNull();
     }
 
     @Test
     void builderRejectsAMaxEncryptedBodyTooSmallForAnEmptyPayload() {
         for (int invalid : new int[] {Integer.MIN_VALUE, -1, 0, 102}) {
-            assertThatThrownBy(() -> PushSender.builder().maxEncryptedBodyBytes(invalid))
+            assertThatThrownBy(() -> builder().maxEncryptedBodyBytes(invalid))
                     .as("maxEncryptedBodyBytes %d", invalid)
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("must be at least the fixed 103-byte aes128gcm overhead");
         }
         // 103 is the body of an empty payload, which the library does send — so the limit that
         // admits exactly that body is legal, not one byte above it.
-        assertThat(PushSender.builder().maxEncryptedBodyBytes(103)).isNotNull();
+        assertThat(builder().maxEncryptedBodyBytes(103)).isNotNull();
     }
 
     @Test
     void anEmptyPayloadFitsTheSmallestLegalBodyLimit() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = sender(PushSender.builder().maxEncryptedBodyBytes(103))
+            PushResult result = sender(builder().maxEncryptedBodyBytes(103))
                     .send(subscription(receiver), PushMessage.of(new byte[0]));
 
             assertThat(result.isDelivered()).isTrue();
@@ -168,9 +165,12 @@ class PushSenderPayloadSizeTest {
                 .hasMessageContaining("raise recordSize to at least 2147483562");
     }
 
+    /** A builder pre-loaded with the required key source and contact — these tests exercise only optional steps. */
+    private static PushSender.Builder builder() {
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com");
+    }
+
     private static PushSender sender(PushSender.Builder builder) {
-        return builder.vapid(generateVapidKeys())
-                .contact("mailto:ops@example.com")
-                .build();
+        return builder.build();
     }
 }

@@ -24,9 +24,10 @@ import org.jspecify.annotations.Nullable;
  * 8292), POSTs the {@code aes128gcm} body to the endpoint (RFC 8030), and interprets the HTTP status into a
  * {@link PushResult} with retries.
  *
- * <p>Build it with {@link #builder()}. Exactly one key source is required — {@code .vapid(keys)} (the default in-JVM
- * signer) <em>or</em> {@code .signer(externalSigner)} (which supplies the VAPID public key itself);
- * {@code .contact(...)} is required in both.
+ * <p>Build it with {@link #builder(VapidKeys, String)} (the default in-JVM signer) or {@link #builder(VapidSigner,
+ * String)} (an external signer, which supplies the VAPID public key itself). The key source and the contact are the two
+ * required values, so they are the factory method's parameters — the overload chooses the key source, and an incomplete
+ * sender cannot be expressed; everything on the {@link Builder} is optional.
  *
  * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a store on expiry is
  * expected control flow, not an error.
@@ -55,13 +56,13 @@ public final class PushSender {
 
     private PushSender(Builder builder) {
         Jca jca = builder.cryptoProvider == null ? Jca.platform() : Jca.using(builder.cryptoProvider);
-        // Builder.build() rejects a missing contact and enforces exactly one key source, so both
-        // are present by the time this runs — stated here so the invariant is checked rather than
-        // assumed if build() ever changes.
+        // Each factory overload sets exactly one key source and a validated contact, so both are
+        // present by the time this runs — stated here so the invariant is checked rather than
+        // assumed if the factories ever change.
         this.signer = builder.signer != null
                 ? builder.signer
                 : new LocalEcVapidSigner(Objects.requireNonNull(builder.vapidKeys, "vapidKeys"), jca);
-        this.contact = Objects.requireNonNull(builder.contact, "contact");
+        this.contact = builder.contact;
         this.encryptor = new WebPushEncryptor(jca);
         this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkPushHttpClient();
         this.retryPolicy = builder.retryPolicy;
@@ -76,12 +77,46 @@ public final class PushSender {
     }
 
     /**
-     * A new builder; configure a key source and contact, then call {@link Builder#build()}.
+     * A new builder for a sender that holds the VAPID key pair locally and signs in-JVM (the default signer). An
+     * overload of {@link #builder(VapidSigner, String)} rather than a differently named method: the two entry points
+     * differ only in which required key source they take, not in contract.
      *
+     * @param vapidKeys the VAPID key pair
+     * @param contact the VAPID {@code sub} claim — a {@code mailto:} / {@code https:} URI the push service can reach
+     *     you at. RFC 8292 §2.1 makes {@code sub} optional ({@code MAY}) and only recommends ({@code SHOULD}) those two
+     *     URI forms when it is present; requiring it is push2u's own contract, because a push service that needs to
+     *     reach the operator about a misbehaving application server has no other channel. A blank value satisfies that
+     *     contract no better than an absent one, so it is rejected too.
      * @return a new builder
+     * @throws IllegalArgumentException if {@code contact} is blank
      */
-    public static Builder builder() {
-        return new Builder();
+    public static Builder builder(VapidKeys vapidKeys, String contact) {
+        return new Builder(Objects.requireNonNull(vapidKeys, "vapidKeys"), null, requireContact(contact));
+    }
+
+    /**
+     * A new builder for a sender that delegates VAPID signing to an external signer — one that also supplies the public
+     * key, e.g. Vault Transit.
+     *
+     * @param signer the external signer
+     * @param contact the VAPID {@code sub} claim; see {@link #builder(VapidKeys, String)} for the contract
+     * @return a new builder
+     * @throws IllegalArgumentException if {@code contact} is blank
+     */
+    public static Builder builder(VapidSigner signer, String contact) {
+        return new Builder(null, Objects.requireNonNull(signer, "signer"), requireContact(contact));
+    }
+
+    /**
+     * The factory methods' contact validation. A required-but-invalid value is a legitimate runtime rejection — unlike
+     * a <em>missing</em> required value, which the factory signatures make inexpressible.
+     */
+    private static String requireContact(@Nullable String contact) {
+        if (contact == null || contact.isBlank()) {
+            throw new IllegalArgumentException(
+                    "contact is required (the VAPID 'sub' claim: optional in RFC 8292 §2.1, required by push2u)");
+        }
+        return contact;
     }
 
     /**
@@ -244,19 +279,20 @@ public final class PushSender {
     }
 
     /**
-     * Configures and builds a {@link PushSender}. Required: a key source ({@link #vapid} or {@link #signer}) and a
-     * {@link #contact}; everything else has a sensible default.
+     * Configures and builds a {@link PushSender}. Everything required — the key source and the contact — is a parameter
+     * of {@link PushSender#builder(VapidKeys, String)} / {@link PushSender#builder(VapidSigner, String)}, so every step
+     * here is optional with a sensible default and {@link #build()} cannot refuse.
      */
     public static final class Builder {
 
+        /** Exactly one of {@code vapidKeys} and {@code signer} is non-null — the factory overload chose which. */
         @Nullable
-        private VapidKeys vapidKeys;
+        private final VapidKeys vapidKeys;
 
         @Nullable
-        private VapidSigner signer;
+        private final VapidSigner signer;
 
-        @Nullable
-        private String contact;
+        private final String contact;
 
         @Nullable
         private PushHttpClient httpClient;
@@ -278,44 +314,10 @@ public final class PushSender {
         @Nullable
         private EndpointPolicy endpointPolicy;
 
-        private Builder() {}
-
-        /**
-         * Hold the VAPID key pair locally and sign in-JVM (the default signer).
-         *
-         * @param vapidKeys the VAPID key pair
-         * @return this builder
-         */
-        public Builder vapid(VapidKeys vapidKeys) {
+        private Builder(@Nullable VapidKeys vapidKeys, @Nullable VapidSigner signer, String contact) {
             this.vapidKeys = vapidKeys;
-            return this;
-        }
-
-        /**
-         * Delegate VAPID signing to an external signer that also supplies the public key.
-         *
-         * @param signer the external signer
-         * @return this builder
-         */
-        public Builder signer(VapidSigner signer) {
             this.signer = signer;
-            return this;
-        }
-
-        /**
-         * The VAPID {@code sub} claim — a {@code mailto:} / {@code https:} the push service can reach you at. RFC 8292
-         * §2.1 makes {@code sub} optional ({@code MAY}) and only recommends ({@code SHOULD}) those two URI forms when
-         * it is present; requiring it is push2u's own contract, because a push service that needs to reach the operator
-         * about a misbehaving application server has no other channel. {@link #build()} therefore rejects a
-         * {@code null} or blank value: a blank one satisfies that contract no better than an absent one, and the JWT it
-         * would produce carries a {@code sub} a push service may well reject, though the RFC obliges no service to.
-         *
-         * @param contact the contact URI
-         * @return this builder
-         */
-        public Builder contact(String contact) {
             this.contact = contact;
-            return this;
         }
 
         /**
@@ -490,23 +492,12 @@ public final class PushSender {
         }
 
         /**
-         * Validates the configuration (exactly one key source, plus a non-blank contact) and builds the
-         * {@link PushSender}.
+         * Builds the {@link PushSender}. There is nothing left to validate: the factory method took everything
+         * required, and every optional step validated its value where it was set.
          *
          * @return the configured sender
-         * @throws IllegalStateException if the key source or the contact is missing or invalid
          */
         public PushSender build() {
-            if (contact == null || contact.isBlank()) {
-                throw new IllegalStateException(
-                        "contact is required (the VAPID 'sub' claim: optional in RFC 8292 §2.1, required by push2u)");
-            }
-            boolean hasVapid = vapidKeys != null;
-            boolean hasSigner = signer != null;
-            if (hasVapid == hasSigner) {
-                throw new IllegalStateException(
-                        "exactly one key source is required: either .vapid(keys) or .signer(externalSigner), not both");
-            }
             return new PushSender(this);
         }
     }

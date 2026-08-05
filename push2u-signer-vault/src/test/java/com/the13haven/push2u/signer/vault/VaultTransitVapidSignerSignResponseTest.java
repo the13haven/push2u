@@ -51,8 +51,14 @@ class VaultTransitVapidSignerSignResponseTest {
                 return new VaultHttpResponse(200, responseBody);
             }
         };
-        return new VaultTransitVapidSigner(
-                URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, stub);
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("http://vault.test:8200"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        publicKey)
+                .mount("transit")
+                .transport(stub)
+                .build();
     }
 
     private static byte[] sign(String responseBody) {
@@ -74,8 +80,15 @@ class VaultTransitVapidSignerSignResponseTest {
                 return new VaultHttpResponse(200, responseBody);
             }
         };
-        return new VaultTransitVapidSigner(
-                URI.create("http://vault.test:8200"), "transit", "vapid", TOKEN, publicKey, keyVersion, stub);
+        return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("http://vault.test:8200"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        publicKey)
+                .mount("transit")
+                .keyVersion(keyVersion)
+                .transport(stub)
+                .build();
     }
 
     /** 64 distinguishable bytes standing in for a real {@code r || s} pair. */

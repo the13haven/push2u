@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -20,7 +21,9 @@ import org.springframework.context.annotation.Bean;
 
 import com.the13haven.push2u.VapidSigner;
 import com.the13haven.push2u.signer.vault.JdkVaultHttpTransport;
+import com.the13haven.push2u.signer.vault.TransitKeyName;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
+import com.the13haven.push2u.signer.vault.VaultToken;
 import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 
 /**
@@ -92,8 +95,17 @@ public final class VaultSignerAutoConfiguration {
         // so the contract holds in the type system too, and so a future change to the condition
         // fails here naming the property rather than with a NullPointerException.
         URI address = Objects.requireNonNull(properties.address(), "push2u.signer.vault.address");
-        String keyName = Objects.requireNonNull(properties.keyName(), "push2u.signer.vault.key-name");
-        String token = Objects.requireNonNull(properties.token(), "push2u.signer.vault.token");
+        // The value types (and the mount step) validate on construction; each rejection is
+        // re-thrown with the YAML property name in front, the same translation every other
+        // configuration failure in this starter gets — the library's message names the Java-side
+        // viewpoint, not the property the operator wrote. The token's message carries no part of
+        // the value, so the translation cannot leak it either.
+        TransitKeyName keyName = translated(
+                "push2u.signer.vault.key-name",
+                () -> new TransitKeyName(Objects.requireNonNull(properties.keyName(), "push2u.signer.vault.key-name")));
+        VaultToken token = translated(
+                "push2u.signer.vault.token",
+                () -> new VaultToken(Objects.requireNonNull(properties.token(), "push2u.signer.vault.token")));
         String publicKey = properties.publicKey();
         Integer keyVersion = properties.keyVersion();
         if (publicKey == null || publicKey.isBlank()) {
@@ -105,15 +117,34 @@ public final class VaultSignerAutoConfiguration {
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
             // (the token needs `read` on the key).
-            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, resolved);
+            VaultTransitVapidSigner.FetchedPublicKeyBuilder fetched =
+                    VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token);
+            translated("push2u.signer.vault.mount", () -> fetched.mount(properties.mount()));
+            return fetched.transport(resolved).build();
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
-        byte[] point = decodePublicKey(publicKey);
-        if (keyVersion == null) {
-            return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, resolved);
+        VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                address, keyName, token, decodePublicKey(publicKey));
+        translated("push2u.signer.vault.mount", () -> builder.mount(properties.mount()));
+        builder.transport(resolved);
+        if (keyVersion != null) {
+            builder.keyVersion(keyVersion);
         }
-        return new VaultTransitVapidSigner(address, properties.mount(), keyName, token, point, keyVersion, resolved);
+        return builder.build();
+    }
+
+    /**
+     * Runs {@code supplier} and re-throws its {@link IllegalArgumentException} with {@code property} prefixed — the
+     * library's own message names the builder's viewpoint, not the YAML the operator wrote. The cause is kept: the
+     * original message carries the actual constraint.
+     */
+    private static <T> T translated(String property, Supplier<T> supplier) {
+        try {
+            return supplier.get();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(property + ": " + e.getMessage(), e);
+        }
     }
 
     /**

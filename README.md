@@ -121,16 +121,21 @@ Web Push endpoints are capability URLs.
 scalar, both encoded as unpadded base64url:
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey))
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(
+        VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com")
     .build();
 ```
 
 The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. RFC 8292
 §2.1 leaves `sub` optional; push2u requires it, because a push service with a problem to report
-about your application server has no other way to reach you. `build()` therefore throws
-`IllegalStateException` for a `null` or whitespace-only contact.
+about your application server has no other way to reach you. It is therefore a parameter of the
+factory method — omitting it does not compile — and `PushSender.builder(…)` throws
+`IllegalArgumentException` for a whitespace-only value. Everything on the returned builder is
+optional; `build()` has nothing left to refuse.
+
+To delegate signing to an external `VapidSigner` (for example Vault Transit, below), pass the
+signer instead of the keys: `PushSender.builder(signer, "mailto:ops@example.com")`. The two
+overloads differ only in the required key source — exactly one, chosen by the overload.
 
 ### Send a message
 
@@ -165,9 +170,7 @@ pipeline runs on a library-owned virtual-thread-per-task executor by default, ne
 their own executor:
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .executor(pushExecutor)
     .build();
 ```
@@ -186,9 +189,7 @@ authentication tag (16). The default therefore admits **3993 bytes of plaintext*
 RFC 8291 §4 derives.
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .maxEncryptedBodyBytes(8192)  // the endpoint is known to accept a larger body
     .recordSize(8192)             // rs must cover the payload as well
     .build();
@@ -213,9 +214,9 @@ accepted:
 - `recordSize` exactly equal to plaintext + 1 + 16 was previously accepted, in violation of the
   RFC 8291 §4 `MUST`; it is now rejected;
 - `recordSize(int)` now throws for values below 18 instead of accepting them silently;
-- `.contact("   ")` (or any whitespace-only value) previously built a `PushSender` that would
-  issue a VAPID JWT with a blank `sub` claim; `build()` now rejects it with the same
-  `IllegalStateException` as a missing contact.
+- a whitespace-only contact previously built a `PushSender` that would issue a VAPID JWT with a
+  blank `sub` claim; the contact is now a parameter of `PushSender.builder(…)`, which rejects a
+  blank value with `IllegalArgumentException` — and a missing contact no longer compiles at all.
 
 ### Retry behavior
 
@@ -226,9 +227,7 @@ delta-seconds and all HTTP-date forms required by RFC 9110 are accepted; malform
 values fall back to the exponential schedule.
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .retryPolicy(new RetryPolicy(
         5,
         Duration.ofMillis(500),
@@ -244,9 +243,7 @@ Implement `PushHttpClient` when the application needs a different HTTP stack, pr
 observability integration:
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .httpClient(customPushHttpClient)
     .build();
 ```
@@ -286,9 +283,7 @@ HttpClient client = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(10))
     .build();
 
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .httpClient(new JdkPushHttpClient(client, Duration.ofSeconds(30)))
     .build();
 ```
@@ -321,9 +316,7 @@ Restrict where a sender may POST with an endpoint policy — for almost every de
 origin allowlist naming the browser push services its users can actually arrive from:
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .endpointPolicy(EndpointPolicies.allowedOrigins(
         "https://fcm.googleapis.com",           // Chrome
         "https://updates.push.services.mozilla.com", // Firefox
@@ -372,9 +365,7 @@ binds the encryption primitives and, when the local signer is used, EC key impor
 signing to that provider:
 
 ```java
-PushSender sender = PushSender.builder()
-    .vapid(keys)
-    .contact("mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
     .cryptoProvider(provider)
     .build();
 ```
@@ -538,12 +529,39 @@ rather than the curve; that value is therefore also accepted and the key is admi
 curve checks pass. This path has not been exercised against a real Vault Enterprise.
 
 ```java
-VapidSigner signer = new VaultTransitVapidSigner(
-    URI.create("https://vault.example:8200"),
-    "transit",
-    "vapid",
-    vaultToken);
+VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+        URI.create("https://vault.example:8200"),
+        new TransitKeyName("vapid"),
+        new VaultToken(vaultToken))
+    .build();
 ```
+
+Everything required — the address, the key name and the token — goes into the factory method, so
+an incomplete signer does not compile and `build()` never refuses over a missing value. The key
+name and the token are the value types `TransitKeyName` and `VaultToken` rather than bare strings:
+they cannot be swapped in the argument list, and each enforces its value's contract.
+`TransitKeyName` applies Vault's own Transit key-name rule (letters, digits, `_`, `-` and `.`,
+beginning and ending with a word character — Vault's `GenericNameRegex`), so no name Vault would
+accept is refused while every URL-breaking character is. `VaultToken` requires non-empty visible
+ASCII — rejecting the trailing newline picked up from a file or a YAML block scalar, a pasted
+`Bearer ` prefix, or a stray space — without echoing the token; its format (`hvs.`, legacy `s.`,
+or a dev-mode arbitrary string) is deliberately not checked, and its `toString()` prints
+`VaultToken[REDACTED]`, never the value. The builder holds only the optional steps: `mount`
+defaults to `transit` (in both the builder and the properties), Vault's own default mount for the
+Transit secrets engine, and `transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
+transport* below). `mount` is validated where it is set, per segment: nested mounts like
+`secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
+and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
+reopened by encoding: a `%2e%2e` or `%2F` segment travels in the raw request path (`URI.resolve` does not normalize dot
+segments in an absolute-path reference) — Vault's own router decodes a `%2F` before routing and addresses
+a different mount, a decoded dot segment draws a 307 redirect to the collapsed path from Vault's
+handler (harmless under the default `Redirect.NEVER` transport, executed — `X-Vault-Token`
+included — by a redirect-following custom one), and a normalizing proxy in front of Vault
+collapses the path before Vault sees it. The set is deliberately narrower than Vault and URLs
+allow: URL-legal punctuation like `+` or `~` in a mount name is refused by this validator's
+policy, not because such a mount could not be addressed — some of that punctuation is treated
+specially by intermediaries, and a conservative set can be widened later without breaking
+compatibility.
 
 The equivalent Spring Boot configuration is:
 
@@ -588,21 +606,26 @@ push2u:
 As above, `push2u.vapid.subject` (the VAPID `sub` claim) comes from the core starter, not the Vault
 signer starter — it must be set here too.
 
-The equivalent plain-Java constructor takes the version after the public key:
+The equivalent plain Java takes the public key at the factory method, alongside the other required
+values, and the version as an optional step:
 
 ```java
-VapidSigner signer = new VaultTransitVapidSigner(
-    URI.create("https://vault.example:8200"),
-    "transit",
-    "vapid",
-    vaultToken,
-    publicKeyBytes,
-    3);
+VapidSigner signer = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+        URI.create("https://vault.example:8200"),
+        new TransitKeyName("vapid"),
+        new VaultToken(vaultToken),
+        publicKeyBytes)
+    .keyVersion(3)
+    .build();
 ```
 
-The explicit constructor/property form without a version is retained for compatibility, but it
-sends no `key_version`; Vault then signs with its latest version. Use that form only when the
-Transit key is guaranteed never to rotate.
+There are two builders rather than one because the two modes differ in contract, not only in
+parameters: `builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
+`builderWithSuppliedPublicKey(…)` contacts nothing. `keyVersion(...)` exists only on the second
+one — in the fetched mode the version comes from Vault, together with the public key it belongs to.
+
+Leaving `keyVersion` (or the `key-version` property) out sends no `key_version`; Vault then signs
+with its latest version. Use that form only when the Transit key is guaranteed never to rotate.
 
 An explicitly supplied `public-key` is checked structurally only — 65 bytes with the `0x04`
 uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is
