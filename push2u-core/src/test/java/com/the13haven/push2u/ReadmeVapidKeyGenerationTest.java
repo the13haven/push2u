@@ -15,7 +15,10 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -34,10 +37,25 @@ import org.junit.jupiter.api.io.TempDir;
  * with — otherwise the command could be broken while the Java inside it stayed correct — and runs the body through the
  * {@code jshell} of the JVM running the tests.
  *
+ * <p>Running it once is not enough on its own, because the pair it prints is random: the snippet's {@code fixed32} is
+ * the part that is easy to get wrong, and both of its plausible regressions — dropping the left-padding, copying from
+ * the wrong end of {@code toByteArray()} — survive most single draws. Dropping the left-padding, the worse of the two,
+ * shows up in about one generated pair in two hundred. So a second run appends probe lines to the body it feeds
+ * {@code jshell} (never to the README, which stays minimal and copy-pasteable), calling the block's <em>own</em>
+ * {@code fixed32} on fixed values that cover every length {@link java.math.BigInteger#toByteArray()} produces, and
+ * compares all 32 returned bytes. That check is a pure function of the snippet: it fails on the first pull request that
+ * breaks the padding, not on the unlucky one.
+ *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
  * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../README.md} would be a guess
  * about the test's working directory.
+ *
+ * <p>One divergence class this design cannot see, recorded rather than built around: the body goes straight to
+ * {@code jshell}'s standard input, so nothing shell-level is exercised. A line equal to {@code EOF} inside the block
+ * would end the heredoc early for a reader following the README while this test ran the whole block happily. Piping the
+ * block through a shell instead would trade that contrived case for a dependency on whichever shell the runner ships,
+ * which is the larger of the two risks.
  */
 class ReadmeVapidKeyGenerationTest {
 
@@ -56,19 +74,62 @@ class ReadmeVapidKeyGenerationTest {
 
     private static final String HEREDOC_CLOSE = "EOF";
 
+    /**
+     * The arguments of {@link #HEREDOC_OPEN}, pinned rather than parsed out of it. Deriving them would look like the
+     * test followed the README, but {@link #snippetBody()} already requires that line to be {@link #HEREDOC_OPEN}
+     * character for character, so the derivation could only ever produce these two. Documenting a different command
+     * therefore means editing both constants, deliberately.
+     */
+    private static final List<String> JSHELL_ARGUMENTS = List.of("-q", "-");
+
+    /** The line that ends the jshell session; probe lines are spliced in before it. */
+    private static final String EXIT_COMMAND = "/exit";
+
     private static final Pattern PUBLIC_KEY_LINE = Pattern.compile("(?m)^public:\\s+(\\S+)\\s*$");
     private static final Pattern PRIVATE_KEY_LINE = Pattern.compile("(?m)^private:\\s+(\\S+)\\s*$");
+    private static final Pattern PROBE_LINE = Pattern.compile("(?m)^probe (\\S+) (\\d+) ([0-9a-f]{64})\\s*$");
 
     private static final long JSHELL_TIMEOUT_MINUTES = 3;
 
+    /**
+     * One check of the snippet's own {@code fixed32}: a {@code BigInteger} expression, the length its
+     * {@code toByteArray()} has (which is the shape being covered), and the 32 bytes {@code fixed32} must return.
+     *
+     * <p>The four together pin both regressions deterministically. Copying from the wrong end of the array is visible
+     * only where {@code toByteArray()} is longer than 32 bytes, so the sign-byte case catches it; dropping the
+     * left-padding is visible only where it is shorter, so the 31-byte and single-byte cases catch it. The exact-32
+     * case is the shape that needs no adjustment at all and must come through untouched.
+     */
+    private record Fixed32Probe(String label, String expression, int encodedLength, String expectedHex) {}
+
+    private static final List<Fixed32Probe> FIXED32_PROBES = List.of(
+            new Fixed32Probe(
+                    "sign-byte",
+                    "BigInteger.ONE.shiftLeft(255)",
+                    33,
+                    "8000000000000000000000000000000000000000000000000000000000000000"),
+            new Fixed32Probe(
+                    "exactly-32",
+                    "BigInteger.ONE.shiftLeft(254)",
+                    32,
+                    "4000000000000000000000000000000000000000000000000000000000000000"),
+            new Fixed32Probe(
+                    "leading-zero",
+                    "BigInteger.ONE.shiftLeft(247).subtract(BigInteger.ONE)",
+                    31,
+                    "007fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            new Fixed32Probe(
+                    "single-byte",
+                    "BigInteger.ONE",
+                    1,
+                    "0000000000000000000000000000000000000000000000000000000000000001"));
+
     @Test
     void readmeCarriesTheAnchoredBlockWithTheDocumentedHeredocWrapper() {
-        Snippet snippet = snippet();
+        // snippetBody() fails unless the block opens with HEREDOC_OPEN and closes with HEREDOC_CLOSE.
+        String body = snippetBody();
 
-        assertThat(snippet.command())
-                .as("the command the README tells the reader to run")
-                .containsExactly("jshell", "-q", "-");
-        assertThat(snippet.body())
+        assertThat(body)
                 .as("the heredoc body is the program, so it must at least be the one described in the prose")
                 .contains("byte[] fixed32(BigInteger value)")
                 .contains("new ECGenParameterSpec(\"secp256r1\")")
@@ -77,14 +138,12 @@ class ReadmeVapidKeyGenerationTest {
 
     @Test
     void readmeSnippetPrintsAPairThatVapidKeysAndTheLocalSignerAccept(@TempDir Path workingDir) throws Exception {
-        Snippet snippet = snippet();
-
-        String printed = run(snippet, workingDir);
+        String printed = run(snippetBody(), workingDir);
 
         String publicKey = capture(PUBLIC_KEY_LINE, printed, "public");
         String privateKey = capture(PRIVATE_KEY_LINE, printed, "private");
 
-        VapidKeys keys = VapidKeys.fromBase64(publicKey, privateKey);
+        VapidKeys keys = accepted(publicKey, privateKey);
         assertThat(keys.publicKey())
                 .as("RFC 8292 §3.2 wants the uncompressed X9.62 point")
                 .hasSize(65)
@@ -101,10 +160,24 @@ class ReadmeVapidKeyGenerationTest {
                 .doesNotThrowAnyException();
     }
 
-    /** The fenced block between the two anchors, split into the shell command and the heredoc body it is fed. */
-    private record Snippet(List<String> command, String body) {}
+    @Test
+    void readmeSnippetsFixed32PadsEveryShapeBigIntegerProduces(@TempDir Path workingDir) throws Exception {
+        Map<String, String> printed = probeResults(run(withFixed32Probes(snippetBody()), workingDir));
 
-    private static Snippet snippet() {
+        for (Fixed32Probe probe : FIXED32_PROBES) {
+            // "<toByteArray().length> <fixed32 output in hex>" — the length is asserted too, so a probe that stopped
+            // covering the shape it was chosen for fails here rather than passing for a reason nobody wanted.
+            assertThat(printed)
+                    .as(
+                            "fixed32(%s), from the block between %s and %s in %s — a %d-byte encoding, which is where"
+                                    + " a padding mistake shows",
+                            probe.expression(), BEGIN_ANCHOR, END_ANCHOR, readme(), probe.encodedLength())
+                    .containsEntry(probe.label(), probe.encodedLength() + " " + probe.expectedHex());
+        }
+    }
+
+    /** The heredoc body of the anchored block: everything the README feeds to {@code jshell}, wrapper excluded. */
+    private static String snippetBody() {
         List<String> block = fencedBlockBetweenAnchors(readme());
 
         if (block.size() < 3
@@ -116,14 +189,43 @@ class ReadmeVapidKeyGenerationTest {
                     + block.get(block.size() - 1) + "\".");
         }
 
-        // The words before "<<" are the command the reader runs; taking them from the line rather than hard-coding
-        // them means this test executes what the README says, not what it said when the test was written.
-        String beforeHeredoc =
-                HEREDOC_OPEN.substring(0, HEREDOC_OPEN.indexOf("<<")).trim();
-        List<String> command = List.of(beforeHeredoc.split("\\s+"));
+        return String.join("\n", block.subList(1, block.size() - 1)) + "\n";
+    }
 
-        String body = String.join("\n", block.subList(1, block.size() - 1)) + "\n";
-        return new Snippet(command, body);
+    /**
+     * The same body with lines printing {@code fixed32}'s output for each {@link #FIXED32_PROBES} entry, spliced in
+     * ahead of the block's own {@code /exit}. The README stays as short as a reader wants it; the determinism lives
+     * here.
+     */
+    private static String withFixed32Probes(String body) {
+        List<String> lines = new ArrayList<>(body.lines().toList());
+        int exit = lines.lastIndexOf(EXIT_COMMAND);
+        if (exit < 0) {
+            return fail("The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + readme()
+                    + " no longer ends its session with \"" + EXIT_COMMAND + "\", so there is nowhere to splice the"
+                    + " fixed32 probes in. Body was:\n" + body);
+        }
+
+        List<String> probes = new ArrayList<>();
+        for (Fixed32Probe probe : FIXED32_PROBES) {
+            // Prints: probe <label> <toByteArray().length> <32 bytes of fixed32 output, hex>. HexFormat is qualified
+            // because the snippet imports only what it needs and these lines must not require an import of their own.
+            probes.add("System.out.println(\"probe " + probe.label() + " \" + (" + probe.expression()
+                    + ").toByteArray().length + \" \" + java.util.HexFormat.of().formatHex(fixed32("
+                    + probe.expression() + ")));");
+        }
+        lines.addAll(exit, probes);
+        return String.join("\n", lines) + "\n";
+    }
+
+    /** The probe lines out of the run's output, as label → "{@code <encoded length> <fixed32 output in hex>}". */
+    private static Map<String, String> probeResults(String printed) {
+        Map<String, String> results = new LinkedHashMap<>();
+        Matcher matcher = PROBE_LINE.matcher(printed);
+        while (matcher.find()) {
+            results.put(matcher.group(1), matcher.group(2) + " " + matcher.group(3));
+        }
+        return results;
     }
 
     private static List<String> fencedBlockBetweenAnchors(Path readme) {
@@ -189,34 +291,41 @@ class ReadmeVapidKeyGenerationTest {
         }
     }
 
-    /** Runs the snippet exactly as the README prescribes: the documented command, with the heredoc body on stdin. */
-    private static String run(Snippet snippet, Path workingDir) throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>(snippet.command());
-        command.set(0, jshell().toString());
+    /** Runs the given body exactly as the README prescribes: the documented command, with the body on stdin. */
+    private static String run(String body, Path workingDir) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(jshell().toString());
+        command.addAll(JSHELL_ARGUMENTS);
 
+        Path output = workingDir.resolve("jshell-stdout.txt");
+        // stderr to a file rather than merged into stdout: the launcher's own chatter (JAVA_TOOL_OPTIONS notices and
+        // the like) would otherwise land among the printed keys, and it is wanted verbatim in a failure.
+        //
+        // stdout to a file for a second reason — reading the child's stream here would block until the child closed
+        // it, i.e. until it exited, and waitFor's timeout below would then only ever be reached after the thing it is
+        // meant to bound had already finished. With both streams redirected, waitFor is the only wait there is.
         Path diagnostics = workingDir.resolve("jshell-stderr.txt");
         Process process = new ProcessBuilder(command)
                 .directory(workingDir.toFile())
-                // To a file rather than merged into stdout: the launcher's own chatter (JAVA_TOOL_OPTIONS notices and
-                // the like) would otherwise land among the printed keys, and it is wanted verbatim in a failure.
+                .redirectOutput(output.toFile())
                 .redirectError(diagnostics.toFile())
                 .start();
 
+        // A couple of kilobytes, well inside a pipe buffer, so this completes whether or not the child is reading.
         try (OutputStream stdin = process.getOutputStream()) {
-            stdin.write(snippet.body().getBytes(UTF_8));
+            stdin.write(body.getBytes(UTF_8));
         }
-        String printed = new String(process.getInputStream().readAllBytes(), UTF_8);
 
         if (!process.waitFor(JSHELL_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
             process.destroyForcibly();
             return fail("The README snippet did not finish within " + JSHELL_TIMEOUT_MINUTES + " minutes."
-                    + diagnostics(printed, diagnostics));
+                    + diagnostics(output, diagnostics));
         }
         if (process.exitValue() != 0) {
             return fail(
-                    "The README snippet exited with " + process.exitValue() + "." + diagnostics(printed, diagnostics));
+                    "The README snippet exited with " + process.exitValue() + "." + diagnostics(output, diagnostics));
         }
-        return printed;
+        return Files.readString(output, UTF_8);
     }
 
     private static Path jshell() {
@@ -240,13 +349,48 @@ class ReadmeVapidKeyGenerationTest {
         return matcher.group(1);
     }
 
-    private static String diagnostics(String printed, Path stderrFile) {
-        String stderr;
+    /**
+     * {@link VapidKeys#fromBase64} on the printed pair, with the rejection named for what it actually is. This is the
+     * likeliest way for the test to fail, and the bare exception would say nothing about which file or which block a
+     * reader has to go and look at.
+     */
+    private static VapidKeys accepted(String publicKey, String privateKey) {
         try {
-            stderr = Files.exists(stderrFile) ? Files.readString(stderrFile, UTF_8) : "";
-        } catch (IOException e) {
-            stderr = "<unreadable: " + e + ">";
+            return VapidKeys.fromBase64(publicKey, privateKey);
+        } catch (RuntimeException e) {
+            return fail(
+                    "The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + readme()
+                            + " printed a pair that VapidKeys.fromBase64 rejects. That block is what a new user is told to"
+                            + " run, and this test executes it rather than a copy of it, so it is the block that needs"
+                            + " fixing — start at its fixed32 helper."
+                            + "\n  public:  " + publicKey + " (" + decodedByteCount(publicKey)
+                            + " decoded bytes; RFC 8292 §3.2 wants 65)"
+                            // The scalar is ephemeral and worthless, but printing key material is a habit worth not
+                            // having;
+                            // its length is what diagnoses an encoding mistake anyway.
+                            + "\n  private: " + decodedByteCount(privateKey)
+                            + " decoded bytes (32 wanted; the value itself is not printed)",
+                    e);
         }
-        return "\nstdout:\n" + printed + "\nstderr:\n" + stderr;
+    }
+
+    private static String decodedByteCount(String base64url) {
+        try {
+            return Integer.toString(Base64.getUrlDecoder().decode(base64url).length);
+        } catch (IllegalArgumentException e) {
+            return "not base64url at all: " + e.getMessage() + ",";
+        }
+    }
+
+    private static String diagnostics(Path stdoutFile, Path stderrFile) {
+        return "\nstdout:\n" + contents(stdoutFile) + "\nstderr:\n" + contents(stderrFile);
+    }
+
+    private static String contents(Path file) {
+        try {
+            return Files.exists(file) ? Files.readString(file, UTF_8) : "";
+        } catch (IOException e) {
+            return "<unreadable: " + e + ">";
+        }
     }
 }

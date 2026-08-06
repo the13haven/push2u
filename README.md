@@ -118,9 +118,10 @@ handed to it as configuration.
 - **The public half is handed to the browser** as the `applicationServerKey` argument of
   `pushManager.subscribe(...)`. The push service records it with the subscription and afterwards
   accepts only pushes signed by the matching private half.
-- **Both halves live in a secret store** and are loaded on every boot. Generating a pair at startup
-  would look like it works — the first subscriptions taken after that boot are valid — and would
-  break every subscription taken before it.
+- **The pair is loaded on every boot, never generated at one.** The private half comes from a secret
+  store, the public half alongside it. Generating a pair at startup would look like it works — the
+  first subscriptions taken after that boot are valid — and would break every subscription taken
+  before it.
 - **Rotating the pair invalidates every existing subscription.** There is no re-keying: the push
   service refuses a request whose VAPID key is not the one the subscription was created with, and
   every affected client has to call `subscribe(...)` again with the new public key. Treat a
@@ -171,6 +172,10 @@ EOF
 ```
 <!-- vapid-keygen:end -->
 
+That block is POSIX-shell syntax — `bash`, `zsh` or `sh`. On PowerShell or `cmd.exe`, save everything
+between the `jshell -q - <<'EOF'` line and the closing `EOF` to a file, say `vapid.jsh`, and run
+`jshell -q vapid.jsh` instead.
+
 **`fixed32` is the reason this is longer than a three-liner, and it is not optional.** `BigInteger`
 values are what the JCA hands out, and `toByteArray()` is a two's-complement encoding, not a fixed
 32-byte field element. Over 3000 generated pairs it returned **33 bytes for 1504 of them** — a
@@ -183,9 +188,13 @@ time and "strip but do not left-pad" is wrong about once in two hundred, which i
 two: the key looks perfectly fine right up to the point where a signature does not verify. Copying
 the block whole avoids both.
 
-This snippet is executed by push2u's own test suite, straight out of this file, and the pair it
-prints is fed to `VapidKeys.fromBase64` and `LocalEcVapidSigner` — so it cannot drift into producing
-something the library rejects.
+push2u's own test suite executes this block straight out of this file, so what is checked is what you
+see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
+`LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering every length
+`toByteArray()` returns — 33 bytes, 32, fewer, and one — and compares all 32 output bytes. An edit
+that breaks the padding fails the build rather than waiting for an unlucky key. What that cannot
+see is the shell: the test feeds the body to `jshell` directly, so the heredoc wrapper around it is
+checked as text and not as something a shell ran.
 
 If you already have Node.js around, the npm `web-push` package prints the same two values in the
 same encoding, and either source is equally good:

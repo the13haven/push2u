@@ -29,13 +29,14 @@ jobs:
   # Does this change contain anything the quality gate would look at? See
   # .github/workflows/detect-changes.yml — the filter lives in a job rather than under `on:`
   # because `quality` is a required status check, and a workflow that never starts leaves its
-  # check Pending forever.
+  # check Pending forever. `build` rather than `code` is the output to read here: it is the wider
+  # of the two, and it includes README.md, whose snippet ReadmeVapidKeyGenerationTest executes.
   changes:
     uses: ./.github/workflows/detect-changes.yml
 
   quality:
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.build == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
