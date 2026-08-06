@@ -146,40 +146,45 @@ class ReadmeVapidKeyGenerationTest {
         // snippetBody() fails unless the block opens with HEREDOC_OPEN and closes with HEREDOC_CLOSE.
         String body = snippetBody();
 
-        // statements() strips line comments and cannot see a block comment, so a /* ... */ around a
-        // pinned line would leave it "live code" here and dead code to javac — the round-3 bypass with
-        // two more characters. Refusing block comments outright turns that assumption into something
-        // checked, and costs the snippet nothing: it has none, and a snippet a reader is meant to
-        // paste has no use for them.
         // statements() strips line comments and is not a Java parser, so anything that hides a pinned
         // statement from javac while leaving it a plain line here defeats the pins below. Three rounds
         // of review found three such syntaxes, one per round — a line comment, then a block comment,
         // then a text block. Rather than wait for the fourth, refuse the three things any of them
         // needs: a block-comment opener, a text block, and a backslash, which is what a \\u002f escape
         // would need to spell a comment the search cannot see. The snippet has none of them and no
-        // use for any of them.
+        // use for any of them. What this does NOT close is semantically dead code — `if (false)`
+        // around a pinned line, or a copy after /exit — which is the recorded presence-vs-value limit
+        // in this class's Javadoc, not a lexical one.
         assertThat(body)
                 .as("the snippet must contain no block comment, text block or escape — see statements()")
                 .doesNotContain("/*")
                 .doesNotContain("\"\"\"")
                 .doesNotContain("\\");
 
-        // Every pin below is a whole statement, normalised by statements(). The values the snippet
-        // prints are random, so no run can prove a call is still there; text is the only deterministic
-        // instrument, and a substring search over the raw body was not enough — a call site commented
-        // out and replaced underneath satisfied it. Matching statements also pins the arraycopy
-        // offsets and the destination lengths, which nothing else in this file looks at.
-        // Only the three fixed32 call sites. Everything else the snippet does is checked on the value
-        // it produces, on every draw and whatever statement produced it — a wrong curve, a missing
-        // 0x04, a renamed helper and padded base64url all fail below or in the probe run. Pinning
-        // those as text as well would buy nothing and would fail a correct rename, which is how a
-        // guard earns its own deletion.
+        // Four statements, each guarding something no check on the printed value can see.
+        //
+        // The three fixed32 call sites: the values are random, so no run can prove a call is still
+        // there, and a substring search over the raw body was not enough — a call site commented out
+        // and replaced underneath satisfied it. Matching whole statements pins the arraycopy offsets
+        // and destination lengths too, which nothing else here looks at.
+        //
+        // The encoder: `=` on the printed value covers PADDING on every draw, deterministically, since
+        // 65 and 32 are both 2 mod 3. It does not cover the ALPHABET. Base64.getEncoder().withoutPadding()
+        // emits no `=` ever and differs from url-safe output only on the draws where a `+` or `/` lands
+        // in one of the two strings — about 2 in 100, measured. On the other 98 the bytes are identical,
+        // so no value check can distinguish them, and a reader's own draw fails for them the same way.
+        //
+        // Everything else the snippet does IS covered by value on every draw and whatever statement
+        // produced it — a wrong curve fails the on-curve check, a missing 0x04 fails VapidKeys, a
+        // renamed or deleted helper fails the probes — so pinning those as text would only add ways to
+        // fail a correct rename, which is how a guard earns its own deletion.
         assertThat(statements(body))
-                .as("every value the snippet prints has to go through fixed32, as live code")
+                .as("what the printed value cannot show: that fixed32 is still called, and the encoder's alphabet")
                 .contains(
                         "System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);",
                         "System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);",
-                        "var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());");
+                        "var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());",
+                        "var base64url = Base64.getUrlEncoder().withoutPadding();");
     }
 
     /**
