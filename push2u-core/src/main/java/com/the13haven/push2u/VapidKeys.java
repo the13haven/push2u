@@ -52,7 +52,29 @@ public final class VapidKeys {
      * @return the key pair
      */
     public static VapidKeys fromBase64(String publicKey, String privateKey) {
-        return new VapidKeys(Base64Url.decode(publicKey), Base64Url.decode(privateKey));
+        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(privateKey, "privateKey");
+        return new VapidKeys(decode(publicKey, "public"), decode(privateKey, "private"));
+    }
+
+    /**
+     * Decodes one half, naming it if the decoder refuses. The JDK's message for a bad character is {@code "Illegal
+     * base64 character 2b"} and nothing else — the same text for either half, mentioning neither VAPID nor which of the
+     * two values was wrong. {@code 2b} is {@code '+'}, and a {@code '+'} or {@code '/'} means the key was encoded with
+     * the standard base64 alphabet rather than the URL-safe one Web Push uses: an {@code openssl base64} pipeline, or a
+     * language whose default encoder is the standard one, produces exactly that.
+     */
+    // The cause is kept and only the message replaced, because the decoder's own text says nothing
+    // about which of the two values it is refusing.
+    private static byte[] decode(String value, String half) {
+        try {
+            return Base64Url.decode(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "VAPID " + half + " key is not valid base64url (RFC 4648 §5, the URL-safe alphabet with '-' and"
+                            + " '_' rather than '+' and '/', padding optional): " + e.getMessage(),
+                    e);
+        }
     }
 
     /**

@@ -24,6 +24,7 @@ import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.JdkPushHttpClient;
 import com.the13haven.push2u.LocalEcVapidSigner;
+import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.RetryPolicy;
@@ -52,6 +53,14 @@ public final class Push2uAutoConfiguration {
      *
      * @param properties the bound configuration
      * @return the local signer
+     * @throws IllegalArgumentException if either key is not valid base64url or has the wrong length, or if the two do
+     *     not belong to the same pair — with {@code push2u.vapid.public-key} / {@code .private-key} named, since the
+     *     core's own message names only the half
+     * @throws PushCryptoException if the two values decode to the right lengths but no signer can be built from them —
+     *     a public key that is not a point on P-256, or a private scalar outside {@code [1, n-1]}, which the key-pair
+     *     self-test is the first thing to reject — and equally if the configured JCA provider cannot supply what the
+     *     signer needs. They all arrive the same way, which is why the message says the signer could not be built
+     *     rather than blaming the properties
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
@@ -65,7 +74,30 @@ public final class Push2uAutoConfiguration {
         // condition fails here with the property name rather than with a NullPointerException.
         String publicKey = Objects.requireNonNull(vapid.publicKey(), "push2u.vapid.public-key");
         String privateKey = Objects.requireNonNull(vapid.privateKey(), "push2u.vapid.private-key");
-        return new LocalEcVapidSigner(VapidKeys.fromBase64(publicKey, privateKey));
+        try {
+            return new LocalEcVapidSigner(VapidKeys.fromBase64(publicKey, privateKey));
+        } catch (IllegalArgumentException e) {
+            // The core names which half it rejected; this adds the YAML keys those halves came from,
+            // the same translation the pushSender properties get. Not one key or the other, because
+            // the mismatch case (LocalEcVapidSigner's self-test) is about the pair rather than about
+            // either value — and the core's message already says which half when it is one of them.
+            throw new IllegalArgumentException(
+                    "push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
+        } catch (PushCryptoException e) {
+            // The other likely typo: one character changed in the middle of a key keeps its length
+            // and its 0x04 tag, so it survives every length check and fails the curve equation
+            // instead — as a PushCryptoException, which the branch above does not catch. Rethrown as
+            // the same type on purpose: IllegalArgumentException here would put a provider failure,
+            // which arrives the same way, into the bad-input category it deliberately stays out of.
+            //
+            // And phrased as "building the signer from", not as a property prefix: the same branch
+            // carries a JVM with no EC KeyFactory or no ES256 Signature, where the two properties
+            // are perfectly correct and blaming them would send the operator to the wrong place.
+            throw new PushCryptoException(
+                    "while building the VAPID signer from push2u.vapid.public-key and" + " push2u.vapid.private-key: "
+                            + e.getMessage(),
+                    e);
+        }
     }
 
     /**

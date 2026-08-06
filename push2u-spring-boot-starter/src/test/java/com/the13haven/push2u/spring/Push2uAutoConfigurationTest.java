@@ -45,6 +45,7 @@ import org.springframework.context.annotation.Configuration;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
+import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
 import com.the13haven.push2u.PushResponse;
@@ -254,6 +255,72 @@ class Push2uAutoConfigurationTest {
                             subscription(), PushMessage.builder(new byte[4096]).build()))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("exceeding the configured maximum");
+        });
+    }
+
+    @Test
+    void keyMaterialThatIsNotBase64urlFailsTheContextNamingTheKeysAndTheHalf() {
+        // The likeliest first failure of all: a key generated with the standard base64 alphabet.
+        // The JDK decoder's own message is "Illegal base64 character 2b" and nothing more — same
+        // text for either half, naming neither VAPID nor a property. '+' is what makes it 2b.
+        // '+' spliced in at a fixed position, not substituted for a '-': a random key contains no
+        // '-' about half the time, and a mutation that sometimes does nothing is a test that
+        // sometimes proves nothing.
+        keyedRunner()
+                .withPropertyValues("push2u.vapid.public-key=+" + publicKeyB64.substring(1))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.vapid.public-key"))
+                            .hasMessageContaining("push2u.vapid.public-key")
+                            .hasMessageContaining("push2u.vapid.private-key")
+                            .as("the core names the half, so the operator knows which of the two to look at")
+                            .hasMessageContaining("VAPID public key is not valid base64url");
+                });
+    }
+
+    @Test
+    void aMalformedPrivateKeyNamesThePrivateHalfRatherThanThePublicOne() {
+        keyedRunner()
+                .withPropertyValues("push2u.vapid.private-key=+" + privateKeyB64.substring(1))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.vapid.public-key"))
+                            .hasMessageContaining("VAPID private key is not valid base64url");
+                });
+    }
+
+    @Test
+    void aKeyThatDecodesButIsNotOnTheCurveAlsoNamesTheKeys() {
+        // The other likely typo: one character changed keeps the length and the 0x04 tag, so it
+        // passes every length check and fails the curve equation instead — as a PushCryptoException,
+        // which the base64 branch does not catch.
+        //
+        // The character is changed in the MIDDLE, not at the end. 65 bytes encode to 87 characters,
+        // and the last of them carries only 4 bits of data — its low 2 bits are padding the decoder
+        // discards — so substituting there decodes to the same bytes for one key in sixteen. Every
+        // position below 86 carries a full 6 bits, so this substitution always changes the key.
+        int at = 10;
+        String offCurve = publicKeyB64.substring(0, at)
+                + (publicKeyB64.charAt(at) == 'A' ? 'B' : 'A')
+                + publicKeyB64.substring(at + 1);
+
+        keyedRunner().withPropertyValues("push2u.vapid.public-key=" + offCurve).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), PushCryptoException.class, "push2u.vapid.public-key"))
+                    // as(...) labels every assertion after it, so the two claims are described
+                    // separately rather than letting the wording rationale caption a curve regression.
+                    .as("worded as the signer not being buildable, since a provider failure lands here too")
+                    .hasMessageContaining("push2u.vapid.public-key")
+                    .hasMessageContaining("while building the VAPID signer")
+                    .as("and the reason is the curve check, not some other PushCryptoException")
+                    .hasMessageContaining("curve");
         });
     }
 
