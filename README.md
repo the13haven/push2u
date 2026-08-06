@@ -190,8 +190,10 @@ the block whole avoids both.
 
 push2u's own test suite executes this block straight out of this file, so what is checked is what you
 see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
-`LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering every length
-`toByteArray()` returns — 33 bytes, 32, fewer, and one — and compares all 32 output bytes. An edit
+`LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
+`toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
+It also checks that the snippet still routes all three values through `fixed32`, which no run over
+random keys can prove. An edit
 that breaks the padding fails the build rather than waiting for an unlucky key. What that cannot
 see is the shell: the test feeds the body to `jshell` directly, so the heredoc wrapper around it is
 checked as text and not as something a shell ran.

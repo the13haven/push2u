@@ -42,9 +42,9 @@ import org.junit.jupiter.api.io.TempDir;
  * the wrong end of {@code toByteArray()} — survive most single draws. Dropping the left-padding, the worse of the two,
  * shows up in about one generated pair in two hundred. So a second run appends probe lines to the body it feeds
  * {@code jshell} (never to the README, which stays minimal and copy-pasteable), calling the block's <em>own</em>
- * {@code fixed32} on fixed values that cover every length {@link java.math.BigInteger#toByteArray()} produces, and
- * compares all 32 returned bytes. That check is a pure function of the snippet: it fails on the first pull request that
- * breaks the padding, not on the unlucky one.
+ * {@code fixed32} on fixed values covering each shape {@link java.math.BigInteger#toByteArray()} produces, and compares
+ * all 32 returned bytes. That check is a pure function of the snippet: it fails on the first pull request that breaks
+ * the padding, not on the unlucky one.
  *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
@@ -134,14 +134,26 @@ class ReadmeVapidKeyGenerationTest {
                 .contains("byte[] fixed32(BigInteger value)")
                 .contains("new ECGenParameterSpec(\"secp256r1\")")
                 .contains("Base64.getUrlEncoder().withoutPadding()");
+
+        // Pinning fixed32's three CALL SITES, not only its body. The probe test proves the helper is
+        // correct in isolation; nothing there notices a snippet that stopped routing a value through
+        // it. Dropping the call on the scalar leaves both other tests green whenever that scalar
+        // happens to encode to exactly 32 bytes — about half the time — which is the same lucky-draw
+        // gap the probes were added to close, one level out. Text is the only deterministic check
+        // available: the values are random, so no run can prove the call is there.
+        assertThat(body)
+                .as("every value the snippet prints has to go through fixed32, not only exist beside it")
+                .contains("fixed32(point.getAffineX())")
+                .contains("fixed32(point.getAffineY())")
+                .contains("fixed32(((ECPrivateKey) pair.getPrivate()).getS())");
     }
 
     @Test
     void readmeSnippetPrintsAPairThatVapidKeysAndTheLocalSignerAccept(@TempDir Path workingDir) throws Exception {
-        String printed = run(snippetBody(), workingDir);
+        JshellRun result = run(snippetBody(), workingDir);
 
-        String publicKey = capture(PUBLIC_KEY_LINE, printed, "public");
-        String privateKey = capture(PRIVATE_KEY_LINE, printed, "private");
+        String publicKey = capture(PUBLIC_KEY_LINE, result, "public");
+        String privateKey = capture(PRIVATE_KEY_LINE, result, "private");
 
         VapidKeys keys = accepted(publicKey, privateKey);
         assertThat(keys.publicKey())
@@ -162,16 +174,20 @@ class ReadmeVapidKeyGenerationTest {
 
     @Test
     void readmeSnippetsFixed32PadsEveryShapeBigIntegerProduces(@TempDir Path workingDir) throws Exception {
-        Map<String, String> printed = probeResults(run(withFixed32Probes(snippetBody()), workingDir));
+        JshellRun result = run(withFixed32Probes(snippetBody()), workingDir);
+        Map<String, String> printed = probeResults(result.printed());
 
         for (Fixed32Probe probe : FIXED32_PROBES) {
             // "<toByteArray().length> <fixed32 output in hex>" — the length is asserted too, so a probe that stopped
             // covering the shape it was chosen for fails here rather than passing for a reason nobody wanted.
+            // "%s" with a prebuilt message: stderr is arbitrary text and would be read as a format string otherwise.
             assertThat(printed)
                     .as(
-                            "fixed32(%s), from the block between %s and %s in %s — a %d-byte encoding, which is where"
-                                    + " a padding mistake shows",
-                            probe.expression(), BEGIN_ANCHOR, END_ANCHOR, readme(), probe.encodedLength())
+                            "%s",
+                            "fixed32(" + probe.expression() + "), from the block between " + BEGIN_ANCHOR + " and "
+                                    + END_ANCHOR + " in " + readme() + " — a " + probe.encodedLength()
+                                    + "-byte encoding, which is where a padding mistake shows.\nstderr:\n"
+                                    + result.diagnostics())
                     .containsEntry(probe.label(), probe.encodedLength() + " " + probe.expectedHex());
         }
     }
@@ -291,8 +307,18 @@ class ReadmeVapidKeyGenerationTest {
         }
     }
 
+    /**
+     * What one run of the block produced. Both streams, because {@code jshell} reports a compile error on stderr and
+     * still exits 0 — so the likeliest breakage of all, a snippet that stopped compiling, reaches the assertions as an
+     * empty stdout with the actual answer sitting in a file nobody read.
+     *
+     * @param printed the block's stdout
+     * @param diagnostics its stderr, verbatim, including any launcher chatter
+     */
+    private record JshellRun(String printed, String diagnostics) {}
+
     /** Runs the given body exactly as the README prescribes: the documented command, with the body on stdin. */
-    private static String run(String body, Path workingDir) throws IOException, InterruptedException {
+    private static JshellRun run(String body, Path workingDir) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(jshell().toString());
         command.addAll(JSHELL_ARGUMENTS);
@@ -325,7 +351,7 @@ class ReadmeVapidKeyGenerationTest {
             return fail(
                     "The README snippet exited with " + process.exitValue() + "." + diagnostics(output, diagnostics));
         }
-        return Files.readString(output, UTF_8);
+        return new JshellRun(Files.readString(output, UTF_8), contents(diagnostics));
     }
 
     private static Path jshell() {
@@ -341,10 +367,12 @@ class ReadmeVapidKeyGenerationTest {
                 + " skipped when the tool is missing — run the build on a full JDK.");
     }
 
-    private static String capture(Pattern pattern, String printed, String label) {
-        Matcher matcher = pattern.matcher(printed);
+    private static String capture(Pattern pattern, JshellRun run, String label) {
+        Matcher matcher = pattern.matcher(run.printed());
         if (!matcher.find()) {
-            return fail("The README snippet printed no \"" + label + ":\" line.\nOutput was:\n" + printed);
+            // stderr, not only stdout: a snippet that no longer compiles prints nothing here and everything there.
+            return fail("The README snippet printed no \"" + label + ":\" line.\nstdout:\n" + run.printed()
+                    + "\nstderr:\n" + run.diagnostics());
         }
         return matcher.group(1);
     }
@@ -365,9 +393,8 @@ class ReadmeVapidKeyGenerationTest {
                             + " fixing — start at its fixed32 helper."
                             + "\n  public:  " + publicKey + " (" + decodedByteCount(publicKey)
                             + " decoded bytes; RFC 8292 §3.2 wants 65)"
-                            // The scalar is ephemeral and worthless, but printing key material is a habit worth not
-                            // having;
-                            // its length is what diagnoses an encoding mistake anyway.
+                            // The scalar is ephemeral and worthless, but printing key material is a habit worth
+                            // not having — and its length is what diagnoses an encoding mistake anyway.
                             + "\n  private: " + decodedByteCount(privateKey)
                             + " decoded bytes (32 wanted; the value itself is not printed)",
                     e);
@@ -378,7 +405,7 @@ class ReadmeVapidKeyGenerationTest {
         try {
             return Integer.toString(Base64.getUrlDecoder().decode(base64url).length);
         } catch (IllegalArgumentException e) {
-            return "not base64url at all: " + e.getMessage() + ",";
+            return "not base64url at all — " + e.getMessage() + "; that is";
         }
     }
 
