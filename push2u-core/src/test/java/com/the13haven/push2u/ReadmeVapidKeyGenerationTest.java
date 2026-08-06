@@ -46,6 +46,13 @@ import org.junit.jupiter.api.io.TempDir;
  * all 32 returned bytes. That check is a pure function of the snippet: it fails on the first pull request that breaks
  * the padding, not on the unlucky one.
  *
+ * <p>A correct {@code fixed32} that nothing calls is the same failure one level out, and equally invisible to a random
+ * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the three
+ * statements that call it are pinned as text — whole lines, with comments stripped first, since a substring search is
+ * satisfied by a call site that has been commented out and replaced. That is the one thing here checked by reading
+ * rather than by running, because there is nothing to run: the values are random, and a green run proves nothing about
+ * the next one.
+ *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
  * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../README.md} would be a guess
@@ -141,11 +148,29 @@ class ReadmeVapidKeyGenerationTest {
         // happens to encode to exactly 32 bytes — about half the time — which is the same lucky-draw
         // gap the probes were added to close, one level out. Text is the only deterministic check
         // available: the values are random, so no run can prove the call is there.
-        assertThat(body)
-                .as("every value the snippet prints has to go through fixed32, not only exist beside it")
-                .contains("fixed32(point.getAffineX())")
-                .contains("fixed32(point.getAffineY())")
-                .contains("fixed32(((ECPrivateKey) pair.getPrivate()).getS())");
+        //
+        // Whole lines, and comments dropped first, because a substring search over the body is
+        // satisfied by a call site that is no longer live — commenting the old line out and writing
+        // a different one underneath passed. Matching the statement pins the arraycopy offsets and
+        // the destination lengths too, which nothing else in this file looks at.
+        assertThat(statements(body))
+                .as("every value the snippet prints has to go through fixed32, as live code and not as a comment")
+                .contains(
+                        "System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);",
+                        "System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);",
+                        "var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());");
+    }
+
+    /**
+     * The block's lines with comments and blanks removed and each one trimmed — what the snippet actually executes, so
+     * a pinned statement cannot be satisfied by text sitting in a comment. Line comments only; the snippet has no block
+     * comments and this is not a Java parser.
+     */
+    private static List<String> statements(String body) {
+        return body.lines()
+                .map(String::trim)
+                .filter(line -> !line.isEmpty() && !line.startsWith("//"))
+                .toList();
     }
 
     @Test
@@ -405,7 +430,8 @@ class ReadmeVapidKeyGenerationTest {
         try {
             return Integer.toString(Base64.getUrlDecoder().decode(base64url).length);
         } catch (IllegalArgumentException e) {
-            return "not base64url at all — " + e.getMessage() + "; that is";
+            // Reads into both call sites, which append " decoded bytes" and their own expectation.
+            return "not base64url, so no";
         }
     }
 
