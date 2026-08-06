@@ -25,4 +25,4 @@ dependencies / documentation, or ignore-for-release for housekeeping.
 - [ ] New packages carry `@NullMarked`; new public API carries Javadoc.
 - [ ] Any new suppression or rule exclusion states its reason next to it.
 - [ ] `DESIGN.md` updated if the architecture or an ADR moved; `README.md` updated if the consumer-
-      facing API, properties or limits changed.
+      facing API or limits changed, `SPRING.md` / `VAULT.md` if a starter or Vault property did.
