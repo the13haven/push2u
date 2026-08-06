@@ -16,10 +16,9 @@ import org.junit.jupiter.api.Test;
  * thing they can debug from the inside, so every refusal has to name the half it is about.
  *
  * <p>The decode failure is the one worth its own test. The JDK decoder's message is {@code "Illegal base64 character
- * 2b"} and nothing else — identical for either argument, mentioning neither VAPID nor which value was wrong. It is also
- * the likeliest failure of all: {@code 2b} is {@code '+'}, a character that appears only when the key was produced with
- * the standard base64 alphabet instead of the URL-safe one, which is exactly what one of the generators in circulation
- * does (see {@code MIGRATION.md}).
+ * 2b"} and nothing else — identical for either argument, mentioning neither VAPID nor which value was wrong. {@code 2b}
+ * is {@code '+'}: a key carrying one was encoded with the standard base64 alphabet rather than the URL-safe one, which
+ * is what an {@code openssl base64} pipeline or a default encoder in another language produces.
  */
 class VapidKeysDecodingTest {
 

@@ -52,18 +52,20 @@ public final class VapidKeys {
      * @return the key pair
      */
     public static VapidKeys fromBase64(String publicKey, String privateKey) {
+        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(privateKey, "privateKey");
         return new VapidKeys(decode(publicKey, "public"), decode(privateKey, "private"));
     }
 
     /**
      * Decodes one half, naming it if the decoder refuses. The JDK's message for a bad character is {@code "Illegal
-     * base64 character 2b"} and nothing else — the same text for either half, mentioning neither VAPID nor which value
-     * was wrong. That is the likeliest first failure of all: {@code 2b} is {@code '+'}, which appears only when the key
-     * was produced with the standard base64 alphabet instead of the URL-safe one, and one of the generators in
-     * circulation does exactly that.
+     * base64 character 2b"} and nothing else — the same text for either half, mentioning neither VAPID nor which of the
+     * two values was wrong. {@code 2b} is {@code '+'}, and a {@code '+'} or {@code '/'} means the key was encoded with
+     * the standard base64 alphabet rather than the URL-safe one Web Push uses: an {@code openssl base64} pipeline, or a
+     * language whose default encoder is the standard one, produces exactly that.
      */
-    // PreserveStackTrace: the cause is kept; only the message is replaced, because the JDK's carries
-    // no indication of which of the two values it is about.
+    // The cause is kept and only the message replaced, because the decoder's own text says nothing
+    // about which of the two values it is refusing.
     private static byte[] decode(String value, String half) {
         try {
             return Base64Url.decode(value);

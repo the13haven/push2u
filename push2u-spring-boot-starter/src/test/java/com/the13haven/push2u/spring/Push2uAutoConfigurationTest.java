@@ -45,6 +45,7 @@ import org.springframework.context.annotation.Configuration;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
+import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
 import com.the13haven.push2u.PushResponse;
@@ -292,6 +293,24 @@ class Push2uAutoConfigurationTest {
                                     "push2u.vapid.public-key"))
                             .hasMessageContaining("VAPID private key is not valid base64url");
                 });
+    }
+
+    @Test
+    void aKeyThatDecodesButIsNotOnTheCurveAlsoNamesTheKeys() {
+        // The other likely typo: one character changed keeps the length and the 0x04 tag, so it
+        // passes every length check and fails the curve equation instead — as a PushCryptoException,
+        // which the base64 branch does not catch. Flipping the last character of the public key
+        // moves the Y coordinate off the curve while leaving the encoding valid.
+        String offCurve =
+                publicKeyB64.substring(0, publicKeyB64.length() - 1) + (publicKeyB64.endsWith("A") ? "B" : "A");
+
+        keyedRunner().withPropertyValues("push2u.vapid.public-key=" + offCurve).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), PushCryptoException.class, "push2u.vapid.public-key"))
+                    .hasMessageContaining("push2u.vapid.public-key")
+                    .hasMessageContaining("curve");
+        });
     }
 
     @Test

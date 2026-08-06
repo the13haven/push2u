@@ -24,6 +24,7 @@ import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.JdkPushHttpClient;
 import com.the13haven.push2u.LocalEcVapidSigner;
+import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.RetryPolicy;
@@ -52,6 +53,10 @@ public final class Push2uAutoConfiguration {
      *
      * @param properties the bound configuration
      * @return the local signer
+     * @throws IllegalArgumentException if either key is not valid base64url or has the wrong length, or if the two do
+     *     not belong to the same pair — with {@code push2u.vapid.public-key} / {@code .private-key} named, since the
+     *     core's own message names only the half
+     * @throws PushCryptoException if a key decodes to the right length but is not a point on P-256
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
@@ -74,6 +79,13 @@ public final class Push2uAutoConfiguration {
             // either value — and the core's message already says which half when it is one of them.
             throw new IllegalArgumentException(
                     "push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
+        } catch (PushCryptoException e) {
+            // The other likely typo: one character changed in the middle of a key keeps its length
+            // and its 0x04 tag, so it survives every length check and fails the curve equation
+            // instead — as a PushCryptoException, which the branch above does not catch. Rethrown as
+            // the same type on purpose: IllegalArgumentException here would put a provider failure,
+            // which arrives the same way, into the bad-input category it deliberately stays out of.
+            throw new PushCryptoException("push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
         }
     }
 
