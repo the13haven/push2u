@@ -487,7 +487,7 @@ class MySignerContractTest extends VapidSignerContractTest {
 `push2u-signer-vault` is a ready-made implementation over HashiCorp Vault Transit, so the private
 key never enters the JVM at all. The kit is documented under
 [Conformance kit for a custom signer](README.md#conformance-kit-for-a-custom-signer), the Vault
-signer under [Vault Transit signer](README.md#vault-transit-signer).
+signer in [`VAULT.md`](VAULT.md).
 
 ## Migration checklist
 
@@ -510,7 +510,7 @@ signer under [Vault Transit signer](README.md#vault-transit-signer).
 10. Configure `EndpointPolicies.allowedOrigins(…)` with the push services your users arrive from.
 11. On Spring Boot, consider `push2u-spring-boot-starter` — it binds `push2u.*`, builds the
     `PushSender` bean and adds an Actuator health indicator that signs a probe and verifies it. See
-    [`README.md` → Spring Boot](README.md#spring-boot).
+    [`SPRING.md`](SPRING.md).
 
 [webpush-java]: https://github.com/web-push-libs/webpush-java
 [jspecify]: https://jspecify.dev
