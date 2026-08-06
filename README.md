@@ -98,7 +98,8 @@ scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers 
 from and how long it lives. The contact is used as the VAPID `sub` claim and should be a `mailto:`
 or `https:` URI. RFC 8292 §2.1 leaves `sub` optional; push2u requires it, because a push service
 with a problem to report about your application server has no other way to reach you. It is
-therefore a parameter of the factory method — omitting it does not compile. To delegate signing to
+therefore a parameter of the factory method — omitting it does not compile, and a blank one is
+rejected with an `IllegalArgumentException`. To delegate signing to
 an external `VapidSigner` (for example the [Vault Transit signer](#vault-transit-signer)), pass the
 signer instead of the keys: `PushSender.builder(signer, "mailto:ops@example.com")`.
 
@@ -265,7 +266,8 @@ with `IllegalArgumentException` before encrypting it or contacting the push serv
 
 The single-record `aes128gcm` body adds a fixed 103 bytes of header, padding delimiter and
 authentication tag to the plaintext ([`DESIGN.md` §4](DESIGN.md#4-send-pipeline) breaks the figure
-down), so the default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives.
+down), so the default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives. The
+record size defaults to 4096 as well, so raising one without the other rejects the message.
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
@@ -304,7 +306,7 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
 Use `RetryPolicy.none()` to disable retries.
 
 **Budget for the worst case before calling `send` from a request thread.** On the defaults, three
-attempts at the transport's 30-second per-request timeout plus 1 s and 2 s of backoff is **93
+attempts at the default 30-second per-request timeout plus 1 s and 2 s of backoff is **93
 seconds** of blocking; a push service that answers `429` with a large `Retry-After` raises that to
 the 60-second ceiling per wait, so **3.5 minutes**. Either lower the numbers, or use
 `sendAsync(…)` and let the request thread go.
@@ -468,7 +470,8 @@ trust domain and its responses must be read.
 `JdkPushHttpClient(HttpClient, Duration)` and `JdkVaultHttpTransport(HttpClient, Duration, int)`
 reject a client whose `followRedirects()` is anything else, with an `IllegalArgumentException`
 naming the policy it found — under the Vault starter, where a `push2uVaultHttpClient`-qualified
-`HttpClient` bean is the supported injection point, that surfaces as a startup failure. Every
+`HttpClient` bean is the supported injection point ([`VAULT.md`](VAULT.md#vault-http-transport) has
+both), that surfaces as a startup failure. Every
 `HttpClient` the library builds for itself sets `Redirect.NEVER` explicitly rather than relying on
 the JDK's default:
 
@@ -610,8 +613,9 @@ consumers' analysers, IntelliJ and the Kotlin compiler read the same annotations
 ## Contributing
 
 Bug reports, proposals and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
-the build, what the quality gate enforces, and the two design constraints most changes run into —
-the zero-dependency core and the small set of extension points.
+the build, what the quality gate enforces, [how to build against unreleased
+changes](CONTRIBUTING.md#developing-against-unpublished-changes), and the two design constraints
+most changes run into — the zero-dependency core and the small set of extension points.
 
 ## Security
 
