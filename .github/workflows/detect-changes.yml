@@ -71,12 +71,19 @@ jobs:
           # repository — classifying it as prose would let a change that breaks the gate for the
           # whole tree merge with the gate reported green, having never run.
           #
+          # README.md is the same case in .md form: it is prose that a test EXECUTES.
+          # ReadmeVapidKeyGenerationTest runs the VAPID key-generation snippet out of that file and
+          # feeds the pair it prints to VapidKeys and LocalEcVapidSigner, so a README-only edit can
+          # genuinely break the build — and calling it prose would let exactly the drift that test
+          # exists to catch merge with the gate green. It costs a full run on a typo fix there,
+          # which is the cheaper of the two mistakes.
+          #
           # Pattern matching rather than grep, so the answer does not depend on which grep dialect
           # the runner image ships. `*` matches `/` in a case pattern, so `config/*` is recursive.
           code=false
           while IFS= read -r file; do
             case "${file}" in
-              config/*) code=true; break ;;
+              config/* | README.md) code=true; break ;;
               '' | *.md | *.txt) ;;
               *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
               *) code=true; break ;;
