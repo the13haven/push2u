@@ -47,22 +47,31 @@ import org.junit.jupiter.api.io.TempDir;
  * the padding, not on the unlucky one.
  *
  * <p>A correct {@code fixed32} that nothing calls is the same failure one level out, and equally invisible to a random
- * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the three
- * statements that call it are pinned as text — whole lines, with comments stripped first, since a substring search is
- * satisfied by a call site that has been commented out and replaced. That is the one thing here checked by reading
- * rather than by running, because there is nothing to run: the values are random, and a green run proves nothing about
- * the next one.
+ * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the statements
+ * that make up the block are pinned as text, normalised by {@link #statements(String)} — a substring search over the
+ * raw body was not enough, since a call site commented out and replaced underneath satisfied it. That is the one thing
+ * here checked by reading rather than by running, because there is nothing to run: the values are random, and a green
+ * run proves nothing about the next one.
  *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
  * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../README.md} would be a guess
  * about the test's working directory.
  *
- * <p>One divergence class this design cannot see, recorded rather than built around: the body goes straight to
- * {@code jshell}'s standard input, so nothing shell-level is exercised. A line equal to {@code EOF} inside the block
- * would end the heredoc early for a reader following the README while this test ran the whole block happily. Piping the
- * block through a shell instead would trade that contrived case for a dependency on whichever shell the runner ships,
- * which is the larger of the two risks.
+ * <p>Two divergence classes this design cannot see, recorded rather than built around.
+ *
+ * <p>The first is the shell: the body goes straight to {@code jshell}'s standard input, so nothing shell-level is
+ * exercised. A line equal to {@code EOF} inside the block would end the heredoc early for a reader following the README
+ * while this test ran the whole block happily. Piping the block through a shell instead would trade that contrived case
+ * for a dependency on whichever shell the runner ships, which is the larger of the two risks.
+ *
+ * <p>The second is the limit of pinning text at all: <em>a statement is present</em> and <em>that statement produced
+ * the value that was printed</em> are different propositions, and only the first is checkable here. Leaving the pinned
+ * line in place and overwriting the variable on the next line passes everything in this file, measured over ten runs,
+ * while a reader copying the block gets a scalar that is short about once in four hundred. Closing that would take a
+ * check on the printed value rather than on the text, and a printed value only differs from a correct one on the draws
+ * that are rare in the first place — which is the lucky-draw problem this file exists to escape. So it is written down
+ * instead.
  */
 class ReadmeVapidKeyGenerationTest {
 
@@ -136,40 +145,50 @@ class ReadmeVapidKeyGenerationTest {
         // snippetBody() fails unless the block opens with HEREDOC_OPEN and closes with HEREDOC_CLOSE.
         String body = snippetBody();
 
+        // statements() strips line comments and cannot see a block comment, so a /* ... */ around a
+        // pinned line would leave it "live code" here and dead code to javac — the round-3 bypass with
+        // two more characters. Refusing block comments outright turns that assumption into something
+        // checked, and costs the snippet nothing: it has none, and a snippet a reader is meant to
+        // paste has no use for them.
         assertThat(body)
-                .as("the heredoc body is the program, so it must at least be the one described in the prose")
-                .contains("byte[] fixed32(BigInteger value)")
-                .contains("new ECGenParameterSpec(\"secp256r1\")")
-                .contains("Base64.getUrlEncoder().withoutPadding()");
+                .as("the snippet must stay free of block comments — see statements()")
+                .doesNotContain("/*");
 
-        // Pinning fixed32's three CALL SITES, not only its body. The probe test proves the helper is
-        // correct in isolation; nothing there notices a snippet that stopped routing a value through
-        // it. Dropping the call on the scalar leaves both other tests green whenever that scalar
-        // happens to encode to exactly 32 bytes — about half the time — which is the same lucky-draw
-        // gap the probes were added to close, one level out. Text is the only deterministic check
-        // available: the values are random, so no run can prove the call is there.
-        //
-        // Whole lines, and comments dropped first, because a substring search over the body is
-        // satisfied by a call site that is no longer live — commenting the old line out and writing
-        // a different one underneath passed. Matching the statement pins the arraycopy offsets and
-        // the destination lengths too, which nothing else in this file looks at.
+        // Every pin below is a whole statement, normalised by statements(). The values the snippet
+        // prints are random, so no run can prove a call is still there; text is the only deterministic
+        // instrument, and a substring search over the raw body was not enough — a call site commented
+        // out and replaced underneath satisfied it. Matching statements also pins the arraycopy
+        // offsets and the destination lengths, which nothing else in this file looks at.
         assertThat(statements(body))
-                .as("every value the snippet prints has to go through fixed32, as live code and not as a comment")
+                .as("the block must still be the program the prose describes, as live code")
                 .contains(
+                        "byte[] fixed32(BigInteger value) {",
+                        "generator.initialize(new ECGenParameterSpec(\"secp256r1\"));",
+                        "var base64url = Base64.getUrlEncoder().withoutPadding();",
+                        "publicKey[0] = 0x04;",
                         "System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);",
                         "System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);",
                         "var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());");
     }
 
     /**
-     * The block's lines with comments and blanks removed and each one trimmed — what the snippet actually executes, so
-     * a pinned statement cannot be satisfied by text sitting in a comment. Line comments only; the snippet has no block
-     * comments and this is not a Java parser.
+     * The block's live lines, normalised for comparison: blanks and whole-line comments dropped, a trailing {@code //}
+     * comment cut off, runs of whitespace collapsed, and each line trimmed.
+     *
+     * <p>The normalisation is what keeps the pins from crying wolf — annotating a still-correct line, re-indenting it
+     * or adjusting spacing inside it must not fail a build, or the guard is the thing that gets deleted. It is not a
+     * Java parser: a {@code //} inside a string literal would be cut, and a block comment is not recognised at all,
+     * which is why {@link #readmeCarriesTheAnchoredBlockWithTheDocumentedHeredocWrapper} refuses one outright.
      */
     private static List<String> statements(String body) {
         return body.lines()
-                .map(String::trim)
-                .filter(line -> !line.isEmpty() && !line.startsWith("//"))
+                .map(line -> {
+                    int comment = line.indexOf("//");
+                    return (comment < 0 ? line : line.substring(0, comment))
+                            .replaceAll("\\s+", " ")
+                            .trim();
+                })
+                .filter(line -> !line.isEmpty())
                 .toList();
     }
 

@@ -192,11 +192,12 @@ push2u's own test suite executes this block straight out of this file, so what i
 you see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
 `LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
 `toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
-It also requires the three statements that call `fixed32` to be present as live code, since no run
-over random keys can prove a call is still there. An edit that breaks the padding, or quietly stops
-applying it, fails the build rather than waiting for an unlucky key. What the test cannot see is
-the shell: the body goes to `jshell` directly, so the heredoc wrapper around it is checked as text
-and not as something a shell ran.
+It also requires the statements the block is made of to be present verbatim, since no run over
+random keys can prove a call is still there — what that pins is the text, not that the value
+printed came from it. An edit that breaks the padding, or quietly stops applying it, fails the
+build rather than waiting for an unlucky key. What the test cannot see is the shell: the body goes
+to `jshell` directly, so the heredoc wrapper around it is checked as text and not as something a
+shell ran.
 
 If you already have Node.js around, the npm `web-push` package prints the same two values in the
 same encoding, and either source is equally good:
