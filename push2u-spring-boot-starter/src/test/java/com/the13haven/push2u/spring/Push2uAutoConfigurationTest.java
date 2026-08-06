@@ -314,9 +314,12 @@ class Push2uAutoConfigurationTest {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
                             context.getStartupFailure(), PushCryptoException.class, "push2u.vapid.public-key"))
-                    .hasMessageContaining("push2u.vapid.public-key")
+                    // as(...) labels every assertion after it, so the two claims are described
+                    // separately rather than letting the wording rationale caption a curve regression.
                     .as("worded as the signer not being buildable, since a provider failure lands here too")
+                    .hasMessageContaining("push2u.vapid.public-key")
                     .hasMessageContaining("while building the VAPID signer")
+                    .as("and the reason is the curve check, not some other PushCryptoException")
                     .hasMessageContaining("curve");
         });
     }

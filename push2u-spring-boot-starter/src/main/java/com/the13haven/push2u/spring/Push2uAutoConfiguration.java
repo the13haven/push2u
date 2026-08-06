@@ -56,9 +56,11 @@ public final class Push2uAutoConfiguration {
      * @throws IllegalArgumentException if either key is not valid base64url or has the wrong length, or if the two do
      *     not belong to the same pair — with {@code push2u.vapid.public-key} / {@code .private-key} named, since the
      *     core's own message names only the half
-     * @throws PushCryptoException if a key decodes to the right length but is not a point on P-256, and equally if the
-     *     configured JCA provider cannot supply what the signer needs — the two arrive the same way, which is why the
-     *     message says the signer could not be built rather than blaming the properties
+     * @throws PushCryptoException if the two values decode to the right lengths but no signer can be built from them —
+     *     a public key that is not a point on P-256, or a private scalar outside {@code [1, n-1]}, which the key-pair
+     *     self-test is the first thing to reject — and equally if the configured JCA provider cannot supply what the
+     *     signer needs. They all arrive the same way, which is why the message says the signer could not be built
+     *     rather than blaming the properties
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
