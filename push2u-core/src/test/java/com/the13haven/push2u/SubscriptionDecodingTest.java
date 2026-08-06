@@ -70,6 +70,19 @@ class SubscriptionDecodingTest {
     }
 
     /**
+     * The decoder's own exception is kept as the cause, so the character code stays reachable for anyone reading a
+     * stack trace rather than only the top message. Pinned separately: dropping the cause would leave every other
+     * assertion here green, since the parent message embeds the decoder's text either way.
+     */
+    @Test
+    void theDecodersOwnExceptionSurvivesAsTheCause() {
+        assertThatThrownBy(() -> Subscription.fromBase64(ENDPOINT, withStandardAlphabetCharacter(p256dh()), AUTH))
+                .cause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Illegal base64 character");
+    }
+
+    /**
      * Well-formed base64url of the wrong length is a different failure, and the compact constructor already named the
      * field. Pinned so the decode message added here does not swallow it.
      */
