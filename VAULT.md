@@ -143,8 +143,8 @@ An explicitly supplied `public-key` is validated as a point on P-256 — 65 byte
 uncompressed tag, coordinates in the field, the curve equation satisfied — because the
 `VapidSigner` contract requires exactly that of `publicKey()`, and no legal VAPID key can fail the
 check. What nothing can check here is that it is the public half of the Transit key being signed
-with; that remains the caller's responsibility, and a mismatch surfaces on the first signature as a
-push-service rejection of the JWT. The Vault-side validation described under *Fetched public key*
+with; that remains the caller's responsibility, and a mismatch surfaces on the first signature to a
+subscription bound to your `applicationServerKey`, as a push-service rejection of the JWT. The Vault-side validation described under *Fetched public key*
 (the Transit `type`, the atomic version/key pair) applies to that mode alone.
 
 ## Vault namespaces (Enterprise / HCP)

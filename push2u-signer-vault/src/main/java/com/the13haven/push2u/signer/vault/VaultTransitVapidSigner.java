@@ -64,8 +64,8 @@ import com.the13haven.push2u.VapidSigner;
  *       tag, both coordinates in the field, the curve equation satisfied — because the {@link VapidSigner} contract
  *       requires exactly that of {@code publicKey()}, and no legal VAPID key can fail it. What nothing here can check
  *       is that it is the public half of the Transit key being signed with: that remains the caller's responsibility,
- *       and a mismatch surfaces on the first signature, as a push-service rejection of the JWT. The Vault-side
- *       validation described below applies to the fetched mode alone.
+ *       and a mismatch surfaces on the first signature to a VAPID-bound subscription, as a push-service rejection of
+ *       the JWT. The Vault-side validation described below applies to the fetched mode alone.
  *   <li><b>Fetched</b> ({@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}) — omit the public key.
  *       The signer reads {@code transit/keys/<key>} once, inside {@code build()} (a {@code GET}), takes the
  *       {@code latest_version} and <em>that version's</em> public key as an atomic pair, and reduces the PEM to the

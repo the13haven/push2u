@@ -447,7 +447,8 @@ No traversal route through OSS Vault is claimed here.
   contract — pinned by the published conformance kit — requires `publicKey()` to return a point on
   P-256, so a signer violating it must be unbuildable, and no legal VAPID key can fail the check.
   Its correspondence to the Transit key cannot be established here and stays with the caller; a
-  mismatch surfaces on the first signature as a push-service rejection.
+  mismatch surfaces on the first signature to a VAPID-bound subscription, as a push-service
+  rejection.
 
 Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form. A
 pinned signer also sends `key_version`; taking the version and public key from the same metadata
