@@ -5,6 +5,32 @@ requests to the Transit engine instead of loading a scalar. This is the configur
 [`README.md` → Vault Transit signer](README.md#vault-transit-signer) carries the dependency
 coordinates and the minimal working example.
 
+## Vault address
+
+The address — the builders' first factory parameter, the starter's `push2u.signer.vault.address` —
+is the base every Vault API path is appended to: the signer calls
+`{address}/v1/{mount}/sign/{key}` and, in fetched mode, `{address}/v1/{mount}/keys/{key}`. Two
+shapes are legal:
+
+- a root address, `https://vault.example:8200` — Vault serving its API directly;
+- a path-prefixed address, `https://gw.example/vault` — Vault behind a reverse proxy or Kubernetes
+  ingress that mounts it under a sub-path. The prefix is preserved in front of every API path
+  (`https://gw.example/vault/v1/transit/sign/vapid`), and a trailing slash changes nothing:
+  `https://gw.example/vault/` is the same base.
+
+The address is validated at the factory methods (and the starter names the property on failure).
+It must be an absolute URI with a host and must carry neither a query nor a fragment — a base
+address has no use for either, and neither could survive the path join. The path prefix follows
+the same per-segment rule as `mount`: every `/`-separated segment must be non-empty, not `.` or
+`..`, and drawn from `[A-Za-z0-9_.-]` — an allowed set rather than a blacklist, so a
+percent-encoded `%2e%2e` cannot reopen what the literal check closes. The prefix rides in front of
+every token-bearing request path, which is why a segment a normalizing hop would rewrite is
+refused at configuration ([`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration)).
+
+The scheme is deliberately not restricted to `https`: Vault's dev server listens on plain `http`,
+and the Vault CLI and Spring Vault accept that the same way. A production address must be `https`
+— on plain HTTP the `X-Vault-Token` header travels in clear text.
+
 ## Fetched public key
 
 The recommended configuration treats the Transit key as the single source of truth. At startup,

@@ -49,8 +49,9 @@ class SubscriptionValueTest {
 
         assertThat(base).isNotEqualTo(new Subscription(ENDPOINT + "2", key(), auth()));
 
-        byte[] otherKey = key();
-        otherKey[64] ^= 0x01;
+        // A different genuine point (the RFC 8291 application-server key): a flipped byte would no
+        // longer construct, since the constructor validates the point against the curve.
+        byte[] otherKey = b64(TestVectors.AS_PUBLIC);
         assertThat(base).isNotEqualTo(new Subscription(ENDPOINT, otherKey, auth()));
 
         byte[] otherAuth = auth();
@@ -88,6 +89,48 @@ class SubscriptionValueTest {
         assertThatThrownBy(() -> new Subscription(ENDPOINT, wrongPrefix, auth()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("0x04");
+    }
+
+    /**
+     * The hostile case the constructor's full check exists for: a value with the right shape whose point is not on
+     * P-256. {@code p256dh} arrives from whoever posts to the application's registration endpoint, and accepting an
+     * off-curve point here would store a subscription that raises {@link PushCryptoException} — the "broken deployment"
+     * exception — on every later send, far from the request that supplied it.
+     */
+    @Test
+    void aKeyOfTheRightShapeWhosePointIsOffTheCurveIsRejectedAtConstruction() {
+        byte[] offCurve = key();
+        offCurve[64] ^= 0x01; // Y is no longer a square root of x³ - 3x + b
+
+        assertThatThrownBy(() -> new Subscription(ENDPOINT, offCurve, auth()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("p256dh")
+                .hasMessageContaining("curve equation");
+    }
+
+    @Test
+    void aKeyWithACoordinateOutsideTheFieldIsRejectedAtConstruction() {
+        byte[] outOfField = new byte[65];
+        outOfField[0] = 0x04;
+        Arrays.fill(outOfField, 1, 65, (byte) 0xFF); // X = Y = 2^256 - 1 > p
+
+        assertThatThrownBy(() -> new Subscription(ENDPOINT, outOfField, auth()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("p256dh")
+                .hasMessageContaining("outside the P-256 field");
+    }
+
+    /** The same refusal through {@link Subscription#fromBase64}, the path a browser-posted value actually takes. */
+    @Test
+    void anOffCurveKeyIsRejectedOnTheFromBase64Path() {
+        byte[] offCurve = key();
+        offCurve[64] ^= 0x01;
+        String encoded = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(offCurve);
+
+        assertThatThrownBy(() -> Subscription.fromBase64(
+                        ENDPOINT, encoded, java.util.Base64.getUrlEncoder().encodeToString(auth())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("p256dh");
     }
 
     @Test

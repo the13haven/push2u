@@ -20,7 +20,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * {@code VaultHttpTransport} bean, and {@code connect-timeout} is additionally ignored when a
  * {@code push2uVaultHttpClient}-qualified {@code HttpClient} bean is supplied (the client owns its connect timeout).
  *
- * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+ * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
+ *     proxy or ingress prefix, e.g. {@code https://gw.example/vault}. It must be an absolute URI with a host and no
+ *     query or fragment; the path prefix, when present, is preserved in front of every Vault API path. The scheme is
+ *     not restricted to {@code https} (Vault's dev server is plain {@code http}), but a production address must be
+ *     {@code https} — on plain HTTP the Vault token header travels in clear text
  * @param mount the Transit mount path (default {@code transit})
  * @param namespace the Vault Enterprise/HCP namespace the Transit engine lives in, possibly nested
  *     ({@code team-a/sub}), sent as the {@code X-Vault-Namespace} header on every Vault call; <b>optional</b> — when

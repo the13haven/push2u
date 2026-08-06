@@ -17,6 +17,11 @@ import org.jspecify.annotations.Nullable;
  * <p>push2u is stateless — the application owns persistence and supplies this record per send. The browser delivers
  * {@code p256dh}/{@code auth} as base64url strings; use {@link #fromBase64} at the REST boundary.
  *
+ * <p>Construction validates what it accepts: {@code p256dh} must encode a point on the P-256 curve (the full
+ * {@link P256PublicKeys#requireOnCurve} check — see the constructor), {@code auth} must be exactly 16 bytes, and the
+ * endpoint must satisfy {@link Endpoints#requireSecure}. A value that cannot ever be sent to is refused here, with an
+ * {@link IllegalArgumentException}, rather than at every later send.
+ *
  * <p>The array components are defensively copied in the compact constructor and the accessors, and
  * {@code equals}/{@code hashCode}/{@code toString} are overridden for content-based value semantics with the
  * {@code auth} secret kept out of {@code toString}.
@@ -27,7 +32,8 @@ import org.jspecify.annotations.Nullable;
  *
  * @param endpoint the push service endpoint URL that encrypted messages are POSTed to — an absolute {@code https} URL,
  *     treated as a secret
- * @param p256dh the user agent's P-256 public key — a 65-byte X9.62 uncompressed point
+ * @param p256dh the user agent's P-256 public key — a 65-byte X9.62 uncompressed point encoding a point on the P-256
+ *     curve
  * @param auth the 16-byte authentication secret (RFC 8291 §3.2)
  */
 // ArrayRecordComponent: the byte[] components are the wire format this type exists to carry — the
@@ -38,16 +44,21 @@ import org.jspecify.annotations.Nullable;
 public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
     /**
-     * Validates the key material (lengths and the {@code 0x04} prefix), requires an absolute {@code https} endpoint,
-     * and defensively copies the arrays.
+     * Validates the key material, requires an absolute {@code https} endpoint, and defensively copies the arrays.
+     *
+     * <p>{@code p256dh} gets the full {@link P256PublicKeys#requireOnCurve} check — shape, coordinates inside the P-256
+     * field, curve equation — not merely the structural one. The value is attacker-supplied (a registration endpoint
+     * accepts the browser's {@code PushSubscription} JSON verbatim, and nothing upstream enforces RFC 8291 §3.1's
+     * requirement that the key be on P-256), and a subscription carrying an off-curve point can never be sent to:
+     * accepting it here would persist a value that raises a {@link PushCryptoException} — the "broken deployment"
+     * exception — on every later send, far from the request that supplied it. The check needs no JCA provider, so it
+     * costs the constructor no new dependency.
      */
     public Subscription {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(p256dh, "p256dh");
         Objects.requireNonNull(auth, "auth");
-        if (p256dh.length != EcKeys.UNCOMPRESSED_LENGTH || p256dh[0] != 0x04) {
-            throw new IllegalArgumentException("p256dh must be a 65-byte uncompressed P-256 point (0x04 prefix)");
-        }
+        P256PublicKeys.requireOnCurve(p256dh, "p256dh");
         if (auth.length != 16) {
             throw new IllegalArgumentException("auth must be 16 bytes (RFC 8291 §3.2)");
         }

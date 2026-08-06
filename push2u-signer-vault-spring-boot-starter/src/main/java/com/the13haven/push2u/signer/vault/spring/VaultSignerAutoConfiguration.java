@@ -19,6 +19,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
+import com.the13haven.push2u.P256PublicKeys;
 import com.the13haven.push2u.VapidSigner;
 import com.the13haven.push2u.signer.vault.JdkVaultHttpTransport;
 import com.the13haven.push2u.signer.vault.TransitKeyName;
@@ -119,9 +120,12 @@ public final class VaultSignerAutoConfiguration {
             }
             // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
             // construction and pins that version, keeping the Transit key the single source of truth
-            // (the token needs `read` on the key).
-            VaultTransitVapidSigner.FetchedPublicKeyBuilder fetched =
-                    VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token);
+            // (the token needs `read` on the key). The factory validates the address (the key name
+            // and token are already-valid value types), so an IllegalArgumentException out of this
+            // call is the address's and is translated to its YAML property name.
+            VaultTransitVapidSigner.FetchedPublicKeyBuilder fetched = translated(
+                    "push2u.signer.vault.address",
+                    () -> VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token));
             translated("push2u.signer.vault.mount", () -> fetched.mount(properties.mount()));
             if (namespace != null) {
                 translated("push2u.signer.vault.namespace", () -> fetched.namespace(namespace));
@@ -130,8 +134,18 @@ public final class VaultSignerAutoConfiguration {
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
-        VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                address, keyName, token, decodePublicKey(publicKey));
+        // The factory validates two of its arguments — the supplied key's shape and the address — so
+        // one translated call could not attribute a rejection to the right property. The key is
+        // probed first with the same core check the factory applies; whatever IllegalArgumentException
+        // then escapes the factory call is the address's.
+        byte[] decodedPublicKey = decodePublicKey(publicKey);
+        translated("push2u.signer.vault.public-key", () -> {
+            P256PublicKeys.requireUncompressedPoint(decodedPublicKey, "public-key");
+            return decodedPublicKey;
+        });
+        VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = translated(
+                "push2u.signer.vault.address",
+                () -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(address, keyName, token, decodedPublicKey));
         translated("push2u.signer.vault.mount", () -> builder.mount(properties.mount()));
         if (namespace != null) {
             translated("push2u.signer.vault.namespace", () -> builder.namespace(namespace));

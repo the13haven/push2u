@@ -28,9 +28,9 @@ import java.util.Arrays;
  */
 final class EcKeys {
 
-    static final int UNCOMPRESSED_LENGTH = 65;
-    static final int COORDINATE_LENGTH = 32;
-    private static final byte UNCOMPRESSED_TAG = 0x04;
+    static final int UNCOMPRESSED_LENGTH = P256PublicKeys.UNCOMPRESSED_LENGTH;
+    static final int COORDINATE_LENGTH = P256PublicKeys.COORDINATE_LENGTH;
+    private static final byte UNCOMPRESSED_TAG = P256PublicKeys.UNCOMPRESSED_TAG;
 
     private EcKeys() {}
 
@@ -39,9 +39,7 @@ final class EcKeys {
      * {@link #requireOnCurve}) before the provider ever sees it.
      */
     static ECPublicKey decodeP256PublicKey(byte[] uncompressed, Jca jca) {
-        if (uncompressed.length != UNCOMPRESSED_LENGTH || uncompressed[0] != UNCOMPRESSED_TAG) {
-            throw new IllegalArgumentException("Expected a 65-byte uncompressed P-256 point starting with 0x04");
-        }
+        P256PublicKeys.requireUncompressedPoint(uncompressed, "public key");
         BigInteger x = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1, 1 + COORDINATE_LENGTH));
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1 + COORDINATE_LENGTH, UNCOMPRESSED_LENGTH));
         ECParameterSpec parameters = jca.p256Parameters();
@@ -71,7 +69,10 @@ final class EcKeys {
      *
      * <p>The parameters come from {@link Jca#p256Parameters()}, which asks the configured provider for
      * {@code secp256r1} by name — a prime-field curve. A provider reporting any other field type for that name is
-     * defective, and a point this check cannot verify is a point it refuses (fail closed).
+     * defective, and a point this check cannot verify is a point it refuses (fail closed). This is deliberately not a
+     * call to {@link P256PublicKeys#requireOnCurve}: that one checks the bytes against the published P-256 constants,
+     * this one checks the point against the parameters of the provider that is about to run ECDH — only the equation
+     * arithmetic is shared.
      */
     private static void requireOnCurve(BigInteger x, BigInteger y, ECParameterSpec parameters) {
         EllipticCurve curve = parameters.getCurve();
@@ -85,13 +86,7 @@ final class EcKeys {
             throw new PushCryptoException("P-256 public key has a coordinate outside the field (0 <= x, y < p), "
                     + "so it is not a point on the curve");
         }
-        BigInteger left = y.multiply(y).mod(p);
-        BigInteger right = x.multiply(x)
-                .multiply(x)
-                .add(curve.getA().multiply(x))
-                .add(curve.getB())
-                .mod(p);
-        if (!left.equals(right)) {
+        if (!P256PublicKeys.satisfiesCurveEquation(x, y, p, curve.getA(), curve.getB())) {
             throw new PushCryptoException("P-256 public key does not satisfy the curve equation (y² = x³ + ax + b), "
                     + "so it is not a point on the curve");
         }
