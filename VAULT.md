@@ -189,9 +189,15 @@ Resolution order (two extension points, plus the properties-only fallback):
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
    owns it). The client must be built with `Redirect.NEVER` or startup fails — see
-   [`README.md` → Redirects must never be followed](README.md#redirects-must-never-be-followed),
-   which also covers what to do when a Vault HA standby is the source of the redirect.
+   [`README.md` → Redirects must never be followed](README.md#redirects-must-never-be-followed)
+   for why.
 3. Otherwise the default transport is built entirely from the properties.
+
+If a redirect is genuinely part of your Vault topology — typically an HA standby with
+`disable_clustering = true` answering `307` towards the active node — point the Vault address at
+the active node's `api_addr` (or a load balancer in front of it), or terminate the redirect in
+the proxy. Following it is not an option: a `3xx` chased by the transport replays `X-Vault-Token`
+to whatever host the `Location` names.
 
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
 transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
