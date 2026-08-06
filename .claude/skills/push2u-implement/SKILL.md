@@ -63,8 +63,9 @@ a `sources.jar`, so those lines are read by people holding the artifact and noth
 or "see `DESIGN.md`" is a dead end for them. Write the reason into the sentence — what this code
 keeps true, not where the decision is filed. The `checkstyleReferences` task fails the build on
 `ADR`, any `*.md` filename and the word `readme` in any case, anywhere in `main` —
-`module-info.java` and `package-info.java` included, since it reads lines rather than an AST. An
-`https://` URL is exempt (a consumer can follow it), and test sources may cite whatever they like.
+`module-info.java` and `package-info.java` included, since it reads lines rather than an AST. A URL
+is exempt (any token containing `://`, `http` or `https`, anchors and query strings included — a
+consumer can follow it), and test sources may cite whatever they like.
 
 ## Changing encryption, VAPID or protocol behaviour
 

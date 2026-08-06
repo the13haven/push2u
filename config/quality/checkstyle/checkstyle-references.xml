@@ -33,23 +33,26 @@
         DESIGN.md, CONTRIBUTING.md, README … any repository document by name, in any case: `readme`
         and `Readme` name the same file `README` does.
 
-        An `https://` URL ending in `.md` is deliberately NOT a violation, and the pattern says so
-        rather than leaving it to a suppression: a link a consumer can open is not a dangling
-        pointer, which is the only thing this rule is about. The alternative — a
-        SuppressWithPlainTextCommentFilter — would have to be switched on inside the file being
-        checked, so the escape hatch itself would ship in the sources jar, and it would open the
-        same opt-out to exactly the citation the rule exists to catch.
+        A URL is deliberately NOT a violation, and the pattern says so rather than leaving it to a
+        suppression: a link a consumer can open is not a dangling pointer, which is the only thing
+        this rule is about. The alternative — a SuppressWithPlainTextCommentFilter — would have to be
+        switched on inside the file being checked, so the escape hatch itself would ship in the
+        sources jar, and it would open the same opt-out to exactly the citation the rule exists to
+        catch.
 
-        How the tempering works: the match may only start where a token does (the negative lookbehind
-        rules out every position inside a `scheme://host/path` run, all of whose characters are word
-        characters, `/`, `.`, `:` or `-`), and a token that starts with `http://` or `https://` is
-        then excluded outright. What remains is a bare filename in prose — `see DESIGN.md` — which
-        is the case with nowhere to lead.
+        The unit of the exemption is the whitespace-delimited token, not a character class of what
+        may appear in a URL. Enumerating URL characters is how the first version of this rule broke:
+        `#`, `?`, `%`, `&` and `=` all end a `scheme://host/path` run for a rule that reasons in
+        characters, which made `https://…/push2u#readme` and `https://…/search?q=README.md` fail
+        even though both open in one click. So: a match may only begin where a token begins
+        (`(?&lt;!\S)`), and a token holding `://` anywhere is skipped whole (`(?!\S*://)`). Only the
+        rest of the line is then still scanned — a URL earlier on a line does not license a bare
+        `DESIGN.md` later on it.
     -->
     <module name="RegexpSingleline">
-        <property name="format" value="(?&lt;![\w./:-])(?:(?!https?://)[\w./-]*[\w-]\.md\b|(?i:readme)\b)"/>
+        <property name="format" value="(?&lt;!\S)(?!\S*://)\S*?(?:\.md\b|\b(?i:readme)\b)"/>
         <property name="fileExtensions" value="java"/>
         <property name="message"
-                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so a reference to a repository document leads nowhere. Say what it says, here — or link something the consumer can open (an https:// URL is allowed)."/>
+                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so a reference to a repository document leads nowhere. Say what it says, here — or link something the consumer can open (any http:// or https:// URL is allowed)."/>
     </module>
 </module>
