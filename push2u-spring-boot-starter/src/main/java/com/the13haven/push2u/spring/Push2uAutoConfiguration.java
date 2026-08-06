@@ -56,7 +56,9 @@ public final class Push2uAutoConfiguration {
      * @throws IllegalArgumentException if either key is not valid base64url or has the wrong length, or if the two do
      *     not belong to the same pair — with {@code push2u.vapid.public-key} / {@code .private-key} named, since the
      *     core's own message names only the half
-     * @throws PushCryptoException if a key decodes to the right length but is not a point on P-256
+     * @throws PushCryptoException if a key decodes to the right length but is not a point on P-256, and equally if the
+     *     configured JCA provider cannot supply what the signer needs — the two arrive the same way, which is why the
+     *     message says the signer could not be built rather than blaming the properties
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
@@ -85,7 +87,14 @@ public final class Push2uAutoConfiguration {
             // instead — as a PushCryptoException, which the branch above does not catch. Rethrown as
             // the same type on purpose: IllegalArgumentException here would put a provider failure,
             // which arrives the same way, into the bad-input category it deliberately stays out of.
-            throw new PushCryptoException("push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
+            //
+            // And phrased as "building the signer from", not as a property prefix: the same branch
+            // carries a JVM with no EC KeyFactory or no ES256 Signature, where the two properties
+            // are perfectly correct and blaming them would send the operator to the wrong place.
+            throw new PushCryptoException(
+                    "while building the VAPID signer from push2u.vapid.public-key and" + " push2u.vapid.private-key: "
+                            + e.getMessage(),
+                    e);
         }
     }
 

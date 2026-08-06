@@ -299,16 +299,24 @@ class Push2uAutoConfigurationTest {
     void aKeyThatDecodesButIsNotOnTheCurveAlsoNamesTheKeys() {
         // The other likely typo: one character changed keeps the length and the 0x04 tag, so it
         // passes every length check and fails the curve equation instead — as a PushCryptoException,
-        // which the base64 branch does not catch. Flipping the last character of the public key
-        // moves the Y coordinate off the curve while leaving the encoding valid.
-        String offCurve =
-                publicKeyB64.substring(0, publicKeyB64.length() - 1) + (publicKeyB64.endsWith("A") ? "B" : "A");
+        // which the base64 branch does not catch.
+        //
+        // The character is changed in the MIDDLE, not at the end. 65 bytes encode to 87 characters,
+        // and the last of them carries only 4 bits of data — its low 2 bits are padding the decoder
+        // discards — so substituting there decodes to the same bytes for one key in sixteen. Every
+        // position below 86 carries a full 6 bits, so this substitution always changes the key.
+        int at = 10;
+        String offCurve = publicKeyB64.substring(0, at)
+                + (publicKeyB64.charAt(at) == 'A' ? 'B' : 'A')
+                + publicKeyB64.substring(at + 1);
 
         keyedRunner().withPropertyValues("push2u.vapid.public-key=" + offCurve).run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
                             context.getStartupFailure(), PushCryptoException.class, "push2u.vapid.public-key"))
                     .hasMessageContaining("push2u.vapid.public-key")
+                    .as("worded as the signer not being buildable, since a provider failure lands here too")
+                    .hasMessageContaining("while building the VAPID signer")
                     .hasMessageContaining("curve");
         });
     }

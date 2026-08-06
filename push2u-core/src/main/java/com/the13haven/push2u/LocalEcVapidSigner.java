@@ -62,12 +62,12 @@ public final class LocalEcVapidSigner implements VapidSigner {
      * so the probe signature is verified exactly as the provider produced it — do not convert it with
      * {@code EcdsaDer.toP1363} here, even on a DER-only provider.
      *
-     * <p>A public key that is well-formed but not a point on P-256 is rejected too, by whichever check fires first: a
-     * provider that validates the point on import fails the decode with {@link PushCryptoException}, while one that
-     * does not (SunEC) lets it through to the verification below, which then reports it as a mismatch. The type
-     * therefore follows the provider — deliberately not normalised here, since the decode also raises
-     * {@code PushCryptoException} when the provider has no EC {@code KeyFactory} at all, and collapsing both into
-     * {@link IllegalArgumentException} would relabel a missing provider as bad input.
+     * <p>A public key that is well-formed but not a point on P-256 is rejected too, and always as
+     * {@link PushCryptoException}: {@code EcKeys.decodeP256PublicKey} checks the curve equation itself, before the
+     * provider sees the point, so the outcome no longer depends on whether that provider validates on import. The type
+     * is still deliberately not normalised to {@link IllegalArgumentException}, because the same decode raises
+     * {@code PushCryptoException} when the provider has no EC {@code KeyFactory} at all, and collapsing the two would
+     * relabel a missing provider as bad input.
      */
     private void requireMatchingKeyPair() {
         ECPublicKey advertised = EcKeys.decodeP256PublicKey(publicKey, jca);
