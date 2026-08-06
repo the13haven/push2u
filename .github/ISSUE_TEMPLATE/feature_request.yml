@@ -7,8 +7,10 @@ body:
       value: >-
         push2u keeps a deliberately small surface. Before writing, it is worth checking
         [DESIGN.md](https://github.com/the13haven/push2u/blob/main/DESIGN.md) — §2 lists the
-        non-goals and §9 the decisions already settled as ADRs. A proposal that reverses one is
-        still welcome; it just needs to argue against that ADR rather than around it.
+        non-goals — and the
+        [ADRs](https://github.com/the13haven/push2u/blob/main/docs/adr/README.md), the
+        decisions already settled. A proposal that reverses one is still welcome; it just
+        needs to argue against that ADR rather than around it.
 
   - type: textarea
     id: problem

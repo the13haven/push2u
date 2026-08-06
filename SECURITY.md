@@ -77,7 +77,7 @@ Out of scope here — report these as ordinary issues, or to the party that owns
 
 - Browser-side code, service workers, and the push services themselves.
 - Subscription storage, deletion, and access control — the library is stateless by design
-  (`DESIGN.md`, ADR-004); those belong to the application.
+  ([ADR-004](docs/adr/0004-stateless-library.md)); those belong to the application.
 - Applications that misconfigure the library, unless the configuration surface makes the unsafe
   outcome the silent default.
 - Advisories against build-time or test-only dependencies (Gradle plugins, analysers,
