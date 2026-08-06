@@ -175,7 +175,7 @@ allprojects {
 }
 
 subprojects {
-    // Baseline = Java 21 LTS (DESIGN.md ADR-001): build with the JDK 26 toolchain but pin
+    // Baseline = Java 21 LTS (docs/adr/0001-java-21-baseline.md): build with the JDK 26 toolchain but pin
     // `--release 21` so the bytecode + visible API stay 21-compatible.
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"

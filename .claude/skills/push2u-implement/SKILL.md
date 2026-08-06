@@ -62,8 +62,9 @@ Checkstyle fails the build if you forget.
 a `sources.jar`, so those lines are read by people holding the artifact and nothing else: `(ADR-014)`
 or "see `DESIGN.md`" is a dead end for them. Write the reason into the sentence — what this code
 keeps true, not where the decision is filed. The `checkstyleReferences` task fails the build on
-`ADR`, any `*.md` filename and the word `README` anywhere in `main`, `module-info.java` and
-`package-info.java` included; test sources may cite whatever they like.
+`ADR`, any `*.md` filename and the word `readme` in any case, anywhere in `main` —
+`module-info.java` and `package-info.java` included, since it reads lines rather than an AST. An
+`https://` URL is exempt (a consumer can follow it), and test sources may cite whatever they like.
 
 ## Changing encryption, VAPID or protocol behaviour
 

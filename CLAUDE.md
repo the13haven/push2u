@@ -198,9 +198,10 @@ starter is ordered before the core starter and outranks the local signer.
   a `main` source set is read by consumers who have no clone of this repository: "ADR-014" or "see
   `DESIGN.md`" is a dead end for them. State the reason in the text instead — `// ADR-002's
   zero-dependency claim` becomes a sentence saying what this code keeps true. Checkstyle's
-  `checkstyleReferences` task fails the build on `ADR`, a `*.md` filename or `README` anywhere in
-  `main`; test sources are free to cite whatever they like. The rule reads lines rather than an AST,
-  which is what lets it cover `module-info.java` and `package-info.java`.
+  `checkstyleReferences` task fails the build on `ADR`, a `*.md` filename or `readme` in any case,
+  anywhere in `main`; an `https://` URL is exempt, because a link the consumer can open is not a
+  dangling pointer. Test sources are free to cite whatever they like. The rule reads lines rather
+  than an AST, which is what lets it cover `module-info.java` and `package-info.java`.
 - **Suppressions:** a rule exclusion carries a comment stating why; a per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope, next to the reason.
 - **Gradle 10 readiness:** the build avoids removed idioms on purpose — `register<Type>(name)` not

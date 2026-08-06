@@ -498,14 +498,14 @@ Boot health support is present — a health indicator. Application beans of the 
 these defaults; an application-supplied `PushSender` bypasses the starter's factory method
 entirely, so everything below concerns the *autoconfigured* sender alone.
 
-**Every rejection is re-thrown with the YAML property name in front of it.** The core is where a
-constraint is stated once, so the starter neither restates a bound nor validates ahead of it — two
-copies of a limit drift, and the core is the authority on what a legal value is. What the core
-cannot know is the name the operator wrote in their configuration file: its messages name a
-camelCase builder or constructor parameter. Translating at the boundary is what turns a rejected
-value into a startup failure the operator can act on, and it is also why the properties bind
-optionally — an unset property leaves the core's default in place rather than restating it in a
-second location.
+**A value the core rejects is re-thrown with the YAML property name in front of the core's own
+message.** The core is where a constraint is stated once, so the starter neither restates a bound
+nor validates ahead of it — two copies of a limit drift, and the core is the authority on what a
+legal value is. What the core cannot know is the name the operator wrote in their configuration
+file: its messages name a camelCase builder or constructor parameter. Translating at the boundary
+is what turns a rejected value into a startup failure the operator can act on, and it is also why
+the properties bind optionally — an unset property leaves the core's default in place rather than
+restating it in a second location.
 
 `push2u.vapid.subject` is checked explicitly rather than left to the factory's generic "contact is
 required", and it is required even when the `VapidSigner` bean comes from another starter: the

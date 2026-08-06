@@ -453,9 +453,9 @@ class Push2uAutoConfigurationTest {
 
     /**
      * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be {@code RetryPolicy.defaults()}
-     * restated in YAML terms — that equality is what lets the README and DESIGN.md describe an unset retry block as
-     * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
-     * either side would make both documents quietly wrong.
+     * restated in YAML terms — that equality is what lets README.md and SPRING.md describe an unset retry block as "the
+     * default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to either
+     * side would make both documents quietly wrong.
      */
     @Test
     void theStarterRetryDefaultsAreTheCoreRetryDefaults() {

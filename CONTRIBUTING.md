@@ -158,10 +158,10 @@ Practical consequences:
   module ships a `sources.jar`, so a comment in a `main` source set is read by people who have only
   the artifact: `(ADR-014)` or "see `DESIGN.md`" sends them nowhere. Write the reason into the
   sentence instead of citing where it is recorded. Checkstyle enforces it — `ADR`, any `*.md`
-  filename and the word `README` fail the build anywhere in a `main` source set, through the
-  `checkstyleReferences` task, which reads source lines rather than a parsed AST so that
-  `module-info.java` and `package-info.java` are covered too. Test sources are exempt; nothing ships
-  them.
+  filename and the word `readme` in any case fail the build anywhere in a `main` source set, through
+  the `checkstyleReferences` task, which reads source lines rather than a parsed AST so that
+  `module-info.java` and `package-info.java` are covered too. An `https://` link is fine, including
+  one that ends in `.md`: a consumer can open it. Test sources are exempt; nothing ships them.
 - A rule exclusion carries a comment saying why. A per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope that covers it, next to its reason.
 - **Boolean methods are named by what they are, in three kinds.** Checkstyle does not enforce this

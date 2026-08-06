@@ -144,8 +144,8 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
   whole call rather than truncating, because the targeted JSON extraction could otherwise find a
   complete-looking `data.signature` before the cut. A per-request timeout is required, not just a
   connect timeout: in fetched mode a Vault that accepts and never answers would hang startup.
-- The two seams stay separate (ADR-005). Unifying them is a design change needing an ADR amendment,
-  not a refactor.
+- The two seams stay separate (ADR-005). Unifying them is a design change needing a new ADR that
+  supersedes ADR-005, not a refactor — and not an edit to ADR-005 either (§5.6).
 
 ### 5.3 Secrets and capability URLs in diagnostics
 
