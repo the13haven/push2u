@@ -72,7 +72,7 @@ is likewise automatic: it carries JUnit and AssertJ, which are automatic modules
 ## Requirements
 
 - Java 21 or newer at runtime.
-- A VAPID P-256 key pair, or an implementation of `VapidSigner`.
+- A VAPID P-256 key pair ([how to get one](#vapid-keys)), or an implementation of `VapidSigner`.
 - An HTTPS Web Push subscription endpoint containing the browser-provided `p256dh` and `auth`
   values.
 
@@ -104,6 +104,146 @@ includeBuild("../push2u")
 The dependency declarations stay exactly as above — Gradle substitutes the included build for
 the published Maven Central artifact.
 
+## VAPID keys
+
+Every send is signed with a VAPID (RFC 8292) P-256 key pair, and push2u never produces one: it has
+no key generator, and nothing in it derives, rotates or replaces a key. The pair is your
+application's identity to the push services, so it is created once, outside the application, and
+handed to it as configuration.
+
+### The lifecycle
+
+- **One pair per application**, generated once — not per user, per subscription, per instance or
+  per deployment. Every instance of the same application signs with the same pair.
+- **The public half is handed to the browser** as the `applicationServerKey` option of
+  `pushManager.subscribe(...)`. The push service records it with the subscription and afterwards
+  accepts only pushes signed by the matching private half.
+- **The pair is loaded on every boot, never generated at one.** The private half comes from a secret
+  store, the public half alongside it. Generating a pair at startup would look like it works — the
+  first subscriptions taken after that boot are valid — and would break every subscription taken
+  before it.
+- **Rotating the pair invalidates every existing subscription.** There is no re-keying: the push
+  service refuses a request whose VAPID key is not the one the subscription was created with, and
+  every affected client has to call `subscribe(...)` again with the new public key. Treat a
+  rotation as a migration, not as routine hygiene.
+
+The private key is a secret with no recovery path — lose it and every subscriber has to
+re-subscribe. The public key is not secret; it is published to browsers by design.
+
+### Generate a pair
+
+Any P-256 generator will do, as long as it emits the encodings used here: the public key as the
+**65-byte uncompressed X9.62 point**, which is what
+[RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) defines for the `k`
+parameter and what browsers take as `applicationServerKey`, and the private key as the **raw 32-byte
+scalar**, which is what `VapidKeys` takes. Both unpadded base64url. The JDK you already build with can do it, through `jshell`.
+
+Run it where you would handle any other secret — a workstation or a bastion, not CI. The private
+half is printed to the terminal, so it lands in scrollback and in whatever your multiplexer or
+terminal emulator keeps; move it into the secret store, then clear the buffer. Nothing here writes
+it to disk, and the heredoc keeps it out of shell history, which records the command and not its
+output.
+
+<!-- vapid-keygen:begin -->
+```bash
+jshell -q - <<'EOF'
+import java.math.BigInteger;
+import java.security.*;
+import java.security.interfaces.*;
+import java.security.spec.*;
+import java.util.Base64;
+
+byte[] fixed32(BigInteger value) {
+    byte[] raw = value.toByteArray(), out = new byte[32];
+    int len = Math.min(raw.length, 32);
+    System.arraycopy(raw, raw.length - len, out, 32 - len, len);
+    return out;
+}
+
+var generator = KeyPairGenerator.getInstance("EC");
+generator.initialize(new ECGenParameterSpec("secp256r1"));
+var pair = generator.generateKeyPair();
+
+var point = ((ECPublicKey) pair.getPublic()).getW();
+var publicKey = new byte[65];
+publicKey[0] = 0x04;
+System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);
+System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);
+var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());
+
+var base64url = Base64.getUrlEncoder().withoutPadding();
+System.out.println("public:  " + base64url.encodeToString(publicKey));
+System.out.println("private: " + base64url.encodeToString(privateKey));
+/exit
+EOF
+```
+<!-- vapid-keygen:end -->
+
+That block is POSIX-shell syntax — `bash`, `zsh` or `sh`. On PowerShell or `cmd.exe`, save everything
+between the `jshell -q - <<'EOF'` line and the closing `EOF` to a file, say `vapid.jsh`, and run
+`jshell -q vapid.jsh` instead.
+
+**`fixed32` is the reason this is longer than a three-liner, and it is not optional.** `BigInteger`
+values are what the JCA hands out, and `toByteArray()` is a two's-complement encoding, not a fixed
+32-byte field element. Over 3000 generated pairs it returned **33 bytes for 1504 of them** — a
+leading `0x00` sign byte whenever the high bit is set. That is exactly the defect
+`nl.martijndwars:web-push`'s own generator has (see
+[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)). In the other direction, 7 scalars and 10 X
+coordinates came back **shorter than 32 bytes**, because leading zeros are dropped — npm's
+`web-push` carries a patch for precisely that case. So "strip the sign byte" is wrong about half the
+time and "strip but do not left-pad" is wrong about once in two hundred, which is the worse of the
+two: the key looks perfectly fine right up to the point where a signature does not verify. Copying
+the block whole avoids both.
+
+push2u's own test suite executes this block straight out of this file, so what is checked is what
+you see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
+`LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
+`toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
+An edit that breaks the padding fails the build rather than waiting for an unlucky key.
+
+If you already have Node.js around, the npm `web-push` package prints the same two values in the
+same encoding, and either source is equally good:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+**The Java `nl.martijndwars:web-push` generator is not usable here.** It prints the `BigInteger`
+encoding described above, so its private key is frequently 33 bytes and `VapidKeys` rejects it with
+`IllegalArgumentException`. If you are migrating and already hold such a key, do not generate a new
+one — re-encode the one you have, as
+[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding) describes.
+
+### Where the two values go
+
+With the Spring Boot starter, as `push2u.vapid.public-key` and `push2u.vapid.private-key` (see
+[Spring Boot](#spring-boot)):
+
+```yaml
+push2u:
+  vapid:
+    public-key: "${VAPID_PUBLIC_KEY}"
+    private-key: "${VAPID_PRIVATE_KEY}"
+    subject: "mailto:ops@example.com"
+```
+
+With the core alone, through `VapidKeys.fromBase64(publicKey, privateKey)` — see
+[Create a sender with a local VAPID key](#create-a-sender-with-a-local-vapid-key). Either way the
+public key is also what the browser needs as `applicationServerKey`; the private key never leaves
+the application server.
+
+Holding the private key in a secret store you would rather not hand to the application at all is
+what the [Vault Transit signer](#vault-transit-signer) is for: the key stays in Vault, and push2u
+sends signing requests instead of loading a scalar. **If that is where you are heading, do not run
+the snippet above at all** — create the key inside Vault, so the scalar never exists outside it:
+
+```bash
+vault write -f transit/keys/<name> type=ecdsa-p256
+```
+
+The signer reads the public half from Vault itself; see
+[Vault Transit signer](#vault-transit-signer).
+
 ## Core usage
 
 ### Create a subscription
@@ -124,7 +264,8 @@ Web Push endpoints are capability URLs.
 ### Create a sender with a local VAPID key
 
 `VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
-scalar, both encoded as unpadded base64url:
+scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
+from and how long it lives:
 
 ```java
 PushSender sender = PushSender.builder(

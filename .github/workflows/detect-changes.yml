@@ -1,7 +1,8 @@
 name: Detect changes
 
-# Answers one question for the workflows that gate a merge: does this change contain anything an
-# analyser would look at?
+# Answers two questions for the workflows that gate a merge — could this change alter what a build
+# does (`build`), and does it touch anything a source analyser would read (`code`)? They differ over
+# exactly one file, README.md; see the `case` block below.
 #
 # It exists as a reusable workflow rather than as a `paths-ignore` filter under `on:` because of how
 # GitHub treats required status checks. `quality` and the two CodeQL `Analyze` jobs are required in
@@ -14,10 +15,22 @@ name: Detect changes
 on:
   workflow_call:
     outputs:
+      build:
+        description: >-
+          "true" when the change can affect the outcome of a build: any file that is not prose or an
+          image, anything under config/, and README.md — whose key-generation snippet the test suite
+          executes. Also "true" when the comparison could not be made at all. This is what the
+          quality gate runs on.
+        value: ${{ jobs.detect.outputs.build }}
+      # A separate output rather than a second reading of `build`: a README edit changes what the
+      # tests do without changing a line CodeQL would read, and re-analysing an unchanged source
+      # tree over a README typo costs about four minutes across the two Analyze jobs on every
+      # documentation pull request.
       code:
         description: >-
-          "true" when the change touches anything other than documentation, or when the comparison
-          could not be made at all. Callers gate their real work on it.
+          "true" when the change touches something a source analyser would read: the same set as
+          `build`, minus README.md, whose snippet is executed but compiles nothing and is not in the
+          tree CodeQL scans. Also "true" when the comparison could not be made at all.
         value: ${{ jobs.detect.outputs.code }}
 
 permissions:
@@ -29,6 +42,7 @@ jobs:
     timeout-minutes: 5
 
     outputs:
+      build: ${{ steps.filter.outputs.build }}
       code: ${{ steps.filter.outputs.code }}
 
     steps:
@@ -52,6 +66,7 @@ jobs:
 
           if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null || ! git cat-file -e "${HEAD}^{commit}" 2>/dev/null; then
             echo "Cannot resolve ${BASE}...${HEAD} — treating this as a code change."
+            echo "build=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -65,25 +80,42 @@ jobs:
           # adding the README banner then spent three minutes of the quality gate on a PNG. Nothing
           # here reaches a compiler, a test or an analyser.
           #
-          # config/ is matched FIRST and always counts as code, whatever the suffix: everything
-          # under it configures an analyser. config/quality/license/header-regex.txt is a .txt file
-          # that decides whether Checkstyle accepts the licence header on every source file in the
-          # repository — classifying it as prose would let a change that breaks the gate for the
-          # whole tree merge with the gate reported green, having never run.
+          # config/ is matched ahead of the suffixes and always counts as code, whatever the suffix
+          # is: everything under it configures an analyser. config/quality/license/header-regex.txt
+          # is a .txt file that decides whether Checkstyle accepts the licence header on every
+          # source file in the repository — classifying it as prose would let a change that breaks
+          # the gate for the whole tree merge with the gate reported green, having never run.
+          #
+          # README.md is the same case in .md form for the BUILD, and not for a source analyser:
+          # ReadmeVapidKeyGenerationTest runs the VAPID key-generation snippet out of that file and
+          # feeds the pair it prints to VapidKeys and LocalEcVapidSigner, so a README-only edit can
+          # genuinely break the build — and calling it prose would let exactly the drift that test
+          # exists to catch merge with the gate green. It costs a full quality run on a typo fix
+          # there, which is the cheaper of the two mistakes. CodeQL is a different question: the
+          # snippet is executed, not compiled, and the tree CodeQL reads is byte-for-byte what it
+          # was. So README.md sets `build` and leaves `code` alone.
           #
           # Pattern matching rather than grep, so the answer does not depend on which grep dialect
           # the runner image ships. `*` matches `/` in a case pattern, so `config/*` is recursive.
+          build=false
           code=false
           while IFS= read -r file; do
             case "${file}" in
-              config/*) code=true; break ;;
+              README.md) build=true ;;
+              config/*) build=true; code=true ;;
               '' | *.md | *.txt) ;;
               *.png | *.jpg | *.jpeg | *.gif | *.svg | *.webp) ;;
-              *) code=true; break ;;
+              *) build=true; code=true ;;
             esac
+            if [ "${build}" = true ] && [ "${code}" = true ]; then
+              break
+            fi
           done <<< "${changed}"
 
-          if [ "${code}" = false ]; then
+          if [ "${build}" = false ]; then
             echo "Documentation only — the calling workflow's jobs will be skipped (and reported as passed)."
+          elif [ "${code}" = false ]; then
+            echo "README.md only — the quality gate runs (it executes the snippet); CodeQL does not."
           fi
+          echo "build=${build}" >> "$GITHUB_OUTPUT"
           echo "code=${code}" >> "$GITHUB_OUTPUT"

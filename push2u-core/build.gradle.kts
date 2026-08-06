@@ -79,6 +79,24 @@ dependencies {
     // disjoint classpaths.
 }
 
+// ReadmeVapidKeyGenerationTest runs the VAPID key-generation snippet that is actually in README.md
+// — push2u ships no key generator, so that snippet is the only instruction a new user gets, and a
+// test holding its own copy of it would stay green while the documented one drifted. The test
+// therefore needs the file itself. A relative "../README.md" would be a guess about the test's
+// working directory, so Gradle resolves it: layout.settingsDirectory is the directory holding
+// settings.gradle.kts, i.e. the repository root, and unlike rootProject it is not a reach into
+// another project's model.
+val readme: RegularFile = layout.settingsDirectory.file("README.md")
+tasks.test {
+    systemProperty("push2u.readme", readme.asFile.absolutePath)
+    // Declared as an input as well: the system property only carries the path, so without this an
+    // edit to the snippet would be answered with an up-to-date (or cached) result from the run
+    // before it — the test would "verify" a README that no longer exists. NONE because only the
+    // content matters; the absolute path above already ties this task's cache entry to the checkout
+    // anyway, and no cache is shared between machines here.
+    inputs.file(readme).withPropertyName("readme").withPathSensitivity(PathSensitivity.NONE)
+}
+
 val fipsTestTask = tasks.register<Test>("fipsTest") {
     description = "Runs the BC-FIPS provider tests (ES256 DER fallback) on a bcprov-free classpath."
     group = "verification"

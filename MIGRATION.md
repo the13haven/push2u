@@ -382,6 +382,11 @@ VAPID keys, so this only matters if something in your pipeline compressed them d
 The same applies to the browser's `p256dh`: push2u requires the 65-byte uncompressed point browsers
 actually send, where `web-push` would have accepted a compressed one.
 
+None of this is a reason to generate a fresh pair: re-encoding keeps every existing subscription
+alive, and a new pair kills all of them. For a genuinely new application,
+[`README.md` → VAPID keys](README.md#vapid-keys) has a generator that emits the 32-byte scalar
+directly.
+
 ### `Topic` is validated locally
 
 `web-push` puts whatever string you pass into the `Topic` header. push2u validates it first: 1–32
