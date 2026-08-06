@@ -135,7 +135,13 @@ re-subscribe. The public key is not secret; it is published to browsers by desig
 Any P-256 generator will do, as long as it emits what
 [RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) and browsers expect: the
 public key as the **65-byte uncompressed X9.62 point** and the private key as the **raw 32-byte
-scalar**, both unpadded base64url. The JDK you already build with can do it, through `jshell`:
+scalar**, both unpadded base64url. The JDK you already build with can do it, through `jshell`.
+
+Run it where you would handle any other secret — a workstation or a bastion, not CI. The private
+half is printed to the terminal, so it lands in scrollback and in whatever your multiplexer or
+terminal emulator keeps; move it into the secret store, then clear the buffer. Nothing here writes
+it to disk, and the heredoc keeps it out of shell history, which records the command and not its
+output.
 
 <!-- vapid-keygen:begin -->
 ```bash
@@ -192,12 +198,11 @@ push2u's own test suite executes this block straight out of this file, so what i
 you see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
 `LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
 `toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
-It also requires the statements the block is made of to be present verbatim, since no run over
-random keys can prove a call is still there — what that pins is the text, not that the value
-printed came from it. An edit that breaks the padding, or quietly stops applying it, fails the
-build rather than waiting for an unlucky key. What the test cannot see is the shell: the body goes
-to `jshell` directly, so the heredoc wrapper around it is checked as text and not as something a
-shell ran.
+The three statements that call `fixed32` are pinned as text as well, since no run over random keys
+can prove a call is still there — though what that pins is the text, not that the printed value
+came from it. An edit that breaks the padding, or quietly stops applying it, fails the build rather
+than waiting for an unlucky key. What the test cannot see is the shell: the body goes to `jshell`
+directly, so the heredoc wrapper around it is checked as text and not as something a shell ran.
 
 If you already have Node.js around, the npm `web-push` package prints the same two values in the
 same encoding, and either source is equally good:
@@ -232,7 +237,15 @@ the application server.
 
 Holding the private key in a secret store you would rather not hand to the application at all is
 what the [Vault Transit signer](#vault-transit-signer) is for: the key stays in Vault, and push2u
-sends signing requests instead of loading a scalar.
+sends signing requests instead of loading a scalar. **If that is where you are heading, do not run
+the snippet above at all** — create the key inside Vault, so the scalar never exists outside it:
+
+```bash
+vault write -f transit/keys/<name> type=ecdsa-p256
+```
+
+The signer reads the public half from Vault itself; see
+[Vault Transit signer](#vault-transit-signer).
 
 ## Core usage
 

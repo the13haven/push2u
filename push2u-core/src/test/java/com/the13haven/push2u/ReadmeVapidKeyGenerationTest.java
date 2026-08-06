@@ -47,11 +47,12 @@ import org.junit.jupiter.api.io.TempDir;
  * the padding, not on the unlucky one.
  *
  * <p>A correct {@code fixed32} that nothing calls is the same failure one level out, and equally invisible to a random
- * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the statements
- * that make up the block are pinned as text, normalised by {@link #statements(String)} — a substring search over the
- * raw body was not enough, since a call site commented out and replaced underneath satisfied it. That is the one thing
- * here checked by reading rather than by running, because there is nothing to run: the values are random, and a green
- * run proves nothing about the next one.
+ * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the three
+ * statements that call it are pinned as text, normalised by {@link #statements(String)} — a substring search over the
+ * raw body was not enough, since a call site commented out and replaced underneath satisfied it. Nothing else is
+ * pinned: everything else the snippet does shows up in the value it prints, and a check on the value costs no
+ * brittleness. That is the one thing here checked by reading rather than by running, because there is nothing to run:
+ * the values are random, and a green run proves nothing about the next one.
  *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
@@ -151,21 +152,23 @@ class ReadmeVapidKeyGenerationTest {
         // checked, and costs the snippet nothing: it has none, and a snippet a reader is meant to
         // paste has no use for them.
         assertThat(body)
-                .as("the snippet must stay free of block comments — see statements()")
-                .doesNotContain("/*");
+                .as("the snippet must contain neither a block comment nor a text block — see statements()")
+                .doesNotContain("/*")
+                .doesNotContain("\"\"\"");
 
         // Every pin below is a whole statement, normalised by statements(). The values the snippet
         // prints are random, so no run can prove a call is still there; text is the only deterministic
         // instrument, and a substring search over the raw body was not enough — a call site commented
         // out and replaced underneath satisfied it. Matching statements also pins the arraycopy
         // offsets and the destination lengths, which nothing else in this file looks at.
+        // Only the three fixed32 call sites. Everything else the snippet does is checked on the value
+        // it produces, on every draw and whatever statement produced it — a wrong curve, a missing
+        // 0x04, a renamed helper and padded base64url all fail below or in the probe run. Pinning
+        // those as text as well would buy nothing and would fail a correct rename, which is how a
+        // guard earns its own deletion.
         assertThat(statements(body))
-                .as("the block must still be the program the prose describes, as live code")
+                .as("every value the snippet prints has to go through fixed32, as live code")
                 .contains(
-                        "byte[] fixed32(BigInteger value) {",
-                        "generator.initialize(new ECGenParameterSpec(\"secp256r1\"));",
-                        "var base64url = Base64.getUrlEncoder().withoutPadding();",
-                        "publicKey[0] = 0x04;",
                         "System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);",
                         "System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);",
                         "var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());");
@@ -198,6 +201,18 @@ class ReadmeVapidKeyGenerationTest {
 
         String publicKey = capture(PUBLIC_KEY_LINE, result, "public");
         String privateKey = capture(PRIVATE_KEY_LINE, result, "private");
+
+        // Unpadded, checked on the printed value rather than on the statement that produced it: both
+        // lengths are 2 mod 3, so a padded encoder always leaves exactly one "=". VapidKeys accepts
+        // padding (Base64Url tolerates it deliberately), and so would this test — but the browser-side
+        // urlBase64ToUint8Array everyone copies does not, so a padded key works everywhere except in
+        // the one place the reader needs it.
+        assertThat(publicKey)
+                .as("base64url without padding — 65 bytes is 2 mod 3, so padding would show as a trailing =")
+                .doesNotContain("=");
+        assertThat(privateKey)
+                .as("base64url without padding — 32 bytes is 2 mod 3, so padding would show as a trailing =")
+                .doesNotContain("=");
 
         VapidKeys keys = accepted(publicKey, privateKey);
         assertThat(keys.publicKey())
