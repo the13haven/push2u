@@ -74,6 +74,7 @@ public final class P256PublicKeys {
      * @param name what the value is, used to open every rejection message (e.g. {@code "p256dh"})
      * @throws IllegalArgumentException if {@code publicKey} is not 65 bytes opening with {@code 0x04}; the message
      *     names {@code name} and never quotes the key bytes
+     * @throws NullPointerException if either argument is {@code null}
      */
     public static void requireUncompressedPoint(byte[] publicKey, String name) {
         Objects.requireNonNull(name, "name");
@@ -104,6 +105,7 @@ public final class P256PublicKeys {
      * @param name what the value is, used to open every rejection message (e.g. {@code "p256dh"})
      * @throws IllegalArgumentException if {@code publicKey} is not a 65-byte uncompressed encoding of a point on P-256;
      *     the message names {@code name} and never quotes the coordinates
+     * @throws NullPointerException if either argument is {@code null}
      */
     public static void requireOnCurve(byte[] publicKey, String name) {
         requireUncompressedPoint(publicKey, name);
