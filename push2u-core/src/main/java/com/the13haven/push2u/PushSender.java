@@ -217,6 +217,12 @@ public final class PushSender {
      * from this call. The async path runs through the same {@link #send} pipeline, so the policy guards it identically:
      * no send through this sender reaches the network without passing the policy.
      *
+     * <p>The same holds for the rest of what {@link #send} throws: a {@link PushCryptoException} or a
+     * {@link PushDeliveryException} completes the returned future exceptionally rather than propagating from this call,
+     * and reaches the caller wrapped in a {@link java.util.concurrent.CompletionException} on {@code join} or an
+     * {@link java.util.concurrent.ExecutionException} on {@code get}. An HTTP error status is not among them — it is a
+     * {@link PushResult}, and the future completes normally with it.
+     *
      * @param subscription the target subscription
      * @param message the message to send
      * @return a future completing with the send result
