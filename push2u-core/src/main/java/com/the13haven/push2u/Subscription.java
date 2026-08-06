@@ -109,6 +109,28 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
      * @return the subscription
      */
     public static Subscription fromBase64(String endpoint, String p256dh, String auth) {
-        return new Subscription(endpoint, Base64Url.decode(p256dh), Base64Url.decode(auth));
+        Objects.requireNonNull(p256dh, "p256dh");
+        Objects.requireNonNull(auth, "auth");
+        return new Subscription(endpoint, decode(p256dh, "p256dh"), decode(auth, "auth"));
+    }
+
+    /**
+     * Decodes one browser-supplied value, naming it if the decoder refuses. The JDK's message for a bad character is
+     * {@code "Illegal base64 character 2b"} and nothing else — the same text for either value, and this pair arrives
+     * over the application's own REST boundary, where "which field was malformed" is the whole question.
+     *
+     * <p>The value itself never reaches the message. It is whatever a client posted, so quoting it would put
+     * attacker-chosen text into the application's logs; the decoder's own text names a character code and no content,
+     * and is kept as the cause.
+     */
+    private static byte[] decode(String value, String field) {
+        try {
+            return Base64Url.decode(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    field + " is not valid base64url (RFC 4648 §5, the URL-safe alphabet with '-' and '_' rather than"
+                            + " '+' and '/', padding optional): " + e.getMessage(),
+                    e);
+        }
     }
 }
