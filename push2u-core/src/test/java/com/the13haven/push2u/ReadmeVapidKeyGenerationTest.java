@@ -169,10 +169,18 @@ class ReadmeVapidKeyGenerationTest {
         // and destination lengths too, which nothing else here looks at.
         //
         // The encoder: `=` on the printed value covers PADDING on every draw, deterministically, since
-        // 65 and 32 are both 2 mod 3. It does not cover the ALPHABET. Base64.getEncoder().withoutPadding()
-        // emits no `=` ever and differs from url-safe output only on the draws where a `+` or `/` lands
-        // in one of the two strings — about 2 in 100, measured. On the other 98 the bytes are identical,
-        // so no value check can distinguish them, and a reader's own draw fails for them the same way.
+        // 65 and 32 are both 2 mod 3. The ALPHABET is the part left over.
+        // Base64.getEncoder().withoutPadding() emits no `=` ever, and its output differs from url-safe
+        // whenever a `+` or `/` falls anywhere in the ~130 printed characters — 2944 of 3000 draws,
+        // measured. Those 98 in 100 are already caught by value, because Base64Url decodes strictly.
+        // What is left is the other 56: draws where the two encodings are byte-identical and no check
+        // on the value can tell them apart. So this pin closes a 1-in-50 escape, not a common one —
+        // small, but the kind that merges green and then fails for a reader whose own draw is ordinary.
+        //
+        // A behaviour check would do the same job: one more probe calling the snippet's own encoder on
+        // a fixed input (`new byte[] {-1, -1}` prints `__8` url-safe, `//8` standard). It was weighed
+        // and not taken — it pins the name `base64url` exactly as this line does, and shares the same
+        // recorded limit, so it buys no determinism this does not already have.
         //
         // Everything else the snippet does IS covered by value on every draw and whatever statement
         // produced it — a wrong curve fails the on-curve check, a missing 0x04 fails VapidKeys, a
