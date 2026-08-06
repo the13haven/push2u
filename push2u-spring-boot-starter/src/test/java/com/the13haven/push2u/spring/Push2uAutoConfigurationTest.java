@@ -258,6 +258,43 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void keyMaterialThatIsNotBase64urlFailsTheContextNamingTheKeysAndTheHalf() {
+        // The likeliest first failure of all: a key generated with the standard base64 alphabet.
+        // The JDK decoder's own message is "Illegal base64 character 2b" and nothing more — same
+        // text for either half, naming neither VAPID nor a property. '+' is what makes it 2b.
+        // '+' spliced in at a fixed position, not substituted for a '-': a random key contains no
+        // '-' about half the time, and a mutation that sometimes does nothing is a test that
+        // sometimes proves nothing.
+        keyedRunner()
+                .withPropertyValues("push2u.vapid.public-key=+" + publicKeyB64.substring(1))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.vapid.public-key"))
+                            .hasMessageContaining("push2u.vapid.public-key")
+                            .hasMessageContaining("push2u.vapid.private-key")
+                            .as("the core names the half, so the operator knows which of the two to look at")
+                            .hasMessageContaining("VAPID public key is not valid base64url");
+                });
+    }
+
+    @Test
+    void aMalformedPrivateKeyNamesThePrivateHalfRatherThanThePublicOne() {
+        keyedRunner()
+                .withPropertyValues("push2u.vapid.private-key=+" + privateKeyB64.substring(1))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.vapid.public-key"))
+                            .hasMessageContaining("VAPID private key is not valid base64url");
+                });
+    }
+
+    @Test
     void invalidRecordSizeFailsTheContextNamingTheProperty() {
         // The builder's own message names its camelCase parameter ("recordSize"), not the YAML
         // property — the starter re-throws with push2u.record-size prefixed so the failure is

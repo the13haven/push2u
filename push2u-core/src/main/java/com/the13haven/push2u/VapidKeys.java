@@ -52,7 +52,27 @@ public final class VapidKeys {
      * @return the key pair
      */
     public static VapidKeys fromBase64(String publicKey, String privateKey) {
-        return new VapidKeys(Base64Url.decode(publicKey), Base64Url.decode(privateKey));
+        return new VapidKeys(decode(publicKey, "public"), decode(privateKey, "private"));
+    }
+
+    /**
+     * Decodes one half, naming it if the decoder refuses. The JDK's message for a bad character is {@code "Illegal
+     * base64 character 2b"} and nothing else — the same text for either half, mentioning neither VAPID nor which value
+     * was wrong. That is the likeliest first failure of all: {@code 2b} is {@code '+'}, which appears only when the key
+     * was produced with the standard base64 alphabet instead of the URL-safe one, and one of the generators in
+     * circulation does exactly that.
+     */
+    // PreserveStackTrace: the cause is kept; only the message is replaced, because the JDK's carries
+    // no indication of which of the two values it is about.
+    private static byte[] decode(String value, String half) {
+        try {
+            return Base64Url.decode(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "VAPID " + half + " key is not valid base64url (RFC 4648 §5, the URL-safe alphabet with '-' and"
+                            + " '_' rather than '+' and '/', padding optional): " + e.getMessage(),
+                    e);
+        }
     }
 
     /**

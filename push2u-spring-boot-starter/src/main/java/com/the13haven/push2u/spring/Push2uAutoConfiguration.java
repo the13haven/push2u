@@ -65,7 +65,16 @@ public final class Push2uAutoConfiguration {
         // condition fails here with the property name rather than with a NullPointerException.
         String publicKey = Objects.requireNonNull(vapid.publicKey(), "push2u.vapid.public-key");
         String privateKey = Objects.requireNonNull(vapid.privateKey(), "push2u.vapid.private-key");
-        return new LocalEcVapidSigner(VapidKeys.fromBase64(publicKey, privateKey));
+        try {
+            return new LocalEcVapidSigner(VapidKeys.fromBase64(publicKey, privateKey));
+        } catch (IllegalArgumentException e) {
+            // The core names which half it rejected; this adds the YAML keys those halves came from,
+            // the same translation the pushSender properties get. Not one key or the other, because
+            // the mismatch case (LocalEcVapidSigner's self-test) is about the pair rather than about
+            // either value — and the core's message already says which half when it is one of them.
+            throw new IllegalArgumentException(
+                    "push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
+        }
     }
 
     /**
