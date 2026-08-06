@@ -277,10 +277,13 @@ Before the first tag it behaves differently. `scmVersion.tag.initialVersion` in 
 base the incrementer starts from: an untagged repository reports `0.0.0-SNAPSHOT`, and `release`
 would create the tag `v0.0.0`. The patch incrementer only engages afterwards.
 
-**This is why the first release needs an explicit version.** The README documents `0.1.0`, so run
-Setup Next Version with `0.1.0` before the first Release — otherwise the library's first published
-artifact is `0.0.0`. The same applies whenever the next release should be a minor or major bump
-rather than a patch:
+**This is why a minor or major bump needs an explicit version.** Left alone, axion only increments
+the patch from the last tag — the version it derives without a Setup Next Version run is a patch
+release, never a minor or major one. On a repository with no tags at all, there is no last tag to
+increment from, and the version released would be `initialVersion` (currently `0.0.0`,
+`build.gradle.kts:101`) rather than whatever the README documents — the sharpest case of this rule,
+since every version an untagged repository could fall back to is wrong. So before a Release that
+should land a minor, a major, or the very first version, run:
 
 *Actions → Setup Next Version → Run workflow*, entering the intended version as `nextVersion`
 in `X.Y.Z` form (e.g. `0.2.0`).
