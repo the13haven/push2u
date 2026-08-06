@@ -115,7 +115,7 @@ handed to it as configuration.
 
 - **One pair per application**, generated once — not per user, per subscription, per instance or
   per deployment. Every instance of the same application signs with the same pair.
-- **The public half is handed to the browser** as the `applicationServerKey` argument of
+- **The public half is handed to the browser** as the `applicationServerKey` option of
   `pushManager.subscribe(...)`. The push service records it with the subscription and afterwards
   accepts only pushes signed by the matching private half.
 - **The pair is loaded on every boot, never generated at one.** The private half comes from a secret
@@ -132,10 +132,11 @@ re-subscribe. The public key is not secret; it is published to browsers by desig
 
 ### Generate a pair
 
-Any P-256 generator will do, as long as it emits what
-[RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) and browsers expect: the
-public key as the **65-byte uncompressed X9.62 point** and the private key as the **raw 32-byte
-scalar**, both unpadded base64url. The JDK you already build with can do it, through `jshell`.
+Any P-256 generator will do, as long as it emits the encodings used here: the public key as the
+**65-byte uncompressed X9.62 point**, which is what
+[RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) defines for the `k`
+parameter and what browsers take as `applicationServerKey`, and the private key as the **raw 32-byte
+scalar**, which is what `VapidKeys` takes. Both unpadded base64url. The JDK you already build with can do it, through `jshell`.
 
 Run it where you would handle any other secret — a workstation or a bastion, not CI. The private
 half is printed to the terminal, so it lands in scrollback and in whatever your multiplexer or
@@ -198,15 +199,7 @@ push2u's own test suite executes this block straight out of this file, so what i
 you see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
 `LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
 `toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
-Four statements are pinned as text as well — the three that call `fixed32`, and the one that picks
-the encoder — for the cases a run over random keys cannot settle on its own. A call that is gone
-shows up about half the time; a standard base64 alphabet instead of the url-safe one shows up 98
-times in 100, and hides on the other two, where the two encodings happen to be byte-identical. What
-the pins add is that neither depends on the draw. What they do not add is any proof that the
-printed value came from the pinned line. An edit that breaks the padding, or quietly stops applying
-it, fails the build rather than waiting for an unlucky key. What the test cannot see is the shell:
-the body goes to `jshell` directly, so the heredoc wrapper around it is checked as text and not as
-something a shell ran.
+An edit that breaks the padding fails the build rather than waiting for an unlucky key.
 
 If you already have Node.js around, the npm `web-push` package prints the same two values in the
 same encoding, and either source is equally good:

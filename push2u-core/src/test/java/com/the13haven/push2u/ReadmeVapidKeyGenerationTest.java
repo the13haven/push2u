@@ -47,32 +47,26 @@ import org.junit.jupiter.api.io.TempDir;
  * the padding, not on the unlucky one.
  *
  * <p>A correct {@code fixed32} that nothing calls is the same failure one level out, and equally invisible to a random
- * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the three
- * statements that call it are pinned as text, normalised by {@link #statements(String)} — a substring search over the
- * raw body was not enough, since a call site commented out and replaced underneath satisfied it. Nothing else is
- * pinned: everything else the snippet does shows up in the value it prints, and a check on the value costs no
- * brittleness. That is the one thing here checked by reading rather than by running, because there is nothing to run:
- * the values are random, and a green run proves nothing about the next one.
+ * draw: a scalar that happens to encode to exactly 32 bytes makes an unpadded snippet look right. So the statements
+ * that call it are pinned as text, normalised by {@link #statements(String)}, along with the one that picks the
+ * encoder. Nothing else is pinned: everything else the snippet does shows up in the value it prints, and a check on the
+ * value costs no brittleness. Those are the only things here checked by reading rather than by running, because there
+ * is nothing to run — the values are random, and a green run proves nothing about the next one.
  *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
  * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
  * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../README.md} would be a guess
  * about the test's working directory.
  *
- * <p>Two divergence classes this design cannot see, recorded rather than built around.
+ * <p><b>What this guards, and what it does not.</b> It guards an ordinary edit — to the snippet, or to
+ * {@link VapidKeys} and {@link LocalEcVapidSigner} underneath it — that makes the documented instructions print a key
+ * push2u or a browser rejects. It does not guard against someone with commit access deliberately hiding broken code
+ * from a text check: whoever can edit {@code README.md} can edit this file beside it, so hardening against that buys
+ * nothing and costs the brittleness that gets a guard deleted. "A block comment, a text block, an escape or dead code
+ * could hide a pinned statement" is out of scope by construction, not an open gap.
  *
- * <p>The first is the shell: the body goes straight to {@code jshell}'s standard input, so nothing shell-level is
- * exercised. A line equal to {@code EOF} inside the block would end the heredoc early for a reader following the README
- * while this test ran the whole block happily. Piping the block through a shell instead would trade that contrived case
- * for a dependency on whichever shell the runner ships, which is the larger of the two risks.
- *
- * <p>The second is the limit of pinning text at all: <em>a statement is present</em> and <em>that statement produced
- * the value that was printed</em> are different propositions, and only the first is checkable here. Leaving the pinned
- * line in place and overwriting the variable on the next line passes everything in this file, measured over ten runs,
- * while a reader copying the block gets a scalar that is short about once in four hundred. Closing that would take a
- * check on the printed value rather than on the text, and a printed value only differs from a correct one on the draws
- * that are rare in the first place — which is the lucky-draw problem this file exists to escape. So it is written down
- * instead.
+ * <p>The one real limit that follows: a pinned statement being <em>present</em> is not proof that it produced the value
+ * that was printed, and this file does not try to close that.
  */
 class ReadmeVapidKeyGenerationTest {
 
@@ -92,10 +86,8 @@ class ReadmeVapidKeyGenerationTest {
     private static final String HEREDOC_CLOSE = "EOF";
 
     /**
-     * The arguments of {@link #HEREDOC_OPEN}, pinned rather than parsed out of it. Deriving them would look like the
-     * test followed the README, but {@link #snippetBody()} already requires that line to be {@link #HEREDOC_OPEN}
-     * character for character, so the derivation could only ever produce these two. Documenting a different command
-     * therefore means editing both constants, deliberately.
+     * The arguments of {@link #HEREDOC_OPEN}, pinned rather than parsed: that line is already matched character for
+     * character.
      */
     private static final List<String> JSHELL_ARGUMENTS = List.of("-q", "-");
 
@@ -104,88 +96,54 @@ class ReadmeVapidKeyGenerationTest {
 
     private static final Pattern PUBLIC_KEY_LINE = Pattern.compile("(?m)^public:\\s+(\\S+)\\s*$");
     private static final Pattern PRIVATE_KEY_LINE = Pattern.compile("(?m)^private:\\s+(\\S+)\\s*$");
-    private static final Pattern PROBE_LINE = Pattern.compile("(?m)^probe (\\S+) (\\d+) ([0-9a-f]{64})\\s*$");
+    private static final Pattern PROBE_LINE = Pattern.compile("(?m)^probe (\\S+) ([0-9a-f]{64})\\s*$");
 
     private static final long JSHELL_TIMEOUT_MINUTES = 3;
 
     /**
-     * One check of the snippet's own {@code fixed32}: a {@code BigInteger} expression, the length its
-     * {@code toByteArray()} has (which is the shape being covered), and the 32 bytes {@code fixed32} must return.
+     * One check of the snippet's own {@code fixed32}: a {@code BigInteger} expression and the 32 bytes {@code fixed32}
+     * must return for it.
      *
      * <p>The four together pin both regressions deterministically. Copying from the wrong end of the array is visible
      * only where {@code toByteArray()} is longer than 32 bytes, so the sign-byte case catches it; dropping the
      * left-padding is visible only where it is shorter, so the 31-byte and single-byte cases catch it. The exact-32
      * case is the shape that needs no adjustment at all and must come through untouched.
      */
-    private record Fixed32Probe(String label, String expression, int encodedLength, String expectedHex) {}
+    private record Fixed32Probe(String label, String expression, String expectedHex) {}
 
     private static final List<Fixed32Probe> FIXED32_PROBES = List.of(
             new Fixed32Probe(
                     "sign-byte",
                     "BigInteger.ONE.shiftLeft(255)",
-                    33,
                     "8000000000000000000000000000000000000000000000000000000000000000"),
             new Fixed32Probe(
                     "exactly-32",
                     "BigInteger.ONE.shiftLeft(254)",
-                    32,
                     "4000000000000000000000000000000000000000000000000000000000000000"),
             new Fixed32Probe(
                     "leading-zero",
                     "BigInteger.ONE.shiftLeft(247).subtract(BigInteger.ONE)",
-                    31,
                     "007fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
             new Fixed32Probe(
                     "single-byte",
                     "BigInteger.ONE",
-                    1,
                     "0000000000000000000000000000000000000000000000000000000000000001"));
 
     @Test
-    void readmeCarriesTheAnchoredBlockWithTheDocumentedHeredocWrapper() {
+    void readmeSnippetStillCallsFixed32AndTheUrlSafeEncoder() {
         // snippetBody() fails unless the block opens with HEREDOC_OPEN and closes with HEREDOC_CLOSE.
         String body = snippetBody();
 
-        // statements() strips line comments and is not a Java parser, so anything that hides a pinned
-        // statement from javac while leaving it a plain line here defeats the pins below. Three rounds
-        // of review found three such syntaxes, one per round — a line comment, then a block comment,
-        // then a text block. Rather than wait for the fourth, refuse the three things any of them
-        // needs: a block-comment opener, a text block, and a backslash, which is what a \\u002f escape
-        // would need to spell a comment the search cannot see. The snippet has none of them and no
-        // use for any of them. What this does NOT close is semantically dead code — `if (false)`
-        // around a pinned line, or a copy after /exit — which is the recorded presence-vs-value limit
-        // in this class's Javadoc, not a lexical one.
-        assertThat(body)
-                .as("the snippet must contain no block comment, text block or escape — see statements()")
-                .doesNotContain("/*")
-                .doesNotContain("\"\"\"")
-                .doesNotContain("\\");
-
-        // Four statements, each guarding something no check on the printed value can see.
+        // Four statements, each guarding something the printed value cannot show.
         //
         // The three fixed32 call sites: the values are random, so no run can prove a call is still
-        // there, and a substring search over the raw body was not enough — a call site commented out
-        // and replaced underneath satisfied it. Matching whole statements pins the arraycopy offsets
-        // and destination lengths too, which nothing else here looks at.
+        // there — a coordinate that happens to encode to exactly 32 bytes makes a dropped call look
+        // right about half the time. Matching whole statements pins the arraycopy offsets and the
+        // destination lengths as well, which nothing else here looks at.
         //
-        // The encoder: `=` on the printed value covers PADDING on every draw, deterministically, since
-        // 65 and 32 are both 2 mod 3. The ALPHABET is the part left over.
-        // Base64.getEncoder().withoutPadding() emits no `=` ever, and its output differs from url-safe
-        // whenever a `+` or `/` falls anywhere in the ~130 printed characters — 2944 of 3000 draws,
-        // measured. Those 98 in 100 are already caught by value, because Base64Url decodes strictly.
-        // What is left is the other 56: draws where the two encodings are byte-identical and no check
-        // on the value can tell them apart. So this pin closes a 1-in-50 escape, not a common one —
-        // small, but the kind that merges green and then fails for a reader whose own draw is ordinary.
-        //
-        // A behaviour check would do the same job: one more probe calling the snippet's own encoder on
-        // a fixed input (`new byte[] {-1, -1}` prints `__8` url-safe, `//8` standard). It was weighed
-        // and not taken — it pins the name `base64url` exactly as this line does, and shares the same
-        // recorded limit, so it buys no determinism this does not already have.
-        //
-        // Everything else the snippet does IS covered by value on every draw and whatever statement
-        // produced it — a wrong curve fails the on-curve check, a missing 0x04 fails VapidKeys, a
-        // renamed or deleted helper fails the probes — so pinning those as text would only add ways to
-        // fail a correct rename, which is how a guard earns its own deletion.
+        // The encoder: padding is covered by value on every draw, since 65 and 32 are both 2 mod 3
+        // and a padded encoder therefore always leaves a trailing "=". The alphabet is not, because
+        // url-safe and standard output coincide on roughly one draw in fifty.
         assertThat(statements(body))
                 .as("what the printed value cannot show: that fixed32 is still called, and the encoder's alphabet")
                 .contains(
@@ -201,8 +159,7 @@ class ReadmeVapidKeyGenerationTest {
      *
      * <p>The normalisation is what keeps the pins from crying wolf — annotating a still-correct line, re-indenting it
      * or adjusting spacing inside it must not fail a build, or the guard is the thing that gets deleted. It is not a
-     * Java parser: a {@code //} inside a string literal would be cut, and a block comment is not recognised at all,
-     * which is why {@link #readmeCarriesTheAnchoredBlockWithTheDocumentedHeredocWrapper} refuses one outright.
+     * Java parser and does not need to be: it reads a snippet nobody is trying to disguise.
      */
     private static List<String> statements(String body) {
         return body.lines()
@@ -258,17 +215,15 @@ class ReadmeVapidKeyGenerationTest {
         Map<String, String> printed = probeResults(result.printed());
 
         for (Fixed32Probe probe : FIXED32_PROBES) {
-            // "<toByteArray().length> <fixed32 output in hex>" — the length is asserted too, so a probe that stopped
-            // covering the shape it was chosen for fails here rather than passing for a reason nobody wanted.
             // "%s" with a prebuilt message: stderr is arbitrary text and would be read as a format string otherwise.
             assertThat(printed)
                     .as(
                             "%s",
                             "fixed32(" + probe.expression() + "), from the block between " + BEGIN_ANCHOR + " and "
-                                    + END_ANCHOR + " in " + readme() + " — a " + probe.encodedLength()
-                                    + "-byte encoding, which is where a padding mistake shows.\nstderr:\n"
+                                    + END_ANCHOR + " in " + readme() + " — the " + probe.label()
+                                    + " shape, which is where a padding mistake shows.\nstderr:\n"
                                     + result.diagnostics())
-                    .containsEntry(probe.label(), probe.encodedLength() + " " + probe.expectedHex());
+                    .containsEntry(probe.label(), probe.expectedHex());
         }
     }
 
@@ -304,22 +259,21 @@ class ReadmeVapidKeyGenerationTest {
 
         List<String> probes = new ArrayList<>();
         for (Fixed32Probe probe : FIXED32_PROBES) {
-            // Prints: probe <label> <toByteArray().length> <32 bytes of fixed32 output, hex>. HexFormat is qualified
-            // because the snippet imports only what it needs and these lines must not require an import of their own.
-            probes.add("System.out.println(\"probe " + probe.label() + " \" + (" + probe.expression()
-                    + ").toByteArray().length + \" \" + java.util.HexFormat.of().formatHex(fixed32("
-                    + probe.expression() + ")));");
+            // Prints: probe <label> <32 bytes of fixed32 output, hex>. HexFormat is qualified because the snippet
+            // imports only what it needs and these lines must not require an import of their own.
+            probes.add("System.out.println(\"probe " + probe.label() + " \" + java.util.HexFormat.of().formatHex("
+                    + "fixed32(" + probe.expression() + ")));");
         }
         lines.addAll(exit, probes);
         return String.join("\n", lines) + "\n";
     }
 
-    /** The probe lines out of the run's output, as label → "{@code <encoded length> <fixed32 output in hex>}". */
+    /** The probe lines out of the run's output, as label → {@code fixed32}'s output in hex. */
     private static Map<String, String> probeResults(String printed) {
         Map<String, String> results = new LinkedHashMap<>();
         Matcher matcher = PROBE_LINE.matcher(printed);
         while (matcher.find()) {
-            results.put(matcher.group(1), matcher.group(2) + " " + matcher.group(3));
+            results.put(matcher.group(1), matcher.group(2));
         }
         return results;
     }
