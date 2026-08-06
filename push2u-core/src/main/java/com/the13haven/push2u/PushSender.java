@@ -31,6 +31,11 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a store on expiry is
  * expected control flow, not an error.
+ *
+ * <p><b>A built sender is immutable and thread-safe.</b> It holds configuration only and derives everything a send
+ * needs inside the call, so it is built once and shared across threads — {@link #sendAsync} makes concurrent sends the
+ * normal case rather than an edge one. The same obligation therefore falls on the three SPIs it calls
+ * ({@link VapidSigner}, {@link PushHttpClient}, {@link EndpointPolicy}), each of which states it.
  */
 public final class PushSender {
 
@@ -49,7 +54,8 @@ public final class PushSender {
     @Nullable
     private final Executor executor;
     /**
-     * {@code null} means no policy — the historical any-https-endpoint behaviour; see {@link Builder#endpointPolicy}.
+     * {@code null} means no policy — any endpoint satisfying {@link Endpoints#requireSecure} is sent to; see
+     * {@link Builder#endpointPolicy}.
      */
     @Nullable
     private final EndpointPolicy endpointPolicy;
@@ -135,6 +141,10 @@ public final class PushSender {
      * @throws IllegalArgumentException if the payload does not fit the configured body limit, or if the configured
      *     record size is too small for it
      * @throws EndpointRejectedException if the configured endpoint policy rejects the subscription's endpoint
+     * @throws PushCryptoException if the encryption or the VAPID signature cannot be produced — including a
+     *     {@link VapidSigner} whose remote key service is unreachable or refuses the operation, which may be transient
+     * @throws PushDeliveryException if the transport fails to complete the request; an HTTP error status is not this
+     *     but a {@link PushResult}
      */
     // PreserveStackTrace / AvoidThrowingNewInstanceOfSameException: URI.create's own
     // IllegalArgumentException carries the raw capability URL, so it is replaced by one built from
@@ -465,11 +475,12 @@ public final class PushSender {
          * VAPID signature and before any network I/O; a rejected endpoint throws {@link EndpointRejectedException} and
          * costs none of them.
          *
-         * <p>Off by default, for backward compatibility: with no policy configured the sender keeps its historical
-         * contract and POSTs to any endpoint satisfying {@link Endpoints#requireSecure} — including loopback,
-         * private-range and cloud-metadata addresses. Any integration whose subscriptions arrive from clients should
-         * configure one, typically {@link EndpointPolicies#allowedOrigins}; {@link EndpointPolicy} documents the threat
-         * model and the limits of a URI-level check.
+         * <p>Off by default, and deliberately so: which hosts an application server may POST to is a statement about a
+         * deployment's egress, which the library cannot make on its behalf. With no policy configured the sender POSTs
+         * to any endpoint satisfying {@link Endpoints#requireSecure} — including loopback, private-range and
+         * cloud-metadata addresses. Any integration whose subscriptions arrive from clients should configure one,
+         * typically {@link EndpointPolicies#allowedOrigins}; {@link EndpointPolicy} documents the threat model and the
+         * limits of a URI-level check.
          *
          * @param endpointPolicy the policy to validate each endpoint against
          * @return this builder

@@ -6,13 +6,18 @@
 package com.the13haven.push2u;
 
 /**
- * Thrown when a cryptographic primitive cannot be set up or executed — a genuine misconfiguration (a required JCE
- * algorithm/provider is missing, an invalid key, a malformed EC point), never a normal protocol outcome.
+ * Thrown when a cryptographic operation cannot be set up or carried out — a required JCE algorithm or provider is
+ * missing, a key is invalid, an EC point is malformed, or a {@link VapidSigner} could not produce the VAPID signature.
+ * Never a normal protocol outcome: a dead subscription is a {@code PushResult}, not an exception.
  *
- * <p>Unchecked on purpose: the library's contract is that the public surface throws only on genuine errors, and a
- * missing {@code AES/GCM/NoPadding} or {@code HmacSHA256} is a deployment fault the caller cannot meaningfully recover
- * from at the call site. A dead subscription, by contrast, is a normal protocol outcome and therefore a
- * {@code PushResult}, not an exception.
+ * <p>Unchecked on purpose: the library's contract is that the public surface throws only on genuine errors, and none of
+ * these is something the call site can correct by trying differently.
+ *
+ * <p><b>Not every occurrence is permanent.</b> A missing {@code AES/GCM/NoPadding} or {@code HmacSHA256} is a
+ * deployment fault that will fail identically on the next send, and wants an alert rather than a retry. A
+ * {@link VapidSigner} backed by a remote key service reports its transport failures as this exception too — the Vault
+ * Transit signer does so for a request timeout and for a dropped connection — and those are transient by nature. One
+ * type covers both on purpose; the message and the cause chain, not the type, say which happened.
  */
 public class PushCryptoException extends RuntimeException {
 

@@ -23,6 +23,11 @@ package com.the13haven.push2u;
  * that forwards its provider's output unconverted looks correct until a push service rejects it. Ask the provider for
  * {@code SHA256withECDSAinP1363Format}, or convert before returning — the library does exactly that for its own signer
  * but cannot do it here, since these bytes arrive from an implementation whose provider and encoding are unknown.
+ *
+ * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
+ * {@link PushSender#sendAsync} makes concurrent calls the normal case. This is not checkable by the conformance kit,
+ * and the natural mistake is silent: {@code java.security.Signature} is not thread-safe, so one held in a field
+ * corrupts signatures under concurrency instead of failing. Obtain per-call instances, or confine them to a thread.
  */
 public interface VapidSigner {
 
@@ -35,6 +40,9 @@ public interface VapidSigner {
      *
      * @param signingInput the ASCII JWT signing input
      * @return the raw {@code r || s} ES256 signature (64 bytes for P-256), owned by the caller
+     * @throws PushCryptoException if no signature can be produced — the key is unusable or refused, or a remote key
+     *     service is unreachable, timed out or rejected the operation. Failing is the contract; returning a placeholder
+     *     or a zero-filled array would reach the push service as an opaque 401.
      */
     byte[] sign(byte[] signingInput);
 
@@ -47,6 +55,8 @@ public interface VapidSigner {
      * {@code clone()}, and the {@code push2u-testkit} conformance kit checks it by array identity.
      *
      * @return the 65-byte uncompressed public key, a fresh copy owned by the caller
+     * @throws PushCryptoException if the key cannot be produced — it is unusable, or a remote key service holding it is
+     *     unreachable, timed out or refused to publish it
      */
     byte[] publicKey();
 }

@@ -27,6 +27,10 @@ import com.the13haven.push2u.PushCryptoException;
  * {@code X-Vault-Token} included, against whatever host the {@code Location} names, which for a hijacked or
  * mis-resolved Vault address is an attacker), and must never echo request headers (the Vault token travels in
  * {@code X-Vault-Token}) into exception messages.
+ *
+ * <p><b>Implementations must be thread-safe.</b> The transport is held by a signer, which is held by a
+ * {@code PushSender} shared across threads: with asynchronous sending, concurrent {@link #post} calls are the normal
+ * case. Per-request state belongs in the call rather than in a field.
  */
 public interface VaultHttpTransport {
 

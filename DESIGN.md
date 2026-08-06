@@ -191,9 +191,10 @@ Optional settings control the HTTP transport, async executor, JCE provider, retr
 expiry, default TTL, RFC 8188 record size, the maximum encrypted body size, and the endpoint
 policy. The record size and body size are validated when configured: `recordSize` must be at
 least 18 (RFC 8188 §2) and `maxEncryptedBodyBytes` must be at least the fixed 103-byte overhead —
-the body an empty payload produces. The endpoint policy is off by default (backward
-compatibility: with no policy, any endpoint satisfying `Endpoints.requireSecure` is sent to) and
-is described under its SPI below.
+the body an empty payload produces. The endpoint policy is off by default — with no policy, any
+endpoint satisfying `Endpoints.requireSecure` is sent to — because which hosts a deployment may
+POST to is a statement about its egress that the library cannot make on its behalf; it is described
+under its SPI below.
 
 ### VapidSigner
 

@@ -36,6 +36,11 @@ import java.net.URI;
  * the name, verify the address, connect to what was verified), per the <a
  * href="https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html">OWASP
  * SSRF Prevention Cheat Sheet</a>. The policy is a coarse filter, not a sandbox.
+ *
+ * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
+ * {@link PushSender#sendAsync} makes concurrent {@link #validate} calls the normal case; a policy keeping mutable state
+ * — a resolution cache, a counter — has to guard it. The policy {@link EndpointPolicies#allowedOrigins} returns closes
+ * over an immutable set and needs none.
  */
 @FunctionalInterface
 public interface EndpointPolicy {
