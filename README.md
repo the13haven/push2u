@@ -99,9 +99,9 @@ from and how long it lives. The contact is used as the VAPID `sub` claim and sho
 or `https:` URI. RFC 8292 §2.1 leaves `sub` optional; push2u requires it, because a push service
 with a problem to report about your application server has no other way to reach you. It is
 therefore a parameter of the factory method — omitting it does not compile, and a blank one is
-rejected with an `IllegalArgumentException`. To delegate signing to
-an external `VapidSigner` (for example the [Vault Transit signer](#vault-transit-signer)), pass the
-signer instead of the keys: `PushSender.builder(signer, "mailto:ops@example.com")`.
+rejected with an `IllegalArgumentException`. To delegate signing to an external `VapidSigner` (for
+example the [Vault Transit signer](#vault-transit-signer)), pass the signer instead of the keys:
+`PushSender.builder(signer, "mailto:ops@example.com")`.
 
 A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
 and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
@@ -470,8 +470,7 @@ trust domain and its responses must be read.
 `JdkPushHttpClient(HttpClient, Duration)` and `JdkVaultHttpTransport(HttpClient, Duration, int)`
 reject a client whose `followRedirects()` is anything else, with an `IllegalArgumentException`
 naming the policy it found — under the Vault starter, where a `push2uVaultHttpClient`-qualified
-`HttpClient` bean is the supported injection point ([`VAULT.md`](VAULT.md#vault-http-transport) has
-both), that surfaces as a startup failure. Every
+`HttpClient` bean is the supported injection point, that surfaces as a startup failure. Every
 `HttpClient` the library builds for itself sets `Redirect.NEVER` explicitly rather than relying on
 the JDK's default:
 
