@@ -151,10 +151,18 @@ class ReadmeVapidKeyGenerationTest {
         // two more characters. Refusing block comments outright turns that assumption into something
         // checked, and costs the snippet nothing: it has none, and a snippet a reader is meant to
         // paste has no use for them.
+        // statements() strips line comments and is not a Java parser, so anything that hides a pinned
+        // statement from javac while leaving it a plain line here defeats the pins below. Three rounds
+        // of review found three such syntaxes, one per round — a line comment, then a block comment,
+        // then a text block. Rather than wait for the fourth, refuse the three things any of them
+        // needs: a block-comment opener, a text block, and a backslash, which is what a \\u002f escape
+        // would need to spell a comment the search cannot see. The snippet has none of them and no
+        // use for any of them.
         assertThat(body)
-                .as("the snippet must contain neither a block comment nor a text block — see statements()")
+                .as("the snippet must contain no block comment, text block or escape — see statements()")
                 .doesNotContain("/*")
-                .doesNotContain("\"\"\"");
+                .doesNotContain("\"\"\"")
+                .doesNotContain("\\");
 
         // Every pin below is a whole statement, normalised by statements(). The values the snippet
         // prints are random, so no run can prove a call is still there; text is the only deterministic
