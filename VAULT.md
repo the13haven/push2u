@@ -139,10 +139,13 @@ one — in the fetched mode the version comes from Vault, with the public key it
 Leaving `keyVersion` (or the `key-version` property) out sends no `key_version`; Vault then signs
 with its latest version. Use that form only when the Transit key is guaranteed never to rotate.
 
-An explicitly supplied `public-key` is checked structurally only — 65 bytes with the `0x04`
-uncompressed tag. It is not verified to be a point on P-256, and nothing can check here that it is
-the public half of the Transit key being signed with; both remain the caller's responsibility. The
-P-256 validation described under *Fetched public key* applies to that mode alone.
+An explicitly supplied `public-key` is validated as a point on P-256 — 65 bytes with the `0x04`
+uncompressed tag, coordinates in the field, the curve equation satisfied — because the
+`VapidSigner` contract requires exactly that of `publicKey()`, and no legal VAPID key can fail the
+check. What nothing can check here is that it is the public half of the Transit key being signed
+with; that remains the caller's responsibility, and a mismatch surfaces on the first signature as a
+push-service rejection of the JWT. The Vault-side validation described under *Fetched public key*
+(the Transit `type`, the atomic version/key pair) applies to that mode alone.
 
 ## Vault namespaces (Enterprise / HCP)
 

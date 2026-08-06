@@ -60,10 +60,12 @@ import com.the13haven.push2u.VapidSigner;
  *       performs no I/O. The Vault token then needs only the {@code sign} capability ({@code update} on
  *       {@code transit/sign/<key>}); the public key is never read from Vault. Use this for a strict sign-only token or
  *       an air-gapped public key.
- *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04} uncompressed tag. It
- *       is not verified to be a point on P-256, and nothing here can check that it is the public half of the Transit
- *       key being signed with: that remains the caller's responsibility. The P-256 validation described below applies
- *       to the fetched mode alone.
+ *       <p>The supplied key is validated as a <em>point on P-256</em> — 65 bytes with the {@code 0x04} uncompressed
+ *       tag, both coordinates in the field, the curve equation satisfied — because the {@link VapidSigner} contract
+ *       requires exactly that of {@code publicKey()}, and no legal VAPID key can fail it. What nothing here can check
+ *       is that it is the public half of the Transit key being signed with: that remains the caller's responsibility,
+ *       and a mismatch surfaces on the first signature, as a push-service rejection of the JWT. The Vault-side
+ *       validation described below applies to the fetched mode alone.
  *   <li><b>Fetched</b> ({@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}) — omit the public key.
  *       The signer reads {@code transit/keys/<key>} once, inside {@code build()} (a {@code GET}), takes the
  *       {@code latest_version} and <em>that version's</em> public key as an atomic pair, and reduces the PEM to the
@@ -186,7 +188,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
      *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
-     *     contract; a production address must be {@code https})
+     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
+     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
+     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
      *     (this mode reads the key metadata)
@@ -206,13 +210,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
      *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
-     *     contract; a production address must be {@code https})
+     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
+     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
+     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key — this mode never reads the key metadata, so a
      *     sign-only token is enough
-     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed point on the P-256 curve, validated here
+     *     ({@link P256PublicKeys#requireOnCurve}) because the {@link VapidSigner} contract requires it; that it is the
+     *     public half of the Transit key remains the caller's responsibility
      * @return a new builder
-     * @throws IllegalArgumentException if {@code publicKey} is not a 65-byte uncompressed point, or if {@code address}
+     * @throws IllegalArgumentException if {@code publicKey} does not encode a point on P-256, or if {@code address}
      *     violates the contract of {@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}
      */
     public static SuppliedPublicKeyBuilder builderWithSuppliedPublicKey(
@@ -233,10 +241,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
         Objects.requireNonNull(publicKey, "publicKey");
-        // Structural on purpose — 65 bytes, 0x04 tag, via the core's shared check. See the class
-        // Javadoc: a supplied key's real check is agreement with the Transit key, which nothing
-        // here can perform, and the fetched mode's key was curve-checked in fetchKeyMetadata.
-        P256PublicKeys.requireUncompressedPoint(publicKey, "publicKey");
+        // The full on-curve check: the VapidSigner contract (and the published conformance kit)
+        // requires publicKey() to return a point on P-256, so a signer violating it must be
+        // unbuildable. For the fetched mode's array this re-checks what fetchKeyMetadata already
+        // validated; what no check here can establish is the supplied key's agreement with the
+        // Transit key — that surfaces on the first signature (see the class Javadoc).
+        P256PublicKeys.requireOnCurve(publicKey, "publicKey");
         if (keyVersion != null && keyVersion < 1) {
             throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
         }
@@ -1213,9 +1223,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // The key is copied at the factory method, not only in the constructor the builder
         // eventually calls: otherwise the caller's array stays live for as long as the builder
         // does, and a mutation between builderWithSuppliedPublicKey(...) and build() would change
-        // the advertised key. Its shape is also checked here, so an invalid key fails at the
-        // factory call that supplied it (the canonical constructor re-checks the same invariant
-        // for the fetched mode's array).
+        // the advertised key. It is also validated here — the full on-curve check — so an invalid
+        // key fails at the factory call that supplied it (the canonical constructor re-checks the
+        // same invariant for the fetched mode's array).
         private SuppliedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token, byte[] publicKey) {
             // Validated here, like the key below, so the failure points at the factory call that
             // supplied the value (build() must never refuse over it).
@@ -1223,7 +1233,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             this.keyName = Objects.requireNonNull(keyName, "keyName");
             this.token = Objects.requireNonNull(token, "token");
             Objects.requireNonNull(publicKey, "publicKey");
-            P256PublicKeys.requireUncompressedPoint(publicKey, "publicKey");
+            P256PublicKeys.requireOnCurve(publicKey, "publicKey");
             this.publicKey = publicKey.clone();
         }
 

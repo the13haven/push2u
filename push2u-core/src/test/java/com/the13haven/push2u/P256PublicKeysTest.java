@@ -93,7 +93,8 @@ class P256PublicKeysTest {
     @Test
     void theStructuralCheckDoesNotInspectTheCoordinates() {
         // Structural only, by contract: all-zero coordinates are not a point on the curve, but
-        // they have the right shape — the case the Vault signer's supplied-key mode relies on.
+        // they have the right shape. The method exists for call sites where a stronger check
+        // follows — the send pipeline's decoder re-validates against the provider's parameters.
         byte[] zeroCoordinates = new byte[P256PublicKeys.UNCOMPRESSED_LENGTH];
         zeroCoordinates[0] = 0x04;
 

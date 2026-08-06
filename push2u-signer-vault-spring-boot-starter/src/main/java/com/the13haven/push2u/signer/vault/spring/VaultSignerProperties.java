@@ -32,8 +32,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param keyName the {@code ecdsa-p256} Transit key name
  * @param token the Vault token authorising {@code sign} on the key (plus {@code read} on {@code transit/keys/<key>}
  *     when {@code publicKey} is omitted)
- * @param publicKey the VAPID public key as base64url (the 65-byte uncompressed P-256 point); <b>optional</b> — when
- *     null/blank the signer reads it from Vault at startup
+ * @param publicKey the VAPID public key as base64url (the 65-byte uncompressed point, which must encode a point on the
+ *     P-256 curve); <b>optional</b> — when null/blank the signer reads it from Vault at startup
  * @param keyVersion the Transit key version {@code publicKey} belongs to, pinned on every sign request; <b>optional</b>
  *     and only valid together with {@code publicKey} (the fetched mode pins the version it reads from Vault itself).
  *     Without it the explicit mode signs with Vault's latest version, which breaks after a key rotation — set it

@@ -443,8 +443,11 @@ No traversal route through OSS Vault is claimed here.
 - **Explicit mode:** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. Omitting `keyVersion`
   uses Vault's latest version and is safe only for a key that never rotates.
-  The supplied key is checked structurally only (65 bytes, `0x04` tag) — neither its point nor its
-  correspondence to the Transit key can be established here; both stay with the caller.
+  The supplied key gets the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner`
+  contract — pinned by the published conformance kit — requires `publicKey()` to return a point on
+  P-256, so a signer violating it must be unbuildable, and no legal VAPID key can fail the check.
+  Its correspondence to the Transit key cannot be established here and stays with the caller; a
+  mismatch surfaces on the first signature as a push-service rejection.
 
 Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form. A
 pinned signer also sends `key_version`; taking the version and public key from the same metadata

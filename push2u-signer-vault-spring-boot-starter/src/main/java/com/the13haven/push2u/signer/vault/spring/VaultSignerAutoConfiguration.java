@@ -134,13 +134,13 @@ public final class VaultSignerAutoConfiguration {
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
-        // The factory validates two of its arguments — the supplied key's shape and the address — so
-        // one translated call could not attribute a rejection to the right property. The key is
-        // probed first with the same core check the factory applies; whatever IllegalArgumentException
-        // then escapes the factory call is the address's.
+        // The factory validates two of its arguments — the supplied key (the full on-curve check)
+        // and the address — so one translated call could not attribute a rejection to the right
+        // property. The key is probed first with the same core check the factory applies; whatever
+        // IllegalArgumentException then escapes the factory call is the address's.
         byte[] decodedPublicKey = decodePublicKey(publicKey);
         translated("push2u.signer.vault.public-key", () -> {
-            P256PublicKeys.requireUncompressedPoint(decodedPublicKey, "public-key");
+            P256PublicKeys.requireOnCurve(decodedPublicKey, "public-key");
             return decodedPublicKey;
         });
         VaultTransitVapidSigner.SuppliedPublicKeyBuilder builder = translated(

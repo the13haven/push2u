@@ -179,10 +179,10 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
-    void aStructurallyInvalidPublicKeyFailsNamingTheProperty() {
-        // The supplied-key factory validates both the address and the key's shape; the starter
-        // probes the key first so each rejection is attributed to its own property — this pins
-        // that a bad key is never mislabelled as a bad address.
+    void anInvalidPublicKeyFailsNamingTheProperty() {
+        // The supplied-key factory validates both the address and the key (the full on-curve
+        // check); the starter probes the key first so each rejection is attributed to its own
+        // property — this pins that a bad key is never mislabelled as a bad address.
         vaultRunner()
                 .withPropertyValues("push2u.signer.vault.public-key="
                         + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]))
@@ -191,6 +191,19 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(context.getStartupFailure())
                             .hasStackTraceContaining("push2u.signer.vault.public-key")
                             .hasStackTraceContaining("65-byte uncompressed");
+                });
+        // The right shape, off the curve — the VapidSigner contract requires a point on P-256,
+        // so a corrupted configured key fails startup instead of drawing a push-service 401.
+        byte[] offCurve = Base64.getUrlDecoder().decode(publicKeyB64);
+        offCurve[64] ^= 0x01;
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.public-key="
+                        + Base64.getUrlEncoder().withoutPadding().encodeToString(offCurve))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.public-key")
+                            .hasStackTraceContaining("curve equation");
                 });
     }
 

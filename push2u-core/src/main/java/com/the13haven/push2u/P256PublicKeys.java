@@ -17,8 +17,8 @@ import java.util.Objects;
  * <ul>
  *   <li>{@link #requireUncompressedPoint} is <b>structural</b>: 65 bytes opening with the {@code 0x04} uncompressed
  *       tag. It refuses a compressed point, a raw coordinate pair, or a truncated copy-paste — the wrong <em>shape</em>
- *       — but says nothing about the content. Enough where a stronger check follows elsewhere, as with the Vault
- *       signer's supplied public key, whose real check is agreement with the Transit key.
+ *       — but says nothing about the content. Enough where a stronger check follows elsewhere — the send pipeline's own
+ *       decoder applies it first and then re-validates the point against the configured provider's parameters.
  *   <li>{@link #requireOnCurve} is the <b>full</b> check: structural, then both coordinates inside the P-256 prime
  *       field ({@code 0 <= x, y < p}) and the point satisfying the short Weierstrass equation {@code y² = x³ + ax + b
  *       (mod p)}. Only a value passing it can be a P-256 public key at all.

@@ -52,17 +52,17 @@ class VaultTransitVapidSignerAddressTest {
         }
     }
 
-    private static byte[] structuralPublicKey() {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
-        return publicKey;
+    /** A genuine P-256 point (the RFC 8291 §5 user-agent key): the supplied key is validated against the curve. */
+    private static byte[] validPublicKey() {
+        return Base64.getUrlDecoder()
+                .decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
     }
 
     /** The sign URI the explicit-mode signer actually POSTs to for {@code address}. */
     private static URI signUriFor(String address) {
         UriRecordingTransport transport = new UriRecordingTransport();
         VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        URI.create(address), new TransitKeyName("vapid"), new VaultToken(TOKEN), structuralPublicKey())
+                        URI.create(address), new TransitKeyName("vapid"), new VaultToken(TOKEN), validPublicKey())
                 .transport(transport)
                 .build()
                 .sign("address probe".getBytes(StandardCharsets.UTF_8));
@@ -194,7 +194,7 @@ class VaultTransitVapidSignerAddressTest {
                         URI.create("https://gw.example/vault/../sys"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
-                        structuralPublicKey()))
+                        validPublicKey()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("'..' segment");
     }
@@ -207,7 +207,7 @@ class VaultTransitVapidSignerAddressTest {
                         URI.create("http://127.0.0.1:8200"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
-                        structuralPublicKey()))
+                        validPublicKey()))
                 .doesNotThrowAnyException();
     }
 }
