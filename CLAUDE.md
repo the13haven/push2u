@@ -17,11 +17,13 @@ set as verified facts, so anything added there must be checked against the publi
 `RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of the
 conventions below, and `SECURITY.md` the vulnerability policy.
 
-**A `com.the13haven:<module>:X.Y.Z` coordinate belongs in `README.md` and nowhere else.** The
-pre-release hook rewrites every one of them, in that file only, so the same string written into
-`VAULT.md`, `SPRING.md`, `MIGRATION.md` or anywhere else freezes at whatever version it was written
-with and starts lying at the next release. Those documents point at README's Installation section
-instead.
+**A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
+nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
+string written into `VAULT.md`, `SPRING.md`, `MIGRATION.md` or anywhere else freezes at whatever
+version it was written with and starts lying at the next release. Those documents point at README's
+Installation section instead. The exception is a document that is *about* one version and is never
+read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a frozen
+coordinate there is correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main`. It loads automatically alongside this file.
