@@ -15,9 +15,10 @@ and Spring Boot auto-configuration.
 
 Releases are published to Maven Central under the `com.the13haven` group ID. The version is
 derived from git tags of the form `vX.Y.Z`; between releases the build identifies itself as the
-next `X.Y.Z-SNAPSHOT`, which is not published anywhere — anything ahead of the latest release is
-consumed through the [composite build](#developing-against-unpublished-changes) below. The
-implemented architecture is described in [`DESIGN.md`](DESIGN.md).
+next `X.Y.Z-SNAPSHOT`, which is not published anywhere — building against changes ahead of the
+latest release is covered in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#developing-against-unpublished-changes). The implemented
+architecture is described in [`DESIGN.md`](DESIGN.md).
 
 Coming from `nl.martijndwars:web-push`? [`MIGRATION.md`](MIGRATION.md) maps the two APIs onto each
 other, lists the 26 transitive artifacts and the BouncyCastle provider registration a migration
@@ -38,45 +39,13 @@ limits, `aes128gcm` only, and a VAPID private key that has to be exactly 32 byte
 - Optional HashiCorp Vault Transit signer.
 - Optional Spring Boot 4 auto-configuration and health indicator.
 
-## Modules
-
-| Module | Purpose | JPMS module name |
-|---|---|---|
-| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
-| `push2u-testkit` | The `VapidSigner` conformance contract, for a **test** classpath | `com.the13haven.push2u.testkit` |
-| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
-| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
-| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
-
-`push2u-core` and `push2u-signer-vault` are explicit JPMS modules — they ship a `module-info.java`
-and work on the module path as they do on the class path:
-
-```java
-module com.example.app {
-    requires com.the13haven.push2u;
-}
-```
-
-The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
-its own configured `HttpClient` to `JdkPushHttpClient` does not have to require it as well. JSpecify
-is a `requires static`, so nothing resolves that jar at runtime and the module stays dependency-free
-on the module path exactly as it is on the class path. You do not need JSpecify to compile against
-push2u — the nullness annotations are readable from the class files either way. You need it only if
-something reads them reflectively at runtime, and then the module has to be added explicitly
-(`--add-modules org.jspecify`), because a `static` requires is not resolved on its own.
-
-The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
-Boot's own artifacts are automatic modules and its auto-configuration is reflective. `push2u-testkit`
-is likewise automatic: it carries JUnit and AssertJ, which are automatic modules themselves.
-
 ## Requirements
 
 - Java 21 or newer at runtime.
 - A VAPID P-256 key pair ([how to get one](#vapid-keys)), or an implementation of `VapidSigner`.
 - An HTTPS Web Push subscription endpoint containing the browser-provided `p256dh` and `auth`
   values.
-
-The build uses a JDK 26 toolchain with `--release 21`. Run it with the included Gradle wrapper.
+- Spring Boot 4.x, for either of the two starters — see [Spring Boot](#spring-boot).
 
 ## Installation
 
@@ -91,18 +60,57 @@ dependencies {
 The Spring Boot starters and the Vault signer module use the same group ID and version; the
 sections below show which module each integration needs.
 
-### Developing against unpublished changes
+## Quick start
 
-To build against changes that have not been released yet, include this repository as a Gradle
-composite build:
+The browser supplies the endpoint, `p256dh`, and `auth` values. JSON parsing remains an
+application responsibility. Use only the HTTPS endpoint returned by the browser, and treat the
+complete endpoint as a secret: Web Push endpoints are capability URLs.
 
-```kotlin
-// settings.gradle.kts
-includeBuild("../push2u")
+```java
+Subscription subscription = Subscription.fromBase64(
+    browserSubscription.endpoint(),
+    browserSubscription.p256dh(),
+    browserSubscription.auth());
+
+PushSender sender = PushSender.builder(
+        VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com")
+    .build();
+
+PushMessage message = PushMessage.builder(payloadBytes)
+    .ttl(Duration.ofHours(1))
+    .urgency(Urgency.NORMAL)
+    .topic("account_update")
+    .build();
+
+PushResult result = sender.send(subscription, message);
+
+if (result.isDelivered()) {
+    // The push service accepted the message.
+} else if (result.isSubscriptionExpired()) {
+    subscriptionStore.delete(subscription);
+} else {
+    log.warn("Push rejected: HTTP {}, attempts={}",
+        result.statusCode(), result.attempts());
+}
 ```
 
-The dependency declarations stay exactly as above — Gradle substitutes the included build for
-the published Maven Central artifact.
+`VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
+scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
+from and how long it lives. The contact is used as the VAPID `sub` claim and should be a `mailto:`
+or `https:` URI. RFC 8292 §2.1 leaves `sub` optional; push2u requires it, because a push service
+with a problem to report about your application server has no other way to reach you. It is
+therefore a parameter of the factory method — omitting it does not compile. To delegate signing to
+an external `VapidSigner` (for example Vault Transit, below), pass the signer instead of the keys:
+`PushSender.builder(signer, "mailto:ops@example.com")`.
+
+A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
+and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
+has to be thread-safe for the same reason; the ones shipped here are.
+
+`404` and `410` are returned as `SUBSCRIPTION_EXPIRED`, not as exceptions. Transport failures
+throw `PushDeliveryException`; cryptographic failures throw `PushCryptoException`. When present,
+`topic` is validated locally before transport: it must contain 1–32 characters from the URL-safe
+Base64 alphabet (`A-Z`, `a-z`, `0-9`, `-`, `_`) required by RFC 8030.
 
 ## VAPID keys
 
@@ -183,23 +191,19 @@ That block is POSIX-shell syntax — `bash`, `zsh` or `sh`. On PowerShell or `cm
 between the `jshell -q - <<'EOF'` line and the closing `EOF` to a file, say `vapid.jsh`, and run
 `jshell -q vapid.jsh` instead.
 
-**`fixed32` is the reason this is longer than a three-liner, and it is not optional.** `BigInteger`
-values are what the JCA hands out, and `toByteArray()` is a two's-complement encoding, not a fixed
-32-byte field element. Over 3000 generated pairs it returned **33 bytes for 1504 of them** — a
-leading `0x00` sign byte whenever the high bit is set. That is exactly the defect
+**`fixed32` is the reason this is longer than a three-liner, and it is not optional.** The JCA hands
+out `BigInteger` coordinates, and `toByteArray()` is a two's-complement encoding rather than a fixed
+32-byte field element: it prepends a `0x00` sign byte whenever the high bit is set — about half of
+all generated pairs — and drops leading zeros, returning fewer than 32 bytes about once in two
+hundred. So "strip the sign byte" is wrong half the time, and "strip but do not left-pad" is wrong
+once in two hundred — the worse of the two, because the key looks perfectly fine right up to the
+point where a signature does not verify. That second defect is exactly the one
 `nl.martijndwars:web-push`'s own generator has (see
-[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)). In the other direction, 7 scalars and 10 X
-coordinates came back **shorter than 32 bytes**, because leading zeros are dropped — npm's
-`web-push` carries a patch for precisely that case. So "strip the sign byte" is wrong about half the
-time and "strip but do not left-pad" is wrong about once in two hundred, which is the worse of the
-two: the key looks perfectly fine right up to the point where a signature does not verify. Copying
-the block whole avoids both.
-
-push2u's own test suite executes this block straight out of this file, so what is checked is what
-you see here: it runs the whole thing and feeds the printed pair to `VapidKeys.fromBase64` and
-`LocalEcVapidSigner`, then calls this `fixed32` on fixed values covering each *shape*
-`toByteArray()` produces — 33 bytes, exactly 32, fewer, and one — and compares all 32 output bytes.
-An edit that breaks the padding fails the build rather than waiting for an unlucky key.
+[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)); copying the block whole avoids both. push2u's
+own test suite executes this block straight out of this file — feeding the printed pair to
+`VapidKeys.fromBase64` and `LocalEcVapidSigner`, and calling this `fixed32` on fixed values covering
+each shape `toByteArray()` produces — so an edit that breaks the padding fails the build rather than
+waiting for an unlucky key.
 
 If you already have Node.js around, the npm `web-push` package prints the same two values in the
 same encoding, and either source is equally good:
@@ -228,9 +232,8 @@ push2u:
 ```
 
 With the core alone, through `VapidKeys.fromBase64(publicKey, privateKey)` — see
-[Create a sender with a local VAPID key](#create-a-sender-with-a-local-vapid-key). Either way the
-public key is also what the browser needs as `applicationServerKey`; the private key never leaves
-the application server.
+[Quick start](#quick-start). Either way the public key is also what the browser needs as
+`applicationServerKey`; the private key never leaves the application server.
 
 Holding the private key in a secret store you would rather not hand to the application at all is
 what the [Vault Transit signer](#vault-transit-signer) is for: the key stays in Vault, and push2u
@@ -244,72 +247,9 @@ vault write -f transit/keys/<name> type=ecdsa-p256
 The signer reads the public half from Vault itself; see
 [Vault Transit signer](#vault-transit-signer).
 
-## Core usage
+## Sending in detail
 
-### Create a subscription
-
-The browser supplies the endpoint, `p256dh`, and `auth` values. JSON parsing remains an
-application responsibility:
-
-```java
-Subscription subscription = Subscription.fromBase64(
-    browserSubscription.endpoint(),
-    browserSubscription.p256dh(),
-    browserSubscription.auth());
-```
-
-Use only the HTTPS endpoint returned by the browser. Treat the complete endpoint as a secret:
-Web Push endpoints are capability URLs.
-
-### Create a sender with a local VAPID key
-
-`VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
-scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
-from and how long it lives:
-
-```java
-PushSender sender = PushSender.builder(
-        VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com")
-    .build();
-```
-
-The contact is used as the VAPID `sub` claim and should be a `mailto:` or `https:` URI. RFC 8292
-§2.1 leaves `sub` optional; push2u requires it, because a push service with a problem to report
-about your application server has no other way to reach you. It is therefore a parameter of the
-factory method — omitting it does not compile — and `PushSender.builder(…)` throws
-`IllegalArgumentException` for a whitespace-only value. Everything on the returned builder is
-optional; `build()` has nothing left to refuse.
-
-To delegate signing to an external `VapidSigner` (for example Vault Transit, below), pass the
-signer instead of the keys: `PushSender.builder(signer, "mailto:ops@example.com")`. The two
-overloads differ only in the required key source — exactly one, chosen by the overload.
-
-### Send a message
-
-```java
-PushMessage message = PushMessage.builder(payloadBytes)
-    .ttl(Duration.ofHours(1))
-    .urgency(Urgency.NORMAL)
-    .topic("account_update")
-    .build();
-
-PushResult result = sender.send(subscription, message);
-
-if (result.isDelivered()) {
-    // The push service accepted the message.
-} else if (result.isSubscriptionExpired()) {
-    subscriptionStore.delete(subscription);
-} else {
-    log.warn("Push rejected: HTTP {}, attempts={}",
-        result.statusCode(), result.attempts());
-}
-```
-
-When present, `topic` is validated locally before transport: it must contain 1–32 characters
-from the URL-safe Base64 alphabet (`A-Z`, `a-z`, `0-9`, `-`, `_`) required by RFC 8030.
-
-`404` and `410` are returned as `SUBSCRIPTION_EXPIRED`, not as exceptions. Transport failures
-throw `PushDeliveryException`; cryptographic failures throw `PushCryptoException`.
+### Asynchronous sending
 
 `sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The blocking send
 pipeline runs on a library-owned virtual-thread-per-task executor by default, never on the common
@@ -352,19 +292,6 @@ RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the 
 with a message naming the minimum `rs` it needs. RFC 8188 §2 makes any `rs` below 18 invalid, and
 the builder rejects such values outright.
 
-**Behaviour change.** These limits reject configurations and payloads that earlier versions
-accepted:
-
-- a payload of 3994–4079 bytes (4079 being the largest the old, off-by-one record-size check
-  admitted at the default `rs`) was previously encrypted and sent as a body of up to 4182 bytes;
-  it now throws `IllegalArgumentException` before the request is built;
-- `recordSize` exactly equal to plaintext + 1 + 16 was previously accepted, in violation of the
-  RFC 8291 §4 `MUST`; it is now rejected;
-- `recordSize(int)` now throws for values below 18 instead of accepting them silently;
-- a whitespace-only contact previously built a `PushSender` that would issue a VAPID JWT with a
-  blank `sub` claim; the contact is now a parameter of `PushSender.builder(…)`, which rejects a
-  blank value with `IllegalArgumentException` — and a missing contact no longer compiles at all.
-
 ### Retry behavior
 
 The default policy makes up to three attempts. Backoff starts at one second, doubles after each
@@ -384,7 +311,7 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
 
 Use `RetryPolicy.none()` to disable retries.
 
-### Custom HTTP transport
+## Custom HTTP transport
 
 Implement `PushHttpClient` when the application needs a different HTTP stack, proxy policy, or
 observability integration:
@@ -419,8 +346,8 @@ responses must be read.
 **Supplying your own `java.net.http.HttpClient`.** Build it with `Redirect.NEVER`; both
 `JdkPushHttpClient(HttpClient, Duration)` and `JdkVaultHttpTransport(HttpClient, Duration, int)`
 reject a client whose `followRedirects()` is anything else, with an `IllegalArgumentException`
-naming the policy it found. Under the Vault starter — where a `push2uVaultHttpClient`-qualified
-`HttpClient` bean is the supported injection point — that surfaces as a startup failure. Every
+naming the policy it found — under the Vault starter, where a `push2uVaultHttpClient`-qualified
+`HttpClient` bean is the supported injection point, that surfaces as a startup failure. Every
 `HttpClient` the library builds for itself sets `Redirect.NEVER` explicitly rather than relying on
 the JDK's default:
 
@@ -449,7 +376,7 @@ the active node's `api_addr` (or a load balancer in front of it), or terminate t
 the proxy. On the push side there is nothing to accommodate: RFC 8030 §5 delivery has no redirect
 step.
 
-### Endpoint policy (SSRF hardening)
+## Endpoint policy (SSRF hardening)
 
 The endpoint inside a `Subscription` is attacker-influenced data: a typical integration accepts
 the browser's `PushSubscription` JSON at a public registration endpoint, and nothing stops a
@@ -496,16 +423,16 @@ deployment startup instead of misbehaving at send time.
 egress rules or custom DNS checks can be expressed directly. The policy is fixed when the sender
 is built and receives only the URI — a rule that varies by tenant means one sender per tenant.
 
-With no policy configured, behaviour is unchanged: any absolute `https` endpoint accepted by
-`Subscription` is sent to. Know the limits either way: a URI-level check cannot close DNS
-rebinding, and it cannot see what happens after the connection. The one gap it would otherwise
-leave — a `3xx` steering the POST to a host the allowlist never saw — is closed in the transport
-(see [Redirects must never be followed](#redirects-must-never-be-followed)). Strict guarantees
+No policy is configured by default, and then any absolute `https` endpoint `Subscription` accepts
+is sent to. Know the limits either way: a URI-level check cannot close DNS rebinding, and it
+cannot see what happens after the connection. The one gap it would otherwise leave — a `3xx`
+steering the POST to a host the allowlist never saw — is closed in the transport (see
+[Redirects must never be followed](#redirects-must-never-be-followed)). Strict guarantees
 require pinning resolution and egress in the transport layer — see the
 [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html).
 The policy is a coarse filter, not a sandbox.
 
-### JCE provider selection
+## JCE provider selection
 
 By default, cryptographic primitives resolve through the JVM provider chain. Passing a provider
 binds the encryption primitives and, when the local signer is used, EC key import and ES256
@@ -536,7 +463,7 @@ signs through JCA, note that `SHA256withECDSA` produces DER: ask for
 `SHA256withECDSAinP1363Format` or convert before returning, and the rejection message will say so
 if you forget.
 
-### Conformance kit for a custom signer
+## Conformance kit for a custom signer
 
 The check above is what your signer meets on every send; `push2u-testkit` is how it finds out in
 its own test suite instead. It is a test-scoped artifact holding one abstract JUnit 5 class:
@@ -570,6 +497,10 @@ Transit signer are held to. The kit brings JUnit 5 and AssertJ with it, which is
 separate artifact and never a dependency of `push2u-core`.
 
 ## Spring Boot
+
+The two starters require **Spring Boot 4.x** and are built against 4.1.0. They do not work on
+Boot 3.x — among other things, the health indicator sits on `spring-boot-health`, a module that
+arrived in Boot 4.0.
 
 Add the core starter:
 
@@ -633,24 +564,15 @@ The indicator participates in the health endpoint's primary group only. Spring B
 group contains just the application's own liveness state, so a signer outage can never restart
 pods — an unreachable Vault is not something a container restart fixes.
 
-The indicator is registered when a `VapidSigner` bean exists, and asks about nothing else. The
+The indicator is registered when a `VapidSigner` bean exists, and asks about nothing else: the
 signer is the only part of a send that can stop working while the application runs — it reaches a
-backend that can go down, holds a token that can expire, names a key that can be deleted. The rest
-of a `PushSender` is immutable configuration the builder already validated, and an incomplete
-configuration fails startup rather than showing up here: health answers "what broke", not "what was
-set up wrong".
+backend that can go down, holds a token that can expire, names a key that can be deleted — while
+the rest of a `PushSender` is configuration the builder validated at startup.
 
-While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
-a startup failure naming `push2u.vapid.subject`), so this changes nothing there. Where it matters
-is a context that *excludes* `Push2uAutoConfiguration` and wires its own `PushSender` around a
-signer kept as a bean: the probe then applies to exactly the signer that sender uses. An
-application that supplies its own `PushSender` and no `push2u.vapid.*` gets no indicator — that
-sender's signer lives inside it, where the starter cannot reach it, and an indicator reporting
-health it never established would be worse than its absence. When the entry is missing and you
-expected it, `/actuator/conditions` (or starting with `--debug`) names the bean the condition did
-not find. Note the flip side of probing a bean: an application that supplies both its own
-`PushSender` *and* `push2u.vapid.*` gets an indicator that exercises the signer built from those
-properties, not the one inside its sender.
+An application that supplies its own `PushSender` and no `push2u.vapid.*` therefore gets no
+indicator: that sender's signer lives inside it, where the starter cannot reach it. Supplying both
+its own `PushSender` *and* `push2u.vapid.*` gets an indicator that exercises the signer built from
+those properties, not the one inside that sender.
 
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
@@ -733,32 +655,25 @@ VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
 ```
 
 Everything required — the address, the key name and the token — goes into the factory method, so
-an incomplete signer does not compile and `build()` never refuses over a missing value. The key
-name and the token are the value types `TransitKeyName` and `VaultToken` rather than bare strings:
-they cannot be swapped in the argument list, and each enforces its value's contract.
-`TransitKeyName` applies Vault's own Transit key-name rule (letters, digits, `_`, `-` and `.`,
-beginning and ending with a word character — Vault's `GenericNameRegex`), so no name Vault would
-accept is refused while every URL-breaking character is. `VaultToken` requires non-empty visible
-ASCII — rejecting the trailing newline picked up from a file or a YAML block scalar, a pasted
-`Bearer ` prefix, or a stray space — without echoing the token; its format (`hvs.`, legacy `s.`,
-or a dev-mode arbitrary string) is deliberately not checked, and its `toString()` prints
-`VaultToken[REDACTED]`, never the value. The builder holds only the optional steps: `mount`
-defaults to `transit` (in both the builder and the properties), Vault's own default mount for the
-Transit secrets engine, `namespace` defaults to none (see *Vault namespaces* below), and
-`transport` defaults to a `JdkVaultHttpTransport` (see *Vault HTTP
-transport* below). `mount` is validated where it is set, per segment: nested mounts like
-`secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or `..`,
-and use only `[A-Za-z0-9_.-]`. The explicit allowed set exists because a literal `..` check can be
-reopened by encoding: a `%2e%2e` or `%2F` segment travels in the raw request path (`URI.resolve` does not normalize dot
-segments in an absolute-path reference) — Vault's own router decodes a `%2F` before routing and addresses
-a different mount, a decoded dot segment draws a 307 redirect to the collapsed path from Vault's
-handler (harmless under the default `Redirect.NEVER` transport, executed — `X-Vault-Token`
-included — by a redirect-following custom one), and a normalizing proxy in front of Vault
-collapses the path before Vault sees it. The set is deliberately narrower than Vault and URLs
-allow: URL-legal punctuation like `+` or `~` in a mount name is refused by this validator's
-policy, not because such a mount could not be addressed — some of that punctuation is treated
-specially by intermediaries, and a conservative set can be widened later without breaking
-compatibility.
+an incomplete signer does not compile. The key name and the token are the value types
+`TransitKeyName` and `VaultToken` rather than bare strings, so they cannot be swapped in the
+argument list, and each enforces its value's contract. `TransitKeyName` applies Vault's own Transit
+key-name rule (letters, digits, `_`, `-` and `.`, beginning and ending with a word character —
+Vault's `GenericNameRegex`), so no name Vault would accept is refused while every URL-breaking
+character is. `VaultToken` requires non-empty visible ASCII — rejecting the trailing newline picked
+up from a file or a YAML block scalar, a pasted `Bearer ` prefix, or a stray space — without
+echoing the token; the token's *format* is deliberately not checked, and its `toString()` prints
+`VaultToken[REDACTED]`, never the value.
+
+The builder holds only the optional steps: `mount` defaults to `transit` (in both the builder and
+the properties), Vault's own default mount for the Transit secrets engine, `namespace` defaults to
+none (see *Vault namespaces* below), and `transport` defaults to a `JdkVaultHttpTransport` (see
+*Vault HTTP transport* below). `mount` is validated where it is set, per segment: nested mounts
+like `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or
+`..`, and use only `[A-Za-z0-9_.-]`. That it is an allowed set rather than a `..` blacklist is what
+percent-encoding cannot reopen, and the set is deliberately narrower than either Vault or a URL
+permits — [`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration) has the routes it closes and why
+a conservative set can be widened later but not narrowed.
 
 The equivalent Spring Boot configuration is:
 
@@ -775,10 +690,9 @@ push2u:
 ```
 
 The Vault signer starter only supplies the `VapidSigner` (key custody); it does not know the
-application's contact address. `push2u.vapid.subject` therefore still comes from the core starter's
-properties — it is the VAPID `sub` claim, which push2u requires even though RFC 8292 §2.1 leaves
-it optional, and `Push2uAutoConfiguration` fails startup with a message naming this property if
-it is left unset.
+application's contact address. `push2u.vapid.subject` — the VAPID `sub` claim — therefore still
+comes from the core starter's properties, in this mode and in the explicit one below, and
+`Push2uAutoConfiguration` fails startup with a message naming it if it is left unset.
 
 ### Explicit public key
 
@@ -800,9 +714,6 @@ push2u:
       key-version: 3
 ```
 
-As above, `push2u.vapid.subject` (the VAPID `sub` claim) comes from the core starter, not the Vault
-signer starter — it must be set here too.
-
 The equivalent plain Java takes the public key at the factory method, alongside the other required
 values, and the version as an optional step:
 
@@ -816,10 +727,10 @@ VapidSigner signer = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
     .build();
 ```
 
-There are two builders rather than one because the two modes differ in contract, not only in
-parameters: `builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
+There are two builders rather than one because the modes differ in contract:
+`builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
 `builderWithSuppliedPublicKey(…)` contacts nothing. `keyVersion(...)` exists only on the second
-one — in the fetched mode the version comes from Vault, together with the public key it belongs to.
+one — in the fetched mode the version comes from Vault, with the public key it belongs to.
 
 Leaving `keyVersion` (or the `key-version` property) out sends no `key_version`; Vault then signs
 with its latest version. Use that form only when the Transit key is guaranteed never to rotate.
@@ -862,12 +773,10 @@ push2u:
 
 Nested namespaces (`team-a/sub`) are legal. Note that Vault's own CLI prints namespace paths with
 a trailing slash (`team-a/`) — drop it here, since the value must not begin or end with `/`. The
-value is validated where it is set, by the same
-per-segment rule as `mount`: every `/`-separated segment must be non-empty, not `.` or `..`, and
-use only `[A-Za-z0-9_.-]`. Two reasons, one definite: the value lands in an HTTP header, which the
-allowed set keeps safe by construction (visible ASCII only, no control characters). The other is
-defence in depth — a `..` cannot name a real namespace, so a value carrying one is a configuration
-mistake worth refusing at startup rather than sending.
+value is validated where it is set, by the same per-segment rule as `mount`: it lands in an HTTP
+header, which the allowed set keeps header-safe by construction, and a traversal segment cannot
+name a real namespace anyway, so it is a configuration mistake worth refusing at startup
+([`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration)).
 
 ### Vault HTTP transport
 
@@ -900,9 +809,8 @@ Resolution order (two extension points, plus the properties-only fallback):
 2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
-   owns it). The client must be built with `Redirect.NEVER` or startup fails — see
-   [Redirects must never be followed](#redirects-must-never-be-followed), which also covers what
-   to do when a Vault HA standby is the source of the redirect.
+   owns it). The client must be built with `Redirect.NEVER` or startup fails; that section also
+   covers what to do when a Vault HA standby is the source of the redirect.
 3. Otherwise the default transport is built entirely from the properties.
 
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
@@ -916,6 +824,37 @@ subsequent sign requests. Recover by recreating the fetched signer, or by config
 new public key and version in explicit mode. Adopting a new VAPID public key is an
 application-level migration: browser subscriptions created for the previous application-server key
 must be replaced.
+
+## Modules
+
+| Module | Purpose | JPMS module name |
+|---|---|---|
+| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
+| `push2u-testkit` | The `VapidSigner` conformance contract, for a **test** classpath | `com.the13haven.push2u.testkit` |
+| `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
+| `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
+| `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
+
+`push2u-core` and `push2u-signer-vault` are explicit JPMS modules — they ship a `module-info.java`
+and work on the module path as they do on the class path:
+
+```java
+module com.example.app {
+    requires com.the13haven.push2u;
+}
+```
+
+The core requires only `java.net.http` from the JDK, and it is `transitive`, so a consumer supplying
+its own configured `HttpClient` to `JdkPushHttpClient` does not have to require it as well. JSpecify
+is a `requires static`, so nothing resolves that jar at runtime and the module stays dependency-free
+on the module path exactly as it is on the class path. You do not need JSpecify to compile against
+push2u — the nullness annotations are readable from the class files either way. You need it only if
+something reads them reflectively at runtime, and then the module has to be added explicitly
+(`--add-modules org.jspecify`), because a `static` requires is not resolved on its own.
+
+The two Spring Boot starters are automatic modules with a fixed `Automatic-Module-Name`, because
+Boot's own artifacts are automatic modules and its auto-configuration is reflective. `push2u-testkit`
+is likewise automatic: it carries JUnit and AssertJ, which are automatic modules themselves.
 
 ## Protocol limits
 
@@ -931,58 +870,15 @@ must be replaced.
 - VAPID JWT expiry must be greater than zero and no more than 24 hours.
 - The library is stateless; subscription persistence and deletion belong to the application.
 
-## Build and test
-
-```bash
-./gradlew clean build
-./gradlew javadoc
-```
-
-The test suite includes RFC 5869, RFC 8291, and RFC 8292 vectors, sender/retry tests, Spring Boot
-auto-configuration tests, and a Vault Transit integration contract.
-
 ## Nullness
 
 Every package is [JSpecify](https://jspecify.dev) `@NullMarked`: a reference type in the API is
 non-null unless annotated `@Nullable`. The annotated exceptions are the optional message headers
-(`PushMessage.ttl` / `urgency` / `topic`), the unset builder fields and the Spring properties.
-
-The contract is machine-checked, not just documented — NullAway fails the build on a violation, and
-`RequireExplicitNullMarking` fails it on a package that forgets the mark. Because JSpecify is an
-`api` dependency, the same annotations are visible to consumers' analysers, IntelliJ and the Kotlin
-compiler.
-
-## Quality checks
-
-Static analysis and coverage are wired up as their own lifecycle tasks, so `build` stays compile +
-test only:
-
-```bash
-./gradlew qualityCheck     # local: formats the code, then runs every analyser
-./gradlew qualityCheckCi   # CI: verifies formatting instead of applying it
-```
-
-| Tool                 | What it enforces                                            | Configuration                                |
-|----------------------|-------------------------------------------------------------|----------------------------------------------|
-| Spotless             | Palantir Java Format, import order                           | `build-logic/.../push2u-quality.gradle.kts`  |
-| Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
-| PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
-| SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
-| Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
-| JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
-
-Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
-the test compilations as well, since its checks are about defects rather than style; NullAway runs
-on `main` and on `testFixtures`, which share `main`'s packages and so its nullness contract. Reports
-land in `<module>/build/reports/` (HTML and XML); the aggregated coverage report is in
-`build/reports/jacoco/testCodeCoverageReport/`.
-
-Rule exclusions carry a comment stating why, and a per-file exception is a `@SuppressWarnings`
-("PMD.<Rule>") at the narrowest scope that covers it, next to the reason.
-
-`./gradlew aggregateTestResults` collects the JUnit XML of every module — `push2u-core`'s
-`fipsTest` suite included — into `build/test-results-aggregated/`. CI runs it after the quality
-check and hands that directory, plus the aggregated JaCoCo XML, to Codecov.
+(`PushMessage.ttl` / `urgency` / `topic`), the unset builder fields and the Spring properties. The
+contract is machine-checked rather than merely documented — NullAway fails the build on a violation
+— and because JSpecify is an `api` dependency, the same annotations are visible to consumers'
+analysers, IntelliJ and the Kotlin compiler
+([ADR-012](DESIGN.md#adr-012--nullness-declared-with-jspecify)).
 
 ## Contributing
 
@@ -998,11 +894,8 @@ Do not report a vulnerability in a public issue. Use GitHub's private reporting 
 
 ## Releases
 
-Releases are cut manually from GitHub Actions: the *Release* workflow runs the full quality
-gate, tags the version, publishes signed artifacts to Maven Central through the Central Portal,
-and creates a GitHub Release with generated notes. The step-by-step procedure, the required
-repository secrets, and the one-time publishing setup are documented in
-[`RELEASING.md`](RELEASING.md).
+Releases are cut manually from GitHub Actions; the procedure, the required repository secrets and
+the one-time publishing setup are in [`RELEASING.md`](RELEASING.md).
 
 ## License
 
