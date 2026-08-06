@@ -73,8 +73,11 @@ spotless {
 // ---------------------------------------------------------------------------------------------
 // Checkstyle — naming, Javadoc and import-order verification (never formatting; Spotless owns it).
 // ---------------------------------------------------------------------------------------------
-// The header-only Checkstyle task, named here because the exclusion below has to spare it.
+// The two line-based Checkstyle tasks, named here because the exclusion below has to spare both:
+// their configurations have no TreeWalker, so they read module-info.java as lines instead of
+// failing to parse it.
 val licenseHeaderTaskName = "checkstyleLicenseHeader"
+val referencesTaskName = "checkstyleReferences"
 
 // Checkstyle 13.9.0 cannot parse a module declaration: its TreeWalker grammar has no production for
 // one, and `module foo {}` alone fails with "no viable alternative at input 'modulefoo{'". A single
@@ -84,7 +87,7 @@ val licenseHeaderTaskName = "checkstyleLicenseHeader"
 // header, which is why checkstyleLicenseHeader is exempt: its configuration has no TreeWalker, so
 // it reads the file as lines and never parses it. Revisit when Checkstyle grows the grammar.
 tasks.withType<Checkstyle>().configureEach {
-    if (name != licenseHeaderTaskName) {
+    if (name != licenseHeaderTaskName && name != referencesTaskName) {
         exclude("module-info.java")
     }
 }
@@ -168,6 +171,32 @@ val checkstyleLicenseHeader = tasks.register<Checkstyle>(licenseHeaderTaskName) 
     include("**/*.java")
 
     // Checkstyle parses source, not bytecode; the property is mandatory but nothing here reads it.
+    classpath = files()
+}
+
+// The mirror image of the task above: `main` alone, because this rule is about what ships. Every
+// module publishes a -sources jar, so a comment in `main` is read by consumers holding the artifact
+// and nothing else — an "(ADR-014)" or a "see DESIGN.md" there points at a repository they do not
+// have. Test sources are exempt: nothing publishes them.
+//
+// It is a task of its own rather than a rule in checkstyle.xml because the two files most likely to
+// carry such a reference are the two checkstyleMain cannot read: module-info.java, which the
+// TreeWalker grammar cannot parse, and package-info.java, whose Javadoc is where a design note
+// naturally goes. checkstyle-references.xml has no TreeWalker at all, so it reads both as lines.
+val checkstyleReferences = tasks.register<Checkstyle>(referencesTaskName) {
+    description = "Fails on a reference to a repository document from a published source set."
+    group = "verification"
+
+    configFile = rootProject.file("config/quality/checkstyle/checkstyle-references.xml")
+
+    // A Callable for the same reason as above — the source sets are read when the task's inputs are
+    // resolved, not while this plugin is being applied.
+    setSource(
+        Callable {
+            javaSourceSets.filter { it.name == SourceSet.MAIN_SOURCE_SET_NAME }.flatMap { it.java.srcDirs }
+        })
+    include("**/*.java")
+
     classpath = files()
 }
 
@@ -317,7 +346,8 @@ tasks.withType<JavaCompile>().configureEach {
 // ---------------------------------------------------------------------------------------------
 // Lifecycle tasks
 // ---------------------------------------------------------------------------------------------
-val analysisTasks = listOf("checkstyleMain", checkstyleLicenseHeader.name, "pmdMain", "spotbugsMain")
+val analysisTasks =
+    listOf("checkstyleMain", checkstyleLicenseHeader.name, checkstyleReferences.name, "pmdMain", "spotbugsMain")
 
 tasks.register("qualityCheck") {
     description = "Runs all quality checks locally (auto-formats code)."
@@ -350,7 +380,8 @@ tasks.withType<JavaCompile>().configureEach { mustRunAfter(formattingTasks) }
 // checkstyleLicenseHeader goes first among the analysers: one rule over the source lines, a
 // fraction of a second, against SpotBugs' ~17s at the other end of the chain.
 checkstyleLicenseHeader.configure { mustRunAfter(formattingTasks) }
-tasks.named("checkstyleMain") { mustRunAfter(formattingTasks, checkstyleLicenseHeader) }
+checkstyleReferences.configure { mustRunAfter(formattingTasks, checkstyleLicenseHeader) }
+tasks.named("checkstyleMain") { mustRunAfter(formattingTasks, checkstyleLicenseHeader, checkstyleReferences) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
 tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }
@@ -372,8 +403,10 @@ gradle.taskGraph.whenReady {
 
     // checkstyleLicenseHeader is the exception to "main-only": it exists precisely for the source
     // sets the name-based rule excludes, so it is enabled by the quality gate on its own name.
+    // checkstyleReferences is main-only in substance but not in name, so it is enabled the same way.
+    val namedTasks = setOf(checkstyleLicenseHeader.name, checkstyleReferences.name)
     tasks.withType<Checkstyle>().configureEach {
-        enabled = mainOnly(name) || (runQuality && name == checkstyleLicenseHeader.name) || name in requested
+        enabled = mainOnly(name) || (runQuality && name in namedTasks) || name in requested
     }
     tasks.withType<Pmd>().configureEach { enabled = mainOnly(name) || name in requested }
     tasks.withType<SpotBugsTask>().configureEach { enabled = mainOnly(name) || name in requested }
@@ -442,6 +475,36 @@ gradle.taskGraph.whenReady {
             val examples = missing.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
             error(
                 "$licenseHeaderTask does not cover everything it must read — ${missing.size} file(s) " +
+                    "would go unchecked, among them:\n  $examples")
+        }
+    }
+
+    // The same guard for the references task, and for the same reason: its whole value is that it
+    // reads main's module-info.java and package-info.java, the two files checkstyleMain never sees.
+    // A lazily-resolved source that quietly came back empty would leave those two — the likeliest
+    // place for an "(ADR-014)" — checked by nothing, with the build still green.
+    val referencesTask = "${project.path}:${checkstyleReferences.name}"
+    if (hasTask(referencesTask)) {
+        val mainSourcesNow =
+            project
+                .files(
+                    project.extensions
+                        .getByType<SourceSetContainer>()
+                        .filter { it.name == SourceSet.MAIN_SOURCE_SET_NAME }
+                        .flatMap { it.java.srcDirs })
+                .asFileTree
+                .matching { include("**/*.java") }
+                .files
+        val unread = mainSourcesNow - checkstyleReferences.get().source.files
+        if (mainSourcesNow.isEmpty()) {
+            error(
+                "$referencesTask found no main sources — a module without production code, or a read " +
+                    "that is no longer lazy?")
+        }
+        if (unread.isNotEmpty()) {
+            val examples = unread.take(5).joinToString("\n  ") { it.relativeTo(project.projectDir).path }
+            error(
+                "$referencesTask does not cover everything it must read — ${unread.size} published file(s) " +
                     "would go unchecked, among them:\n  $examples")
         }
     }

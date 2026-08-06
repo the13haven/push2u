@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Published sources explain themselves.
+
+    Every module ships a -sources jar, so a comment or Javadoc line in a `main` source set is read
+    by consumers who hold the artifact and nothing else. "(ADR-014)" or "see DESIGN.md" is a dead
+    end for them: the reasoning has to be in the sentence, not in a pointer to a file only this
+    repository has. The rule is about published code alone — the `checkstyleReferences` task feeds
+    it `main` and nothing else, and test sources may cite whatever they like.
+
+    Both rules sit on Checker rather than TreeWalker, so they read source lines instead of a parsed
+    AST. That is what lets them cover module-info.java, which Checkstyle's grammar cannot parse at
+    all, and package-info.java, whose Javadoc is where such a reference is most likely to be
+    written.
+-->
+<module name="Checker">
+    <property name="severity" value="error"/>
+    <property name="charset" value="UTF-8"/>
+
+    <!-- ADR-NNN, "the ADRs", "an ADR" — the decisions live in docs/adr/, which consumers do not have. -->
+    <module name="RegexpSingleline">
+        <property name="format" value="\bADRs?\b"/>
+        <property name="fileExtensions" value="java"/>
+        <property name="message"
+                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so an ADR citation leads nowhere. State the reason in the sentence instead."/>
+    </module>
+
+    <!-- DESIGN.md, CONTRIBUTING.md, README … any repository document by name. -->
+    <module name="RegexpSingleline">
+        <property name="format" value="\b[\w-]+\.md\b|\bREADME\b"/>
+        <property name="fileExtensions" value="java"/>
+        <property name="message"
+                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so a reference to a repository document leads nowhere. Say what it says, here."/>
+    </module>
+</module>

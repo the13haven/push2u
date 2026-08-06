@@ -6,7 +6,8 @@
 /**
  * push2u-signer-vault — a {@code VapidSigner} backed by HashiCorp Vault Transit; the private key never leaves Vault.
  *
- * <p>The module name is the package name, and both are permanent (ADR-014).
+ * <p>The module name is the package name, and both are permanent: changing either after a release breaks every consumer
+ * that reads this artifact from the module path.
  */
 module com.the13haven.push2u.signer.vault {
     // `transitive`: VaultTransitVapidSigner implements com.the13haven.push2u.VapidSigner and the
@@ -15,9 +16,9 @@ module com.the13haven.push2u.signer.vault {
     requires transitive com.the13haven.push2u;
 
     // `transitive` for the same reason as the core: HttpClient is a parameter of the public
-    // `JdkVaultHttpTransport(HttpClient, Duration, int)`, which is how the README's mTLS and proxy
-    // configurations reach Vault. This is the module's own transport seam, deliberately not
-    // PushHttpClient — Vault's responses must be read, push responses must not.
+    // `JdkVaultHttpTransport(HttpClient, Duration, int)`, which is how an application supplies a
+    // client configured for mTLS or a proxy. This is the module's own transport seam, deliberately
+    // not PushHttpClient — Vault's responses must be read, push responses must not.
     requires transitive java.net.http;
 
     // `static`: see the core's descriptor — the annotations are RUNTIME-retention, but an
