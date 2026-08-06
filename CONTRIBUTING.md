@@ -39,6 +39,7 @@ uses a Java 26 toolchain and compiles with `--release 21`; Gradle resolves the t
 ```bash
 ./gradlew build          # compile + test
 ./gradlew qualityCheck   # the full local gate — auto-formats, then runs every analyser
+./gradlew javadoc        # the published API documentation
 ```
 
 `build` deliberately does **not** run the analysers, so ordinary compile-test cycles stay fast.
@@ -53,10 +54,28 @@ Useful narrower runs:
 ./gradlew :push2u-core:fipsTest        # BC-FIPS suite, isolated source set
 ./gradlew :push2u-signer-vault:test    # requires Docker
 ./gradlew spotlessApply                # after a formatting failure
+./gradlew aggregateTestResults         # every module's JUnit XML in one directory
 ```
 
-Reports land in `<module>/build/reports/`; aggregated coverage in
-`build/reports/jacoco/testCodeCoverageReport/`.
+Reports land in `<module>/build/reports/` (HTML and XML); aggregated coverage in
+`build/reports/jacoco/testCodeCoverageReport/`. `aggregateTestResults` collects every module's
+JUnit XML — `push2u-core`'s `fipsTest` suite included — into `build/test-results-aggregated/`; CI
+runs it after the quality check and hands that directory, plus the aggregated JaCoCo XML, to
+Codecov.
+
+### Developing against unpublished changes
+
+Nothing between releases is published — no snapshots. To build against changes that have not been
+released yet, include this repository as a Gradle composite build:
+
+```kotlin
+// settings.gradle.kts
+includeBuild("../push2u")
+```
+
+The dependency declarations stay exactly as they are in
+[`README.md` → Installation](README.md#installation) — Gradle substitutes the included build for
+the published Maven Central artifact.
 
 ### Upgrading Gradle
 
@@ -93,7 +112,21 @@ a value copied out of another repository.
 
 Formatting (Spotless/Palantir), naming and Javadoc on the public API (Checkstyle), bug patterns
 (PMD, SpotBugs, Error Prone) and the nullness contract (NullAway) all fail the build rather than
-warn. Aggregated instruction coverage must stay at or above 80 %. Practical consequences:
+warn. Aggregated instruction coverage must stay at or above 80 %.
+
+| Tool                 | What it enforces                                            | Configuration                                |
+|----------------------|-------------------------------------------------------------|----------------------------------------------|
+| Spotless             | Palantir Java Format, import order                           | `build-logic/.../push2u-quality.gradle.kts`  |
+| Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
+| PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
+| SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
+| Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
+| JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
+
+Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
+the test compilations as well, since its checks are about defects rather than style; NullAway runs
+on `main` and on `testFixtures`, which share `main`'s packages and so its nullness contract.
+Practical consequences:
 
 - A new package needs a `package-info.java` carrying JSpecify's `@NullMarked`; forgetting it is a
   build failure, not a lint warning.
@@ -187,6 +220,9 @@ warn. Aggregated instruction coverage must stay at or above 80 %. Practical cons
   read `<module>/build/publications/maven/module.json`).
 
 ## Tests
+
+The suite is the RFC vectors, the sender and retry tests, the Spring Boot auto-configuration tests
+and a Vault Transit integration contract run against a Testcontainers Vault.
 
 The RFC vectors are the specification, not a snapshot of current behaviour: RFC 5869 for HKDF,
 the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a change makes a

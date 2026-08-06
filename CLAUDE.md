@@ -8,14 +8,22 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 `aes128gcm`-encrypted push delivery from a Java server to browser push services. Java 21 baseline,
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
-`README.md` documents the public API for consumers; `DESIGN.md` documents the architecture and
-carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything structural, and
-amend it in the same change if the decision moves. `MIGRATION.md` is the guide for consumers coming
-from `nl.martijndwars:web-push` — it states the other library's API and dependency set as verified
-facts, so anything added there must be checked against the published artifact, and it deliberately
-carries no `com.the13haven:<module>:X.Y.Z` coordinate, because the pre-release hook rewrites those
-in `README.md` only. `RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the
-contributor-facing form of the conventions below, and `SECURITY.md` the vulnerability policy.
+`README.md` documents the public API for consumers; `VAULT.md` and `SPRING.md` carry the reference
+for the two integrations, which README introduces in a few lines and links to. `DESIGN.md` documents
+the architecture and carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything
+structural, and amend it in the same change if the decision moves. `MIGRATION.md` is the guide for
+consumers coming from `nl.martijndwars:web-push` — it states the other library's API and dependency
+set as verified facts, so anything added there must be checked against the published artifact.
+`RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of the
+conventions below, and `SECURITY.md` the vulnerability policy.
+
+**A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
+nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
+string written into `VAULT.md`, `SPRING.md`, `MIGRATION.md` or anywhere else freezes at whatever
+version it was written with and starts lying at the next release. Those documents point at README's
+Installation section instead. The exception is a document that is *about* one version and is never
+read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a frozen
+coordinate there is correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main`. It loads automatically alongside this file.

@@ -296,8 +296,8 @@ class VaultSignerAutoConfigurationTest {
 
     @Test
     void withoutKeyVersionTheExplicitSignerSendsNoPin() {
-        // The compatibility form: explicit public-key without key-version keeps the historical
-        // request shape (Vault signs with its latest version).
+        // Omitting key-version is the unpinned form: no version travels in the request, so Vault
+        // signs with its latest.
         RecordingTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         vaultRunner()
                 .withUserConfiguration(RecordingTransportConfiguration.class)

@@ -26,8 +26,8 @@ import org.junit.jupiter.api.Test;
  * Tests for the {@link EndpointPolicy} seam in the send pipeline. The load-bearing property is <em>where</em> the
  * policy runs: a rejected endpoint must cost zero signing operations (under an external signer, each one is a remote
  * Vault/KMS call) and zero HTTP requests — proven with a counting signer and a counting client, not asserted from the
- * code's shape. Equally load-bearing is what happens when no policy is configured: nothing, byte for byte the
- * historical behaviour, because this is a published library.
+ * code's shape. Equally load-bearing is what happens when no policy is configured: nothing — the seam must not quietly
+ * narrow what a sender without a policy will send to.
  */
 class PushSenderEndpointPolicyTest {
 
@@ -68,9 +68,9 @@ class PushSenderEndpointPolicyTest {
     }
 
     @Test
-    void withoutAPolicyBehaviourIsUnchanged() {
-        // Backward compatibility pinned: no configured policy means the historical contract — any
-        // https endpoint that Subscription accepted is sent to, this internal-looking one included.
+    void withoutAPolicyAnyHttpsEndpointIsSentTo() {
+        // The default-off contract pinned: with no policy configured, any https endpoint that
+        // Subscription accepted is sent to, this internal-looking one included.
         PushSender sender = sender(null);
 
         PushResult result = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));

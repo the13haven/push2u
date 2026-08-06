@@ -155,8 +155,8 @@ class VaultTransitVapidSignerSignResponseTest {
 
     @Test
     void anEmptySignatureFailsLoudlyInsteadOfSigningTheJwtWithNothing() {
-        // "vault:v1:" with nothing after the prefix decodes to zero bytes — historically that
-        // zero-length "signature" went straight into the JWT.
+        // "vault:v1:" with nothing after the prefix decodes to zero bytes, and a zero-length
+        // "signature" that reached the JWT would be rejected by the push service as an opaque 401.
         assertThatThrownBy(() -> sign("{\"data\":{\"signature\":\"vault:v1:\"}}"))
                 .isInstanceOf(PushCryptoException.class)
                 .hasMessageContaining("expected 64 bytes")

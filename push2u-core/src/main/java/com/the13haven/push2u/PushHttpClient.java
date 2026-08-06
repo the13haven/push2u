@@ -33,6 +33,10 @@ import java.util.Map;
  * {@code java.net.http.HttpClient} at construction, but a client built on another stack must set it deliberately —
  * OkHttp's {@code followRedirects} defaults to {@code true}, so the straightforward implementation there is unsafe
  * until it is turned off (its {@code followSslRedirects} too).
+ *
+ * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
+ * {@link PushSender#sendAsync} makes concurrent {@link #post} calls the normal case, so per-request state belongs in
+ * the call rather than in a field — which is also what makes a pooled client the natural implementation.
  */
 @FunctionalInterface
 public interface PushHttpClient {
