@@ -558,6 +558,31 @@ class EcKeysUntrustedInputTest {
                 .hasMessageContaining("NIST P-256");
     }
 
+    /**
+     * The maximally degenerate generator: {@code KeyPair} stores whatever references its constructor was handed,
+     * {@code null} included, and the refusal must still arrive as the library's own {@link PushCryptoException} — a
+     * {@link NullPointerException} escaping from the diagnostic itself would be a crypto failure surfacing outside the
+     * library's stated exception taxonomy.
+     */
+    @Test
+    void aGeneratedPairWithANullPublicHalfFailsClosedAsACryptoException() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(null));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no public key");
+    }
+
+    @Test
+    void aGeneratedPairWithANullPrivateHalfFailsClosedAsACryptoException() {
+        ECPublicKey genuine = EcKeys.decodeP256PublicKey(validPoint(), jca);
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(genuine, null));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no private key");
+    }
+
     /** A genuine P-256 point (the RFC 8291 worked example's {@code ua_public}) to pair with substituted parameters. */
     private ECPoint genuineP256Point() {
         return EcKeys.decodeP256PublicKey(validPoint(), jca).getW();

@@ -206,10 +206,11 @@ public final class P256PublicKeys {
 
     /**
      * Whether {@code (x, y)} satisfies the short Weierstrass equation {@code y² ≡ x³ + ax + b (mod p)}. The one
-     * implementation of the equation in this module: the public check above runs it on the hard-coded P-256 parameters,
-     * and {@code EcKeys} runs it on the configured provider's parameters before ECDH — same arithmetic, deliberately
-     * different parameter source (see the class Javadoc). Callers ensure {@code 0 <= x, y < p} first; this method only
-     * evaluates the equation.
+     * implementation of the equation in this module, reached three ways: the public check above and
+     * {@link #isOnNistP256} run it on the hard-coded P-256 parameters — for wire-format key material and for the
+     * generated ephemeral pair respectively — and {@code EcKeys} runs it on the configured provider's parameters before
+     * ECDH. Same arithmetic, deliberately different parameter sources (see the class Javadoc). Callers ensure {@code 0
+     * <= x, y < p} first; this method only evaluates the equation.
      */
     static boolean satisfiesCurveEquation(BigInteger x, BigInteger y, BigInteger p, BigInteger a, BigInteger b) {
         BigInteger left = y.multiply(y).mod(p);

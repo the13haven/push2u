@@ -7,6 +7,7 @@ package com.the13haven.push2u;
 
 import java.math.BigInteger;
 import java.security.GeneralSecurityException;
+import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -20,6 +21,8 @@ import java.security.spec.ECPrivateKeySpec;
 import java.security.spec.ECPublicKeySpec;
 import java.security.spec.EllipticCurve;
 import java.util.Arrays;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * P-256 key import/export and ECDH, all through the JDK ({@link Jca}). Handles the two wire forms Web Push uses: the
@@ -139,30 +142,53 @@ final class EcKeys {
     }
 
     /**
-     * Refuse a generated pair that is not, in every respect checkable from the outside, a NIST P-256 key pair. The
-     * generator already answered the {@code secp256r1} lookup, so honouring the name must be proven rather than
-     * assumed, and two checks of different reach do it: each half's declared domain parameters are compared value for
-     * value against the published NIST constants, and the public point is required to satisfy the curve equation.
-     * Neither check covers the other — parameter equality proves what the generator <em>declares</em>, the equation
-     * proves the point it actually <em>returned</em> lies on the declared curve. The parameter comparison is what
-     * catches the sharpest defect: a wrong order {@code n} leaves every generated point genuinely on P-256, but
-     * {@code n} bounds the private scalar, so a small substituted order draws a guessable scalar and a guessable ECDH
-     * secret. The private half gets the type and parameter checks too — the scalar has no equation to satisfy, but the
-     * agreement runs on its parameters. The messages quote no coordinates or scalars: the values are fresh key
-     * material, and the failure is structural.
+     * Refuse a generated pair that fails what this library verifies of a NIST P-256 key pair — three checks, exactly:
+     * both halves must be EC keys, both halves' declared domain parameters must equal the published NIST P-256
+     * constants value for value, and the public point must lie on the curve of those constants. The generator already
+     * answered the {@code secp256r1} lookup, so honouring the name must be proven rather than assumed, and the last two
+     * checks prove different things — parameter equality proves what the generator <em>declares</em>, the curve
+     * equation proves the point it actually <em>returned</em> lies on the declared curve. The parameter comparison is
+     * what catches the sharpest checkable defect: a wrong order {@code n} leaves every generated point genuinely on
+     * P-256, but {@code n} bounds the private scalar, so a small substituted order draws a guessable scalar and a
+     * guessable ECDH secret.
+     *
+     * <p>Two failure modes are outside this check's reach, on purpose. A provider that declares the correct parameters
+     * and simply draws a weak or attacker-known scalar passes undetected — no parameter verification can catch that,
+     * which is why the choice of provider remains a trust decision. And the two halves are not checked to belong
+     * together ({@code W = d·G} is not evaluated): that needs point multiplication, which this library deliberately
+     * does not implement, and it would buy nothing against a hostile provider, which can always hand over a
+     * self-consistent pair whose scalar it knows. The scalar's range is not checked either: a scalar of zero has no
+     * affine public point — its would-be point is infinity, which the point check refuses — a scalar at or above
+     * {@code n} acts as its residue {@code d mod n} and is no weaker for it, and the private-scalar import path applies
+     * no range check, which is the standard this path is held to.
+     *
+     * <p>The messages quote no coordinates or scalars: the values are fresh key material, and the failure is
+     * structural.
      */
     private static void requireGeneratedOnP256(KeyPair pair) {
         if (!(pair.getPublic() instanceof ECPublicKey publicKey)) {
-            throw new PushCryptoException("P-256 key-pair generation returned a "
-                    + pair.getPublic().getAlgorithm() + " public key, not an EC one");
+            throw notAnEcKey(pair.getPublic(), "public");
         }
         requireGeneratedP256Parameters(publicKey.getParams(), "public");
         requireGeneratedPointOnP256(publicKey.getW());
         if (!(pair.getPrivate() instanceof ECPrivateKey privateKey)) {
-            throw new PushCryptoException("P-256 key-pair generation returned a "
-                    + pair.getPrivate().getAlgorithm() + " private key, not an EC one");
+            throw notAnEcKey(pair.getPrivate(), "private");
         }
         requireGeneratedP256Parameters(privateKey.getParams(), "private");
+    }
+
+    /**
+     * The type-check failure of {@link #requireGeneratedOnP256}, phrased for both degenerate shapes: a key of some
+     * other algorithm, and no key at all — {@link KeyPair} stores whatever references it was handed, {@code null}
+     * included, and the refusal must stay this library's own crypto exception rather than a
+     * {@link NullPointerException} escaping from the diagnostic itself.
+     */
+    private static PushCryptoException notAnEcKey(@Nullable Key key, String half) {
+        if (key == null) {
+            return new PushCryptoException("P-256 key-pair generation returned no " + half + " key at all");
+        }
+        return new PushCryptoException(
+                "P-256 key-pair generation returned a " + key.getAlgorithm() + " " + half + " key, not an EC one");
     }
 
     /**
