@@ -87,6 +87,43 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
+    void toStringMasksCredentialsInAnAddressThatHasNoAuthority() {
+        // "user:secret@vault.example:8200" — the address as an operator types a host:port, without
+        // a scheme — is a valid URI whose scheme is "user" and whose whole scheme-specific part is
+        // "secret@vault.example:8200": no "//", so URI.getUserInfo() is null and an authority-only
+        // rule would print the password verbatim. The signer refuses such an address (no host), but
+        // this record binds before any signer exists, and holds it either way.
+        VaultSignerProperties properties =
+                properties(URI.create("proxy-user:PROXY-PASSWORD-MARKER@vault.example:8200"));
+
+        assertThat(properties.toString())
+                .doesNotContain("PROXY-PASSWORD-MARKER")
+                .doesNotContain("proxy-user")
+                .contains("address=***@vault.example:8200");
+    }
+
+    @Test
+    void anEmptyUserinfoIsNotMasked() {
+        // "https://@vault.example:8200" delimits a userinfo that is empty — no credential was
+        // configured, so a mask here would claim one exactly as a "***" for an unset token would.
+        VaultSignerProperties properties = properties(URI.create("https://@vault.example:8200"));
+
+        assertThat(properties.toString())
+                .contains("address=https://@vault.example:8200")
+                .doesNotContain("***@");
+    }
+
+    @Test
+    void aDoubleSlashInThePathIsNotAnAuthority() {
+        // An authority is the "//" right after the scheme's colon and nothing else. A "//" further
+        // along is an empty path segment, and the "@" behind it is an ordinary path character —
+        // masking there would both claim credentials that do not exist and mangle the address.
+        VaultSignerProperties properties = properties(URI.create("/vault//a@b"));
+
+        assertThat(properties.toString()).contains("address=/vault//a@b").doesNotContain("***@");
+    }
+
+    @Test
     void toStringDropsAQueryAndFragmentFromTheAddress() {
         // A base address may carry neither — the signer refuses one at startup, naming the property
         // — but the binding that fills this record happens first, and a Vault query can name

@@ -202,6 +202,11 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
      * the path may not — and without userinfo, because credentials smuggled into the authority (e.g.
      * {@code https://user:secret@vault:8200}, basic auth for a fronting proxy) are exactly as secret as a query and
      * would otherwise ride into every transport failure.
+     *
+     * <p>The Vault signer starter applies this same rule to the address its bound properties print, the one difference
+     * being that it masks the userinfo as {@code ***@} rather than dropping it — a configuration dump has to keep
+     * saying that something was configured there, while a failure message is more useful as a URI an operator can copy.
+     * Keep {@code VaultSignerProperties} in step when this changes.
      */
     private static String redacted(URI uri) {
         String text = uri.toString();
@@ -215,18 +220,42 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
             cut = fragment;
         }
         String stripped = text.substring(0, cut);
-        // Userinfo sits between "//" and the last "@" of the authority (an "@" may legally recur
-        // inside the userinfo itself, so the last one before the path is the delimiter).
-        int authorityStart = stripped.indexOf("//");
-        if (authorityStart >= 0) {
-            int pathStart = stripped.indexOf('/', authorityStart + 2);
-            int authorityEnd = pathStart >= 0 ? pathStart : stripped.length();
-            int at = stripped.lastIndexOf('@', authorityEnd - 1);
+        // An authority is the "//" that follows the scheme's colon (or opens a relative reference)
+        // and nothing else: a "//" further along is two path segments, whose "@" is an ordinary
+        // path character and no credential.
+        String scheme = uri.getScheme();
+        int schemeEnd = scheme == null ? 0 : scheme.length() + 1;
+        if (stripped.startsWith("//", schemeEnd)) {
+            // Userinfo sits between the "//" and the last "@" of the authority. An "@" at the
+            // authority's very first character delimits an empty userinfo — nothing was configured
+            // there, and the address is left as it stands.
+            int authorityStart = schemeEnd + 2;
+            int at = lastAtBeforeThePath(stripped, authorityStart);
             if (at > authorityStart) {
-                stripped = stripped.substring(0, authorityStart + 2) + stripped.substring(at + 1);
+                return stripped.substring(0, authorityStart) + stripped.substring(at + 1);
+            }
+        } else if (scheme != null) {
+            // No authority, yet the credentials can still be there: "user:secret@vault:8200" typed
+            // without a scheme parses as the scheme "user" with all of "secret@vault:8200" behind
+            // it. Everything up to the last "@" before the path goes, the scheme included — it is
+            // the user name half of the userinfo.
+            int at = lastAtBeforeThePath(stripped, schemeEnd);
+            if (at >= schemeEnd) {
+                return stripped.substring(at + 1);
             }
         }
         return stripped;
+    }
+
+    /**
+     * The index of the last {@code @} in front of the path, searching from {@code from}, or {@code -1} if there is
+     * none. An {@code @} may legally recur inside userinfo, so the last one is the delimiter and everything before it
+     * is credential; past the first {@code /} the {@code @} is an ordinary path character.
+     */
+    private static int lastAtBeforeThePath(String stripped, int from) {
+        int pathStart = stripped.indexOf('/', from);
+        int end = pathStart >= 0 ? pathStart : stripped.length();
+        return stripped.lastIndexOf('@', end - 1);
     }
 
     private static @Nullable ResponseTooLargeException findTooLarge(Throwable failure) {

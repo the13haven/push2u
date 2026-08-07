@@ -121,11 +121,15 @@ public record VaultSignerProperties(
      * presence is a misconfiguration this rendering has no need to report — while a query can name secrets, which is
      * why one that is present anyway (this record binds before the signer validates it) must not be printed.
      *
-     * <p>The built-in Vault transport applies the same rule to the URIs in its failure messages. This is a deliberate
-     * second copy rather than a shared one: sharing it would mean adding a public member to the signer library that
-     * every consumer would then be able to depend on for good, and the two renderings are not the same anyway — the
-     * transport strips userinfo outright, keeping its messages a URI an operator can copy, while a configuration dump
-     * has to keep saying that something was configured there.
+     * <p>An address typed without a scheme ({@code user:secret@vault.example:8200}) carries its credentials outside any
+     * authority — Java reads {@code user} as the scheme — so the same cut is made there, taking the scheme with it.
+     *
+     * <p>The built-in Vault transport ({@code JdkVaultHttpTransport}) applies the same rule to the URIs in its failure
+     * messages. This is a deliberate second copy rather than a shared one: sharing it would mean adding a public member
+     * to the signer library that every consumer would then be able to depend on for good, and the two renderings are
+     * not the same anyway — the transport strips userinfo outright, keeping its messages a URI an operator can copy,
+     * while a configuration dump has to keep saying that something was configured there. Keep the two in step when
+     * either changes.
      */
     private static @Nullable String redactedAddress(@Nullable URI address) {
         if (address == null) {
@@ -142,18 +146,41 @@ public record VaultSignerProperties(
             cut = fragment;
         }
         String stripped = text.substring(0, cut);
-        // Userinfo sits between "//" and the last "@" of the authority: an "@" may legally recur
-        // inside the userinfo itself, so the last one before the path is the delimiter, and taking
-        // the last one keeps the whole of a multi-"@" authority masked.
-        int authorityStart = stripped.indexOf("//");
-        if (authorityStart >= 0) {
-            int pathStart = stripped.indexOf('/', authorityStart + 2);
-            int authorityEnd = pathStart >= 0 ? pathStart : stripped.length();
-            int at = stripped.lastIndexOf('@', authorityEnd - 1);
+        // An authority is the "//" that follows the scheme's colon (or opens a relative reference)
+        // and nothing else: a "//" further along is two path segments, whose "@" is an ordinary
+        // path character and no credential.
+        String scheme = address.getScheme();
+        int schemeEnd = scheme == null ? 0 : scheme.length() + 1;
+        if (stripped.startsWith("//", schemeEnd)) {
+            // Userinfo sits between the "//" and the last "@" of the authority. An "@" at the
+            // authority's very first character delimits an empty userinfo — nothing was configured
+            // there, and the address is left as it stands.
+            int authorityStart = schemeEnd + 2;
+            int at = lastAtBeforeThePath(stripped, authorityStart);
             if (at > authorityStart) {
-                stripped = stripped.substring(0, authorityStart + 2) + "***@" + stripped.substring(at + 1);
+                return stripped.substring(0, authorityStart) + "***@" + stripped.substring(at + 1);
+            }
+        } else if (scheme != null) {
+            // No authority, yet the credentials can still be there: "user:secret@vault:8200" typed
+            // without a scheme parses as the scheme "user" with all of "secret@vault:8200" behind
+            // it. Everything up to the last "@" before the path goes, the scheme included — it is
+            // the user name half of the userinfo.
+            int at = lastAtBeforeThePath(stripped, schemeEnd);
+            if (at >= schemeEnd) {
+                return "***@" + stripped.substring(at + 1);
             }
         }
         return stripped;
+    }
+
+    /**
+     * The index of the last {@code @} in front of the path, searching from {@code from}, or {@code -1} if there is
+     * none. An {@code @} may legally recur inside userinfo, so the last one is the delimiter and everything before it
+     * is credential; past the first {@code /} the {@code @} is an ordinary path character.
+     */
+    private static int lastAtBeforeThePath(String stripped, int from) {
+        int pathStart = stripped.indexOf('/', from);
+        int end = pathStart >= 0 ? pathStart : stripped.length();
+        return stripped.lastIndexOf('@', end - 1);
     }
 }
