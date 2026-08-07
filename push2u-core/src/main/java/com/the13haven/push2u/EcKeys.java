@@ -29,6 +29,14 @@ import org.jspecify.annotations.Nullable;
  * X9.62 uncompressed point ({@code 0x04 || X || Y}, 65 bytes) for public keys ({@code p256dh}, VAPID {@code k}) and the
  * raw 32-byte scalar for the VAPID private key.
  */
+// GodClass: tipped over the metric (WMC 48 against the rule's 47) by one added branch of the
+// generated-key verification, which refuses a degenerate provider answer by name instead of
+// dereferencing it. The class is the single home for P-256 key import/export and the provider
+// checks guarding those operations; splitting the checks out to satisfy the metric would separate
+// them from what they guard. If the metric fires again, the seam to split at is codec versus key
+// agreement — decode/encode/writeFixed serialise the wire forms, generateP256 and ecdh with their
+// verification helpers guard the provider — never a cut through the middle of a verification.
+@SuppressWarnings("PMD.GodClass")
 final class EcKeys {
 
     static final int UNCOMPRESSED_LENGTH = P256PublicKeys.UNCOMPRESSED_LENGTH;
@@ -105,8 +113,13 @@ final class EcKeys {
     }
 
     /**
-     * Encode a public key as the 65-byte X9.62 uncompressed point. The fixed 32-byte coordinate fields are P-256's
-     * field size, and a coordinate from a larger curve is rejected rather than truncated (see {@link #writeFixed}).
+     * Encode a public key as the 65-byte X9.62 uncompressed point. Call only with a key already validated to carry a
+     * real point: the one production caller serialises the freshly generated ephemeral key, whose {@code getW()} has
+     * been refused by {@link #generateP256} if it was {@code null} or the point at infinity, so neither is re-checked
+     * here — a key that passed those checks and answers differently on this read is lying, and a liar can equally
+     * answer with a different <em>valid</em> point, which no re-check could catch. The fixed 32-byte coordinate fields
+     * are P-256's field size, and a coordinate from a larger curve is rejected rather than truncated (see
+     * {@link #writeFixed}).
      */
     static byte[] encodeUncompressed(ECPublicKey key) {
         ECPoint point = key.getW();
@@ -196,9 +209,11 @@ final class EcKeys {
      * The parameter check of {@link #requireGeneratedOnP256}: the {@code half} key's declared domain parameters must be
      * the published NIST P-256 values — prime field modulus, both coefficients, generator, order and cofactor. The
      * message names the mismatched component and quotes no values, the same way the import-side parameter verification
-     * reports it.
+     * reports it. A key answering {@code getParams()} with {@code null} — the provider's own key implementation is what
+     * answers, and nothing obliges a defective one to answer at all — is reported the same way, as having no domain
+     * parameters, rather than dereferenced.
      */
-    private static void requireGeneratedP256Parameters(ECParameterSpec parameters, String half) {
+    private static void requireGeneratedP256Parameters(@Nullable ECParameterSpec parameters, String half) {
         String mismatch = P256PublicKeys.nistP256Mismatch(parameters);
         if (mismatch != null) {
             throw new PushCryptoException("P-256 key-pair generation returned a " + half
@@ -208,11 +223,18 @@ final class EcKeys {
     }
 
     /**
-     * The point check of {@link #requireGeneratedOnP256}, against the hard-coded published constants: not the point at
-     * infinity (whose affine coordinates are {@code null}, so it is refused before the arithmetic), both coordinates
-     * inside the prime field, and the curve equation satisfied.
+     * The point check of {@link #requireGeneratedOnP256}, against the hard-coded published constants: a point at all
+     * (the provider's key implementation answers {@code getW()}, and a defective one can answer {@code null} — which
+     * {@code ECPoint.POINT_INFINITY.equals(null)} quietly reports as {@code false}, so it must be refused by name
+     * before that comparison), not the point at infinity (whose affine coordinates are {@code null}, so it is refused
+     * before the arithmetic), both coordinates inside the prime field, and the curve equation satisfied.
      */
-    private static void requireGeneratedPointOnP256(ECPoint w) {
+    private static void requireGeneratedPointOnP256(@Nullable ECPoint w) {
+        if (w == null) {
+            throw new PushCryptoException(
+                    "P-256 key-pair generation returned a public key reporting no point at all, which is not a usable"
+                            + " public key");
+        }
         if (ECPoint.POINT_INFINITY.equals(w)) {
             throw new PushCryptoException(
                     "P-256 key-pair generation returned the point at infinity, which is not a usable public key");

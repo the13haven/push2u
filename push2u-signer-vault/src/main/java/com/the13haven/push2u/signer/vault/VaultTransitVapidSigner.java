@@ -406,6 +406,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *       as {@code (1, 2)}, or a coordinate at or above the field prime — so without this step the signer would
      *       still publish a VAPID key that no push service can verify.
      * </ol>
+     *
+     * <p>Both answers a key gives about itself — {@code getParams()} and {@code getW()} — come from the provider's own
+     * key implementation, and a defective provider installed ahead of the platform's can answer {@code null} to either;
+     * each is refused as this module's crypto exception rather than dereferenced.
      */
     private static void requireP256PublicKey(ECPublicKey key) {
         ECParameterSpec expected = p256Parameters();
@@ -420,10 +424,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     /**
      * Check {@code point} against the short Weierstrass equation of {@code parameters}: {@code 0 <= x,y < p} and
      * {@code y² ≡ x³ + ax + b (mod p)}. Called only with the canonical P-256 parameters, so the field is known to be an
-     * {@link ECFieldFp}. Coordinates are public key material, but the message quotes none of it — the failure is
-     * structural, and there is nothing an operator can do with the digits.
+     * {@link ECFieldFp}. A {@code null} point — a defective provider's key answering {@code getW()} with nothing — is
+     * refused first and by name: {@code ECPoint.POINT_INFINITY.equals(null)} is {@code false}, so the infinity guard
+     * alone would wave the null through to the affine-coordinate arithmetic. Coordinates are public key material, but
+     * the message quotes none of it — the failure is structural, and there is nothing an operator can do with the
+     * digits.
      */
-    private static void requireOnCurve(ECPoint point, ECParameterSpec parameters) {
+    private static void requireOnCurve(@Nullable ECPoint point, ECParameterSpec parameters) {
+        if (point == null) {
+            throw new PushCryptoException(
+                    "Vault Transit public key reports no point at all, which is not a usable VAPID key");
+        }
         if (ECPoint.POINT_INFINITY.equals(point)) {
             throw new PushCryptoException(
                     "Vault Transit public key is the point at infinity, which is not a usable VAPID key");
@@ -448,12 +459,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
     }
 
-    /** The canonical NIST P-256 domain parameters, resolved from the platform JCE providers. */
+    /**
+     * The canonical NIST P-256 domain parameters, resolved from the platform JCE providers. A lookup answered with no
+     * spec at all — {@code getParameterSpec} runs in whichever provider wins the {@code AlgorithmParameters}
+     * resolution, and a defective one installed ahead of the platform's can answer {@code null} — is refused here as
+     * this module's crypto exception, not left to dereference inside the curve comparison.
+     */
     private static ECParameterSpec p256Parameters() {
         try {
             AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC);
             parameters.init(new ECGenParameterSpec(SECP256R1));
-            return parameters.getParameterSpec(ECParameterSpec.class);
+            ECParameterSpec spec = parameters.getParameterSpec(ECParameterSpec.class);
+            if (spec == null) {
+                throw new PushCryptoException("EC AlgorithmParameters answered the " + SECP256R1
+                        + " lookup with no parameter spec at all, so there is nothing to verify the Vault key against");
+            }
+            return spec;
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException(
                     "EC AlgorithmParameters (" + SECP256R1 + ") are unavailable from the platform JCE providers", e);
@@ -496,7 +517,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * so "a 256-bit prime field" reads as a self-contradiction. The {@code b} coefficient discriminates them, and being
      * a published domain parameter it is safe to log.
      */
-    private static String describe(ECParameterSpec parameters, ECParameterSpec expected) {
+    private static String describe(@Nullable ECParameterSpec parameters, ECParameterSpec expected) {
         if (parameters == null) {
             return "the key carries no EC domain parameters";
         }
@@ -805,8 +826,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * Encode a P-256 public key as its 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y}). Call only after
-     * {@link #requireP256PublicKey}: the fixed 32-byte coordinate fields are P-256's field size, and a coordinate from
-     * a larger curve is rejected rather than truncated.
+     * {@link #requireP256PublicKey}: that check has already refused a key reporting no point at all or the point at
+     * infinity, so neither is re-checked here, and the fixed 32-byte coordinate fields are P-256's field size, so a
+     * coordinate from a larger curve is rejected rather than truncated.
      */
     private static byte[] uncompressedPoint(ECPublicKey key) {
         byte[] out = new byte[UNCOMPRESSED_LENGTH];

@@ -11,17 +11,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigInteger;
 import java.net.URI;
 import java.security.AlgorithmParameters;
+import java.security.AlgorithmParametersSpi;
+import java.security.Key;
 import java.security.KeyFactory;
+import java.security.KeyFactorySpi;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
+import java.security.Provider;
 import java.security.PublicKey;
+import java.security.Security;
 import java.security.interfaces.ECPublicKey;
+import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.ECFieldFp;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
 import java.security.spec.EllipticCurve;
+import java.security.spec.KeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Map;
@@ -247,6 +255,226 @@ class VaultTransitVapidSignerKeyValidationTest {
         assertThat(point[33])
                 .as("Y's leading sign byte is dropped, not written into the field")
                 .isNotZero();
+    }
+
+    /**
+     * The two degenerate shapes a provider's own key implementation can produce — {@code getW()} or {@code getParams()}
+     * answering {@code null} — delivered through the production path: the signer's PEM parser resolves
+     * {@code KeyFactory.getInstance("EC")} through the JVM's installed-provider order, so a provider inserted at
+     * position 1 registering only that service hands the builder the degenerate key while every other JCA lookup still
+     * falls through to the platform. Driving {@code build()} end to end rather than calling the validation directly
+     * pins not just the refusal but its place in the chain: the key is refused <em>before</em> its point is serialised,
+     * so a reordering that serialises first brings the NPE back and fails here. The null point is the sharper case:
+     * {@code ECPoint.POINT_INFINITY.equals(null)} is {@code false}, so the infinity guard alone would wave it through
+     * to the affine-coordinate arithmetic.
+     *
+     * <p>Unlike the core's provider probes, which pass their provider by reference into the seam, this is JVM-global
+     * state — the lookup sits inside the parser and has no seam — so the install is scoped in try/finally, and the
+     * technique depends on this build running its tests sequentially in one JVM (it configures no parallel test
+     * execution anywhere). If the build ever parallelises tests, these need a different route.
+     */
+    @Test
+    void aKeyReportingNoPointAtAllIsRefusedAsACryptoException() throws Exception {
+        assertRefusedThroughTheBuilder(keyReporting(null, p256()), "no point at all");
+    }
+
+    @Test
+    void aKeyReportingNoDomainParametersAtAllIsRefusedAsACryptoException() throws Exception {
+        ECPoint anyPoint = new ECPoint(BigInteger.ONE, BigInteger.TWO);
+
+        assertRefusedThroughTheBuilder(keyReporting(anyPoint, null), "no EC domain parameters");
+    }
+
+    /**
+     * The platform-parameter lookup itself, answered degenerately: {@code AlgorithmParameters.getParameterSpec} runs in
+     * whichever provider wins the resolution, and one answering {@code null} must be refused before the curve
+     * comparison dereferences it. The provider also registers a {@code KeyFactory} handing back the pre-parsed genuine
+     * key, because the platform's own SPKI parsing reaches {@code AlgorithmParameters.getInstance("EC")} internally —
+     * leaving the parse to it would hit the degenerate parameters upstream and fail as an unparseable key, short of the
+     * branch under test. Same global-state scoping and the same sequential-build dependency as above.
+     */
+    @Test
+    void aParameterLookupAnsweringNoSpecAtAllIsRefusedAsACryptoException() throws Exception {
+        ECPublicKey genuine = generate("secp256r1");
+        String body = metadataBody(pem(genuine), "ecdsa-p256");
+        Provider degenerate = new NullParameterSpecProvider(genuine);
+        Security.insertProviderAt(degenerate, 1);
+        try {
+            assertThatThrownBy(() -> signerFor(body))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("no parameter spec at all");
+        } finally {
+            Security.removeProvider(degenerate.getName());
+        }
+    }
+
+    /** Installs a {@code KeyFactory} answering with {@code key} and drives the fetched-key construction end to end. */
+    private static void assertRefusedThroughTheBuilder(ECPublicKey key, String messageFragment) throws Exception {
+        String body = metadataBody(pem(generate("secp256r1")), "ecdsa-p256");
+        Provider degenerate = new DegenerateKeyFactoryProvider(key);
+        Security.insertProviderAt(degenerate, 1);
+        try {
+            assertThatThrownBy(() -> signerFor(body))
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining(messageFragment);
+        } finally {
+            Security.removeProvider(degenerate.getName());
+        }
+    }
+
+    /**
+     * A hand-rolled key answering exactly the given point and parameters, {@code null}s included — the shape only a
+     * defective provider's {@code KeyFactory} can produce, which the real {@link #keyAt} (going through the platform
+     * factory) cannot.
+     */
+    private static ECPublicKey keyReporting(ECPoint w, ECParameterSpec parameters) {
+        return new ECPublicKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public ECPoint getW() {
+                return w;
+            }
+
+            @Override
+            public ECParameterSpec getParams() {
+                return parameters;
+            }
+
+            @Override
+            public String getAlgorithm() {
+                return "EC";
+            }
+
+            @Override
+            public String getFormat() {
+                return "X.509";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        };
+    }
+
+    /**
+     * A provider registering exactly one service — {@code KeyFactory.EC} — whose parse answers with a fixed degenerate
+     * key. Inserted at position 1 it intercepts the signer's plain {@code KeyFactory.getInstance("EC")}; every other
+     * lookup falls through to the platform. {@code Service.newInstance} is overridden, so the SPI needs no reflective
+     * access.
+     */
+    private static final class DegenerateKeyFactoryProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        DegenerateKeyFactoryProvider(ECPublicKey key) {
+            super("push2u-degenerate-keyfactory", "1.0", "answers EC key parsing with a fixed degenerate key");
+            putService(new Service(this, "KeyFactory", "EC", DegenerateKeyFactory.class.getName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) {
+                    return new DegenerateKeyFactory(key);
+                }
+            });
+        }
+    }
+
+    /**
+     * A provider answering the {@code AlgorithmParameters.EC} lookup with a spec of {@code null}, plus a
+     * {@code KeyFactory.EC} handing back a fixed already-parsed key — see
+     * {@link #aParameterLookupAnsweringNoSpecAtAllIsRefusedAsACryptoException} for why both registrations are needed.
+     */
+    private static final class NullParameterSpecProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        NullParameterSpecProvider(ECPublicKey parsedKey) {
+            super("push2u-null-parameter-spec", "1.0", "answers the EC parameter lookup with no spec at all");
+            putService(new Service(this, "AlgorithmParameters", "EC", NullParameterSpec.class.getName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) {
+                    return new NullParameterSpec();
+                }
+            });
+            putService(new Service(this, "KeyFactory", "EC", DegenerateKeyFactory.class.getName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) {
+                    return new DegenerateKeyFactory(parsedKey);
+                }
+            });
+        }
+    }
+
+    /** The {@code KeyFactorySpi} behind both providers above: answers every public-key parse with the fixed key. */
+    public static final class DegenerateKeyFactory extends KeyFactorySpi {
+
+        private final ECPublicKey key;
+
+        DegenerateKeyFactory(ECPublicKey key) {
+            this.key = key;
+        }
+
+        @Override
+        protected PublicKey engineGeneratePublic(KeySpec keySpec) {
+            return key;
+        }
+
+        @Override
+        protected PrivateKey engineGeneratePrivate(KeySpec keySpec) {
+            throw new UnsupportedOperationException("public keys only");
+        }
+
+        @Override
+        protected <T extends KeySpec> T engineGetKeySpec(Key toConvert, Class<T> keySpec) {
+            throw new UnsupportedOperationException("public keys only");
+        }
+
+        @Override
+        protected Key engineTranslateKey(Key toTranslate) {
+            throw new UnsupportedOperationException("public keys only");
+        }
+    }
+
+    /** An {@code AlgorithmParameters} SPI answering the spec lookup with {@code null}. */
+    public static final class NullParameterSpec extends AlgorithmParametersSpi {
+
+        @Override
+        protected void engineInit(AlgorithmParameterSpec paramSpec) {
+            // Accept the ECGenParameterSpec("secp256r1") init and answer null anyway.
+        }
+
+        @Override
+        protected void engineInit(byte[] params) {
+            // Unused by the signer's parameter lookup.
+        }
+
+        @Override
+        protected void engineInit(byte[] params, String format) {
+            // Unused by the signer's parameter lookup.
+        }
+
+        @Override
+        protected <T extends AlgorithmParameterSpec> T engineGetParameterSpec(Class<T> paramSpec) {
+            return null;
+        }
+
+        @Override
+        protected byte[] engineGetEncoded() {
+            return new byte[0];
+        }
+
+        @Override
+        protected byte[] engineGetEncoded(String format) {
+            return new byte[0];
+        }
+
+        @Override
+        protected String engineToString() {
+            return "null parameter spec";
+        }
     }
 
     private static VaultTransitVapidSigner signerFor(String metadataBody) {
