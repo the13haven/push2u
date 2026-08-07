@@ -349,7 +349,6 @@ class VaultSignerAutoConfigurationTest {
         });
     }
 
-    /** The root cause's message, where the token rejection surfaces. */
     /** The whole failure as it reaches a log: every message in the chain, plus the frames. */
     private static String stackTrace(Throwable failure) {
         StringWriter rendered = new StringWriter();
@@ -359,6 +358,7 @@ class VaultSignerAutoConfigurationTest {
         return rendered.toString();
     }
 
+    /** The root cause's message, where the token rejection surfaces. */
     private static String rootMessage(Throwable failure) {
         Throwable cursor = failure;
         while (cursor.getCause() != null) {
