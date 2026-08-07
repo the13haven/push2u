@@ -55,9 +55,11 @@ import com.the13haven.push2u.VapidSigner;
  * schemes — because the signer speaks Vault's HTTP API and nothing else; any other scheme is rejected at the factory.
  * {@code https} is always accepted. Plain {@code http} is accepted without ceremony only when the host is a <em>literal
  * loopback</em>: {@code localhost}, a name under {@code .localhost}, an IPv4 dotted-quad in {@code 127.0.0.0/8}
- * (canonical decimal, no leading zeros), or the IPv6 loopback written as a bracketed literal ({@code [::1]} in any of
- * its spellings). That carve-out is the Vault Agent and service-mesh sidecar pattern — the application talks plain HTTP
- * to {@code http://127.0.0.1:8200}, and the agent beside it terminates TLS — a mainstream production deployment, not a
+ * (canonical decimal, no leading zeros), or a bracketed IP literal that denotes a loopback address — {@code [::1]} in
+ * any of its spellings, and equally {@code [::ffff:127.0.0.1]} or {@code [::ffff:7f00:1]}, the IPv4-mapped writings of
+ * a {@code 127.0.0.0/8} address, whose traffic goes to that IPv4 loopback and so no further than the {@code 127.0.0.1}
+ * form does. That carve-out is the Vault Agent and service-mesh sidecar pattern — the application talks plain HTTP to
+ * {@code http://127.0.0.1:8200}, and the agent beside it terminates TLS — a mainstream production deployment, not a
  * development convenience. {@code http} to any other host makes {@code build()} throw unless the builder's optional
  * {@code allowInsecureHttp()} step was called: the Vault token travels in the {@code X-Vault-Token} request header, and
  * over plain HTTP to a remote host it would cross the network in clear text. Loopback is decided from the literal host
@@ -1004,10 +1006,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * <p>Loopback is decided from the literal host text, never by resolving the name: resolution would be a network
      * call inside validation, could disagree with whatever the transport's own resolver answers later, and would make
-     * the rule depend on the environment instead of on the address. The literal set is the one browsers treat as a
-     * secure context — {@code localhost}, any name under {@code .localhost}, an IPv4 dotted-quad in
-     * {@code 127.0.0.0/8}, the IPv6 loopback as a bracketed literal ({@link #isLoopbackLiteral}). A private name that
-     * merely <em>resolves</em> to a loopback ({@code http://my-vault} through the hosts file) therefore needs the
+     * the rule depend on the environment instead of on the address. The literal set is essentially the one browsers
+     * treat as a secure context — {@code localhost}, any name under {@code .localhost}, an IPv4 dotted-quad in
+     * {@code 127.0.0.0/8}, and a bracketed IP literal denoting a loopback address, which covers the IPv6 loopback in
+     * any spelling and the IPv4-mapped writings of {@code 127.0.0.0/8} ({@link #isLoopbackLiteral}). A private name
+     * that merely <em>resolves</em> to a loopback ({@code http://my-vault} through the hosts file) therefore needs the
      * opt-in — the accepted price of a rule readable from the address alone.
      */
     private static void requirePlainHttpPermitted(URI address, boolean allowInsecureHttp) {
@@ -1029,9 +1032,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * Whether {@code host} — as {@link URI#getHost()} reports it — is a literal loopback, decided from the text alone
      * (the rationale lives on {@link #requirePlainHttpPermitted}): {@code localhost} or a name under
      * {@code .localhost}, compared ASCII case-insensitively because RFC 3986 §3.2.2 host names are; an IPv4 dotted-quad
-     * in {@code 127.0.0.0/8}; or a bracketed IPv6 literal that is the loopback address. The bracketed form is parsed
-     * rather than string-compared because {@code ::1} has many legal spellings — and RFC 3986 §3.2.2 admits only an IP
-     * literal inside brackets, never a name, so parsing it can involve no name resolution.
+     * in {@code 127.0.0.0/8}; or a bracketed IP literal that denotes a loopback address.
+     *
+     * <p>The bracketed form is parsed rather than string-compared because one address has many legal spellings, and
+     * because the question is which address the literal denotes rather than how it is written: {@code [::1]} and
+     * {@code [0:0:0:0:0:0:0:1]} are the same IPv6 loopback, while the IPv4-mapped writings {@code [::ffff:127.0.0.1]}
+     * and {@code [::ffff:7f00:1]} are a <em>different</em> 128-bit value that the platform resolves to the IPv4 address
+     * it maps — {@code 127.0.0.1} here, so the traffic reaches the same place plain {@code 127.0.0.1} does and is
+     * admitted for the same reason. A mapped form of anything else ({@code [::ffff:8.8.8.8]}) maps to a non-loopback
+     * address and is refused, as is the deprecated IPv4-compatible form {@code [::127.0.0.1]}, which denotes an IPv6
+     * address that is not the loopback. RFC 3986 §3.2.2 admits only an IP literal inside brackets, never a name, so
+     * this parse can involve no name resolution.
      */
     private static boolean isLoopbackLiteral(String host) {
         String lowerCased = host.toLowerCase(Locale.ROOT);
@@ -1304,8 +1315,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * that hop is genuinely acceptable — a physically isolated network, a test bench — and prefer {@code https}, or
          * a TLS-terminating Vault Agent or sidecar on the same host, which needs no opt-in at all: {@code http} to a
          * literal loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4
-         * literal, or the IPv6 loopback {@code [::1]}) is always accepted. The loopback decision reads the host text
-         * literally, never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
+         * literal, or a bracketed IP literal denoting a loopback address — {@code [::1]} in any spelling, and the
+         * IPv4-mapped writings such as {@code [::ffff:127.0.0.1]}) is always accepted. The loopback decision reads the
+         * host text literally, never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
          *
          * <p>{@code https} addresses are unaffected — this step neither weakens TLS nor changes certificate validation.
          *
@@ -1479,8 +1491,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * that hop is genuinely acceptable — a physically isolated network, a test bench — and prefer {@code https}, or
          * a TLS-terminating Vault Agent or sidecar on the same host, which needs no opt-in at all: {@code http} to a
          * literal loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4
-         * literal, or the IPv6 loopback {@code [::1]}) is always accepted. The loopback decision reads the host text
-         * literally, never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
+         * literal, or a bracketed IP literal denoting a loopback address — {@code [::1]} in any spelling, and the
+         * IPv4-mapped writings such as {@code [::ffff:127.0.0.1]}) is always accepted. The loopback decision reads the
+         * host text literally, never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
          *
          * <p>{@code https} addresses are unaffected — this step neither weakens TLS nor changes certificate validation.
          *

@@ -34,7 +34,7 @@ what it replaces. The superseded one keeps its number, its title and its body, a
 becomes:
 
 ```markdown
-**Status:** Superseded by [ADR-015](0015-the-new-decision.md)
+**Status:** Superseded by [ADR-NNN](NNNN-the-new-decision.md)
 ```
 
 That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is

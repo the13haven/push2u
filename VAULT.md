@@ -31,11 +31,16 @@ The scheme must be `http` or `https` (case-insensitively — RFC 3986 §3.1): th
 Vault's HTTP API and nothing else, so any other scheme is rejected at the factory (and at startup,
 naming the property). `https` is always accepted. Plain `http` is accepted without ceremony only
 when the host is a *literal loopback* — `localhost`, a name under `.localhost`, an IPv4
-dotted-quad in `127.0.0.0/8` (canonical decimal, no leading zeros), or the IPv6 loopback as a
-bracketed literal (`[::1]` in any spelling). That carve-out is the Vault Agent Injector and
-service-mesh sidecar pattern: the application talks plain HTTP to `http://127.0.0.1:8200` and the
-agent beside it terminates TLS — a mainstream production deployment that works out of the box (and
-covers Vault's plain-`http` dev server too).
+dotted-quad in `127.0.0.0/8` (canonical decimal, no leading zeros), or a bracketed IP literal that
+denotes a loopback address. The bracketed form is parsed rather than string-matched, so it covers
+`[::1]` in any of its spellings *and* the IPv4-mapped writings of a `127.0.0.0/8` address —
+`[::ffff:127.0.0.1]`, `[::ffff:7f00:1]` — which the platform resolves to that IPv4 loopback, so
+they reach exactly where `127.0.0.1` does. A mapped form of anything else (`[::ffff:8.8.8.8]`) is
+refused, as is the deprecated IPv4-compatible `[::127.0.0.1]`, which denotes an IPv6 address that
+is not the loopback. That carve-out is the Vault Agent Injector and service-mesh sidecar pattern:
+the application talks plain HTTP to `http://127.0.0.1:8200` and the agent beside it terminates TLS
+— a mainstream production deployment that works out of the box (and covers Vault's plain-`http`
+dev server too).
 
 Plain `http` to any other host is refused by `build()` unless the builder's `allowInsecureHttp()`
 step was called: the `X-Vault-Token` header would cross the network in clear text. In the fetched
@@ -103,7 +108,8 @@ The builder holds only the optional steps: `mount` defaults to `transit` (in bot
 the properties), Vault's own default mount for the Transit secrets engine, `namespace` defaults to
 none (see *Vault namespaces* below), `transport` defaults to a `JdkVaultHttpTransport` (see
 *Vault HTTP transport* below), and `allowInsecureHttp()` defaults to off (see *Vault address*
-above — plain `http` beyond a literal loopback host is refused without it). `mount` is validated where it is set, per segment: nested mounts
+above — plain `http` beyond a literal loopback host is refused without it). `mount` is validated
+where it is set, per segment: nested mounts
 like `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or
 `..`, and use only `[A-Za-z0-9_.-]`. That it is an allowed set rather than a `..` blacklist is what
 percent-encoding cannot reopen, and the set is deliberately narrower than either Vault or a URL

@@ -18,9 +18,15 @@ The decision:
 - **Plain `http` to a literal loopback host is always accepted, with no opt-in.** This is not a
   developer convenience: it is the Vault Agent Injector and service-mesh sidecar pattern, where the
   application talks to `http://127.0.0.1:8200` and the agent beside it terminates TLS — a
-  mainstream production deployment that must work out of the box. The literal set is the browsers'
-  secure-context set: `localhost`, names under `.localhost`, `127.0.0.0/8` IPv4 dotted-quads in
-  canonical decimal, and the IPv6 loopback as a bracketed literal.
+  mainstream production deployment that must work out of the box. The literal set is essentially
+  the browsers' secure-context set: `localhost`, names under `.localhost`, `127.0.0.0/8` IPv4
+  dotted-quads in canonical decimal, and a bracketed IP literal that *denotes* a loopback address.
+  The bracketed form is parsed rather than string-matched, and the test is the address it denotes,
+  not its spelling — so it admits `[::1]` however it is written and equally the IPv4-mapped
+  writings of a `127.0.0.0/8` address (`[::ffff:127.0.0.1]`, `[::ffff:7f00:1]`), which are a
+  different 128-bit value but resolve to that IPv4 loopback and therefore travel no further than
+  `127.0.0.1` does. A mapped form of any other address is refused, as is the deprecated
+  IPv4-compatible `[::127.0.0.1]`, which denotes an IPv6 address that is not the loopback.
 - **Plain `http` to anything else requires the builders' explicit `allowInsecureHttp()` step**;
   without it `build()` throws. The rule cannot live at the factory — the opt-in is a builder step,
   callable only after the factory has returned — so this is a deliberate exception to the habit of
