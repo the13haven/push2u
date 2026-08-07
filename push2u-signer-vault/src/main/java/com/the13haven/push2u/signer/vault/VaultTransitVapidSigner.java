@@ -409,10 +409,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * <p>Both answers a key gives about itself — {@code getParams()} and {@code getW()} — come from the provider's own
      * key implementation, and a defective provider installed ahead of the platform's can answer {@code null} to either;
-     * each is refused as this module's crypto exception rather than dereferenced. Package-private for the
-     * degenerate-key unit tests, which cannot produce such a key through a real {@code KeyFactory}.
+     * each is refused as this module's crypto exception rather than dereferenced.
      */
-    static void requireP256PublicKey(ECPublicKey key) {
+    private static void requireP256PublicKey(ECPublicKey key) {
         ECParameterSpec expected = p256Parameters();
         ECParameterSpec actual = key.getParams();
         if (actual == null || !sameCurve(actual, expected)) {

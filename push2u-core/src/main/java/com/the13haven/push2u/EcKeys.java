@@ -33,7 +33,9 @@ import org.jspecify.annotations.Nullable;
 // generated-key verification, which refuses a degenerate provider answer by name instead of
 // dereferencing it. The class is the single home for P-256 key import/export and the provider
 // checks guarding those operations; splitting the checks out to satisfy the metric would separate
-// them from what they guard.
+// them from what they guard. If the metric fires again, the seam to split at is codec versus key
+// agreement — decode/encode/writeFixed serialise the wire forms, generateP256 and ecdh with their
+// verification helpers guard the provider — never a cut through the middle of a verification.
 @SuppressWarnings("PMD.GodClass")
 final class EcKeys {
 

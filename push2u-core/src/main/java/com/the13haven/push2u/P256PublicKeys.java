@@ -165,9 +165,12 @@ public final class P256PublicKeys {
      * dereference: a provider's own key or {@code AlgorithmParameters} implementation is what answers
      * {@code getParams()} and {@code getParameterSpec(...)}, and nothing in the JDK stops a defective one answering
      * {@code null}, so every caller feeding this method a provider-supplied value is covered here at once. That is also
-     * where the null-handling deliberately stops: the components <em>inside</em> a non-null spec are never checked for
-     * {@code null}, because the {@link ECParameterSpec}, {@link EllipticCurve} and {@link ECPoint} constructors all
-     * reject {@code null} arguments, so a constructed instance cannot carry a null component.
+     * where the null-handling deliberately stops, and the stopping point is chosen, not proven: a merely defective
+     * provider plausibly answers {@code null} from its own methods while still building genuine
+     * {@link ECParameterSpec}, {@link EllipticCurve} and {@link ECPoint} instances, whose constructors reject
+     * {@code null} components — whereas a provider hostile enough to subclass those types and lie through overridden
+     * getters could be chased one accessor deeper without end. So the line is drawn at the values a provider returns
+     * from its own implementation, and the components <em>inside</em> a non-null spec are not re-checked.
      */
     @Nullable
     static String nistP256Mismatch(@Nullable ECParameterSpec parameters) {
