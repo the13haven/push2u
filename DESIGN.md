@@ -379,20 +379,32 @@ record carries the whole payload, `rs` must be strictly greater than the plainte
 padding delimiter plus the authentication tag (RFC 8291 §4); equality is rejected. The record is
 not zero-padded up to `rs`, so the body size depends only on the payload.
 
+The provider itself is not trusted to answer the `secp256r1` lookup honestly. `Jca.p256Parameters()`
+is the one seam where provider-supplied domain parameters enter the library — the public-key and
+the private-key decode both take them from there — and it verifies the answer value for value
+against the hard-coded FIPS 186-4 constants (prime field modulus, both coefficients, generator,
+order, cofactor) before anything runs on it, failing closed as `PushCryptoException`. Without that,
+a provider answering the name with another 256-bit prime-field curve would silently move the ECDH
+agreement and the VAPID private-key import onto that curve. The parameters are a per-instance
+constant, so the verified result is cached the same way as the ES256 resolution; the verification
+runs before each store, never resting on the cache. The ephemeral `KeyPairGenerator` resolves the
+curve name itself and is covered separately: the generated public point is checked against the
+canonical P-256 curve equation before the pair is used. On the way out, the fixed-width coordinate
+serialization refuses a negative or wider-than-256-bit coordinate rather than truncating it —
+truncation would publish a plausible-looking but wrong point.
+
 The subscription public key (`p256dh`) is attacker-reachable input, and it is validated twice, on
 purpose. At construction, `Subscription` runs `P256PublicKeys.requireOnCurve` (§5) against the
 hard-coded FIPS 186-4 parameters — no provider involved — so a hostile off-curve key is refused at
 the application's boundary. At decode time, inside the send pipeline, the point is validated again
-— coordinates inside the prime field, then the P-256 curve equation — against the parameters of
-the provider that is about to run ECDH, before the point reaches that provider's `KeyFactory`.
-The second check is not a duplicate of the first: it asks a different question ("does the provider
-that will compute agree this is on its curve?"), and with a provider whose `secp256r1` parameters
-are not over a prime field it fails closed rather than assuming the constants. Refusing an
-invalid-curve point therefore never depends on whether the configured provider validates in
-`KeyAgreement.doPhase`. The equation arithmetic itself lives once, in `P256PublicKeys`; only the
-parameter source differs. The Vault signer performs its own, deliberately separate check on the
-key it fetches (§7), which additionally compares domain parameters by value because there the
-parameters come from the input.
+— coordinates inside the prime field, then the P-256 curve equation — against the now-verified
+parameters of the provider that is about to run ECDH, before the point reaches that provider's
+`KeyFactory`. Refusing an invalid-curve point therefore never depends on whether the configured
+provider validates in `KeyAgreement.doPhase`. The equation arithmetic itself lives once, in
+`P256PublicKeys`; only the parameter source differs. The Vault signer performs its own, deliberately
+separate checks on the key it fetches (§7) — the same value-wise parameter comparison and the same
+refuse-not-truncate serialization, duplicated on purpose: there the parameters and coordinates come
+from the fetched key itself, and each module keeps its trust boundary self-contained.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.

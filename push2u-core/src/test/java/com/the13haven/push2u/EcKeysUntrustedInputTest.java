@@ -11,7 +11,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.security.AlgorithmParametersSpi;
+import java.security.KeyPair;
+import java.security.KeyPairGeneratorSpi;
 import java.security.Provider;
+import java.security.PublicKey;
+import java.security.SecureRandom;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.ECFieldF2m;
@@ -20,8 +24,12 @@ import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.EllipticCurve;
 import java.util.Arrays;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * The {@code p256dh} key travels from a browser through the application's own storage before reaching this library, so
@@ -107,16 +115,104 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
-     * The decode-time check needs the field prime, so it can only run over a prime field. {@code Jca.using(...)} means
-     * the parameters come from an arbitrary provider, and a provider answering the {@code secp256r1} lookup with a
-     * binary-field ({@code ECFieldF2m}) parameter set is defective — the pinned behaviour is failing closed on a point
-     * that cannot be validated, not skipping the check.
+     * {@code Jca.using(...)} means the {@code secp256r1} parameters come from an arbitrary provider, and a provider
+     * answering that lookup with a binary-field ({@code ECFieldF2m}) parameter set is defective — the pinned behaviour
+     * is failing closed at the parameter seam, before any key is imported on those parameters.
      */
     @Test
     void parametersOverANonPrimeFieldFailClosedInsteadOfSkippingTheCheck() {
         assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), Jca.using(new BinaryFieldProvider())))
                 .isInstanceOf(PushCryptoException.class)
                 .hasMessageContaining("non-prime field");
+    }
+
+    // ---- a provider answering secp256r1 with some other curve ----------------------------------
+
+    /**
+     * The {@code secp256r1} lookup is by name, and the name is all a defective provider needs to honour: before the
+     * value-wise verification, a provider could answer it with any other 256-bit prime-field curve — secp256k1,
+     * brainpoolP256r1, or a deliberately weak one — and ECDH, the VAPID private key import and the ephemeral key
+     * generation would all silently run on that curve. Each canonical component (field prime, both coefficients,
+     * generator, order, cofactor) must be compared, so each is falsified on its own here, with the message naming it —
+     * the messages quote no parameter values, only which component is off.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("substitutedP256Components")
+    void parametersDifferingFromNistP256InAnyComponentFailClosed(
+            String component, ECParameterSpec substituted, String expectedFragment) {
+        assertThatThrownBy(
+                        () -> EcKeys.decodeP256PublicKey(validPoint(), Jca.using(new ParametersProvider(substituted))))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining(expectedFragment)
+                .hasMessageContaining("NIST P-256");
+    }
+
+    /**
+     * The private-scalar decode imports the VAPID private key on the same provider parameters, and a weak curve there
+     * leaks the long-term key through the signatures made with it — so the wrong-curve refusal must cover this path
+     * too, not only the public-key one.
+     */
+    @Test
+    void thePrivateKeyDecodeGoesThroughTheSameParameterVerification() {
+        Jca secp256k1 =
+                Jca.using(new ParametersProvider(withCurve(SECP256K1_P, BigInteger.ZERO, BigInteger.valueOf(7))));
+
+        assertThatThrownBy(() -> EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), secp256k1))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("NIST P-256");
+    }
+
+    /** secp256k1's field prime — the 256-bit prime-field curve most likely to be confused with P-256. */
+    private static final BigInteger SECP256K1_P =
+            new BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16);
+
+    private static Stream<Arguments> substitutedP256Components() {
+        return Stream.of(
+                Arguments.of("wrong field prime (secp256k1's p)", withField(SECP256K1_P), "prime field modulus"),
+                Arguments.of("wrong coefficient a", withA(BigInteger.ZERO), "coefficient a"),
+                Arguments.of("wrong coefficient b (secp256k1's b)", withB(BigInteger.valueOf(7)), "coefficient b"),
+                Arguments.of(
+                        "wrong generator", withGenerator(new ECPoint(BigInteger.ONE, BigInteger.TWO)), "generator"),
+                Arguments.of("wrong order", withOrder(P256PublicKeys.N.subtract(BigInteger.ONE)), "order"),
+                Arguments.of("wrong cofactor", withCofactor(4), "cofactor"));
+    }
+
+    private static ECParameterSpec withField(BigInteger p) {
+        return spec(p, P256PublicKeys.A, P256PublicKeys.B, canonicalGenerator(), P256PublicKeys.N, 1);
+    }
+
+    private static ECParameterSpec withA(BigInteger a) {
+        return spec(P256PublicKeys.P, a, P256PublicKeys.B, canonicalGenerator(), P256PublicKeys.N, 1);
+    }
+
+    private static ECParameterSpec withB(BigInteger b) {
+        return spec(P256PublicKeys.P, P256PublicKeys.A, b, canonicalGenerator(), P256PublicKeys.N, 1);
+    }
+
+    private static ECParameterSpec withCurve(BigInteger p, BigInteger a, BigInteger b) {
+        return spec(p, a, b, canonicalGenerator(), P256PublicKeys.N, 1);
+    }
+
+    private static ECParameterSpec withGenerator(ECPoint generator) {
+        return spec(P256PublicKeys.P, P256PublicKeys.A, P256PublicKeys.B, generator, P256PublicKeys.N, 1);
+    }
+
+    private static ECParameterSpec withOrder(BigInteger order) {
+        return spec(P256PublicKeys.P, P256PublicKeys.A, P256PublicKeys.B, canonicalGenerator(), order, 1);
+    }
+
+    private static ECParameterSpec withCofactor(int cofactor) {
+        return spec(
+                P256PublicKeys.P, P256PublicKeys.A, P256PublicKeys.B, canonicalGenerator(), P256PublicKeys.N, cofactor);
+    }
+
+    private static ECPoint canonicalGenerator() {
+        return new ECPoint(P256PublicKeys.GX, P256PublicKeys.GY);
+    }
+
+    private static ECParameterSpec spec(
+            BigInteger p, BigInteger a, BigInteger b, ECPoint generator, BigInteger order, int cofactor) {
+        return new ECParameterSpec(new EllipticCurve(new ECFieldFp(p), a, b), generator, order, cofactor);
     }
 
     /** A valid point still decodes and feeds ECDH — the RFC 8291 vector in {@link EcKeysTest} pins the exact secret. */
@@ -211,6 +307,83 @@ class EcKeysUntrustedInputTest {
         }
     }
 
+    /**
+     * A provider answering the {@code secp256r1} {@code AlgorithmParameters} lookup with a fixed parameter set — the
+     * wrong-curve-provider shape the value-wise verification tests need. Its {@code KeyFactory} is real (delegated to
+     * the stock provider), because a genuinely defective provider offers a working key import too — the pinned
+     * behaviour is that the parameters are refused before that import is ever asked to run.
+     */
+    private static final class ParametersProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        ParametersProvider(ECParameterSpec parameters) {
+            super("push2u-fixed-parameters", "1.0", "answers secp256r1 with a fixed parameter set");
+            putService(
+                    new Service(
+                            this, "AlgorithmParameters", Algorithms.EC, FixedParameters.class.getName(), null, null) {
+                        @Override
+                        public Object newInstance(Object constructorParameter) {
+                            return new FixedParameters(parameters);
+                        }
+                    });
+            Provider.Service source =
+                    java.security.Security.getProvider("SunEC").getService("KeyFactory", Algorithms.EC);
+            putService(new Service(this, "KeyFactory", Algorithms.EC, source.getClassName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) throws java.security.NoSuchAlgorithmException {
+                    return source.newInstance(constructorParameter);
+                }
+            });
+        }
+    }
+
+    /** An {@code AlgorithmParameters} SPI reporting whatever parameter set it was built with. */
+    public static final class FixedParameters extends AlgorithmParametersSpi {
+
+        private final ECParameterSpec parameters;
+
+        FixedParameters(ECParameterSpec parameters) {
+            this.parameters = parameters;
+        }
+
+        @Override
+        protected void engineInit(AlgorithmParameterSpec paramSpec) {
+            // Accept the ECGenParameterSpec("secp256r1") init and report the fixed parameters anyway.
+        }
+
+        @Override
+        protected void engineInit(byte[] params) {
+            // Unused by Jca.p256Parameters().
+        }
+
+        @Override
+        protected void engineInit(byte[] params, String format) {
+            // Unused by Jca.p256Parameters().
+        }
+
+        @Override
+        protected <T extends AlgorithmParameterSpec> T engineGetParameterSpec(Class<T> paramSpec) {
+            return paramSpec.cast(parameters);
+        }
+
+        @Override
+        protected byte[] engineGetEncoded() {
+            return new byte[0];
+        }
+
+        @Override
+        protected byte[] engineGetEncoded(String format) {
+            return new byte[0];
+        }
+
+        @Override
+        protected String engineToString() {
+            return "fixed parameters";
+        }
+    }
+
     @Test
     void aCompressedPointIsRefusedEvenThoughItIsAValidEncodingElsewhere() {
         byte[] compressed = new byte[33];
@@ -269,6 +442,115 @@ class EcKeysUntrustedInputTest {
                 .isInstanceOf(PushCryptoException.class);
     }
 
+    // ---- the ephemeral key generator -----------------------------------------------------------
+
+    /**
+     * {@code generateP256} asks the provider's {@code KeyPairGenerator} for {@code secp256r1} by name, and the
+     * parameter verification at the {@code AlgorithmParameters} lookup does not reach this path — the generator
+     * resolves the curve name itself. The generated public point drives ECDH and is published in the {@code aes128gcm}
+     * header, so a generator answering the name with another curve's key must fail closed. secp256k1's generator point
+     * is the probe: a genuine EC point, just not on P-256.
+     */
+    @Test
+    void aGeneratedKeyPairOffTheP256CurveFailsClosed() {
+        BigInteger k1x = new BigInteger("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16);
+        BigInteger k1y = new BigInteger("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16);
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(pointAt(k1x, k1y, jca.p256Parameters())));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("not on NIST P-256");
+    }
+
+    @Test
+    void aGeneratedKeyThatIsNotAnEcKeyFailsClosedInsteadOfClassCasting() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(new PublicKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public String getAlgorithm() {
+                return "XDH";
+            }
+
+            @Override
+            public String getFormat() {
+                return "X.509";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        }));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("not an EC");
+    }
+
+    /** {@code getAffineX()} on the point at infinity is {@code null}, so it needs refusing before the curve check. */
+    @Test
+    void aGeneratedKeyAtThePointAtInfinityFailsClosed() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(keyAt(ECPoint.POINT_INFINITY, jca.p256Parameters())));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("point at infinity");
+    }
+
+    /**
+     * A provider whose only registration answers the EC {@code KeyPairGenerator} lookup with a generator returning a
+     * fixed public key — the defective-generator shape the fail-closed tests above need.
+     */
+    private static final class FixedKeyPairProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        FixedKeyPairProvider(PublicKey publicKey) {
+            super("push2u-fixed-keypair", "1.0", "answers EC key-pair generation with a fixed key");
+            putService(
+                    new Service(
+                            this,
+                            "KeyPairGenerator",
+                            Algorithms.EC,
+                            FixedKeyPairGenerator.class.getName(),
+                            null,
+                            null) {
+                        @Override
+                        public Object newInstance(Object constructorParameter) {
+                            return new FixedKeyPairGenerator(publicKey);
+                        }
+                    });
+        }
+    }
+
+    /** A {@code KeyPairGenerator} SPI returning the fixed public key it was built with (the private half is unused). */
+    public static final class FixedKeyPairGenerator extends KeyPairGeneratorSpi {
+
+        private final PublicKey publicKey;
+
+        FixedKeyPairGenerator(PublicKey publicKey) {
+            this.publicKey = publicKey;
+        }
+
+        @Override
+        public void initialize(int keysize, SecureRandom random) {
+            // Unused by EcKeys.generateP256.
+        }
+
+        @Override
+        public void initialize(AlgorithmParameterSpec params, SecureRandom random) {
+            // Accept the ECGenParameterSpec("secp256r1") init and return the fixed key anyway.
+        }
+
+        @Override
+        public KeyPair generateKeyPair() {
+            return new KeyPair(publicKey, EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), Jca.platform()));
+        }
+    }
+
     // ---- fixed-width coordinate serialisation --------------------------------------------------
 
     /**
@@ -298,6 +580,34 @@ class EcKeysUntrustedInputTest {
                 .isEqualTo(rightAligned(signPadded));
     }
 
+    /**
+     * A coordinate above one leading {@code 0x00} sign byte's worth of padding is <em>significant</em> width — a
+     * 257-bit value is not a P-256 field element, and copying its low 32 bytes would publish a plausible-looking but
+     * wrong point. The bit count is quoted (a length is not content); the digits are not.
+     */
+    @Test
+    void anOverWideCoordinateIsRefusedInsteadOfBeingTruncated() {
+        BigInteger overWide =
+                BigInteger.ONE.shiftLeft(256); // 257 bits: toByteArray() is 33 bytes, none of them padding
+
+        assertThatThrownBy(() -> EcKeys.encodeUncompressed(pointAt(overWide, BigInteger.TWO, jca.p256Parameters())))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("257 bits")
+                .hasMessageContaining("at most 256");
+    }
+
+    /**
+     * A negative coordinate is refused with its own message: {@code BigInteger.bitLength()} excludes the sign bit and
+     * is 0 for −1, so folding this case into the width complaint would report a nonsensical bit count.
+     */
+    @Test
+    void aNegativeCoordinateIsRefusedNotSerialisedInTwosComplement() {
+        assertThatThrownBy(() -> EcKeys.encodeUncompressed(
+                        pointAt(BigInteger.valueOf(-1), BigInteger.TWO, jca.p256Parameters())))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("negative");
+    }
+
     @Test
     void everyGeneratedKeyRoundTripsThroughTheWireFormat() {
         for (int i = 0; i < 64; i++) {
@@ -322,18 +632,26 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
-     * A public key carrying an arbitrary point. {@code encodeUncompressed} serialises whatever {@code getW()} reports —
-     * it is not a validation step — which is what makes the coordinate widths above testable without hunting for a
-     * generated key whose X happens to be small.
+     * A public key carrying an arbitrary point. {@code encodeUncompressed} serialises whatever {@code getW()} reports
+     * as long as each coordinate fits a 32-byte field element — anything negative or wider is refused, pinned above —
+     * which is what makes the coordinate widths testable without hunting for a generated key whose X happens to be
+     * small.
      */
     private static ECPublicKey pointAt(BigInteger x, BigInteger y, ECParameterSpec params) {
+        return keyAt(new ECPoint(x, y), params);
+    }
+
+    /**
+     * A public key reporting exactly {@code w} — including {@link ECPoint#POINT_INFINITY}, which has no affine form.
+     */
+    private static ECPublicKey keyAt(ECPoint w, ECParameterSpec params) {
         return new ECPublicKey() {
             @java.io.Serial
             private static final long serialVersionUID = 1L;
 
             @Override
             public ECPoint getW() {
-                return new ECPoint(x, y);
+                return w;
             }
 
             @Override

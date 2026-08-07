@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigInteger;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECFieldFp;
+import java.security.spec.ECParameterSpec;
 import java.security.spec.EllipticCurve;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -42,12 +43,21 @@ class P256PublicKeysTest {
      */
     @Test
     void everyHardCodedConstantMatchesTheProvider() {
-        EllipticCurve curve = Jca.platform().p256Parameters().getCurve();
+        ECParameterSpec parameters = Jca.platform().p256Parameters();
+        EllipticCurve curve = parameters.getCurve();
 
         assertThat(curve.getField()).isInstanceOf(ECFieldFp.class);
         assertThat(P256PublicKeys.P).as("field prime p").isEqualTo(((ECFieldFp) curve.getField()).getP());
         assertThat(P256PublicKeys.A).as("curve coefficient a").isEqualTo(curve.getA());
         assertThat(P256PublicKeys.B).as("curve coefficient b").isEqualTo(curve.getB());
+        assertThat(P256PublicKeys.GX)
+                .as("generator x")
+                .isEqualTo(parameters.getGenerator().getAffineX());
+        assertThat(P256PublicKeys.GY)
+                .as("generator y")
+                .isEqualTo(parameters.getGenerator().getAffineY());
+        assertThat(P256PublicKeys.N).as("order n").isEqualTo(parameters.getOrder());
+        assertThat(P256PublicKeys.H).as("cofactor h").isEqualTo(parameters.getCofactor());
         assertThat(P256PublicKeys.COORDINATE_LENGTH)
                 .as("coordinate width follows the field size")
                 .isEqualTo((curve.getField().getFieldSize() + 7) / 8);

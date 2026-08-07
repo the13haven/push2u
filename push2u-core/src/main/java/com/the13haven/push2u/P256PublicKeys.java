@@ -6,8 +6,14 @@
 package com.the13haven.push2u;
 
 import java.math.BigInteger;
+import java.security.spec.ECFieldFp;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.EllipticCurve;
 import java.util.Arrays;
 import java.util.Objects;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Validation of the P-256 public key material Web Push carries on the wire — the 65-byte X9.62 uncompressed point that
@@ -55,13 +61,24 @@ public final class P256PublicKeys {
      * The NIST P-256 (secp256r1) prime field modulus {@code p = 2^256 − 2^224 + 2^192 + 2^96 − 1}, transcribed from
      * FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2. Hard-coding the domain parameters is what lets the full check run
      * without a JCA provider; {@code P256PublicKeysTest} (and its BC-FIPS twin) verify each constant against what a
-     * provider returns for {@code secp256r1}, so a transcription error cannot survive the build.
+     * provider returns for {@code secp256r1}, so a transcription error cannot survive the build. The curve-equation
+     * check uses {@code p}, {@code a} and {@code b}; the generator, order and cofactor below complete the published
+     * parameter set as the reference values a configured provider's own {@code secp256r1} answer is verified against,
+     * value for value, before any key runs on it.
      */
     static final BigInteger P = new BigInteger("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF", 16);
     /** The P-256 curve coefficient {@code a = p − 3} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
     static final BigInteger A = new BigInteger("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC", 16);
     /** The P-256 curve coefficient {@code b} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
     static final BigInteger B = new BigInteger("5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B", 16);
+    /** The P-256 base point (generator) x coordinate {@code Gx} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
+    static final BigInteger GX = new BigInteger("6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296", 16);
+    /** The P-256 base point (generator) y coordinate {@code Gy} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
+    static final BigInteger GY = new BigInteger("4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5", 16);
+    /** The P-256 group order {@code n} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
+    static final BigInteger N = new BigInteger("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16);
+    /** The P-256 cofactor {@code h = 1} (FIPS 186-4 §D.1.2.3 / SEC 2 v2.0 §2.4.2). */
+    static final int H = 1;
 
     private P256PublicKeys() {}
 
@@ -119,6 +136,57 @@ public final class P256PublicKeys {
             throw new IllegalArgumentException(name + " does not satisfy the P-256 curve equation (y² = x³ + ax + b), "
                     + "so it is not a point on the curve");
         }
+    }
+
+    /**
+     * The first component in which {@code parameters} differs from the published NIST P-256 domain parameters, as a
+     * short log-safe phrase naming the component and no values — or {@code null} when every component matches. The
+     * comparison is value-wise because {@link ECParameterSpec} has no {@code equals}: providers hand back
+     * equivalent-but-distinct instances (named-curve subclasses, cached singletons), so only comparing each component
+     * against the constants above can tell P-256 from an impostor. {@code Jca} runs this on whatever the configured
+     * provider answers for {@code secp256r1} before any key is imported on those parameters.
+     */
+    @Nullable
+    static String nistP256Mismatch(ECParameterSpec parameters) {
+        String curveMismatch = curveMismatch(parameters.getCurve());
+        if (curveMismatch != null) {
+            return curveMismatch;
+        }
+        if (!isCanonicalGenerator(parameters.getGenerator())) {
+            return "wrong generator";
+        }
+        if (!parameters.getOrder().equals(N)) {
+            return "wrong order n";
+        }
+        if (parameters.getCofactor() != H) {
+            return "wrong cofactor h";
+        }
+        return null;
+    }
+
+    /** The curve half of {@link #nistP256Mismatch}: field type, field prime, and both coefficients. */
+    @Nullable
+    private static String curveMismatch(EllipticCurve curve) {
+        if (!(curve.getField() instanceof ECFieldFp primeField)) {
+            return "non-prime field";
+        }
+        if (!primeField.getP().equals(P)) {
+            return "wrong prime field modulus p";
+        }
+        if (!curve.getA().equals(A)) {
+            return "wrong coefficient a";
+        }
+        if (!curve.getB().equals(B)) {
+            return "wrong coefficient b";
+        }
+        return null;
+    }
+
+    /** Affine equality with {@code (Gx, Gy)}; the point at infinity (null affine coordinates) never matches. */
+    private static boolean isCanonicalGenerator(ECPoint generator) {
+        return !ECPoint.POINT_INFINITY.equals(generator)
+                && generator.getAffineX().equals(GX)
+                && generator.getAffineY().equals(GY);
     }
 
     /**
