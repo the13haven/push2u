@@ -279,7 +279,8 @@ class VaultTransitVapidSignerAddressTest {
                 "[::1]",
                 "[0:0:0:0:0:0:0:1]",
                 "[::ffff:127.0.0.1]",
-                "[::ffff:7f00:1]")) {
+                "[::ffff:7f00:1]",
+                "[::ffff:0127.0.0.1]")) {
             assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
                                     URI.create("http://" + host + ":8200"),
                                     new TransitKeyName("vapid"),
@@ -310,7 +311,8 @@ class VaultTransitVapidSignerAddressTest {
         // That last one is not the leading-zero rule holding inside the brackets. The mapped path
         // reads the embedded quad decimally but demands no canonical form, so [::ffff:0127.0.0.1]
         // parses to 127.0.0.1 and IS admitted with no opt-in, where the bare 0127.0.0.1 is
-        // refused: the canonical-decimal restriction is the unbracketed rule alone. What keeps
+        // refused — both pinned, the mapped one in the admit list above and the bare one just
+        // below: the canonical-decimal restriction is the unbracketed rule alone. What keeps
         // that tolerable is that the built-in transport resolves through the same InetAddress, so
         // the request lands on the address this check vouched for. A custom VaultHttpTransport
         // parsing hosts some other way is the one place the two readings could part.
@@ -321,7 +323,8 @@ class VaultTransitVapidSignerAddressTest {
                 "hTTp://vault.internal:8200",
                 "http://[::ffff:8.8.8.8]:8200",
                 "http://[::127.0.0.1]:8200",
-                "http://[::ffff:0177.0.0.1]:8200")) {
+                "http://[::ffff:0177.0.0.1]:8200",
+                "http://0127.0.0.1:8200")) {
             assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
                                     URI.create(address),
                                     new TransitKeyName("vapid"),
