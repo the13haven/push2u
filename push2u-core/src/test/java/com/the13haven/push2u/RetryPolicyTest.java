@@ -12,6 +12,7 @@ import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.Timeout.ThreadMode;
 
 class RetryPolicyTest {
 
@@ -83,7 +84,7 @@ class RetryPolicyTest {
      * result has to be the ceiling, not an exception.
      */
     @Test
-    @Timeout(10)
+    @Timeout(value = 10, threadMode = ThreadMode.SEPARATE_THREAD)
     void backoffClimbsToADurationSizedCeilingWithoutOverflowingOnTheLastStep() {
         RetryPolicy policy = new RetryPolicy(Integer.MAX_VALUE, Duration.ofNanos(1), DURATION_MAX);
         Duration lastRepresentableTerm = Duration.ofNanos(1L << 62).multipliedBy(1L << 30);
@@ -151,7 +152,7 @@ class RetryPolicyTest {
      * that steps once per attempt would take an hour on the last one.
      */
     @Test
-    @Timeout(10)
+    @Timeout(value = 10, threadMode = ThreadMode.SEPARATE_THREAD)
     void aZeroBackoffStaysZeroAtEveryAttempt() {
         RetryPolicy none = RetryPolicy.none();
 
