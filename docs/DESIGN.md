@@ -387,11 +387,29 @@ order, cofactor) before anything runs on it, failing closed as `PushCryptoExcept
 a provider answering the name with another 256-bit prime-field curve would silently move the ECDH
 agreement and the VAPID private-key import onto that curve. The parameters are a per-instance
 constant, so the verified result is cached the same way as the ES256 resolution; the verification
-runs before each store, never resting on the cache. The ephemeral `KeyPairGenerator` resolves the
-curve name itself and is covered separately: the generated public point is checked against the
-canonical P-256 curve equation before the pair is used. On the way out, the fixed-width coordinate
+runs before each store, never resting on the cache. On the way out, the fixed-width coordinate
 serialization refuses a negative or wider-than-256-bit coordinate rather than truncating it —
 truncation would publish a plausible-looking but wrong point.
+
+The ephemeral key pair does not come through that seam — the `KeyPairGenerator` resolves the
+`secp256r1` name itself — so the pair it returns is held to the same standard before it is used,
+in three checks and no more: both halves must be EC keys, both halves' declared domain parameters
+must equal the published NIST P-256 constants value for value (prime field modulus, both
+coefficients, generator, order, cofactor), and the public point must lie on the curve of those
+constants. The last two prove different things, and neither substitutes for the other: parameter
+equality proves what the generator *declares*, the curve equation proves that the point it actually
+*returned* lies on the declared curve. The parameter comparison is the sharper of the two. A
+substituted order `n` leaves every generated point genuinely on P-256, so the equation check alone
+passes — but `n` is what bounds the private scalar, and a small substituted order draws a guessable
+scalar and therefore a guessable ECDH secret.
+
+What that boundary does not reach is worth stating as plainly as the boundary itself. A provider
+that declares the correct parameters and simply draws a weak or attacker-known scalar passes
+undetected; no parameter verification can catch that, which is why the choice of provider remains a
+trust decision. The two halves are also not checked to belong together — `W = d·G` is not
+evaluated — because that needs point multiplication the library deliberately does not implement,
+and it would buy nothing against a hostile provider, which can always hand over a self-consistent
+pair whose scalar it knows.
 
 The subscription public key (`p256dh`) is attacker-reachable input, and it is validated twice, on
 purpose. At construction, `Subscription` runs `P256PublicKeys.requireOnCurve` (§5) against the
@@ -401,10 +419,14 @@ the application's boundary. At decode time, inside the send pipeline, the point 
 parameters of the provider that is about to run ECDH, before the point reaches that provider's
 `KeyFactory`. Refusing an invalid-curve point therefore never depends on whether the configured
 provider validates in `KeyAgreement.doPhase`. The equation arithmetic itself lives once, in
-`P256PublicKeys`; only the parameter source differs. The Vault signer performs its own, deliberately
-separate checks on the key it fetches (§7) — the same value-wise parameter comparison and the same
-refuse-not-truncate serialization, duplicated on purpose: there the parameters and coordinates come
-from the fetched key itself, and each module keeps its trust boundary self-contained.
+`P256PublicKeys`; only the parameter source differs. The value-wise parameter comparison lives once
+there as well, against the hard-coded constants, and answers for both places a provider's
+`secp256r1` claim enters the core — the import seam above and the ephemeral generator. The Vault
+signer performs its own, deliberately separate checks on the key it fetches (§7) — a parameter
+comparison of the same shape and the same refuse-not-truncate serialization, duplicated on purpose:
+the core's comparison is internal to that module, and there the key, its parameters and its
+coordinates all arrive from Vault and are held against the platform's own answer for `secp256r1`.
+Each module keeps its trust boundary self-contained.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
@@ -636,8 +658,9 @@ The automated suite covers:
 - HTTP delivery, status mapping, and retry behavior;
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
-  shapes at `Subscription` construction (`SubscriptionValueTest`) and at decode time
-  (`EcKeysUntrustedInputTest`);
+  shapes at `Subscription` construction (`SubscriptionValueTest`) and at decode time, and the
+  generated-pair refusals against a provider that returns them — a substituted parameter component,
+  a non-EC or absent half, a point off the curve or at infinity (`EcKeysUntrustedInputTest`);
 - the Vault address contract: the path-preserving join for root and path-prefixed addresses, and
   every factory-level rejection (`VaultTransitVapidSignerAddressTest`);
 - Spring Boot auto-configuration — the property wiring and the diagnostics that name the YAML key,
