@@ -163,7 +163,11 @@ public final class VaultSignerAutoConfiguration {
         }
         builder.transport(resolved);
         if (keyVersion != null) {
-            builder.keyVersion(keyVersion);
+            // Validated where it is set, like mount and namespace above: the step's own message
+            // names its Java-side "keyVersion", not the YAML the operator wrote, so it gets the
+            // same translation. The rejection is thrown by this step, never by build(), so it
+            // cannot reach builtWithPlainHttpRejectionTranslated below.
+            translated("push2u.signer.vault.key-version", () -> builder.keyVersion(keyVersion));
         }
         return builtWithPlainHttpRejectionTranslated(builder::build);
     }
