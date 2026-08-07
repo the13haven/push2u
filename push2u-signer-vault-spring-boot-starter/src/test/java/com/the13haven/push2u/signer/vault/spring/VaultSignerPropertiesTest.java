@@ -124,6 +124,40 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
+    void aCredentialCarryingASlashIsLeftInPlace() {
+        // A known limit, pinned so it is found here rather than in an incident. The masking cut ends
+        // at the first "/", and it cannot be moved past it: "vault.example:8200/a@b" is the same
+        // string shape and its "@" is an ordinary path character that must survive, so a password
+        // containing "/" — an ordinary character in a generated one — survives the rendering with
+        // it. Java reports no userinfo for either address below, which is what the rendering masks.
+        assertThat(URI.create("user:PA/SS@vault.example:8200").getUserInfo()).isNull();
+        assertThat(properties(URI.create("user:PA/SS@vault.example:8200")).toString())
+                .contains("address=user:PA/SS@vault.example:8200");
+
+        assertThat(URI.create("https://u:PA/SS@vault.example:8200").getUserInfo())
+                .isNull();
+        assertThat(properties(URI.create("https://u:PA/SS@vault.example:8200")).toString())
+                .contains("address=https://u:PA/SS@vault.example:8200");
+    }
+
+    @Test
+    void textInTheUserinfoPositionThatIsNotUserinfoIsLeftInPlace() {
+        // The other half of the same known limit: "?" and "/" end the authority before the "@" is
+        // reached, so there is no "@" in the authority left to anchor a mask on — the query cut
+        // removes it outright in the first address, the path cut puts it out of reach in the second.
+        // Java reports no userinfo for either, and userinfo is what this rendering masks.
+        assertThat(URI.create("https://u:PASS?@vault.example").getUserInfo()).isNull();
+        assertThat(properties(URI.create("https://u:PASS?@vault.example")).toString())
+                .contains("address=https://u:PASS,")
+                .doesNotContain("***@");
+
+        assertThat(URI.create("https://u:PASS/@vault.example").getUserInfo()).isNull();
+        assertThat(properties(URI.create("https://u:PASS/@vault.example")).toString())
+                .contains("address=https://u:PASS/@vault.example")
+                .doesNotContain("***@");
+    }
+
+    @Test
     void toStringDropsAQueryAndFragmentFromTheAddress() {
         // A base address may carry neither — the signer refuses one at startup, naming the property
         // — but the binding that fills this record happens first, and a Vault query can name

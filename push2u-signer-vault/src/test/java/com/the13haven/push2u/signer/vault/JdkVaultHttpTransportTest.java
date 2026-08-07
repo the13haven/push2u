@@ -260,6 +260,36 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
+    void aDoubleSlashInThePathIsNotAnAuthority() {
+        // An authority is the "//" right after the scheme's colon and nothing else. A "//" further
+        // along is an empty path segment whose "@" is an ordinary path character, so cutting there
+        // would mangle a URI that carries no credential — and mangle it in the one message an
+        // operator has to work from. Mirrors the starter's test of the same shape: the two
+        // renderings are separate copies of one rule and can only stay in step if both are pinned.
+        // Reached through the URI-rejection path, which renders without ever connecting.
+        URI uri = URI.create("/vault//a@b");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                .isInstanceOf(PushCryptoException.class)
+                .hasNoCause()
+                .hasMessageContaining("/vault//a@b");
+    }
+
+    @Test
+    void anEmptyUserinfoLosesNothing() {
+        // "https://@vault.test:8200" delimits a userinfo that is empty: there is no credential to
+        // strip, and cutting at that "@" would drop the delimiter for nothing. The starter's mirror
+        // of this test asserts it gains no "***@"; here the rendering must simply come through
+        // whole. Reached through the header-rejection path, which renders without connecting.
+        URI uri = URI.create("https://@vault.test:8200/v1/transit/keys/vapid");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                .isInstanceOf(PushCryptoException.class)
+                .hasNoCause()
+                .hasMessageContaining("https://@vault.test:8200/v1/transit/keys/vapid");
+    }
+
+    @Test
     void anIllegalArgumentFromTheClientItselfKeepsItsOwnDiagnostic() {
         // The header-sanitising catch must wrap the header loop ALONE: an
         // IllegalArgumentException from inside the client's own send() has nothing to do with
