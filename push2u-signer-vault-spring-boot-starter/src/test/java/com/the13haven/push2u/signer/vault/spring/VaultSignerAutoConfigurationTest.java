@@ -590,6 +590,7 @@ class VaultSignerAutoConfigurationTest {
                         Push2uHealthAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.allowed-origins=https://fcm.googleapis.com",
                         "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token",
@@ -610,6 +611,7 @@ class VaultSignerAutoConfigurationTest {
                         "push2u.vapid.public-key=" + publicKeyB64,
                         "push2u.vapid.private-key=" + privateKeyB64,
                         "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://fcm.googleapis.com",
                         "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token",
@@ -644,6 +646,7 @@ class VaultSignerAutoConfigurationTest {
                         AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.allowed-origins=https://fcm.googleapis.com",
                         "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.mount=transit",
                         "push2u.signer.vault.key-name=vapid",
@@ -670,6 +673,7 @@ class VaultSignerAutoConfigurationTest {
                         AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.allowed-origins=https://fcm.googleapis.com",
                         "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.mount=transit",
                         "push2u.signer.vault.key-name=vapid",

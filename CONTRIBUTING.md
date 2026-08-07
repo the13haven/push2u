@@ -193,8 +193,9 @@ Practical consequences:
   firm rule, not a preference, and its firm consequence is this: `build()` must not be able to
   refuse over a missing required value — making an incomplete object inexpressible is the
   compiler's job, not the runtime's. `PushMessage.builder(payload)` takes the payload because there
-  is no message without one; `PushSender.builder(keys, contact)` takes the key source and the
-  contact for the same reason; and everything either builder still exposes is genuinely optional.
+  is no message without one; `PushSender.builder(keys, contact, endpointPolicy)` takes the key
+  source, the contact and the egress rule for the same reason; and everything either builder still
+  exposes is genuinely optional.
   What remains legitimate at the factory is rejecting a value that is present but *invalid* — a
   blank contact, a malformed key — with an `IllegalArgumentException`. What is never acceptable is
   an optional value smuggled into the factory method.
@@ -220,8 +221,8 @@ Practical consequences:
   `builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
   `builderWithSuppliedPublicKey(…)` does nothing over the network — different contracts, so
   different names. Entry points that differ only in a required parameter are overloads of one
-  `builder(…)` instead: `PushSender.builder(keys, contact)` and `PushSender.builder(signer,
-  contact)` share one contract, so they share one name.
+  `builder(…)` instead: `PushSender.builder(keys, contact, endpointPolicy)` and
+  `PushSender.builder(signer, contact, endpointPolicy)` share one contract, so they share one name.
 - Vulnerable transitive dependencies are pinned with dependency **constraints**, never
   `resolutionStrategy.force` — force also records the originally requested version in the
   submitted dependency graph, and Dependabot then alerts on that phantom node. Each pin names its

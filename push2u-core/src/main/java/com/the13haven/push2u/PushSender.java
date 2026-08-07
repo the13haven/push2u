@@ -24,10 +24,11 @@ import org.jspecify.annotations.Nullable;
  * 8292), POSTs the {@code aes128gcm} body to the endpoint (RFC 8030), and interprets the HTTP status into a
  * {@link PushResult} with retries.
  *
- * <p>Build it with {@link #builder(VapidKeys, String)} (the default in-JVM signer) or {@link #builder(VapidSigner,
- * String)} (an external signer, which supplies the VAPID public key itself). The key source and the contact are the two
- * required values, so they are the factory method's parameters — the overload chooses the key source, and an incomplete
- * sender cannot be expressed; everything on the {@link Builder} is optional.
+ * <p>Build it with {@link #builder(VapidKeys, String, EndpointPolicy)} (the default in-JVM signer) or
+ * {@link #builder(VapidSigner, String, EndpointPolicy)} (an external signer, which supplies the VAPID public key
+ * itself). The key source, the contact and the {@link EndpointPolicy} are the three required values, so they are the
+ * factory method's parameters — the overload chooses the key source, and an incomplete sender cannot be expressed;
+ * everything on the {@link Builder} is optional.
  *
  * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a store on expiry is
  * expected control flow, not an error.
@@ -53,18 +54,14 @@ public final class PushSender {
     /** {@code null} selects the library-owned virtual-thread executor; see {@link #sendAsync}. */
     @Nullable
     private final Executor executor;
-    /**
-     * {@code null} means no policy — any endpoint satisfying {@link Endpoints#requireSecure} is sent to; see
-     * {@link Builder#endpointPolicy}.
-     */
-    @Nullable
+    /** Always present: a sender cannot be obtained without one, and it runs on every send. */
     private final EndpointPolicy endpointPolicy;
 
     private PushSender(Builder builder) {
         Jca jca = builder.cryptoProvider == null ? Jca.platform() : Jca.using(builder.cryptoProvider);
-        // Each factory overload sets exactly one key source and a validated contact, so both are
-        // present by the time this runs — stated here so the invariant is checked rather than
-        // assumed if the factories ever change.
+        // Each factory overload sets exactly one key source, a validated contact and an endpoint
+        // policy, so all three are present by the time this runs — stated here so the invariant is
+        // checked rather than assumed if the factories ever change.
         this.signer = builder.signer != null
                 ? builder.signer
                 : new LocalEcVapidSigner(Objects.requireNonNull(builder.vapidKeys, "vapidKeys"), jca);
@@ -84,8 +81,8 @@ public final class PushSender {
 
     /**
      * A new builder for a sender that holds the VAPID key pair locally and signs in-JVM (the default signer). An
-     * overload of {@link #builder(VapidSigner, String)} rather than a differently named method: the two entry points
-     * differ only in which required key source they take, not in contract.
+     * overload of {@link #builder(VapidSigner, String, EndpointPolicy)} rather than a differently named method: the two
+     * entry points differ only in which required key source they take, not in contract.
      *
      * @param vapidKeys the VAPID key pair
      * @param contact the VAPID {@code sub} claim — a {@code mailto:} / {@code https:} URI the push service can reach
@@ -93,11 +90,21 @@ public final class PushSender {
      *     URI forms when it is present; requiring it is push2u's own contract, because a push service that needs to
      *     reach the operator about a misbehaving application server has no other channel. A blank value satisfies that
      *     contract no better than an absent one, so it is rejected too.
+     * @param endpointPolicy which push endpoints this sender may contact, checked on every send. Required, because the
+     *     endpoint inside a {@link Subscription} is attacker-influenced wherever subscriptions arrive from clients and
+     *     a sender with no policy will POST anywhere that endpoint names — an outcome nobody should reach by omitting a
+     *     step. The library still does not pick the rule: {@link EndpointPolicies#allowedOrigins} names the push
+     *     services this deployment expects, and {@link EndpointPolicies#unrestricted()} states that no restriction is
+     *     wanted, with the consequences on its own documentation
      * @return a new builder
      * @throws IllegalArgumentException if {@code contact} is blank
      */
-    public static Builder builder(VapidKeys vapidKeys, String contact) {
-        return new Builder(Objects.requireNonNull(vapidKeys, "vapidKeys"), null, requireContact(contact));
+    public static Builder builder(VapidKeys vapidKeys, String contact, EndpointPolicy endpointPolicy) {
+        return new Builder(
+                Objects.requireNonNull(vapidKeys, "vapidKeys"),
+                null,
+                requireContact(contact),
+                Objects.requireNonNull(endpointPolicy, "endpointPolicy"));
     }
 
     /**
@@ -105,12 +112,19 @@ public final class PushSender {
      * key, e.g. Vault Transit.
      *
      * @param signer the external signer
-     * @param contact the VAPID {@code sub} claim; see {@link #builder(VapidKeys, String)} for the contract
+     * @param contact the VAPID {@code sub} claim; see {@link #builder(VapidKeys, String, EndpointPolicy)} for the
+     *     contract
+     * @param endpointPolicy which push endpoints this sender may contact; see {@link #builder(VapidKeys, String,
+     *     EndpointPolicy)} for why it is required
      * @return a new builder
      * @throws IllegalArgumentException if {@code contact} is blank
      */
-    public static Builder builder(VapidSigner signer, String contact) {
-        return new Builder(null, Objects.requireNonNull(signer, "signer"), requireContact(contact));
+    public static Builder builder(VapidSigner signer, String contact, EndpointPolicy endpointPolicy) {
+        return new Builder(
+                null,
+                Objects.requireNonNull(signer, "signer"),
+                requireContact(contact),
+                Objects.requireNonNull(endpointPolicy, "endpointPolicy"));
     }
 
     /**
@@ -131,16 +145,16 @@ public final class PushSender {
      * <p>The payload is size-checked first, before any cryptography or network I/O, against both
      * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; an oversized payload throws
      * {@link IllegalArgumentException} rather than being sent for the push service to reject with {@code 413}. The
-     * {@link Builder#endpointPolicy(EndpointPolicy) endpoint policy}, when one is configured, runs next — still ahead
-     * of the encryption, the VAPID signature (which under an external {@link VapidSigner} is a remote Vault/KMS
-     * operation) and the HTTP request, so a rejected endpoint costs none of them.
+     * {@link EndpointPolicy} the sender was built with runs next, on every send without exception — still ahead of the
+     * encryption, the VAPID signature (which under an external {@link VapidSigner} is a remote Vault/KMS operation) and
+     * the HTTP request, so a rejected endpoint costs none of them.
      *
      * @param subscription the target subscription
      * @param message the message to send
      * @return the send result
      * @throws IllegalArgumentException if the payload does not fit the configured body limit, or if the configured
      *     record size is too small for it
-     * @throws EndpointRejectedException if the configured endpoint policy rejects the subscription's endpoint
+     * @throws EndpointRejectedException if this sender's endpoint policy rejects the subscription's endpoint
      * @throws PushCryptoException if the encryption or the VAPID signature cannot be produced — including a
      *     {@link VapidSigner} whose remote key service is unreachable or refuses the operation, which may be transient
      * @throws PushDeliveryException if the transport fails to complete the request; an HTTP error status is not this
@@ -167,13 +181,11 @@ public final class PushSender {
             throw new IllegalArgumentException(
                     "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
         }
-        if (endpointPolicy != null) {
-            // Before the encryption as well as the signature and the POST: a policy rejection is a
-            // verdict on the subscription, and reaching it must not depend on — or pay for — any
-            // per-send cryptography. The sender holds no mutable state, so a policy that throws
-            // (a rejection or its own defect) leaves nothing to corrupt for later sends.
-            endpointPolicy.validate(endpoint);
-        }
+        // Unconditional, and before the encryption as well as the signature and the POST: a policy
+        // rejection is a verdict on the subscription, and reaching it must not depend on — or pay
+        // for — any per-send cryptography. The sender holds no mutable state, so a policy that
+        // throws (a rejection or its own defect) leaves nothing to corrupt for later sends.
+        endpointPolicy.validate(endpoint);
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         String authorization = Vapid.authorizationHeader(
                 signer, Origin.serialize(endpoint), contact, clock.instant().plus(jwtExpiry));
@@ -212,10 +224,10 @@ public final class PushSender {
      * <p>If a caller-supplied executor rejects the task, its {@link java.util.concurrent.RejectedExecutionException}
      * propagates from this call rather than completing the returned future exceptionally. The preconditions
      * {@link #send} checks go the other way: they run inside the queued task, so an oversized payload — or an endpoint
-     * the configured {@link Builder#endpointPolicy(EndpointPolicy) endpoint policy} rejects — completes the returned
-     * future exceptionally ({@link IllegalArgumentException}, {@link EndpointRejectedException}) instead of throwing
-     * from this call. The async path runs through the same {@link #send} pipeline, so the policy guards it identically:
-     * no send through this sender reaches the network without passing the policy.
+     * this sender's {@link EndpointPolicy} rejects — completes the returned future exceptionally
+     * ({@link IllegalArgumentException}, {@link EndpointRejectedException}) instead of throwing from this call. The
+     * async path runs through the same {@link #send} pipeline, so the policy guards it identically: no send through
+     * this sender reaches the network without passing the policy.
      *
      * <p>The same holds for the rest of what {@link #send} throws: a {@link PushCryptoException} or a
      * {@link PushDeliveryException} completes the returned future exceptionally rather than propagating from this call,
@@ -295,9 +307,10 @@ public final class PushSender {
     }
 
     /**
-     * Configures and builds a {@link PushSender}. Everything required — the key source and the contact — is a parameter
-     * of {@link PushSender#builder(VapidKeys, String)} / {@link PushSender#builder(VapidSigner, String)}, so every step
-     * here is optional with a sensible default and {@link #build()} cannot refuse.
+     * Configures and builds a {@link PushSender}. Everything required — the key source, the contact and the
+     * {@link EndpointPolicy} — is a parameter of {@link PushSender#builder(VapidKeys, String, EndpointPolicy)} /
+     * {@link PushSender#builder(VapidSigner, String, EndpointPolicy)}, so every step here is optional with a sensible
+     * default and {@link #build()} cannot refuse.
      */
     public static final class Builder {
 
@@ -309,6 +322,8 @@ public final class PushSender {
         private final VapidSigner signer;
 
         private final String contact;
+
+        private final EndpointPolicy endpointPolicy;
 
         @Nullable
         private PushHttpClient httpClient;
@@ -327,13 +342,15 @@ public final class PushSender {
         @Nullable
         private Executor executor;
 
-        @Nullable
-        private EndpointPolicy endpointPolicy;
-
-        private Builder(@Nullable VapidKeys vapidKeys, @Nullable VapidSigner signer, String contact) {
+        private Builder(
+                @Nullable VapidKeys vapidKeys,
+                @Nullable VapidSigner signer,
+                String contact,
+                EndpointPolicy endpointPolicy) {
             this.vapidKeys = vapidKeys;
             this.signer = signer;
             this.contact = contact;
+            this.endpointPolicy = endpointPolicy;
         }
 
         /**
@@ -472,27 +489,6 @@ public final class PushSender {
          */
         public Builder executor(Executor executor) {
             this.executor = Objects.requireNonNull(executor, "executor");
-            return this;
-        }
-
-        /**
-         * The policy deciding which push endpoints this sender may contact, run on every send (and every
-         * {@link PushSender#sendAsync} — the async path goes through the same pipeline) before encryption, before the
-         * VAPID signature and before any network I/O; a rejected endpoint throws {@link EndpointRejectedException} and
-         * costs none of them.
-         *
-         * <p>Off by default, and deliberately so: which hosts an application server may POST to is a statement about a
-         * deployment's egress, which the library cannot make on its behalf. With no policy configured the sender POSTs
-         * to any endpoint satisfying {@link Endpoints#requireSecure} — including loopback, private-range and
-         * cloud-metadata addresses. Any integration whose subscriptions arrive from clients should configure one,
-         * typically {@link EndpointPolicies#allowedOrigins}; {@link EndpointPolicy} documents the threat model and the
-         * limits of a URI-level check.
-         *
-         * @param endpointPolicy the policy to validate each endpoint against
-         * @return this builder
-         */
-        public Builder endpointPolicy(EndpointPolicy endpointPolicy) {
-            this.endpointPolicy = Objects.requireNonNull(endpointPolicy, "endpointPolicy");
             return this;
         }
 

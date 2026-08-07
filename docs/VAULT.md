@@ -130,6 +130,8 @@ The equivalent Spring Boot configuration is:
 push2u:
   vapid:
     subject: "mailto:ops@example.com"
+  allowed-origins:
+    - "https://fcm.googleapis.com"
   signer:
     vault:
       address: "https://vault.example:8200"
@@ -139,9 +141,12 @@ push2u:
 ```
 
 The Vault signer starter only supplies the `VapidSigner` (key custody); it does not know the
-application's contact address. `push2u.vapid.subject` — the VAPID `sub` claim — therefore still
-comes from the core starter's properties, in this mode and in the explicit one below, and
-`Push2uAutoConfiguration` fails startup with a message naming it if it is left unset.
+application's contact address, nor which endpoints the deployment may POST to.
+`push2u.vapid.subject` — the VAPID `sub` claim — and `push2u.allowed-origins` — the endpoint
+policy — therefore both come from the core starter's properties, in this mode and in the explicit
+one below, and `Push2uAutoConfiguration` fails startup with a message naming whichever is left
+unset. The endpoint policy may equally be an application `EndpointPolicy` bean instead of the
+property; [`SPRING.md`](SPRING.md#endpoint-policy) has both routes.
 
 ## Explicit public key
 
@@ -153,6 +158,8 @@ key:
 push2u:
   vapid:
     subject: "mailto:ops@example.com"
+  allowed-origins:
+    - "https://fcm.googleapis.com"
   signer:
     vault:
       address: "https://vault.example:8200"

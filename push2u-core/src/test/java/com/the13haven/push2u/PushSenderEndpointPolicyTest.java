@@ -8,6 +8,7 @@ package com.the13haven.push2u;
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.TestVectors.b64;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
@@ -26,8 +27,9 @@ import org.junit.jupiter.api.Test;
  * Tests for the {@link EndpointPolicy} seam in the send pipeline. The load-bearing property is <em>where</em> the
  * policy runs: a rejected endpoint must cost zero signing operations (under an external signer, each one is a remote
  * Vault/KMS call) and zero HTTP requests — proven with a counting signer and a counting client, not asserted from the
- * code's shape. Equally load-bearing is what happens when no policy is configured: nothing — the seam must not quietly
- * narrow what a sender without a policy will send to.
+ * code's shape. Every sender has a policy, so there is no unguarded path left to test; what is tested instead is that
+ * {@link EndpointPolicies#unrestricted()} is genuinely the way to send anywhere, so that nobody is tempted to
+ * reintroduce a no-policy sender to get that behaviour back.
  */
 class PushSenderEndpointPolicyTest {
 
@@ -68,16 +70,34 @@ class PushSenderEndpointPolicyTest {
     }
 
     @Test
-    void withoutAPolicyAnyHttpsEndpointIsSentTo() {
-        // The default-off contract pinned: with no policy configured, any https endpoint that
-        // Subscription accepted is sent to, this internal-looking one included.
-        PushSender sender = sender(null);
+    void unrestrictedSendsToTheVeryEndpointAnAllowlistRejects() {
+        // What the named opt-out buys, and what it costs: the same internal-looking endpoint that
+        // allowedOrigins refuses above is delivered to here. Asserting it against FOREIGN_ENDPOINT
+        // specifically is what makes this a statement about the policy rather than about a send.
+        PushSender sender = sender(EndpointPolicies.unrestricted());
 
         PushResult result = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
 
         assertThat(result.isDelivered()).isTrue();
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
+        assertThat(client.lastEndpoint).isEqualTo(URI.create(FOREIGN_ENDPOINT));
+    }
+
+    @Test
+    void unrestrictedRejectsNothingAtAll() {
+        // Directly against the policy rather than through a sender: no shape of endpoint is
+        // refused, loopback and cloud-metadata included, so a reader is not left wondering whether
+        // some category is quietly still blocked.
+        EndpointPolicy unrestricted = EndpointPolicies.unrestricted();
+
+        assertThatCode(() -> {
+                    unrestricted.validate(URI.create("https://127.0.0.1:8443/send/token"));
+                    unrestricted.validate(URI.create("https://10.0.0.5/send/token"));
+                    unrestricted.validate(URI.create("https://169.254.169.254/latest/meta-data/"));
+                    unrestricted.validate(URI.create("https://user@allowed.example/send/token"));
+                })
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -154,13 +174,10 @@ class PushSenderEndpointPolicyTest {
         assertThat(seen).containsExactly(URI.create(ALLOWED_ENDPOINT));
     }
 
-    private PushSender sender(@Nullable EndpointPolicy policy) {
-        PushSender.Builder builder =
-                PushSender.builder(signer, "mailto:ops@example.com").httpClient(client);
-        if (policy != null) {
-            builder.endpointPolicy(policy);
-        }
-        return builder.build();
+    private PushSender sender(EndpointPolicy policy) {
+        return PushSender.builder(signer, "mailto:ops@example.com", policy)
+                .httpClient(client)
+                .build();
     }
 
     private static Subscription subscription(String endpoint) {

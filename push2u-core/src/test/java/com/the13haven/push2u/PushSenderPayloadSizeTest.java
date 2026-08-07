@@ -168,7 +168,8 @@ class PushSenderPayloadSizeTest {
 
     /** A builder pre-loaded with the required key source and contact — these tests exercise only optional steps. */
     private static PushSender.Builder builder() {
-        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com").httpClient(trustingPushHttpClient());
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
+                .httpClient(trustingPushHttpClient());
     }
 
     private static PushSender sender(PushSender.Builder builder) {

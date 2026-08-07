@@ -137,14 +137,16 @@ public final class Push2uAutoConfiguration {
      * single property by its message alone; {@code retryPolicy(…)} below carries the reasoning.
      *
      * <p>The {@link EndpointPolicy} comes from either {@code push2u.allowed-origins} (bound to
-     * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean. Setting both
-     * fails the context, naming the property and the bean: the two express a security control, and silently letting one
-     * win could leave the operator believing the ignored one is in force. The single exception is a property explicitly
-     * set to an <em>empty</em> value alongside a bean — that is the escape hatch for a service inheriting
-     * {@code push2u.allowed-origins} from a shared configuration it does not own: it cannot unset the property, so
-     * emptying it means "deliberately not using the property here" and the bean wins. An empty value <em>alone</em>
-     * still fails ("requires at least one origin"), so the control cannot be disabled by accident. Configuring neither
-     * keeps {@link PushSender}'s default of no policy.
+     * {@link EndpointPolicies#allowedOrigins}) or an application-supplied {@code EndpointPolicy} bean, and exactly one
+     * of them is required. Setting both fails the context, naming the property and the bean: the two express a security
+     * control, and silently letting one win could leave the operator believing the ignored one is in force. The single
+     * exception is a property explicitly set to an <em>empty</em> value alongside a bean — that is the escape hatch for
+     * a service inheriting {@code push2u.allowed-origins} from a shared configuration it does not own: it cannot unset
+     * the property, so emptying it means "deliberately not using the property here" and the bean wins. An empty value
+     * <em>alone</em> still fails ("requires at least one origin"), so the control cannot be disabled by accident.
+     * Configuring neither also fails: which hosts this application server may POST to is a decision the deployment has
+     * to express, and a sender built without it would POST to whatever endpoint an attacker-influenced subscription
+     * names.
      *
      * @param signer the VAPID signer
      * @param httpClient the HTTP transport
@@ -152,8 +154,8 @@ public final class Push2uAutoConfiguration {
      * @param beanFactory the bean factory, used to name the conflicting {@code EndpointPolicy} bean in the failure
      * @param properties the bound configuration
      * @return the configured sender
-     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, or if both a non-empty
-     *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured
+     * @throws IllegalStateException if {@code push2u.vapid.subject} is unset or blank, if both a non-empty
+     *     {@code push2u.allowed-origins} and an {@code EndpointPolicy} bean are configured, or if neither is
      * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.default-ttl},
      *     {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes}, any {@code push2u.retry.*} key or
      *     {@code push2u.allowed-origins} is set to a value the builder, {@link RetryPolicy} or the policy factory
@@ -176,8 +178,10 @@ public final class Push2uAutoConfiguration {
                             + " starter, e.g. the Vault Transit signer starter, which supplies only key"
                             + " custody, not a contact address");
         }
-        PushSender.Builder builder =
-                PushSender.builder(signer, subject).httpClient(httpClient).retryPolicy(retryPolicy(properties.retry()));
+        EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, beanFactory, properties.allowedOrigins());
+        PushSender.Builder builder = PushSender.builder(signer, subject, policy)
+                .httpClient(httpClient)
+                .retryPolicy(retryPolicy(properties.retry()));
         // Every optional property is applied through the same translate-the-error helper, so a
         // rejected value fails naming the YAML key instead of the builder's camelCase parameter.
         applyIfPresent(properties.jwtExpiry(), builder::jwtExpiry, "push2u.jwt-expiry");
@@ -185,10 +189,6 @@ public final class Push2uAutoConfiguration {
         applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
         applyIfPresent(
                 properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
-        EndpointPolicy policy = resolveEndpointPolicy(endpointPolicy, beanFactory, properties.allowedOrigins());
-        if (policy != null) {
-            builder.endpointPolicy(policy);
-        }
         return builder.build();
     }
 
@@ -249,15 +249,19 @@ public final class Push2uAutoConfiguration {
 
     /**
      * Resolves the endpoint policy from its two possible sources — the {@code push2u.allowed-origins} property and an
-     * application-supplied {@link EndpointPolicy} bean — or {@code null} for none (the {@link PushSender} default).
-     * Both at once fails, naming the property and the bean: they express the same security control, and silently
-     * preferring one would leave the operator believing the ignored one is in force. An <em>empty</em> property beside
-     * a bean is the deliberate exception (the bean wins): a service inheriting {@code push2u.allowed-origins} from a
-     * shared configuration cannot unset it, so explicitly emptying it is its only way to cede to a bean — while an
-     * empty property alone still fails below ("requires at least one origin"), so nobody disables the control by
-     * accident.
+     * application-supplied {@link EndpointPolicy} bean — of which exactly one is required. Both at once fails, naming
+     * the property and the bean: they express the same security control, and silently preferring one would leave the
+     * operator believing the ignored one is in force. An <em>empty</em> property beside a bean is the deliberate
+     * exception (the bean wins): a service inheriting {@code push2u.allowed-origins} from a shared configuration cannot
+     * unset it, so explicitly emptying it is its only way to cede to a bean — while an empty property alone still fails
+     * below ("requires at least one origin"), so nobody disables the control by accident.
+     *
+     * <p>Neither source fails too, and that is the point of the check: the endpoint a send POSTs to comes from the
+     * subscription, which is attacker-influenced wherever subscriptions are registered by clients, so a deployment that
+     * has not said which endpoints it will contact has not made a decision the library can make for it. The failure
+     * names both ways to make one — including the deliberate opt-out, which is a bean rather than a property so that
+     * choosing it is a code change someone reviews rather than a line copied between profiles.
      */
-    @Nullable
     private static EndpointPolicy resolveEndpointPolicy(
             ObjectProvider<EndpointPolicy> endpointPolicy,
             ListableBeanFactory beanFactory,
@@ -277,7 +281,17 @@ public final class Push2uAutoConfiguration {
             return applicationPolicy;
         }
         if (allowedOrigins == null) {
-            return null;
+            // Not "an empty allowlist": an unset property with no bean beside it means the question
+            // was never asked. An explicitly empty value falls through to allowedOrigins() below,
+            // which refuses it in its own words.
+            throw new IllegalStateException("push2u.allowed-origins is not set and no EndpointPolicy bean is"
+                    + " supplied — a sender needs one of them, because the endpoint it POSTs to comes from the"
+                    + " subscription, and a subscription registered by a client can name any address this process"
+                    + " can reach, including loopback, private-range and cloud-metadata ones. Set"
+                    + " push2u.allowed-origins to the push service origins you expect (e.g."
+                    + " https://fcm.googleapis.com), or define an EndpointPolicy bean — one returning"
+                    + " EndpointPolicies.unrestricted() if this deployment deliberately applies no restriction,"
+                    + " which is safe only where subscriptions never arrive from untrusted clients.");
         }
         try {
             return EndpointPolicies.allowedOrigins(allowedOrigins);

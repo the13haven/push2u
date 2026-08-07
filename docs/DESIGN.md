@@ -133,7 +133,7 @@ API does not have. Do not "fix" it.
 PushSender.send(subscription, message)
     │
     ├─ Check the payload against the body limit and the record size
-    ├─ Validate the endpoint against the configured EndpointPolicy (no policy by default)
+    ├─ Validate the endpoint against the sender's EndpointPolicy (always present)
     ├─ Decode the subscription P-256 public key, checking the point is on the curve
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
@@ -160,8 +160,10 @@ The encrypted body and VAPID token are reused across retries of the same send op
 
 The endpoint policy runs after the size preconditions and before everything else — encryption, the
 VAPID signature (a remote Vault/KMS call under an external signer) and the POST — so a rejected
-endpoint costs no cryptography and no I/O. `sendAsync` runs the same pipeline, so the policy
-cannot be bypassed on the async path.
+endpoint costs no cryptography and no I/O. It runs unconditionally: a sender cannot exist without a
+policy, so the pipeline has no branch around this step and the ordering guarantee does not depend
+on configuration. `sendAsync` runs the same pipeline, so the policy cannot be bypassed on the async
+path either.
 
 The VAPID `aud` claim is the endpoint's origin in the Unicode serialization of RFC 6454 §6.1, as
 RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to their Unicode form,
@@ -210,8 +212,9 @@ delay at the retry policy's maximum backoff.
 the contact — are the factory method's parameters, so an incomplete sender does not compile and
 `build()` has nothing left to refuse:
 
-- `builder(VapidKeys, String contact)` creates `LocalEcVapidSigner`; or
-- `builder(VapidSigner, String contact)` delegates signing and public-key publication.
+- `builder(VapidKeys, String contact, EndpointPolicy)` creates `LocalEcVapidSigner`; or
+- `builder(VapidSigner, String contact, EndpointPolicy)` delegates signing and public-key
+  publication.
 
 The two are overloads of one `builder(…)` rather than differently named methods: they differ only
 in which required key source they take, not in contract — and the overload choosing the key source
@@ -223,12 +226,15 @@ problem with an application server has no other channel to it. A blank value is 
 because it satisfies that contract no better than an absent claim while still producing a JWT
 whose `sub` a push service may well reject — the RFC requires neither the claim nor its rejection.
 
+The endpoint policy is the third required value, and a `null` is rejected at the factory like any
+other present-but-invalid one. It is a parameter rather than a builder step because which hosts a
+deployment may POST to is a decision that has to be made, even though the library cannot make it —
+the two are different claims, and only the first belongs to the library; the SPI section below
+carries the reasoning.
+
 Everything else on the builder is optional, and each value is validated where it is set rather
 than at send time: the constraint is known at configuration time, so a bad value fails a
-deployment's startup instead of its first delivery. The endpoint policy is the one option whose
-default is *absence* — with no policy, any endpoint satisfying `Endpoints.requireSecure` is sent
-to — because which hosts a deployment may POST to is a statement about its egress that the library
-cannot make on its behalf; it is described under its SPI below.
+deployment's startup instead of its first delivery.
 
 Three seams in the core are public, and only three
 ([ADR-005](adr/0005-public-spis-in-the-core.md)).
@@ -325,6 +331,18 @@ JSON verbatim), so without a policy every send is a POST from inside the network
 the subscription's choosing — a blind SSRF oracle via `PushResult.statusCode()`,
 `PushDeliveryException` and timing. `Endpoints.requireSecure` stays a protocol check (absolute
 `https` URL with a host); which hosts a deployment may contact is policy, and lives here.
+
+**A policy is a required argument of both `PushSender` factory methods**
+([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
+there is no default policy and no way to obtain a sender without naming one. The library still does
+not choose a deployment's allowlist — that is what ADR-005 admitted the seam for — but it does not
+decide on the deployment's behalf that there is none. A deployment that wants none says so with
+`EndpointPolicies.unrestricted()`, which accepts every endpoint `Subscription` accepts. The
+difference from the previous default is entirely in where it is visible: `unrestricted()` is a
+token in the consumer's own source, appearing in their diff, their review and their grep, while an
+unset builder step appeared in none of them. Requiring the argument also removes a runtime failure
+mode instead of adding one — `build()` cannot refuse over a missing required value, since the
+compiler refuses first.
 
 `EndpointPolicies.allowedOrigins` is the standard implementation: an origin allowlist compared on
 the same RFC 6454 §6.1 serialization the `aud` claim uses, so `Origin.serialize` normalizes both
@@ -631,7 +649,13 @@ control, so configuring both fails the context (naming the property and the bean
 silently preferring one and leaving the other believed-active. The one exception is an explicitly
 *empty* property beside a bean — the escape hatch for a service inheriting the property from
 shared configuration it cannot unset — while an empty property on its own still fails, so the
-control cannot be disabled by accident.
+control cannot be disabled by accident. Configuring **neither** fails the context as well, with a
+message naming both ways to fix it: the sender the starter builds needs a policy like any other,
+and the decision has to come from the deployment. There is no property for the unrestricted mode —
+under Spring it is an application `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`,
+by the same reasoning ADR-015 applied to the Vault address: a YAML flag reaches production by
+copying a dev profile, a code change passes a review, and a property can be added later but not
+removed after a release.
 
 The health indicator is registered when a `VapidSigner` bean exists, and asks about nothing else:
 the signer is the only part of a send that can stop working while the application runs — it

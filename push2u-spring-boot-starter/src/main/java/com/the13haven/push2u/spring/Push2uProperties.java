@@ -28,11 +28,12 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     default (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the
  *     fixed 103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
  * @param allowedOrigins the push-service origins the sender may POST to (e.g. {@code https://fcm.googleapis.com}),
- *     enforced as {@code EndpointPolicies.allowedOrigins}; {@code null} keeps the {@code PushSender} default of no
- *     endpoint policy — any https endpoint is sent to, which for client-registered subscriptions is a blind-SSRF
- *     surface. Malformed entries are rejected at startup, as is an explicitly empty value on its own. A non-empty value
- *     is mutually exclusive with an application-supplied {@code EndpointPolicy} bean; an explicitly <em>empty</em>
- *     value beside a bean cedes to the bean — the escape hatch for a service that inherits this property from shared
+ *     enforced as {@code EndpointPolicies.allowedOrigins}. Required unless the application supplies an
+ *     {@code EndpointPolicy} bean instead: leaving both out fails the context, because a sender with no policy POSTs
+ *     wherever a subscription's endpoint points, which for client-registered subscriptions is a blind-SSRF surface.
+ *     Malformed entries are rejected at startup, as is an explicitly empty value on its own. A non-empty value is
+ *     mutually exclusive with an application-supplied {@code EndpointPolicy} bean; an explicitly <em>empty</em> value
+ *     beside a bean cedes to the bean — the escape hatch for a service that inherits this property from shared
  *     configuration it cannot unset
  * @param retry the retry policy
  * @param health the Actuator health probe settings; always present, defaults apply when unset

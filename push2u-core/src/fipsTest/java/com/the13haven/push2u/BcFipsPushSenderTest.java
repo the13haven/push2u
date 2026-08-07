@@ -35,7 +35,8 @@ class BcFipsPushSenderTest {
         assertThat(Jca.using(bcFips).es256().encoding()).isEqualTo(Jca.EcdsaSignature.Encoding.DER);
 
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     // Real TLS to the receiver, trusting its per-JVM certificate. The TLS stack
                     // stays SunJSSE — .cryptoProvider(...) scopes BC-FIPS to the message crypto
                     // only, and LoopbackTls itself is provider-free by the shared-plumbing rule.

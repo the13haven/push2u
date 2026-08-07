@@ -77,7 +77,8 @@ class PushSenderTest {
         Subscription subscription = new Subscription(
                 "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
 
-        PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+        PushResult result = PushSender.builder(
+                        generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                 .httpClient(capturingClient)
                 .build()
                 .send(subscription, PushMessage.of(bytes("x")));
@@ -100,7 +101,8 @@ class PushSenderTest {
         // second later produces a JWT every push service is entitled to answer with 401.
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
@@ -124,7 +126,8 @@ class PushSenderTest {
         // 12h ahead, not silently drift to some other offset the Javadoc no longer matches.
         Instant now = Instant.parse("2030-01-01T00:00:00Z");
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
@@ -170,7 +173,8 @@ class PushSenderTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
             receiver.enqueue(201);
-            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
@@ -240,7 +244,8 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushResult result = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(capturingClient)
                     .build()
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
@@ -271,7 +276,8 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushResult result = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(capturingClient)
                     .executor(executor)
                     .build()
@@ -296,7 +302,8 @@ class PushSenderTest {
             throw new RejectedExecutionException("saturated");
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender pusher = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .executor(rejecting)
                     .build();
             Subscription subscription = subscription(receiver);
@@ -312,7 +319,8 @@ class PushSenderTest {
     void externalSignerPathDelivers() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             VapidSigner externalSigner = new LocalEcVapidSigner(generateVapidKeys());
-            PushSender pusher = PushSender.builder(externalSigner, "mailto:ops@example.com")
+            PushSender pusher = PushSender.builder(
+                            externalSigner, "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
                     .sleeper(sleeper)
                     .build();
@@ -340,18 +348,67 @@ class PushSenderTest {
         // required value is inexpressible.
         VapidKeys keys = generateVapidKeys();
 
-        assertThatThrownBy(() -> PushSender.builder(keys, "   "))
+        assertThatThrownBy(() -> PushSender.builder(keys, "   ", EndpointPolicies.unrestricted()))
                 .as("keys overload")
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("contact is required");
-        assertThatThrownBy(() -> PushSender.builder(new LocalEcVapidSigner(keys), ""))
+        assertThatThrownBy(() -> PushSender.builder(new LocalEcVapidSigner(keys), "", EndpointPolicies.unrestricted()))
                 .as("signer overload")
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("contact is required");
     }
 
+    @Test
+    void theFactoryRejectsANullEndpointPolicy() {
+        // The policy is a required argument, so omitting it does not compile; null is the one way
+        // to express "no policy" that still typechecks, and it is refused at the factory like every
+        // other present-but-invalid value. A deployment wanting no restriction says
+        // EndpointPolicies.unrestricted(), which is a token in its own source.
+        VapidKeys keys = generateVapidKeys();
+
+        assertThatThrownBy(() -> PushSender.builder(keys, "mailto:ops@example.com", null))
+                .as("keys overload")
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("endpointPolicy");
+        assertThatThrownBy(() -> PushSender.builder(new LocalEcVapidSigner(keys), "mailto:ops@example.com", null))
+                .as("signer overload")
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("endpointPolicy");
+    }
+
+    @Test
+    void bothFactoryOverloadsRunThePolicyTheyWereGiven() {
+        // The two entry points differ only in the key source; neither may lose the policy on the
+        // way to the sender. Proven by rejection, not by a getter: a policy that refuses everything
+        // must stop a send through either overload.
+        VapidKeys keys = generateVapidKeys();
+        EndpointPolicy refuseEverything = endpoint -> {
+            throw new EndpointRejectedException("refused by test policy");
+        };
+        Subscription subscription = new Subscription(
+                "https://push.example.com/never-contacted",
+                TestVectors.b64(TestVectors.UA_PUBLIC),
+                TestVectors.b64(TestVectors.AUTH_SECRET));
+        PushMessage message = PushMessage.of(bytes("x"));
+
+        PushSender fromKeys = PushSender.builder(keys, "mailto:ops@example.com", refuseEverything)
+                .httpClient((endpoint, headers, body) -> PushResponse.of(201))
+                .build();
+        PushSender fromSigner = PushSender.builder(
+                        new LocalEcVapidSigner(keys), "mailto:ops@example.com", refuseEverything)
+                .httpClient((endpoint, headers, body) -> PushResponse.of(201))
+                .build();
+
+        assertThatThrownBy(() -> fromKeys.send(subscription, message))
+                .as("keys overload")
+                .isInstanceOf(EndpointRejectedException.class);
+        assertThatThrownBy(() -> fromSigner.send(subscription, message))
+                .as("signer overload")
+                .isInstanceOf(EndpointRejectedException.class);
+    }
+
     private PushSender pusher() {
-        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com")
+        return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                 // The real JdkPushHttpClient, trusting the receiver's per-JVM TLS certificate —
                 // the sends here traverse an actual https handshake, same as production.
                 .httpClient(trustingPushHttpClient())
