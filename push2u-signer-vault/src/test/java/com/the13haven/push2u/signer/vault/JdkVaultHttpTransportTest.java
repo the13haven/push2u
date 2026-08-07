@@ -206,6 +206,18 @@ class JdkVaultHttpTransportTest {
                             .doesNotContain("marker")
                             .doesNotContain("/v1/transit/keys/vapid"));
         }
+
+        // The same property through the header-rejection path, which renders without connecting:
+        // every message site funnels through one rendering today, but that is an implementation
+        // fact a future edit can break per site, so the query's absence is pinned on both.
+        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("GET <unrenderable address>")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain("secret-query")
+                        .doesNotContain("marker"));
     }
 
     @Test
@@ -263,6 +275,35 @@ class JdkVaultHttpTransportTest {
                         .doesNotContain("secret-cred")
                         .doesNotContain("vault-user")
                         .doesNotContain("vault.test"));
+    }
+
+    @Test
+    void aCredentialWhoseHeadParsesAsHostAndPortIsReplacedByTheMarker() {
+        // The subtlest of the leak class: when the text before a password's first "/" happens to
+        // parse as host[:port], Java produces a perfectly server-based authority — user name as
+        // the host, digits as the port — and drops the rest of the credential, "@" and real host
+        // included, into the path. A host check alone passes these, so the guard keys on the "@"
+        // in the parsed path, which a valid Vault address path never carries. Mirrors the
+        // starter's test of the same shapes. Reached through the header-rejection path, which
+        // renders without ever connecting.
+        for (String address : new String[] {
+            "https://u:1971/restOfPassword@vault.test:8200",
+            "https://u:/PASS@vault.test:8200",
+            "https://user.name:443/secret@vault.test"
+        }) {
+            URI uri = URI.create(address);
+
+            assertThatThrownBy(() ->
+                            transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                    .as("address %s", address)
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("<unrenderable address>")
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .doesNotContain("restOfPassword")
+                            .doesNotContain("PASS")
+                            .doesNotContain("secret")
+                            .doesNotContain("vault.test"));
+        }
     }
 
     @Test

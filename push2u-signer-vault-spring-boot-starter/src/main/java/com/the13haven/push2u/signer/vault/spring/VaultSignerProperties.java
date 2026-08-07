@@ -130,14 +130,20 @@ public record VaultSignerProperties(
      * <p>Every other shape renders as the fixed marker {@code <unrenderable address>}, with not one character of the
      * original string: once Java has not parsed a server-based authority, a credential can sit anywhere in the text — a
      * password carrying {@code /} or {@code ?}, both ordinary characters in a generated one, dissolves the authority as
-     * Java reads it — and no string-level cut can find it without guessing. The marker is deliberately distinct from
-     * {@code null} (no address configured) and from the token's {@code ***} (a value, hidden): it says an address is
-     * configured but its shape cannot be rendered without risking a credential. The shapes it covers — a relative
-     * reference, a schemeless {@code user:pass@vault.example:8200} (Java reads {@code user} as the scheme, so there is
-     * no host), an address carrying a query or fragment — are exactly the shapes that can never be a valid Vault
-     * address, so the signer refuses them at startup naming the property; the operator who needs the value has it in
-     * their own configuration, and the signer library itself already refuses a bad address without quoting it, which
-     * this rendering merely stops departing from. A valid address is unaffected.
+     * Java reads it — and no string-level cut can find it without guessing. A parsed authority alone is not enough,
+     * which is why a raw path carrying {@code @} routes to the marker too: when the text before a password's first
+     * {@code /} happens to parse as {@code host[:port]} ({@code https://u:1971/restOfPassword@vault.example:8200}),
+     * Java reads the user name as the host and drops the rest of the credential — its {@code @} and the real host
+     * included — into the path. A credential in an authority is always delimited by {@code @}, so a path with no
+     * {@code @} can hide no tail of one; that delimiter is the whole guard, deliberately, and it swallows nothing
+     * renderable, the signer's address rule admitting no {@code @} in an address path. The marker is deliberately
+     * distinct from {@code null} (no address configured) and from the token's {@code ***} (a value, hidden): it says an
+     * address is configured but its shape cannot be rendered without risking a credential. The shapes it covers — a
+     * relative reference, a schemeless {@code user:pass@vault.example:8200} (Java reads {@code user} as the scheme, so
+     * there is no host), an address carrying a query, a fragment or an {@code @} in its path — are exactly the shapes
+     * that can never be a valid Vault address, so the signer refuses them at startup naming the property; the operator
+     * who needs the value has it in their own configuration, and the signer library itself already refuses a bad
+     * address without quoting it, which this rendering merely stops departing from. A valid address is unaffected.
      *
      * <p>The built-in Vault transport ({@code JdkVaultHttpTransport}) renders the URIs in its failure messages by the
      * same fail-closed rule. This is a deliberate second copy rather than a shared one: sharing it would mean adding a
@@ -150,10 +156,14 @@ public record VaultSignerProperties(
         if (address == null) {
             return null;
         }
+        // A URI with a parsed host always carries a path, possibly empty; the fallback only
+        // states that in a form the nullness checker can see.
+        String rawPath = Objects.requireNonNullElse(address.getRawPath(), "");
         if (address.getScheme() == null
                 || address.getHost() == null
                 || address.getRawQuery() != null
-                || address.getRawFragment() != null) {
+                || address.getRawFragment() != null
+                || rawPath.indexOf('@') >= 0) {
             return "<unrenderable address>";
         }
         StringBuilder rendered = new StringBuilder(address.getScheme()).append("://");
@@ -165,9 +175,6 @@ public record VaultSignerProperties(
         if (address.getPort() >= 0) {
             rendered.append(':').append(address.getPort());
         }
-        // A URI with a parsed host always carries a path, possibly empty; the fallback only
-        // states that in a form the nullness checker can see.
-        return rendered.append(Objects.requireNonNullElse(address.getRawPath(), ""))
-                .toString();
+        return rendered.append(rawPath).toString();
     }
 }

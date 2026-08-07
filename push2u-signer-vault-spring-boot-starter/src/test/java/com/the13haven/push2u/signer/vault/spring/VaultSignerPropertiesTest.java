@@ -175,6 +175,34 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
+    void aCredentialWhoseHeadParsesAsHostAndPortRendersAsTheMarker() {
+        // The subtlest of the leak class: when the text before a password's first "/" happens to
+        // parse as host[:port], Java produces a perfectly server-based authority — user name as
+        // the host, digits as the port — and drops the rest of the credential, "@" and real host
+        // included, into the path. A host check alone passes these, so the guard keys on the "@"
+        // in the parsed path: a credential in an authority is always delimited by "@", and a valid
+        // Vault address path never carries one.
+        assertThat(properties(URI.create("https://u:1971/restOfPassword@vault.example:8200"))
+                        .toString())
+                .doesNotContain("restOfPassword")
+                .doesNotContain("1971")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://u:/PASS@vault.example:8200")).toString())
+                .doesNotContain("PASS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://user.name:443/secret@vault.example"))
+                        .toString())
+                .doesNotContain("secret")
+                .doesNotContain("user.name")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+    }
+
+    @Test
     void anAddressCarryingAQueryOrFragmentRendersAsTheMarker() {
         // A base address may carry neither — the signer refuses one at startup, naming the property
         // — but the binding that fills this record happens first, and a Vault query can name
