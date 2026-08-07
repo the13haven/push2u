@@ -119,10 +119,20 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(inChainNaming(
                                     context.getStartupFailure(), "push2u.signer.vault.public-key is not base64url"))
                             .isInstanceOf(IllegalArgumentException.class);
+                    // The type change removed what used to make a doubled prefix impossible: an
+                    // IllegalStateException could not be caught by translated(...), an
+                    // IllegalArgumentException can. Folding this decode into the translated(...)
+                    // block beside it would read like a tidy-up and compose the property name twice.
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .doesNotContain("public-key: push2u.signer.vault.public-key");
                 });
     }
 
-    /** The first throwable in the chain whose message opens with {@code prefix}, or null if none does. */
+    /**
+     * The first throwable in the chain whose message opens with {@code prefix} — the rejection the starter composes,
+     * not the {@code rootCause()} underneath it. Fails naming the prefix rather than returning null, so a miss reads as
+     * "nothing in the chain said this" instead of a generic complaint about null.
+     */
     private static Throwable inChainNaming(Throwable failure, String prefix) {
         for (Throwable throwable = failure; throwable != null; throwable = throwable.getCause()) {
             String message = throwable.getMessage();
@@ -130,7 +140,7 @@ class VaultSignerAutoConfigurationTest {
                 return throwable;
             }
         }
-        return null;
+        throw new AssertionError("no throwable in the failure chain opens with: " + prefix);
     }
 
     @Test
@@ -527,6 +537,12 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .rootCause()
+                            // The other half of the taxonomy, pinned by type as well as by message:
+                            // this is the starter's own pre-flight over two settings at once, which
+                            // is what IllegalStateException means here, while one value's form
+                            // being rejected is an IllegalArgumentException. Leaving either half on
+                            // a message-only assertion is how the distinction drifted before.
+                            .isInstanceOf(IllegalStateException.class)
                             .hasMessageContaining("key-version requires push2u.signer.vault.public-key");
                 });
     }

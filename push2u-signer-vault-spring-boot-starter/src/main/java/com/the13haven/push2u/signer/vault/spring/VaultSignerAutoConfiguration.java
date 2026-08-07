@@ -223,10 +223,11 @@ public final class VaultSignerAutoConfiguration {
      * the expected encoding, and a context failure that only says "Illegal base64 character" leaves the operator
      * guessing which of the {@code push2u.*} values is at fault.
      *
-     * <p>The rejection stays an {@link IllegalArgumentException}, which is what this starter raises when a single
-     * configured <em>value</em> is unusable — as the on-curve check on this very property does one line later. An
-     * {@link IllegalStateException} means something else here: the configuration is incoherent as a whole, a required
-     * value missing or two settings contradicting each other. One malformed value is not that.
+     * <p>The rejection is an {@link IllegalArgumentException}, which is what both starters raise when one value's
+     * <em>form</em> is rejected — by the library, by the JDK, or here — as the on-curve check on this same property
+     * does. An {@link IllegalStateException} is reserved for the starter's own coherence pre-flight over several
+     * settings at once: a required one absent or blank, or two of them contradicting each other. A public key that is
+     * not base64url is neither.
      */
     private static byte[] decodePublicKey(String publicKey) {
         try {
