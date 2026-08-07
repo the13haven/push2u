@@ -57,7 +57,7 @@ class VaultTransitVapidSignerSignResponseTest {
             }
         };
         return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        URI.create("http://vault.test:8200"),
+                        URI.create("https://vault.test:8200"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
                         publicKey)
@@ -85,7 +85,7 @@ class VaultTransitVapidSignerSignResponseTest {
             }
         };
         return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        URI.create("http://vault.test:8200"),
+                        URI.create("https://vault.test:8200"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
                         publicKey)

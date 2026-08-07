@@ -21,6 +21,7 @@ is [`DESIGN.md`](../../DESIGN.md); how to use the library is [`README.md`](../..
 | [012](0012-nullness-declared-with-jspecify.md) | Nullness declared with JSpecify | Accepted | Unmarked packages; a nullness contract that exists only in prose |
 | [013](0013-release-and-publication-process.md) | Release and publication process | Accepted | A version constant in the build; a release implied by a merge; a namespace on a domain the project does not own |
 | [014](0014-jpms-explicit-and-automatic-modules.md) | JPMS: explicit modules for the library, automatic for the starters | Accepted | A module or package name changed after release; a package split across two artifacts; a descriptor on a starter |
+| [015](0015-vault-address-scheme-policy.md) | Vault address scheme: https, or loopback/opted-in http | Accepted | A non-HTTP scheme; a loopback decision made by name resolution; a configuration-only path to plaintext transport of the Vault token |
 
 ## An ADR is immutable once implemented
 
@@ -33,7 +34,7 @@ what it replaces. The superseded one keeps its number, its title and its body, a
 becomes:
 
 ```markdown
-**Status:** Superseded by [ADR-015](0015-the-new-decision.md)
+**Status:** Superseded by [ADR-NNN](NNNN-the-new-decision.md)
 ```
 
 That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is

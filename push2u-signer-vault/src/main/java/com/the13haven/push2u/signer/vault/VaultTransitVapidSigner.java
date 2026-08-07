@@ -6,7 +6,9 @@
 package com.the13haven.push2u.signer.vault;
 
 import java.math.BigInteger;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
 import java.security.GeneralSecurityException;
@@ -21,6 +23,7 @@ import java.security.spec.ECPoint;
 import java.security.spec.EllipticCurve;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -46,9 +49,22 @@ import com.the13haven.push2u.VapidSigner;
  * rule as {@code mount} — every {@code /}-separated segment non-empty, not {@code .} or {@code ..}, drawn from
  * {@code [A-Za-z0-9_.-]} — for the same reasons (see {@link #requireValidVaultPath}'s rationale): the prefix rides in
  * front of every token-bearing request path, so a segment a normalizing hop would rewrite must fail loudly at
- * configuration instead. The <em>scheme</em> is deliberately not restricted to {@code https} — Vault's dev server
- * listens on plain {@code http}, and the Vault CLI and Spring Vault accept it the same way — but a production address
- * must be {@code https}: on plain HTTP the {@code X-Vault-Token} header travels in clear text.
+ * configuration instead.
+ *
+ * <p><b>The scheme</b> must be {@code http} or {@code https} — compared case-insensitively, as RFC 3986 §3.1 defines
+ * schemes — because the signer speaks Vault's HTTP API and nothing else; any other scheme is rejected at the factory.
+ * {@code https} is always accepted. Plain {@code http} is accepted without ceremony only when the host is a <em>literal
+ * loopback</em>: {@code localhost}, a name under {@code .localhost}, an IPv4 dotted-quad in {@code 127.0.0.0/8}
+ * (canonical decimal, no leading zeros), or a bracketed IP literal that denotes a loopback address — {@code [::1]} in
+ * any of its spellings, and equally {@code [::ffff:127.0.0.1]} or {@code [::ffff:7f00:1]}, the IPv4-mapped writings of
+ * a {@code 127.0.0.0/8} address, whose traffic goes to that IPv4 loopback and so no further than the {@code 127.0.0.1}
+ * form does. That carve-out is the Vault Agent and service-mesh sidecar pattern — the application talks plain HTTP to
+ * {@code http://127.0.0.1:8200}, and the agent beside it terminates TLS — a mainstream production deployment, not a
+ * development convenience. {@code http} to any other host makes {@code build()} throw unless the builder's optional
+ * {@code allowInsecureHttp()} step was called: the Vault token travels in the {@code X-Vault-Token} request header, and
+ * over plain HTTP to a remote host it would cross the network in clear text. Loopback is decided from the literal host
+ * text, never by resolving the name, so the rule stays readable from the address alone — {@code http://my-vault}
+ * pointing at {@code 127.0.0.1} through the hosts file still needs the opt-in.
  *
  * <p>The Vault key must be an {@code ecdsa-p256} Transit key. The VAPID public key is your published identity; Vault
  * holds only the private half. There are two ways to supply the public key, one builder each — the two differ in
@@ -90,9 +106,10 @@ import com.the13haven.push2u.VapidSigner;
  * <p>Both factory methods take everything required — the Vault base address, the {@link TransitKeyName} and the
  * {@link VaultToken} — so an incomplete signer cannot be expressed and {@code build()} never refuses over a missing
  * value; the value types keep the arguments impossible to swap and carry their own validation. The builders hold only
- * the optional steps: {@code mount} (default {@code "transit"}), {@code namespace} (default none — see below) and
- * {@code transport} (default {@link JdkVaultHttpTransport}). Only the supplied-key builder has {@code keyVersion} — in
- * the fetched mode the version is Vault's to state, not the caller's.
+ * the optional steps: {@code mount} (default {@code "transit"}), {@code namespace} (default none — see below),
+ * {@code transport} (default {@link JdkVaultHttpTransport}) and {@code allowInsecureHttp()} (off by default — see the
+ * scheme rule above). Only the supplied-key builder has {@code keyVersion} — in the fetched mode the version is Vault's
+ * to state, not the caller's.
  *
  * <p><b>Vault namespaces (Enterprise/HCP):</b> when the Transit engine lives inside a <a
  * href="https://developer.hashicorp.com/vault/docs/enterprise/namespaces">Vault Enterprise or HCP Vault namespace</a>,
@@ -158,6 +175,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final int SIGNATURE_LENGTH = 2 * COORDINATE_LENGTH;
     /** The Transit mount path both builders assume unless {@code mount(...)} says otherwise — Vault's own default. */
     private static final String DEFAULT_MOUNT = "transit";
+    /** The one scheme always acceptable for the Vault address: TLS keeps the token confidential on the wire. */
+    private static final String HTTPS_SCHEME = "https";
+    /** Acceptable only towards a literal loopback host, or with the builders' explicit {@code allowInsecureHttp()}. */
+    private static final String HTTP_SCHEME = "http";
     /** The header carrying the Vault token on every Vault call. */
     private static final String TOKEN_HEADER = "X-Vault-Token";
     /** The header addressing a Vault Enterprise/HCP namespace — sent only when {@code namespace(...)} was set. */
@@ -188,16 +209,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
      *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
-     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
-     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
-     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
+     *     contract; the scheme must be {@code http} or {@code https}, and plain {@code http} beyond a literal loopback
+     *     host additionally needs the builder's {@code allowInsecureHttp()} step). Userinfo in the address is
+     *     preserved, but the built-in transport does not use it — no {@code Authorization} header is formed from it;
+     *     Vault authentication is the token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth
+     *     fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
      *     (this mode reads the key metadata)
      * @return a new builder
-     * @throws IllegalArgumentException if {@code address} is not an absolute URI with a host, carries a query or
-     *     fragment, or has a path violating the per-segment rule (empty, {@code .} or {@code ..} segments, or
-     *     characters outside {@code [A-Za-z0-9_.-]})
+     * @throws IllegalArgumentException if {@code address} is not an absolute URI with a host, has a scheme other than
+     *     {@code http} or {@code https} (case-insensitive), carries a query or fragment, or has a path violating the
+     *     per-segment rule (empty, {@code .} or {@code ..} segments, or characters outside {@code [A-Za-z0-9_.-]})
      */
     public static FetchedPublicKeyBuilder builderWithFetchedPublicKey(
             URI address, TransitKeyName keyName, VaultToken token) {
@@ -210,9 +233,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
      *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
-     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
-     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
-     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
+     *     contract; the scheme must be {@code http} or {@code https}, and plain {@code http} beyond a literal loopback
+     *     host additionally needs the builder's {@code allowInsecureHttp()} step). Userinfo in the address is
+     *     preserved, but the built-in transport does not use it — no {@code Authorization} header is formed from it;
+     *     Vault authentication is the token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth
+     *     fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key — this mode never reads the key metadata, so a
      *     sign-only token is enough
@@ -887,9 +912,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * that supplied it and {@code build()} never trips over it. The address must be absolute and carry a host (a
      * relative or opaque URI names no server to call), and must carry neither a query nor a fragment: the signer
      * appends {@code /v1/…} API paths to it, and RFC 3986 §5.3 gives a base's query and fragment no way into the joined
-     * URI — a value that would be silently discarded is a misconfiguration worth naming. The scheme is deliberately
-     * unrestricted (see the class Javadoc: Vault's dev server is plain {@code http}); production addresses must be
-     * {@code https}.
+     * URI — a value that would be silently discarded is a misconfiguration worth naming. The scheme must be
+     * {@code http} or {@code https} (case-insensitively — RFC 3986 §3.1 schemes are), because the signer speaks Vault's
+     * HTTP API and no other protocol can carry these requests; anything else fails here, at the factory, since no later
+     * builder step could rescue it. What this method deliberately does <em>not</em> decide is whether plain
+     * {@code http} is acceptable towards the configured host — that depends on the builders' optional
+     * {@code allowInsecureHttp()} step, which is called only after the factory has returned, so that rule lives in
+     * {@code build()} ({@link #requirePlainHttpPermitted}).
      *
      * <p>The path — the reverse-proxy or ingress prefix the API paths are appended after — is validated by the same
      * per-segment rule as {@code mount}, for the same reasons ({@link #requireValidVaultPath}): it rides in front of
@@ -907,6 +936,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new IllegalArgumentException(
                     "address must be an absolute URI with a host, e.g. https://vault.example:8200"
                             + " or https://gw.example/vault");
+        }
+        String scheme = address.getScheme();
+        if (!HTTP_SCHEME.equalsIgnoreCase(scheme) && !HTTPS_SCHEME.equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("address scheme must be http or https, got '" + scheme
+                    + "' — the signer speaks Vault's HTTP API, and no other protocol can carry these requests");
         }
         if (address.getRawQuery() != null) {
             throw new IllegalArgumentException("address must not carry a query — it is a base address the Vault API"
@@ -960,6 +994,111 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 }
             }
         }
+    }
+
+    /**
+     * The {@code build()}-time half of the scheme rule (the factory half is {@link #requireValidVaultAddress}): plain
+     * {@code http} to a host that is not a literal loopback is refused unless the builder's {@code allowInsecureHttp()}
+     * step opted in. This is the one address rule that cannot live at the factory, where every other
+     * invalid-but-present value is rejected — the opt-in is a builder step and is called only after the factory has
+     * returned — so both builders call this first thing in {@code build()}, before any other work; in the fetched mode
+     * that means before the Vault read, so a refused address fails without contacting anything.
+     *
+     * <p>Loopback is decided from the literal host text, never by resolving the name: resolution would be a network
+     * call inside validation, could disagree with whatever the transport's own resolver answers later, and would make
+     * the rule depend on the environment instead of on the address. The literal set is essentially the one browsers
+     * treat as a secure context — {@code localhost}, any name under {@code .localhost}, an IPv4 dotted-quad in
+     * {@code 127.0.0.0/8} written in canonical decimal, and a bracketed IP literal denoting a loopback address, which
+     * covers the IPv6 loopback in any spelling and the IPv4-mapped writings of {@code 127.0.0.0/8}
+     * ({@link #isLoopbackLiteral}). A private name that merely <em>resolves</em> to a loopback ({@code http://my-vault}
+     * through the hosts file) therefore needs the opt-in — the accepted price of a rule readable from the address
+     * alone.
+     */
+    private static void requirePlainHttpPermitted(URI address, boolean allowInsecureHttp) {
+        if (!HTTP_SCHEME.equalsIgnoreCase(address.getScheme())
+                || allowInsecureHttp
+                || isLoopbackLiteral(address.getHost())) {
+            return;
+        }
+        throw new IllegalArgumentException("address uses plain http to a host that is not a literal loopback:"
+                + " every Vault call carries the Vault token in the X-Vault-Token request header, so over http the"
+                + " token would cross the network in clear text. Use an https address, or accept that risk"
+                + " deliberately by calling allowInsecureHttp() on this builder. No opt-in is needed for a literal"
+                + " loopback host — localhost, a name under .localhost, a four-octet 127.0.0.0/8 IPv4 literal in"
+                + " canonical decimal (127.0.0.1, but neither the shorthand 127.1 nor the leading-zero 0177.0.0.1),"
+                + " or a bracketed IP literal denoting a loopback address ([::1] in any spelling, and the IPv4-mapped"
+                + " writings such as [::ffff:127.0.0.1]) — where a TLS-terminating Vault Agent or sidecar beside the"
+                + " application keeps the token on the machine");
+    }
+
+    /**
+     * Whether {@code host} — as {@link URI#getHost()} reports it — is a literal loopback, decided from the text alone
+     * (the rationale lives on {@link #requirePlainHttpPermitted}): {@code localhost} or a name under
+     * {@code .localhost}, compared ASCII case-insensitively because RFC 3986 §3.2.2 host names are; an IPv4 dotted-quad
+     * in {@code 127.0.0.0/8} written in canonical decimal ({@link #isIpv4LoopbackLiteral}); or a bracketed IP literal
+     * that denotes a loopback address.
+     *
+     * <p>The bracketed form is parsed rather than string-compared because one address has many legal spellings, and
+     * because the question is which address the literal denotes rather than how it is written: {@code [::1]} and
+     * {@code [0:0:0:0:0:0:0:1]} are the same IPv6 loopback, while the IPv4-mapped writings {@code [::ffff:127.0.0.1]}
+     * and {@code [::ffff:7f00:1]} are a <em>different</em> 128-bit value that the platform resolves to the IPv4 address
+     * it maps — {@code 127.0.0.1} here, so the traffic reaches the same place plain {@code 127.0.0.1} does and is
+     * admitted for the same reason. A mapped form of anything else ({@code [::ffff:8.8.8.8]}) maps to a non-loopback
+     * address and is refused, as is the deprecated IPv4-compatible form {@code [::127.0.0.1]}, which denotes an IPv6
+     * address that is not the loopback. RFC 3986 §3.2.2 admits only an IP literal inside brackets, never a name, so
+     * this parse can involve no name resolution.
+     */
+    private static boolean isLoopbackLiteral(String host) {
+        String lowerCased = host.toLowerCase(Locale.ROOT);
+        if ("localhost".equals(lowerCased) || lowerCased.endsWith(".localhost")) {
+            return true;
+        }
+        if (host.startsWith("[")) {
+            try {
+                return InetAddress.getByName(host).isLoopbackAddress();
+            } catch (UnknownHostException e) {
+                // Not a parseable IP literal (an IPvFuture form, say) — not known to be loopback,
+                // so plain http to it takes the explicit opt-in like any other host.
+                return false;
+            }
+        }
+        return isIpv4LoopbackLiteral(host);
+    }
+
+    /**
+     * Whether {@code host} is an IPv4 dotted-quad literal in {@code 127.0.0.0/8}: exactly four {@code .}-separated
+     * decimal octets, each 0–255 with no leading zeros, the first being {@code 127}. Leading zeros are refused rather
+     * than read as decimal because {@code inet_aton}-style parsers read them as octal — {@code 0177.0.0.1} is loopback
+     * to one parser and 177.0.0.1 to another, and a form whose meaning depends on the resolver is not a literal this
+     * rule can vouch for. Shorthand forms ({@code 127.1}) are refused for the same reason.
+     */
+    private static boolean isIpv4LoopbackLiteral(String host) {
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4 || !"127".equals(octets[0])) {
+            return false;
+        }
+        for (String octet : octets) {
+            if (!isDecimalOctet(octet)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether {@code octet} is a canonical decimal octet: 1–3 ASCII digits, no leading zero, value at most 255. */
+    private static boolean isDecimalOctet(String octet) {
+        if (octet.isEmpty() || octet.length() > 3 || (octet.length() > 1 && octet.charAt(0) == '0')) {
+            return false;
+        }
+        int value = 0;
+        for (int i = 0; i < octet.length(); i++) {
+            char c = octet.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+            value = value * 10 + (c - '0');
+        }
+        return value <= 255;
     }
 
     /**
@@ -1084,9 +1223,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * missing value.
      *
      * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #namespace(String)} to none (no
-     * {@code X-Vault-Namespace} header is sent) and {@link #transport(VaultHttpTransport)} to a fresh
-     * {@link JdkVaultHttpTransport}. There is deliberately no {@code keyVersion} step: this mode takes the version from
-     * the same {@code transit/keys/<key>} response as the public key, which is what keeps the two in step.
+     * {@code X-Vault-Namespace} header is sent), {@link #transport(VaultHttpTransport)} to a fresh
+     * {@link JdkVaultHttpTransport}, and {@link #allowInsecureHttp()} is off — plain {@code http} beyond a literal
+     * loopback host is refused by {@code build()} without it, before the Vault read. There is deliberately no
+     * {@code keyVersion} step: this mode takes the version from the same {@code transit/keys/<key>} response as the
+     * public key, which is what keeps the two in step.
      */
     public static final class FetchedPublicKeyBuilder {
 
@@ -1101,6 +1242,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         @Nullable
         private VaultHttpTransport transport;
+
+        private boolean allowInsecureHttp;
 
         private FetchedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token) {
             // Validated here, so the failure points at the factory call that supplied the value
@@ -1170,13 +1313,41 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
 
         /**
+         * Permits plain {@code http} to a host that is not a literal loopback. Without this step {@link #build()}
+         * refuses such an address, because every Vault call carries the Vault token in the {@code X-Vault-Token}
+         * request header and plain HTTP to a remote host sends it across the network in clear text. Call it only where
+         * that hop is genuinely acceptable — a physically isolated network, a test bench — and prefer {@code https}, or
+         * a TLS-terminating Vault Agent or sidecar on the same host, which needs no opt-in at all: {@code http} to a
+         * literal loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4
+         * dotted-quad in canonical decimal — so {@code 127.0.0.1}, but neither {@code 127.1} nor {@code 0177.0.0.1} —
+         * or a bracketed IP literal denoting a loopback address, {@code [::1]} in any spelling and the IPv4-mapped
+         * writings such as {@code [::ffff:127.0.0.1]}) is always accepted. The decision reads the host text literally,
+         * never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
+         *
+         * <p>{@code https} addresses are unaffected — this step neither weakens TLS nor changes certificate validation.
+         *
+         * @return this builder
+         */
+        public FetchedPublicKeyBuilder allowInsecureHttp() {
+            this.allowInsecureHttp = true;
+            return this;
+        }
+
+        /**
          * Reads {@code transit/keys/<keyName>} once, then builds the signer pinned to the version that response
          * advertised as latest.
          *
          * @return the signer
+         * @throws IllegalArgumentException if the address uses plain {@code http} to a host that is not a literal
+         *     loopback and {@link #allowInsecureHttp()} was not called — checked before the Vault read, so a refused
+         *     address fails without contacting anything
          * @throws PushCryptoException if the key read fails or the key is not a usable P-256 key
          */
         public VaultTransitVapidSigner build() {
+            // First thing, before the Vault read: a refused address must fail without any network
+            // contact. This is the one address rule that cannot live at the factory — the opt-in
+            // above is a builder step, called only after the factory has returned.
+            requirePlainHttpPermitted(address, allowInsecureHttp);
             VaultHttpTransport resolvedTransport = orDefaultTransport(transport);
             VaultKeyMetadata metadata = fetchKeyMetadata(address, mount, namespace, keyName, token, resolvedTransport);
             return new VaultTransitVapidSigner(
@@ -1199,8 +1370,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      *
      * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #namespace(String)} to none (no
      * {@code X-Vault-Namespace} header is sent), {@link #transport(VaultHttpTransport)} to a fresh
-     * {@link JdkVaultHttpTransport}, and {@link #keyVersion(int)} is optional but strongly recommended — see its own
-     * documentation. {@link #build()} makes no Vault call.
+     * {@link JdkVaultHttpTransport}, {@link #allowInsecureHttp()} is off — plain {@code http} beyond a literal loopback
+     * host is refused by {@code build()} without it — and {@link #keyVersion(int)} is optional but strongly recommended
+     * — see its own documentation. {@link #build()} makes no Vault call.
      */
     public static final class SuppliedPublicKeyBuilder {
 
@@ -1219,6 +1391,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
         @Nullable
         private VaultHttpTransport transport;
+
+        private boolean allowInsecureHttp;
 
         // The key is copied at the factory method, not only in the constructor the builder
         // eventually calls: otherwise the caller's array stays live for as long as the builder
@@ -1316,11 +1490,37 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
 
         /**
+         * Permits plain {@code http} to a host that is not a literal loopback. Without this step {@link #build()}
+         * refuses such an address, because every Vault call carries the Vault token in the {@code X-Vault-Token}
+         * request header and plain HTTP to a remote host sends it across the network in clear text. Call it only where
+         * that hop is genuinely acceptable — a physically isolated network, a test bench — and prefer {@code https}, or
+         * a TLS-terminating Vault Agent or sidecar on the same host, which needs no opt-in at all: {@code http} to a
+         * literal loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4
+         * dotted-quad in canonical decimal — so {@code 127.0.0.1}, but neither {@code 127.1} nor {@code 0177.0.0.1} —
+         * or a bracketed IP literal denoting a loopback address, {@code [::1]} in any spelling and the IPv4-mapped
+         * writings such as {@code [::ffff:127.0.0.1]}) is always accepted. The decision reads the host text literally,
+         * never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
+         *
+         * <p>{@code https} addresses are unaffected — this step neither weakens TLS nor changes certificate validation.
+         *
+         * @return this builder
+         */
+        public SuppliedPublicKeyBuilder allowInsecureHttp() {
+            this.allowInsecureHttp = true;
+            return this;
+        }
+
+        /**
          * Builds the signer. Contacts nothing.
          *
          * @return the signer
+         * @throws IllegalArgumentException if the address uses plain {@code http} to a host that is not a literal
+         *     loopback and {@link #allowInsecureHttp()} was not called
          */
         public VaultTransitVapidSigner build() {
+            // The one address rule that cannot live at the factory: the opt-in above is a builder
+            // step, called only after the factory has returned.
+            requirePlainHttpPermitted(address, allowInsecureHttp);
             return new VaultTransitVapidSigner(
                     address, mount, namespace, keyName, token, keyVersion, publicKey, orDefaultTransport(transport));
         }

@@ -27,9 +27,34 @@ percent-encoded `%2e%2e` cannot reopen what the literal check closes. The prefix
 every token-bearing request path, which is why a segment a normalizing hop would rewrite is
 refused at configuration ([`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration)).
 
-The scheme is deliberately not restricted to `https`: Vault's dev server listens on plain `http`,
-and the Vault CLI and Spring Vault accept that the same way. A production address must be `https`
-— on plain HTTP the `X-Vault-Token` header travels in clear text.
+The scheme must be `http` or `https` (case-insensitively — RFC 3986 §3.1): the signer speaks
+Vault's HTTP API and nothing else, so any other scheme is rejected at the factory (and at startup,
+naming the property). `https` is always accepted. Plain `http` is accepted without ceremony only
+when the host is a *literal loopback* — `localhost`, a name under `.localhost`, an IPv4
+dotted-quad in `127.0.0.0/8` (canonical decimal, no leading zeros), or a bracketed IP literal that
+denotes a loopback address. The bracketed form is parsed rather than string-matched, so it covers
+`[::1]` in any of its spellings *and* the IPv4-mapped writings of a `127.0.0.0/8` address —
+`[::ffff:127.0.0.1]`, `[::ffff:7f00:1]` — which the platform resolves to that IPv4 loopback, so
+they reach exactly where `127.0.0.1` does. A mapped form of anything else (`[::ffff:8.8.8.8]`) is
+refused, as is the deprecated IPv4-compatible `[::127.0.0.1]`, which denotes an IPv6 address that
+is not the loopback. That carve-out is the Vault Agent Injector and service-mesh sidecar pattern:
+the application talks plain HTTP to `http://127.0.0.1:8200` and the agent beside it terminates TLS
+— a mainstream production deployment that works out of the box (and covers Vault's plain-`http`
+dev server too).
+
+Plain `http` to any other host is refused by `build()` unless the builder's `allowInsecureHttp()`
+step was called: the `X-Vault-Token` header would cross the network in clear text. In the fetched
+mode the refusal happens *before* the startup Vault read, so a misconfigured address fails without
+contacting anything. Loopback is decided from the literal host text, never by resolving the name —
+resolution would be a network call inside validation and would make the rule depend on the
+environment rather than on the address — so `http://my-vault` pointing at `127.0.0.1` through
+`/etc/hosts` still needs the opt-in.
+
+The Spring starter exposes no property for the opt-in, deliberately: sending the Vault token over
+plaintext HTTP to a remote host should cost a code change and a review, not a YAML edit that can
+arrive by copying a dev profile into production. A deployment that accepts the risk defines its
+own `VaultTransitVapidSigner` bean (built with `allowInsecureHttp()`), and the starter's
+`@ConditionalOnMissingBean` backs off to it.
 
 Userinfo in the address (`https://user:password@gw.example/vault`) is preserved but unused by the
 built-in transport; a custom `VaultHttpTransport` may honour it, for a basic-auth proxy in front of
@@ -81,13 +106,15 @@ echoing the token; the token's *format* is deliberately not checked, and its `to
 
 The builder holds only the optional steps: `mount` defaults to `transit` (in both the builder and
 the properties), Vault's own default mount for the Transit secrets engine, `namespace` defaults to
-none (see *Vault namespaces* below), and `transport` defaults to a `JdkVaultHttpTransport` (see
-*Vault HTTP transport* below). `mount` is validated where it is set, per segment: nested mounts
-like `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or
-`..`, and use only `[A-Za-z0-9_.-]`. That it is an allowed set rather than a `..` blacklist is what
-percent-encoding cannot reopen, and the set is deliberately narrower than either Vault or a URL
-permits — [`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration) has the routes it closes and why
-a conservative set can be widened later but not narrowed.
+none (see *Vault namespaces* below), `transport` defaults to a `JdkVaultHttpTransport` (see
+*Vault HTTP transport* below), and `allowInsecureHttp()` defaults to off (see *Vault address*
+above — plain `http` beyond a literal loopback host is refused without it). `mount` is validated
+where it is set, per segment: nested mounts like `secrets/transit` are legal, and every
+`/`-separated segment must be non-empty, not `.` or `..`, and use only `[A-Za-z0-9_.-]`. That it is
+an allowed set rather than a `..` blacklist is what percent-encoding cannot reopen, and the set is
+deliberately narrower than either Vault or a URL permits
+— [`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration) has the routes it closes and why a
+conservative set can be widened later but not narrowed.
 
 The equivalent Spring Boot configuration is:
 

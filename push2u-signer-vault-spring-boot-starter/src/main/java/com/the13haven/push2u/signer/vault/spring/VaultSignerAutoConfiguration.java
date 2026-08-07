@@ -68,6 +68,16 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 @EnableConfigurationProperties(VaultSignerProperties.class)
 public final class VaultSignerAutoConfiguration {
 
+    /**
+     * The signer builders' opt-in step for plain {@code http} to a remote host, named in the rejection their
+     * {@code build()} raises without it — and the one rejection this starter's address advice fits. The message is
+     * matched on this token rather than on the sentence around it because the token is a public method name: the signer
+     * module cannot drop it without a release that breaks compilation, while the prose around it may be reworded at any
+     * time. Should it ever disappear anyway, the failure is harmless — the rejection reaches the operator with the
+     * library's own wording and no Spring-shaped advice, rather than with advice about a value that was never at fault.
+     */
+    private static final String INSECURE_HTTP_OPT_IN = "allowInsecureHttp()";
+
     VaultSignerAutoConfiguration() {
         // Explicit + package-private: the autoconfiguration is framework plumbing, not public API;
         // Spring still instantiates it reflectively. (This also avoids an undocumented public
@@ -130,7 +140,8 @@ public final class VaultSignerAutoConfiguration {
             if (namespace != null) {
                 translated("push2u.signer.vault.namespace", () -> fetched.namespace(namespace));
             }
-            return fetched.transport(resolved).build();
+            fetched.transport(resolved);
+            return builtWithPlainHttpRejectionTranslated(fetched::build);
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
@@ -154,7 +165,7 @@ public final class VaultSignerAutoConfiguration {
         if (keyVersion != null) {
             builder.keyVersion(keyVersion);
         }
-        return builder.build();
+        return builtWithPlainHttpRejectionTranslated(builder::build);
     }
 
     /**
@@ -167,6 +178,39 @@ public final class VaultSignerAutoConfiguration {
             return supplier.get();
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(property + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Runs {@code build} and re-throws <em>one</em> {@link IllegalArgumentException} with the address property in front
+     * and the ways forward a YAML-only operator actually has: the refusal of plain {@code http} to a host that is not a
+     * literal loopback, which is the only configuration value the signer's {@code build()} decides — every other input
+     * was validated, and translated, at the step that set it. The library's message says to call
+     * {@code allowInsecureHttp()}, which no property reaches — deliberately: sending the Vault token over plaintext
+     * HTTP to a remote host should cost a code change and a code review, not a YAML edit that can arrive by copying a
+     * dev profile into production. A property could still be added later without breaking anyone; removing one after a
+     * release cannot. So the translation states the Spring-shaped ways forward: an {@code https} address, or an
+     * application-defined {@code VaultTransitVapidSigner} bean, to which this auto-configuration yields.
+     *
+     * <p>Any <em>other</em> {@link IllegalArgumentException} leaving {@code build()} — from an application-supplied
+     * {@code VaultHttpTransport} answering the fetched mode's startup read, or from a check the signer may grow later —
+     * is re-thrown untouched. It is not about the address, and neither the address property name nor the advice below
+     * would tell the operator anything true about it.
+     */
+    private static VapidSigner builtWithPlainHttpRejectionTranslated(Supplier<VaultTransitVapidSigner> build) {
+        try {
+            return build.get();
+        } catch (IllegalArgumentException e) {
+            String message = e.getMessage();
+            if (message == null || !message.contains(INSECURE_HTTP_OPT_IN)) {
+                throw e;
+            }
+            throw new IllegalArgumentException(
+                    "push2u.signer.vault.address: " + message
+                            + ". There is deliberately no configuration property for that opt-in — a deployment that accepts"
+                            + " plaintext HTTP to a remote Vault defines its own VaultTransitVapidSigner bean (built with"
+                            + " allowInsecureHttp()), and this auto-configuration backs off to it",
+                    e);
         }
     }
 

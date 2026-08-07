@@ -43,7 +43,7 @@ import com.the13haven.push2u.PushCryptoException;
 class VaultTransitVapidSignerKeyValidationTest {
 
     private static final String TOKEN = "s.push2u-test-vault-token";
-    private static final URI VAULT = URI.create("http://vault.test:8200");
+    private static final URI VAULT = URI.create("https://vault.test:8200");
 
     /**
      * A real P-256 public key that hits both fixed-width encoding corner cases at once. {@code X.toByteArray()} is 31
