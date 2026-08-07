@@ -24,7 +24,7 @@ dependencies / documentation, or ignore-for-release for housekeeping.
 - [ ] No new runtime dependency in `push2u-core` (ADR-002).
 - [ ] New packages carry `@NullMarked`; new public API carries Javadoc.
 - [ ] Any new suppression or rule exclusion states its reason next to it.
-- [ ] `DESIGN.md` updated if the architecture moved, and a *new* file in `docs/adr/` if a
+- [ ] `docs/DESIGN.md` updated if the architecture moved, and a *new* file in `docs/adr/` if a
       decision did (an implemented ADR is never edited); `README.md` updated if the consumer-
-      facing API or limits changed, `SPRING.md` / `VAULT.md` if a starter or Vault property did,
-      `VAPID.md` if the key-generation recipe did.
+      facing API or limits changed, `docs/SPRING.md` / `docs/VAULT.md` if a starter or Vault
+      property did, `docs/VAPID.md` if the key-generation recipe did.

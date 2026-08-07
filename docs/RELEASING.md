@@ -3,7 +3,7 @@
 This document describes how push2u releases are produced: the one-time publishing setup, the
 repository secrets the workflows depend on, and the release procedure itself. The design
 rationale behind this process is recorded in
-[ADR-013](docs/adr/0013-release-and-publication-process.md).
+[ADR-013](adr/0013-release-and-publication-process.md).
 
 In short: the version is derived from git tags (`vX.Y.Z`) by the
 [axion-release plugin](https://axion-release-plugin.readthedocs.io/); artifacts are signed with
@@ -23,7 +23,7 @@ reproduced — after a key rotation, a fork, or a move to another namespace.
 3. The Portal issues a verification key. Prove ownership of `the13haven.com` by adding a DNS
    `TXT` record containing that key to the domain, then start verification in the Portal.
    Central checks the record on the exact domain the namespace reverses to — this is why the
-   group ID must be a domain the project actually owns (see [ADR-013](docs/adr/0013-release-and-publication-process.md)).
+   group ID must be a domain the project actually owns (see [ADR-013](adr/0013-release-and-publication-process.md)).
 
 ### 2. Generate a Central Portal user token
 
@@ -387,4 +387,4 @@ what `v0.1.0` was.
 Maven Central is immutable: a published version can never be deleted, replaced, or re-uploaded.
 The only fix is forward — correct the problem and release the next version. This is also why
 the release workflow is a deliberate manual trigger
-([ADR-013](docs/adr/0013-release-and-publication-process.md)).
+([ADR-013](adr/0013-release-and-publication-process.md)).

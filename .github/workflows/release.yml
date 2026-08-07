@@ -82,7 +82,7 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "Missing repository secrets:$missing" >&2
-            echo "See RELEASING.md for how each one is obtained." >&2
+            echo "See docs/RELEASING.md for how each one is obtained." >&2
             exit 1
           fi
 
@@ -179,8 +179,8 @@ jobs:
       # anything. A pull request merged into main while this job runs makes axion's push
       # non-fast-forward, and that failure lands AFTER the release commit and the tag have been
       # created locally: a burnt version number, no artifacts, and a repository that has to be
-      # untangled by hand. RELEASING.md asks for a merge freeze for the duration of a release run;
-      # this is the half that does not depend on anyone remembering.
+      # untangled by hand. docs/RELEASING.md asks for a merge freeze for the duration of a release
+      # run; this is the half that does not depend on anyone remembering.
       #
       # Late on purpose. Everything above is reversible and can take half an hour, so checking
       # early would leave exactly the window it is meant to close; checking here narrows it to
@@ -218,7 +218,7 @@ jobs:
             echo "  cut from: $RELEASE_BASE_SHA" >&2
             echo "  now at:   $remote_head" >&2
             echo "Nothing has been tagged or published. Re-run Release once main is quiet; see" >&2
-            echo "RELEASING.md, 'Freeze main while a release runs'." >&2
+            echo "docs/RELEASING.md, 'Freeze main while a release runs'." >&2
             exit 1
           fi
 

@@ -8,18 +8,24 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 `aes128gcm`-encrypted push delivery from a Java server to browser push services. Java 21 baseline,
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
-`README.md` documents the public API for consumers; `VAULT.md` and `SPRING.md` carry the reference
-for the two integrations, and `VAPID.md` the one-time recipe for generating a VAPID key pair — all
-three are what README introduces in a few lines and links to. `VAPID.md` is the one with a moving
-part: its `jshell` block sits between the `vapid-keygen:begin` / `vapid-keygen:end` anchors and is
-executed by `VapidGuideKeyGenerationTest` out of the file itself, so the anchors, the fenced block
-and the heredoc wrapper are load-bearing and `.github/workflows/detect-changes.yml` treats an edit
-there as a build change. `DESIGN.md` describes the architecture as it stands — why it is shaped this
-way, never how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR
-(ADR-001…015) with `docs/adr/README.md` as the index. Read the relevant ADR before changing anything
-structural. `MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it
-states the other library's API and dependency set as verified facts, so anything added there must be
-checked against the published artifact. `RELEASING.md` covers the release procedure,
+Every reference document lives under `docs/`; the repository root keeps only what a newcomer or
+GitHub's community profile looks for there — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`CODE_OF_CONDUCT.md`, `LICENSE` and this file.
+
+`README.md` documents the public API for consumers; `docs/VAULT.md` and `docs/SPRING.md` carry the
+reference for the two integrations, and `docs/VAPID.md` the one-time recipe for generating a VAPID
+key pair — all three are what README introduces in a few lines and links to. `docs/VAPID.md` is the
+one with a moving part: its `jshell` block sits between the `vapid-keygen:begin` /
+`vapid-keygen:end` anchors and is executed by `VapidGuideKeyGenerationTest` out of the file itself,
+so the anchors, the fenced block and the heredoc wrapper are load-bearing and
+`.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
+matches the path, so moving or renaming the file silently switches that off unless the pattern moves
+with it. `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…015) with
+`docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
+`docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
+the other library's API and dependency set as verified facts, so anything added there must be
+checked against the published artifact. `docs/RELEASING.md` covers the release procedure,
 `CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
 vulnerability policy.
 
@@ -27,14 +33,15 @@ vulnerability policy.
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
 and the superseded one keeps its number, title and body while its status line becomes
 `Superseded by ADR-NNN` — the only edit its body ever takes. The description of how things currently
-work belongs in `DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md`
-carries the procedure.
+work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
+`docs/adr/README.md` carries the procedure. An ADR's *links* are not part of its decision: a
+relative path broken by a file moving is fixed like any other reference.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
-string written into `VAULT.md`, `SPRING.md`, `VAPID.md`, `MIGRATION.md` or anywhere else freezes at
-whatever version it was written with and starts lying at the next release. Those documents point at
-README's Installation section instead. The exception is a document that is *about* one version and
+string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/VAPID.md`, `docs/MIGRATION.md` or
+anywhere else freezes at whatever version it was written with and starts lying at the next release.
+Those documents point at README's Installation section instead. The exception is a document that is *about* one version and
 is never read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a
 frozen coordinate there is correct.
 
@@ -116,7 +123,7 @@ or Vault types reach it.
 
 ## Architecture
 
-`PushSender` is the facade; `send`/`sendAsync` run one pipeline (DESIGN.md §4):
+`PushSender` is the facade; `send`/`sendAsync` run one pipeline (docs/DESIGN.md §4):
 
 size preconditions → `EndpointPolicy` → decode subscription key → ephemeral P-256 + salt → ECDH +
 HKDF-SHA-256 → one AES-128-GCM RFC 8188 record → VAPID JWT → POST via `PushHttpClient` → retry

@@ -17,8 +17,8 @@ name: Delete Draft Release
 # check would never let a deletion through, so there would be no feature left either way.
 #
 # Losing a version number costs nothing — release the next patch instead. If a number really must
-# be reclaimed, RELEASING.md documents doing it by hand, after checking the Portal's Deployments
-# page with human eyes.
+# be reclaimed, docs/RELEASING.md documents doing it by hand, after checking the Portal's
+# Deployments page with human eyes.
 
 on:
   workflow_dispatch:

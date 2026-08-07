@@ -61,7 +61,7 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "Missing repository secrets:$missing" >&2
-            echo "See RELEASING.md for how each one is obtained." >&2
+            echo "See docs/RELEASING.md for how each one is obtained." >&2
             exit 1
           fi
 

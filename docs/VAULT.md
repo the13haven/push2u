@@ -2,7 +2,7 @@
 
 `VaultTransitVapidSigner` keeps the VAPID private key inside HashiCorp Vault: push2u sends signing
 requests to the Transit engine instead of loading a scalar. This is the configuration reference —
-[`README.md` → Vault Transit signer](README.md#vault-transit-signer) carries the dependency
+[`README.md` → Vault Transit signer](../README.md#vault-transit-signer) carries the dependency
 coordinates and the minimal working example.
 
 ## Vault address
@@ -230,7 +230,7 @@ GET — go through the module's `VaultHttpTransport` seam. The default `JdkVault
 connection but never answers cannot hang application startup), a fail-closed response-size cap
 counted in raw streamed bytes (an oversized response fails the call; it is never truncated), and
 `Redirect.NEVER` (see
-[`README.md` → Redirects must never be followed](README.md#redirects-must-never-be-followed)).
+[`README.md` → Redirects must never be followed](../README.md#redirects-must-never-be-followed)).
 Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB cap.
 
 The starter exposes these as properties:
@@ -255,7 +255,7 @@ Resolution order (two extension points, plus the properties-only fallback):
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client
    owns it). The client must be built with `Redirect.NEVER` or startup fails — see
-   [`README.md` → Redirects must never be followed](README.md#redirects-must-never-be-followed)
+   [`README.md` → Redirects must never be followed](../README.md#redirects-must-never-be-followed)
    for why.
 3. Otherwise the default transport is built entirely from the properties.
 

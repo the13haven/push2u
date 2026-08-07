@@ -1,9 +1,9 @@
 # Spring Boot integration
 
 `push2u-spring-boot-starter` binds the `push2u.*` properties to an autoconfigured `PushSender`.
-This is the configuration reference — [`README.md` → Spring Boot](README.md#spring-boot) carries
-the dependency coordinate, the Spring Boot version the starters need, and the minimal working
-configuration.
+This is the configuration reference — [`README.md` → Spring Boot](../README.md#spring-boot)
+carries the dependency coordinate, the Spring Boot version the starters need, and the minimal
+working configuration.
 
 ## Properties
 
@@ -39,9 +39,10 @@ bypasses the starter's checks entirely.
 
 `jwt-expiry`, `default-ttl`, `record-size` and `max-encrypted-body-bytes` are optional; unset, they
 leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes and 4096 bytes respectively — see
-[`README.md` → Payload size limits](README.md#payload-size-limits) for the two size properties).
-The three `retry.*` properties carry their own defaults instead (3 attempts, 1s initial backoff,
-60s ceiling), which match `RetryPolicy.defaults()`, so a `RetryPolicy` is always built explicitly.
+[`README.md` → Payload size limits](../README.md#payload-size-limits) for the two size
+properties). The three `retry.*` properties carry their own defaults instead (3 attempts, 1s
+initial backoff, 60s ceiling), which match `RetryPolicy.defaults()`, so a `RetryPolicy` is always
+built explicitly.
 
 Setting any of them to a value the builder — or, for `retry.*`, `RetryPolicy` itself — rejects
 (`jwt-expiry` not strictly positive or over 24h, `default-ttl` negative, `record-size` below 18,
@@ -54,9 +55,9 @@ two you got wrong.
 ## Endpoint policy
 
 `allowed-origins` binds to `EndpointPolicies.allowedOrigins` — see
-[`README.md` → Endpoint policy (SSRF hardening)](README.md#endpoint-policy-ssrf-hardening). Unset,
-it leaves the `PushSender` default of no endpoint policy. A malformed entry fails the context with
-the message prefixed by the property name, like the size properties. Alternatively, supply an
+[`README.md` → Endpoint policy (SSRF hardening)](../README.md#endpoint-policy-ssrf-hardening).
+Unset, it leaves the `PushSender` default of no endpoint policy. A malformed entry fails the context
+with the message prefixed by the property name, like the size properties. Alternatively, supply an
 `EndpointPolicy` bean, which the autoconfigured sender picks up; configuring *both* the property
 and a bean fails the context, naming the property and the bean — they express the same security
 control, and silently preferring one would leave the other believed-active but ignored.
