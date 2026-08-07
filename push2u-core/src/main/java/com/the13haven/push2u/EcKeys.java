@@ -10,6 +10,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PublicKey;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECFieldFp;
@@ -68,20 +69,15 @@ final class EcKeys {
      * attacker-chosen bytes into logs.
      *
      * <p>The parameters come from {@link Jca#p256Parameters()}, which asks the configured provider for
-     * {@code secp256r1} by name — a prime-field curve. A provider reporting any other field type for that name is
-     * defective, and a point this check cannot verify is a point it refuses (fail closed). This is deliberately not a
-     * call to {@link P256PublicKeys#requireOnCurve}: that one checks the bytes against the published P-256 constants,
-     * this one checks the point against the parameters of the provider that is about to run ECDH — only the equation
-     * arithmetic is shared.
+     * {@code secp256r1} by name and has already verified the answer value for value against the published NIST P-256
+     * constants — including that the field is prime, which is what makes the cast below safe. This is deliberately not
+     * a call to {@link P256PublicKeys#requireOnCurve}: that one checks the bytes against the published P-256 constants,
+     * this one checks the point against the (verified) parameters of the provider that is about to run ECDH — only the
+     * equation arithmetic is shared.
      */
     private static void requireOnCurve(BigInteger x, BigInteger y, ECParameterSpec parameters) {
         EllipticCurve curve = parameters.getCurve();
-        if (!(curve.getField() instanceof ECFieldFp primeField)) {
-            throw new PushCryptoException(
-                    "The configured provider reports P-256 (secp256r1) parameters over a non-prime field, "
-                            + "so the public key cannot be validated");
-        }
-        BigInteger p = primeField.getP();
+        BigInteger p = ((ECFieldFp) curve.getField()).getP();
         if (x.signum() < 0 || x.compareTo(p) >= 0 || y.signum() < 0 || y.compareTo(p) >= 0) {
             throw new PushCryptoException("P-256 public key has a coordinate outside the field (0 <= x, y < p), "
                     + "so it is not a point on the curve");
@@ -106,7 +102,10 @@ final class EcKeys {
         }
     }
 
-    /** Encode a public key as the 65-byte X9.62 uncompressed point. */
+    /**
+     * Encode a public key as the 65-byte X9.62 uncompressed point. The fixed 32-byte coordinate fields are P-256's
+     * field size, and a coordinate from a larger curve is rejected rather than truncated (see {@link #writeFixed}).
+     */
     static byte[] encodeUncompressed(ECPublicKey key) {
         ECPoint point = key.getW();
         byte[] out = new byte[UNCOMPRESSED_LENGTH];
@@ -116,14 +115,52 @@ final class EcKeys {
         return out;
     }
 
-    /** Generate a fresh ephemeral P-256 key pair (the per-message application-server key). */
+    /**
+     * Generate a fresh ephemeral P-256 key pair (the per-message application-server key). The generator resolves the
+     * {@code secp256r1} name itself, so the verification {@link Jca#p256Parameters()} applies to imported keys does not
+     * reach this path — and the generated pair sits on the same trust boundary: its public half is published in the
+     * {@code aes128gcm} header and its private half drives the ECDH agreement. Hence the generated public point is
+     * checked against the published NIST P-256 curve equation before the pair is used — one equation evaluation per
+     * generated pair, nothing provider-dependent — so a generator that honoured the name with some other curve fails
+     * loudly here instead of deriving the content-encryption keys on a curve nobody chose.
+     */
     static KeyPair generateP256(Jca jca) {
+        KeyPair pair;
         try {
             KeyPairGenerator generator = jca.ecKeyPairGenerator();
             generator.initialize(new ECGenParameterSpec(Algorithms.SECP256R1));
-            return generator.generateKeyPair();
+            pair = generator.generateKeyPair();
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("P-256 key-pair generation failed", e);
+        }
+        requireGeneratedOnP256(pair.getPublic());
+        return pair;
+    }
+
+    /**
+     * Refuse a generated public key that is not a point on NIST P-256, checked against the published constants (the
+     * generator already answered the {@code secp256r1} lookup, so its own parameters prove nothing). The messages quote
+     * no coordinates — the value is fresh key material, and the failure is structural.
+     */
+    private static void requireGeneratedOnP256(PublicKey publicKey) {
+        if (!(publicKey instanceof ECPublicKey ecKey)) {
+            throw new PushCryptoException(
+                    "P-256 key-pair generation returned a " + publicKey.getAlgorithm() + " key, not an EC one");
+        }
+        ECPoint w = ecKey.getW();
+        if (ECPoint.POINT_INFINITY.equals(w)) {
+            throw new PushCryptoException(
+                    "P-256 key-pair generation returned the point at infinity, which is not a usable public key");
+        }
+        BigInteger x = w.getAffineX();
+        BigInteger y = w.getAffineY();
+        if (x.signum() < 0
+                || x.compareTo(P256PublicKeys.P) >= 0
+                || y.signum() < 0
+                || y.compareTo(P256PublicKeys.P) >= 0
+                || !P256PublicKeys.satisfiesCurveEquation(x, y, P256PublicKeys.P, P256PublicKeys.A, P256PublicKeys.B)) {
+            throw new PushCryptoException("P-256 key-pair generation returned a public point that is not on NIST "
+                    + "P-256, so the generator did not honour the secp256r1 name");
         }
     }
 
@@ -140,17 +177,31 @@ final class EcKeys {
     }
 
     /**
-     * Big-endian, fixed 32-byte serialization of a coordinate. {@link BigInteger#toByteArray()} can prepend a 0x00 sign
-     * byte (33 bytes) or omit leading zeros (&lt;32 bytes); normalise both to exactly 32 bytes.
+     * Write {@code value} as a fixed 32-byte big-endian field at {@code offset} (right-aligned).
+     * {@link BigInteger#toByteArray()} is two's complement, so a 256-bit coordinate with its top bit set carries a
+     * leading {@code 0x00} sign byte — padding, dropped here — and a small coordinate arrives short of 32 bytes and is
+     * left-padded. Anything wider than one sign byte's worth of padding is <em>significant</em> and fails loudly:
+     * truncating it would publish a plausible-looking but wrong point as the message's application-server key or as a
+     * VAPID public key, and the only symptom would be a much later, opaque failure at the user agent or push service.
      */
     private static void writeFixed(BigInteger value, byte[] out, int offset) {
         byte[] bytes = value.toByteArray();
-        if (bytes.length == COORDINATE_LENGTH) {
-            System.arraycopy(bytes, 0, out, offset, COORDINATE_LENGTH);
-        } else if (bytes.length > COORDINATE_LENGTH) {
-            System.arraycopy(bytes, bytes.length - COORDINATE_LENGTH, out, offset, COORDINATE_LENGTH);
-        } else {
-            System.arraycopy(bytes, 0, out, offset + (COORDINATE_LENGTH - bytes.length), bytes.length);
+        int start = 0;
+        while (start < bytes.length - COORDINATE_LENGTH && bytes[start] == 0) {
+            start++;
         }
+        int length = bytes.length - start;
+        // Two distinct failures, reported apart: BigInteger.bitLength() is the length of the
+        // MINIMAL two's-complement representation excluding the sign bit, so it is 0 for -1 and
+        // would turn a negative coordinate into a nonsensical "0 bits" complaint.
+        if (value.signum() < 0) {
+            throw new PushCryptoException(
+                    "The public key being encoded has a negative coordinate, which is not a P-256 field element");
+        }
+        if (length > COORDINATE_LENGTH) {
+            throw new PushCryptoException("The public key being encoded has a coordinate that is not a P-256 field "
+                    + "element: " + value.bitLength() + " bits, expected at most " + (COORDINATE_LENGTH * Byte.SIZE));
+        }
+        System.arraycopy(bytes, start, out, offset + COORDINATE_LENGTH - length, length);
     }
 }

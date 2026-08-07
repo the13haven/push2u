@@ -48,6 +48,15 @@ final class Jca {
 
     private record Es256Resolution(String algorithm, EcdsaSignature.Encoding encoding) {}
 
+    /**
+     * The {@code secp256r1} parameters resolved from this instance's provider and verified against the published NIST
+     * P-256 values, computed lazily on the first {@link #p256Parameters()} call. Volatile + immutable + idempotent
+     * computation, exactly as {@link #es256Resolution}: a racy first call at worst resolves twice, and each writer has
+     * verified its own value before storing it — the cache only saves work, it is never what makes the check hold.
+     */
+    @Nullable
+    private volatile ECParameterSpec p256Parameters;
+
     private Jca(@Nullable Provider provider) {
         this.provider = provider;
     }
@@ -173,16 +182,53 @@ final class Jca {
         return provider == null ? Signature.getInstance(algorithm) : Signature.getInstance(algorithm, provider);
     }
 
-    /** The {@code secp256r1} (NIST P-256) domain parameters used everywhere in Web Push. */
+    /**
+     * The {@code secp256r1} (NIST P-256) domain parameters used everywhere in Web Push, resolved from the configured
+     * provider and verified value for value against the published NIST constants before anything runs on them. The
+     * lookup is by name, and the name is all a defective provider needs to honour: an answer carrying some other curve
+     * — secp256k1, brainpoolP256r1, or a deliberately weak one — would otherwise silently move the ECDH agreement that
+     * protects each payload, and the import of the long-term VAPID private key, onto that curve. This is the one seam
+     * where provider-supplied parameters enter the library (both the public-key and the private-key decode take them
+     * from here), so verifying here leaves no unverified entry point; the parameters are a per-instance constant, so
+     * the verified result is cached and the check is not repaid on every send.
+     */
     ECParameterSpec p256Parameters() {
+        ECParameterSpec parameters = p256Parameters;
+        if (parameters == null) {
+            parameters = resolveP256Parameters();
+            p256Parameters = parameters;
+        }
+        return parameters;
+    }
+
+    private ECParameterSpec resolveP256Parameters() {
+        ECParameterSpec parameters;
         try {
             AlgorithmParameters params = provider == null
                     ? AlgorithmParameters.getInstance(Algorithms.EC)
                     : AlgorithmParameters.getInstance(Algorithms.EC, provider);
             params.init(new ECGenParameterSpec(Algorithms.SECP256R1));
-            return params.getParameterSpec(ECParameterSpec.class);
+            parameters = params.getParameterSpec(ECParameterSpec.class);
         } catch (GeneralSecurityException e) {
             throw unavailable("EC AlgorithmParameters (" + Algorithms.SECP256R1 + ")", e);
+        }
+        requireNistP256(parameters);
+        return parameters;
+    }
+
+    /**
+     * Refuse a {@code secp256r1} answer that is not, value for value, NIST P-256: prime field modulus {@code p},
+     * coefficients {@code a} and {@code b}, generator {@code G}, order {@code n}, cofactor {@code h}. The comparison
+     * itself lives with the hard-coded FIPS 186-4 reference values in {@link P256PublicKeys} (which the build pins
+     * against two independent providers); this method turns a mismatch into the failure. The message names the
+     * component that differs and quotes no values — the component name is what an operator needs.
+     */
+    private void requireNistP256(ECParameterSpec parameters) {
+        String mismatch = P256PublicKeys.nistP256Mismatch(parameters);
+        if (mismatch != null) {
+            throw new PushCryptoException("The " + Algorithms.SECP256R1 + " parameters from " + providerDescription()
+                    + " are not the published NIST P-256 domain parameters (" + mismatch
+                    + "), so every EC operation would run on the wrong curve");
         }
     }
 

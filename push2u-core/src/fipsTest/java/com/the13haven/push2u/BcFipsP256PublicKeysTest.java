@@ -8,6 +8,7 @@ package com.the13haven.push2u;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.security.spec.ECFieldFp;
+import java.security.spec.ECParameterSpec;
 import java.security.spec.EllipticCurve;
 
 import org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider;
@@ -23,12 +24,20 @@ class BcFipsP256PublicKeysTest {
 
     @Test
     void everyHardCodedConstantMatchesBcFips() {
-        EllipticCurve curve =
-                Jca.using(new BouncyCastleFipsProvider()).p256Parameters().getCurve();
+        ECParameterSpec parameters = Jca.using(new BouncyCastleFipsProvider()).p256Parameters();
+        EllipticCurve curve = parameters.getCurve();
 
         assertThat(curve.getField()).isInstanceOf(ECFieldFp.class);
         assertThat(P256PublicKeys.P).as("field prime p").isEqualTo(((ECFieldFp) curve.getField()).getP());
         assertThat(P256PublicKeys.A).as("curve coefficient a").isEqualTo(curve.getA());
         assertThat(P256PublicKeys.B).as("curve coefficient b").isEqualTo(curve.getB());
+        assertThat(P256PublicKeys.GX)
+                .as("generator x")
+                .isEqualTo(parameters.getGenerator().getAffineX());
+        assertThat(P256PublicKeys.GY)
+                .as("generator y")
+                .isEqualTo(parameters.getGenerator().getAffineY());
+        assertThat(P256PublicKeys.N).as("order n").isEqualTo(parameters.getOrder());
+        assertThat(P256PublicKeys.H).as("cofactor h").isEqualTo(parameters.getCofactor());
     }
 }
