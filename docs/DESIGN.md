@@ -380,18 +380,36 @@ padding delimiter plus the authentication tag (RFC 8291 §4); equality is reject
 not zero-padded up to `rs`, so the body size depends only on the payload.
 
 The provider itself is not trusted to answer the `secp256r1` lookup honestly. `Jca.p256Parameters()`
-is the one seam where provider-supplied domain parameters enter the library — the public-key and
-the private-key decode both take them from there — and it verifies the answer value for value
-against the hard-coded FIPS 186-4 constants (prime field modulus, both coefficients, generator,
-order, cofactor) before anything runs on it, failing closed as `PushCryptoException`. Without that,
-a provider answering the name with another 256-bit prime-field curve would silently move the ECDH
-agreement and the VAPID private-key import onto that curve. The parameters are a per-instance
-constant, so the verified result is cached the same way as the ES256 resolution; the verification
-runs before each store, never resting on the cache. The ephemeral `KeyPairGenerator` resolves the
-curve name itself and is covered separately: the generated public point is checked against the
-canonical P-256 curve equation before the pair is used. On the way out, the fixed-width coordinate
-serialization refuses a negative or wider-than-256-bit coordinate rather than truncating it —
-truncation would publish a plausible-looking but wrong point.
+is the one seam through which provider-supplied domain parameters reach an imported key — the
+public-key and the private-key decode both take them from there — and it verifies the answer value
+for value against the hard-coded FIPS 186-4 constants (prime field modulus, both coefficients,
+generator, order, cofactor) before anything runs on it, failing closed as `PushCryptoException`.
+Without that, a provider answering the name with another 256-bit prime-field curve would silently
+move the ECDH agreement and the VAPID private-key import onto that curve. The parameters are a
+per-instance constant, so the verified result is cached the same way as the ES256 resolution; the
+verification runs before each store, never resting on the cache. On the way out, the fixed-width
+coordinate serialization refuses a negative or wider-than-256-bit coordinate rather than truncating
+it — truncation would publish a plausible-looking but wrong point.
+
+The ephemeral key pair does not come through that seam — the `KeyPairGenerator` resolves the
+`secp256r1` name itself — so the pair it returns is held to the same standard before it is used,
+in three checks and no more: both halves must be EC keys, both halves' declared domain parameters
+must equal the published NIST P-256 constants value for value (prime field modulus, both
+coefficients, generator, order, cofactor), and the public point must lie on the curve of those
+constants. The last two prove different things, and neither substitutes for the other: parameter
+equality proves what the generator *declares*, the curve equation proves that the point it actually
+*returned* lies on the declared curve. The parameter comparison is the sharper of the two. A
+substituted order `n` leaves every generated point genuinely on P-256, so the equation check alone
+passes — but `n` is what bounds the private scalar, and a small substituted order draws a guessable
+scalar and therefore a guessable ECDH secret.
+
+What that boundary does not reach is worth stating as plainly as the boundary itself. A provider
+that declares the correct parameters and simply draws a weak or attacker-known scalar passes
+undetected; no parameter verification can catch that, which is why the choice of provider remains a
+trust decision. The two halves are also not checked to belong together — `W = d·G` is not
+evaluated — because that needs point multiplication the library deliberately does not implement,
+and it would buy nothing against a hostile provider, which can always hand over a self-consistent
+pair whose scalar it knows.
 
 The subscription public key (`p256dh`) is attacker-reachable input, and it is validated twice, on
 purpose. At construction, `Subscription` runs `P256PublicKeys.requireOnCurve` (§5) against the
@@ -400,11 +418,23 @@ the application's boundary. At decode time, inside the send pipeline, the point 
 — coordinates inside the prime field, then the P-256 curve equation — against the now-verified
 parameters of the provider that is about to run ECDH, before the point reaches that provider's
 `KeyFactory`. Refusing an invalid-curve point therefore never depends on whether the configured
-provider validates in `KeyAgreement.doPhase`. The equation arithmetic itself lives once, in
-`P256PublicKeys`; only the parameter source differs. The Vault signer performs its own, deliberately
-separate checks on the key it fetches (§7) — the same value-wise parameter comparison and the same
-refuse-not-truncate serialization, duplicated on purpose: there the parameters and coordinates come
-from the fetched key itself, and each module keeps its trust boundary self-contained.
+provider validates in `KeyAgreement.doPhase`. Within the core the equation arithmetic lives once, in
+`P256PublicKeys`; only the parameter source differs. The value-wise parameter comparison lives once
+there as well, against the hard-coded constants, and answers for both places a provider's
+`secp256r1` claim enters the core — the import seam above and the ephemeral generator. The Vault
+signer performs its own, deliberately separate checks on the key it fetches (§7) — a parameter
+comparison of the same shape, its own inlined copy of the curve equation, and the same
+refuse-not-truncate serialization — all three duplicated because their counterparts
+(`nistP256Mismatch`, `satisfiesCurveEquation`, and `EcKeys` entire) are package-private to
+`push2u-core`, so no other module can call them. The parameter comparison's reference is weaker as
+well as separate: there the fetched key is compared against the platform's `AlgorithmParameters`
+answer for `secp256r1`, taken as given rather than verified against the published constants —
+extending the lookup exactly the trust this section opens by withholding. What that costs is
+diagnostic rather than secret-exposing — a platform answering the name with some other curve makes
+the genuine P-256 key Vault returns fail the comparison, so such a deployment fails loudly when the
+signer is built instead of signing on a curve nobody chose, and the VAPID private key never exists
+locally in any case. What the module *can* call it does call: `P256PublicKeys.requireOnCurve`,
+against the core's hard-coded constants, runs on the key either mode publishes.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
@@ -503,13 +533,18 @@ No traversal route through OSS Vault is claimed here.
   key is validated as P-256 before the signer exists, in three independent steps: the advertised
   `type` must be `ecdsa-p256` or Vault Enterprise's `managed_key` (absent `type` is a failure);
   the parsed public key's domain parameters must match `secp256r1` by value — prime field, curve
-  coefficients, generator, order, cofactor; and the key's point must satisfy `y² = x³ + ax + b
-  (mod p)` with both coordinates in `[0, p)`. None of the three implies another: the metadata is
-  only Vault's claim, and correct parameters say nothing about the point — the JCA validates
-  neither, so SunEC accepts a key at `(1, 2)` both on import and at verification time. Coordinates
-  are likewise never truncated to fit the 32-byte P-256 fields. Without all three, an `ecdsa-p384`
-  key yields a syntactically valid but unusable VAPID key, and the misconfiguration surfaces only
-  as an unexplained push-service rejection on the first send.
+  coefficients, generator, order, cofactor — compared against the platform's `AlgorithmParameters`
+  answer for that name rather than against hard-coded constants, which §6 states the cost of; and
+  the key's point must satisfy `y² = x³ + ax + b (mod p)` with both coordinates in `[0, p)`. None
+  of the three implies another: the metadata is only Vault's claim, and correct parameters say
+  nothing about the point — the JCA validates neither, so SunEC accepts a key at `(1, 2)` both on
+  import and at verification time. Coordinates are likewise never truncated to fit the 32-byte
+  P-256 fields. Without all three, an `ecdsa-p384` key yields a syntactically valid but unusable
+  VAPID key, and the misconfiguration surfaces only as an unexplained push-service rejection on the
+  first send. Those three are what the metadata read itself performs; the canonical constructor
+  then puts the same key through `P256PublicKeys.requireOnCurve` — the core's check, against its
+  hard-coded constants — before the signer exists, which is what §6 weighs against the unverified
+  reference the parameter step uses.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The supplied key gets
   the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
@@ -636,8 +671,10 @@ The automated suite covers:
 - HTTP delivery, status mapping, and retry behavior;
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
-  shapes at `Subscription` construction (`SubscriptionValueTest`) and at decode time
-  (`EcKeysUntrustedInputTest`);
+  shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in
+  `EcKeysUntrustedInputTest` — those same shapes at decode time plus the generated-pair refusals,
+  driven by a provider that returns them: a substituted parameter component, a non-EC or absent
+  half, a point off the curve or at infinity;
 - the Vault address contract: the path-preserving join for root and path-prefixed addresses, and
   every factory-level rejection (`VaultTransitVapidSignerAddressTest`);
 - Spring Boot auto-configuration — the property wiring and the diagnostics that name the YAML key,
