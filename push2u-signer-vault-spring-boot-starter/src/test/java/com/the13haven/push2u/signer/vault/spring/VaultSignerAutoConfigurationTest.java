@@ -94,7 +94,7 @@ class VaultSignerAutoConfigurationTest {
         // absentWithoutProperties, which wires no bean and starts cleanly). The successful fetch is
         // covered by VaultTransitVapidSignerContractTest.
         runner.withPropertyValues(
-                        "push2u.signer.vault.address=http://vault.invalid:8200",
+                        "push2u.signer.vault.address=https://vault.invalid:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token")
                 .run(context -> assertThat(context).hasFailed());
@@ -200,6 +200,58 @@ class VaultSignerAutoConfigurationTest {
         vaultRunner()
                 .withPropertyValues("push2u.signer.vault.address=https://gw.example/vault/")
                 .run(context -> assertThat(context).hasSingleBean(VapidSigner.class));
+    }
+
+    @Test
+    void aLoopbackHttpAddressStartsWithoutAnyOptIn() {
+        // The Vault Agent / sidecar pattern: the application talks plain http to a TLS-terminating
+        // agent on the same machine. A mainstream production topology — no property, no opt-in,
+        // it must simply start. Explicit mode contacts nothing at build, so a wired bean is proof.
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=http://127.0.0.1:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64)
+                .run(context -> assertThat(context).hasSingleBean(VapidSigner.class));
+    }
+
+    @Test
+    void aRemoteHttpAddressFailsStartupNamingThePropertyAndTheWaysOut() {
+        // Plain http to a non-loopback host would send the Vault token across the network in clear
+        // text. There is deliberately no property for the opt-in — that configuration should cost
+        // a code change and a review, not a YAML edit — so the startup failure must name the YAML
+        // property and both real options a Spring operator has: an https address, or an
+        // application-defined VaultTransitVapidSigner bean the starter backs off to.
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=http://vault.internal:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.address")
+                            .hasStackTraceContaining("clear text")
+                            .hasStackTraceContaining("https")
+                            .hasStackTraceContaining("VaultTransitVapidSigner bean");
+                });
+    }
+
+    @Test
+    void aNonHttpSchemeFailsStartupNamingTheProperty() {
+        // The scheme whitelist lives at the library's factory; the starter translates that
+        // rejection to the YAML property like every other address failure.
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=ftp://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + publicKeyB64)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.address")
+                            .hasStackTraceContaining("scheme must be http or https");
+                });
     }
 
     @Test
@@ -412,7 +464,7 @@ class VaultSignerAutoConfigurationTest {
         // version it reads from Vault itself. A stray key-version must fail startup, not be
         // silently ignored.
         runner.withPropertyValues(
-                        "push2u.signer.vault.address=http://vault.invalid:8200",
+                        "push2u.signer.vault.address=https://vault.invalid:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token",
                         "push2u.signer.vault.key-version=2")
@@ -454,7 +506,7 @@ class VaultSignerAutoConfigurationTest {
                         Push2uHealthAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
-                        "push2u.signer.vault.address=http://vault.example:8200",
+                        "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token",
                         "push2u.signer.vault.public-key=" + publicKeyB64)
@@ -474,7 +526,7 @@ class VaultSignerAutoConfigurationTest {
                         "push2u.vapid.public-key=" + publicKeyB64,
                         "push2u.vapid.private-key=" + privateKeyB64,
                         "push2u.vapid.subject=mailto:admin@example.com",
-                        "push2u.signer.vault.address=http://vault.example:8200",
+                        "push2u.signer.vault.address=https://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
                         "push2u.signer.vault.token=test-token",
                         "push2u.signer.vault.public-key=" + publicKeyB64)
@@ -778,7 +830,7 @@ class VaultSignerAutoConfigurationTest {
 
     private ApplicationContextRunner vaultRunner() {
         return runner.withPropertyValues(
-                "push2u.signer.vault.address=http://vault.example:8200",
+                "push2u.signer.vault.address=https://vault.example:8200",
                 "push2u.signer.vault.key-name=vapid",
                 "push2u.signer.vault.token=test-token",
                 "push2u.signer.vault.public-key=" + publicKeyB64);

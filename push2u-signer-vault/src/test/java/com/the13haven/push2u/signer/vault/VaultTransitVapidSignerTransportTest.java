@@ -67,7 +67,7 @@ class VaultTransitVapidSignerTransportTest {
         RecordingVaultTransport transport = new RecordingVaultTransport(metadataBody(keyPair));
 
         VaultTransitVapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
-                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                        URI.create("https://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("transit")
                 .transport(transport)
                 .build();
@@ -96,7 +96,7 @@ class VaultTransitVapidSignerTransportTest {
 
         RecordingVaultTransport fetched = new RecordingVaultTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithFetchedPublicKey(
-                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                        URI.create("https://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .transport(fetched)
                 .build()
                 .sign("default mount probe".getBytes(StandardCharsets.UTF_8));
@@ -106,7 +106,7 @@ class VaultTransitVapidSignerTransportTest {
 
         RecordingVaultTransport supplied = new RecordingVaultTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        URI.create("http://vault.test:8200"),
+                        URI.create("https://vault.test:8200"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
                         uncompressed((ECPublicKey) keyPair.getPublic()))
@@ -130,7 +130,7 @@ class VaultTransitVapidSignerTransportTest {
 
         RecordingVaultTransport flat = new RecordingVaultTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithFetchedPublicKey(
-                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                        URI.create("https://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("push-transit")
                 .transport(flat)
                 .build()
@@ -141,7 +141,7 @@ class VaultTransitVapidSignerTransportTest {
 
         RecordingVaultTransport nested = new RecordingVaultTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithFetchedPublicKey(
-                        URI.create("http://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                        URI.create("https://vault.test:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .mount("secrets/transit")
                 .transport(nested)
                 .build()

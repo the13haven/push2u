@@ -54,7 +54,7 @@ import com.the13haven.push2u.PushCryptoException;
  */
 class VaultTransitVapidSignerParserFuzzTest {
 
-    private static final URI VAULT = URI.create("http://vault.test:8200");
+    private static final URI VAULT = URI.create("https://vault.test:8200");
     private static final String TOKEN = "s.push2u-test-vault-token";
     private static final byte[] PROBE = "probe".getBytes(StandardCharsets.UTF_8);
     private static final Base64.Encoder BASE64_URL = Base64.getUrlEncoder().withoutPadding();

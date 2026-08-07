@@ -73,11 +73,16 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
     /** Fetched mode — the signer reads its own public key from Vault. */
     @Override
     protected VapidSigner signer() {
+        // allowInsecureHttp(): Testcontainers serves the dev Vault over plain http, and its host is
+        // a loopback literal only for a local Docker daemon — a remote or rootless daemon reports a
+        // routable host, which the scheme rule would refuse. The opt-in keeps this suite about the
+        // Transit contract; the scheme rule itself is pinned in VaultTransitVapidSignerAddressTest.
         return VaultTransitVapidSigner.builderWithFetchedPublicKey(
                         URI.create(vault.getHttpHostAddress()),
                         new TransitKeyName(KEY_NAME),
                         new VaultToken(ROOT_TOKEN))
                 .mount(MOUNT)
+                .allowInsecureHttp()
                 .build();
     }
 
@@ -96,6 +101,7 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
                         new VaultToken(ROOT_TOKEN),
                         vapidPublicKey)
                 .mount(MOUNT)
+                .allowInsecureHttp() // Testcontainers' plain-http address — see signer()
                 .build();
         assertThat(explicit.publicKey()).isEqualTo(vapidPublicKey);
         // Same Vault sign path as the fetched mode the contract already verifies — assert it produces
@@ -118,6 +124,7 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
         VapidSigner pinned = VaultTransitVapidSigner.builderWithFetchedPublicKey(
                         URI.create(vault.getHttpHostAddress()), new TransitKeyName(keyName), new VaultToken(ROOT_TOKEN))
                 .mount(MOUNT)
+                .allowInsecureHttp() // Testcontainers' plain-http address — see signer()
                 .build();
         byte[] advertised = pinned.publicKey();
 
@@ -171,6 +178,7 @@ class VaultTransitVapidSignerContractTest extends VapidSignerContractTest {
                         v1PublicKey)
                 .mount(MOUNT)
                 .keyVersion(1)
+                .allowInsecureHttp() // Testcontainers' plain-http address — see signer()
                 .build();
         assertThat(pinned.publicKey()).isEqualTo(v1PublicKey);
 

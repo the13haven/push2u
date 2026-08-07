@@ -22,9 +22,13 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *
  * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
  *     proxy or ingress prefix, e.g. {@code https://gw.example/vault}. It must be an absolute URI with a host and no
- *     query or fragment; the path prefix, when present, is preserved in front of every Vault API path. The scheme is
- *     not restricted to {@code https} (Vault's dev server is plain {@code http}), but a production address must be
- *     {@code https} — on plain HTTP the Vault token header travels in clear text
+ *     query or fragment; the path prefix, when present, is preserved in front of every Vault API path. The scheme must
+ *     be {@code http} or {@code https}. {@code https} is always accepted; plain {@code http} only towards a literal
+ *     loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4 literal, or the
+ *     IPv6 loopback {@code [::1]}) — the TLS-terminating Vault Agent or sidecar pattern. Plain {@code http} to any
+ *     other host fails startup: the Vault token header would cross the network in clear text, and there is deliberately
+ *     no property to permit it — a deployment that accepts that risk defines its own {@code VaultTransitVapidSigner}
+ *     bean (built with {@code allowInsecureHttp()}), which this starter yields to
  * @param mount the Transit mount path (default {@code transit})
  * @param namespace the Vault Enterprise/HCP namespace the Transit engine lives in, possibly nested
  *     ({@code team-a/sub}), sent as the {@code X-Vault-Namespace} header on every Vault call; <b>optional</b> — when

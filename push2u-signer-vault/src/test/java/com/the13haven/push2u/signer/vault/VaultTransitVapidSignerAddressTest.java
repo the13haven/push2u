@@ -199,15 +199,151 @@ class VaultTransitVapidSignerAddressTest {
                 .hasMessageContaining("'..' segment");
     }
 
+    // ---- the scheme ----------------------------------------------------------------------------
+
     @Test
-    void aPlainHttpAddressIsAcceptedForVaultDevMode() {
-        // Deliberate: Vault's dev server listens on http, and the Vault CLI and Spring Vault accept
-        // it the same way. The Javadoc, not the validator, says production must be https.
-        assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        URI.create("http://127.0.0.1:8200"),
+    void aNonHttpSchemeIsRefusedAtTheFactoryOnBothBuilders() {
+        // The reported gap: ftp://vault.example used to pass both factories and build(), and failed
+        // only on the first sign() inside the HTTP transport — far from the value that caused it.
+        // The signer speaks Vault's HTTP API and nothing else, so the whitelist lives at the
+        // factory, where every other invalid-but-present address is already rejected.
+        for (String address : List.of("ftp://vault.example", "file://vault.example/etc")) {
+            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                            URI.create(address), new TransitKeyName("vapid"), new VaultToken(TOKEN)))
+                    .as("fetched factory refuses %s", address)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("scheme must be http or https");
+            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                            URI.create(address), new TransitKeyName("vapid"), new VaultToken(TOKEN), validPublicKey()))
+                    .as("supplied factory refuses %s", address)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("scheme must be http or https");
+        }
+    }
+
+    @Test
+    void theSuppliedKeyFactoryRefusesSchemelessAndOpaqueAddressesToo() {
+        // The fetched-builder shapes are pinned in aRelativeOrHostlessAddressIsRefusedAtTheFactory;
+        // both factories share one validator, and this keeps the second entry point honest.
+        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("//vault.example:8200"),
                         new TransitKeyName("vapid"),
                         new VaultToken(TOKEN),
                         validPublicKey()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute URI with a host");
+        assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                        URI.create("mailto:ops@example.com"),
+                        new TransitKeyName("vapid"),
+                        new VaultToken(TOKEN),
+                        validPublicKey()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute URI with a host");
+    }
+
+    @Test
+    void httpsIsAlwaysAcceptedWhateverItsCase() {
+        // RFC 3986 §3.1: schemes are case-insensitive, and URI.getScheme() preserves the case the
+        // caller typed — so HTTPS:// is the same valid https address.
+        for (String address : List.of("https://vault.example:8200", "HTTPS://vault.example:8200")) {
+            assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                                    URI.create(address),
+                                    new TransitKeyName("vapid"),
+                                    new VaultToken(TOKEN),
+                                    validPublicKey())
+                            .build())
+                    .as("%s builds without any opt-in", address)
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void plainHttpToALiteralLoopbackHostNeedsNoOptIn() {
+        // The Vault Agent / service-mesh sidecar pattern: the application talks plain http to an
+        // agent on the same machine and the agent terminates TLS — a mainstream production
+        // deployment that must work out of the box. The literal set is the browsers'
+        // secure-context one; host names compare case-insensitively (RFC 3986 §3.2.2), and the
+        // IPv6 loopback is recognised in any of its spellings, bracketed as URI.getHost() keeps it.
+        for (String host : List.of(
+                "localhost",
+                "LocalHost",
+                "vault.localhost",
+                "127.0.0.1",
+                "127.255.255.254",
+                "[::1]",
+                "[0:0:0:0:0:0:0:1]")) {
+            assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                                    URI.create("http://" + host + ":8200"),
+                                    new TransitKeyName("vapid"),
+                                    new VaultToken(TOKEN),
+                                    validPublicKey())
+                            .build())
+                    .as("http to %s builds without any opt-in", host)
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void plainHttpToANonLoopbackHostIsRefusedByBuildWithoutTheOptIn() {
+        // The X-Vault-Token header would cross the network in clear text. The literal set decides,
+        // never DNS — my-vault stands for a hosts-file alias of 127.0.0.1, which still needs the
+        // opt-in; 127.0.0.1.evil.example wears a loopback prefix without being one; hTTp checks
+        // the scheme comparison stays case-insensitive on the build() side too.
+        for (String address : List.of(
+                "http://vault.internal:8200",
+                "http://my-vault:8200",
+                "http://127.0.0.1.evil.example:8200",
+                "hTTp://vault.internal:8200")) {
+            assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                                    URI.create(address),
+                                    new TransitKeyName("vapid"),
+                                    new VaultToken(TOKEN),
+                                    validPublicKey())
+                            .build())
+                    .as("build() refuses %s without allowInsecureHttp()", address)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("clear text")
+                    .hasMessageContaining("https")
+                    .hasMessageContaining("allowInsecureHttp()");
+        }
+    }
+
+    @Test
+    void allowInsecureHttpAcceptsARemoteHttpAddressOnBothBuilders() {
+        // Supplied mode: build() contacts nothing, so a successful build is the whole proof.
+        assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
+                                URI.create("http://vault.internal:8200"),
+                                new TransitKeyName("vapid"),
+                                new VaultToken(TOKEN),
+                                validPublicKey())
+                        .allowInsecureHttp()
+                        .build())
                 .doesNotThrowAnyException();
+        // Fetched mode: with the opt-in the address check passes and build() proceeds to the Vault
+        // read — the stub answers 404, so reaching PushCryptoException with a recorded GET proves
+        // the rejection is gone and the network call happened.
+        UriRecordingTransport transport = new UriRecordingTransport();
+        VaultTransitVapidSigner.FetchedPublicKeyBuilder optedIn = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.internal:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .allowInsecureHttp()
+                .transport(transport);
+        assertThatThrownBy(optedIn::build).isInstanceOf(PushCryptoException.class);
+        assertThat(transport.gets).hasSize(1);
+    }
+
+    @Test
+    void theFetchedBuilderRefusesARemoteHttpAddressBeforeAnyVaultCall() {
+        // The check must run before the fetched mode's transit/keys read: a misconfigured address
+        // fails without contacting anything, so nothing — token headers included — goes on the
+        // wire towards a host the rule refuses.
+        UriRecordingTransport transport = new UriRecordingTransport();
+        VaultTransitVapidSigner.FetchedPublicKeyBuilder builder = VaultTransitVapidSigner.builderWithFetchedPublicKey(
+                        URI.create("http://vault.internal:8200"), new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .transport(transport);
+        assertThatThrownBy(builder::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("allowInsecureHttp()");
+        assertThat(transport.gets).as("no Vault call before the refusal").isEmpty();
+        assertThat(transport.posts).isEmpty();
     }
 }
