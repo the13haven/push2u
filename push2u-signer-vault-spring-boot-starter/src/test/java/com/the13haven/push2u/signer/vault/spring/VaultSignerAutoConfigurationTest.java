@@ -512,6 +512,19 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void aKeyVersionBelowOneFailsNamingTheProperty() {
+        // The builder step's own message says "keyVersion", not the YAML the operator wrote — the
+        // starter must translate it like every neighbouring property, rather than let the
+        // library's camelCase message reach the operator untouched.
+        vaultRunner().withPropertyValues("push2u.signer.vault.key-version=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("push2u.signer.vault.key-version")
+                    .hasStackTraceContaining("keyVersion must be >= 1, got 0");
+        });
+    }
+
+    @Test
     void anApplicationSignerOverridesTheVaultOne() {
         vaultRunner().withUserConfiguration(CustomSignerConfiguration.class).run(context -> {
             assertThat(context).hasSingleBean(VapidSigner.class);
