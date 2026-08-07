@@ -139,6 +139,21 @@ public final class P256PublicKeys {
     }
 
     /**
+     * Whether {@code (x, y)} is an affine point on NIST P-256, checked against the hard-coded published constants: both
+     * coordinates inside the prime field ({@code 0 <= x, y < p}) and the curve equation satisfied. The coordinate-wise
+     * twin of {@link #requireOnCurve} for callers that already hold {@code BigInteger} coordinates — the ephemeral-key
+     * generation holds a generated key to the published values through this, rather than to whatever the generating
+     * provider declares.
+     */
+    static boolean isOnNistP256(BigInteger x, BigInteger y) {
+        return x.signum() >= 0
+                && x.compareTo(P) < 0
+                && y.signum() >= 0
+                && y.compareTo(P) < 0
+                && satisfiesCurveEquation(x, y, P, A, B);
+    }
+
+    /**
      * The first component in which {@code parameters} differs from the published NIST P-256 domain parameters, as a
      * short log-safe phrase naming the component and no values — or {@code null} when every component matches. The
      * comparison is value-wise because {@link ECParameterSpec} has no {@code equals}: providers hand back
