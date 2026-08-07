@@ -42,6 +42,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
@@ -486,7 +487,7 @@ class Push2uAutoConfigurationTest {
         // Positive and negative halves of the same property: the allowlisted origin delivers
         // (through the stub transport), a foreign one is rejected before any transport call —
         // proving push2u.allowed-origins actually reached the builder rather than being dropped.
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
@@ -495,7 +496,7 @@ class Push2uAutoConfigurationTest {
                             subscription(), PushMessage.builder(new byte[1]).build());
                     assertThat(result.isDelivered()).isTrue();
                 });
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://other.example")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
@@ -511,7 +512,7 @@ class Push2uAutoConfigurationTest {
     void malformedAllowedOriginFailsTheContextNamingTheProperty() {
         // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
         // property name, not misbehave at send time.
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=http://push.example")
                 .run(context -> {
                     assertThat(context).hasFailed();
@@ -526,7 +527,7 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void anApplicationEndpointPolicyBeanReachesTheWiredSender() {
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
@@ -544,7 +545,7 @@ class Push2uAutoConfigurationTest {
         // leave the operator believing the ignored one is in force. The context must fail naming
         // both sources — including the concrete bean name, since ANY autoconfiguration could have
         // contributed the EndpointPolicy bean and the operator has to find it to fix it.
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test")
                 .withUserConfiguration(RejectingPolicyConfiguration.class)
                 .run(context -> {
@@ -563,7 +564,7 @@ class Push2uAutoConfigurationTest {
         // from a shared application.yml it does not own cannot unset the property, so explicitly
         // emptying it must mean "not using the property here" and let the bean win — otherwise
         // the conflict rule wedges that service with no move at all.
-        keyedRunner()
+        keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=")
                 .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
                 .run(context -> {
@@ -582,12 +583,54 @@ class Push2uAutoConfigurationTest {
     void emptyAllowedOriginsAloneStillFailsTheContext() {
         // The guard on the escape hatch: emptying the property only cedes to a bean. With no bean
         // it stays an error, so the SSRF control cannot be silently disabled by an empty value.
-        keyedRunner().withPropertyValues("push2u.allowed-origins=").run(context -> {
+        // It also fails on its own ground — "at least one origin", the allowlist factory's
+        // rejection — rather than as the no-decision case below: emptying the property is a
+        // statement about the property, and the operator is told what is wrong with the value they
+        // actually wrote.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-origins:"))
+                            .hasMessageContaining("at least one origin");
+                });
+    }
+
+    @Test
+    void neitherAllowedOriginsNorAPolicyBeanFailsTheContextNamingBothWaysToFixIt() {
+        // The decision has to be expressed: a sender wired with no endpoint policy would POST
+        // wherever a subscription's endpoint points, and a subscription registered by a client is
+        // attacker-influenced. The failure has to be actionable in both directions, so it names the
+        // property and the bean — including the deliberate opt-out, which exists only as a bean.
+        keyedRunnerWithoutEndpointPolicy().run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.allowed-origins:"))
-                    .hasMessageContaining("at least one origin");
+                            context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                    .hasMessageContaining("EndpointPolicy bean")
+                    .hasMessageContaining("EndpointPolicies.unrestricted()");
         });
+    }
+
+    @Test
+    void anUnrestrictedPolicyBeanIsTheWayToSendAnywhereUnderSpring() {
+        // No property turns the restriction off — the opt-out is a bean, so choosing it is a code
+        // change that shows up in a review rather than a line copied between profiles. Pinned by
+        // sending to an origin no allowlist in this test class permits.
+        keyedRunnerWithoutEndpointPolicy()
+                .withUserConfiguration(UnrestrictedPolicyConfiguration.class, StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    PushResult result = sender.send(
+                            subscription("https://169.254.169.254/latest/meta-data"),
+                            PushMessage.builder(new byte[1]).build());
+                    assertThat(result.isDelivered())
+                            .as("a cloud-metadata address is exactly what the opt-out lets through")
+                            .isTrue();
+                });
     }
 
     @Test
@@ -792,7 +835,18 @@ class Push2uAutoConfigurationTest {
         }
     }
 
+    /**
+     * The minimum a context needs to wire a sender: keys, subject and an endpoint policy. The allowlist matches
+     * {@link #subscription()}'s origin, so a send through a sender built from this runner is delivered rather than
+     * rejected.
+     */
     private ApplicationContextRunner keyedRunner() {
+        return keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test");
+    }
+
+    /** Keys and subject only — for the cases that supply the endpoint policy themselves, or deliberately omit it. */
+    private ApplicationContextRunner keyedRunnerWithoutEndpointPolicy() {
         return runner.withPropertyValues(
                 "push2u.vapid.public-key=" + publicKeyB64,
                 "push2u.vapid.private-key=" + privateKeyB64,
@@ -801,8 +855,13 @@ class Push2uAutoConfigurationTest {
 
     /** A well-formed subscription unrelated to the VAPID key pair under test. */
     private static Subscription subscription() {
+        return subscription("https://push.example.test/send/abc");
+    }
+
+    /** The same, on a caller-chosen endpoint — for the cases where the endpoint is what is under test. */
+    private static Subscription subscription(String endpoint) {
         return Subscription.fromBase64(
-                "https://push.example.test/send/abc",
+                endpoint,
                 subscriptionKeyB64,
                 Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]));
     }
@@ -837,6 +896,16 @@ class Push2uAutoConfigurationTest {
         }
     }
 
+    /** The named opt-out, supplied the only way Spring offers it: as an application bean. */
+    @Configuration(proxyBeanMethods = false)
+    static class UnrestrictedPolicyConfiguration {
+
+        @Bean
+        EndpointPolicy unrestrictedPolicy() {
+            return EndpointPolicies.unrestricted();
+        }
+    }
+
     /** Answers every POST with 201, so size-limit tests never touch the network. */
     @Configuration(proxyBeanMethods = false)
     static class StubHttpClientConfiguration {
@@ -864,7 +933,8 @@ class Push2uAutoConfigurationTest {
                                 return key;
                             }
                         },
-                        "mailto:ops@example.com")
+                        "mailto:ops@example.com",
+                        EndpointPolicies.allowedOrigins("https://push.example.test"))
                 .build();
 
         @Bean

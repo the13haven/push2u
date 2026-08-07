@@ -19,7 +19,7 @@ push2u:
   default-ttl: 24h
   record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
-  allowed-origins:                  # optional but recommended — see Endpoint policy in the README
+  allowed-origins:                  # required, unless an EndpointPolicy bean supplies it instead
     - "https://fcm.googleapis.com"
     - "https://updates.push.services.mozilla.com"
     - "https://web.push.apple.com"
@@ -34,8 +34,9 @@ same types take precedence.
 
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
-property. It is not required when the application supplies its own `PushSender` bean — that bean
-bypasses the starter's checks entirely.
+property. The endpoint policy is required in the same way, from one of its two sources — see
+[Endpoint policy](#endpoint-policy). Neither is required when the application supplies its own
+`PushSender` bean — that bean bypasses the starter's checks entirely.
 
 `jwt-expiry`, `default-ttl`, `record-size` and `max-encrypted-body-bytes` are optional; unset, they
 leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes and 4096 bytes respectively — see
@@ -54,19 +55,49 @@ two you got wrong.
 
 ## Endpoint policy
 
-`allowed-origins` binds to `EndpointPolicies.allowedOrigins` — see
-[`README.md` → Endpoint policy (SSRF hardening)](../README.md#endpoint-policy-ssrf-hardening).
-Unset, it leaves the `PushSender` default of no endpoint policy. A malformed entry fails the context
-with the message prefixed by the property name, like the size properties. Alternatively, supply an
-`EndpointPolicy` bean, which the autoconfigured sender picks up; configuring *both* the property
-and a bean fails the context, naming the property and the bean — they express the same security
-control, and silently preferring one would leave the other believed-active but ignored.
+The autoconfigured `PushSender` needs an `EndpointPolicy`, because every `PushSender` does — which
+endpoints a deployment may POST to is a decision it has to express, and a subscription's endpoint
+is attacker-influenced wherever subscriptions are registered by clients. See
+[`README.md` → Endpoint policy (SSRF hardening)](../README.md#endpoint-policy-ssrf-hardening) for
+the threat model and the limits of a URI-level check.
+
+The starter takes that decision from one of two sources, and exactly one of them:
+
+- **`push2u.allowed-origins`**, which binds to `EndpointPolicies.allowedOrigins`. A malformed entry
+  fails the context with the message prefixed by the property name, like the size properties.
+- **An application `EndpointPolicy` bean**, which the autoconfigured sender picks up. This is the
+  route for anything the property cannot express — a corporate egress rule, a custom check, or
+  `EndpointPolicies.unrestricted()`.
+
+Configuring **both** fails the context, naming the property and the bean — they express the same
+security control, and silently preferring one would leave the other believed-active but ignored.
+Configuring **neither** fails the context too, with a message naming both ways to fix it: a sender
+wired without a policy would POST wherever a subscription's endpoint points, and that is not an
+outcome anyone should reach by leaving a property out.
 
 One escape hatch: a service that *inherits* `push2u.allowed-origins` from a shared configuration
 it does not own cannot unset the property, so setting it to an explicitly **empty** value beside
 a bean means "deliberately not using the property here" and the bean wins. An empty value on its
-own still fails the context (`requires at least one origin`), so the control cannot be disabled
-by accident.
+own still fails the context (`requires at least one origin`) — on the property's own terms, since
+emptying it is a statement about the property rather than a missing decision.
+
+### No property turns the restriction off
+
+There is deliberately no `push2u.*` flag for unrestricted egress. Sending anywhere is a legitimate
+choice where subscriptions never arrive from untrusted clients, but under Spring it is expressed as
+a bean:
+
+```java
+@Bean
+EndpointPolicy endpointPolicy() {
+    // Subscriptions here are entered by operators, never registered by clients.
+    return EndpointPolicies.unrestricted();
+}
+```
+
+A YAML flag reaches production by copying a dev profile; a bean is a code change that passes a
+review. A property could be added later without breaking anyone, and could not be removed after a
+release — so the asymmetry decides it.
 
 ## Health indicator
 
@@ -107,9 +138,10 @@ backend that can go down, holds a token that can expire, names a key that can be
 the rest of a `PushSender` is configuration the builder validated at startup.
 
 While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
-a startup failure naming `push2u.vapid.subject`), so this changes nothing there. Where it matters
-is a context that *excludes* `Push2uAutoConfiguration` and wires its own `PushSender` around a
-signer kept as a bean: the probe then applies to exactly the signer that sender uses.
+a startup failure naming `push2u.vapid.subject` or `push2u.allowed-origins`), so this changes
+nothing there. Where it matters is a context that *excludes* `Push2uAutoConfiguration` and wires its
+own `PushSender` around a signer kept as a bean: the probe then applies to exactly the signer that
+sender uses.
 
 An application that supplies its own `PushSender` and no `push2u.vapid.*` therefore gets no
 indicator: that sender's signer lives inside it, where the starter cannot reach it, and an

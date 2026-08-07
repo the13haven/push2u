@@ -14,17 +14,56 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Standard {@link EndpointPolicy} implementations. Currently one — an origin allowlist — because that is the rule
- * nearly every deployment actually wants: the set of browser push services an application's users can arrive from is
- * small and known (FCM, Mozilla autopush, WNS, APNs web push), so "only these origins" closes the attacker-supplied
- * endpoint hole with configuration a reviewer can read. Anything more situational (egress-proxy rules, custom DNS
- * checks) belongs in the deployment's own {@link EndpointPolicy} lambda, not in this class — noting that a policy is
- * fixed per sender at {@code build()} and {@code validate} receives only the URI, so a rule that varies by tenant means
- * one sender per tenant, not one policy consulting request context.
+ * Standard {@link EndpointPolicy} implementations: an origin allowlist, and the named opt-out from restricting egress
+ * at all.
+ *
+ * <p>The allowlist is the rule nearly every deployment actually wants: the set of browser push services an
+ * application's users can arrive from is small and known (FCM, Mozilla autopush, WNS, APNs web push), so "only these
+ * origins" closes the attacker-supplied endpoint hole with configuration a reviewer can read. Anything more situational
+ * (egress-proxy rules, custom DNS checks) belongs in the deployment's own {@link EndpointPolicy} lambda, not in this
+ * class — noting that a policy is fixed per sender when the sender is built and {@code validate} receives only the URI,
+ * so a rule that varies by tenant means one sender per tenant, not one policy consulting request context.
+ *
+ * <p>{@link #unrestricted()} is the other half of the same idea. Every {@link PushSender} is built with a policy, so a
+ * deployment that genuinely wants none has to say so — and saying so leaves a token in its own source, visible in a
+ * diff, a review and a grep, which an omitted configuration step never was.
  */
 public final class EndpointPolicies {
 
+    /**
+     * The instance {@link #unrestricted()} hands out. Stateless and immutable, so one shared instance serves every
+     * caller and every thread.
+     */
+    private static final EndpointPolicy UNRESTRICTED = endpoint -> Objects.requireNonNull(endpoint, "endpoint");
+
     private EndpointPolicies() {}
+
+    /**
+     * A policy that permits every endpoint: the explicit, named way for a deployment to state that it applies no egress
+     * restriction to push endpoints.
+     *
+     * <p><b>Security warning.</b> A sender built with this policy POSTs to any endpoint a {@link Subscription} accepts
+     * — which means any {@code https} URL with a host, loopback ({@code https://127.0.0.1:8443/…}), private-range
+     * ({@code https://10.0.0.5/…}) and cloud-metadata addresses included. The endpoint inside a {@link Subscription} is
+     * attacker-influenced wherever subscriptions arrive from clients, which is the ordinary integration: the browser's
+     * {@code PushSubscription} JSON is accepted at a public registration endpoint, and nothing stops a client from
+     * posting a hand-crafted subscription naming an address inside the application's own network. Every later send then
+     * POSTs there from inside that network, and the caller-visible outcome — {@link PushResult#statusCode()} versus
+     * {@link PushDeliveryException}, plus how long the attempt took — is a blind server-side request forgery oracle for
+     * internal host and port existence. {@link EndpointPolicy} carries the full threat model.
+     *
+     * <p><b>When it is the right choice.</b> When subscriptions never arrive from untrusted clients: they are entered
+     * by operators, imported from a system inside the trust boundary, or fixed in configuration. Also where egress is
+     * already pinned somewhere the library cannot see — an egress proxy or firewall that decides what this process may
+     * connect to — since a second allowlist there would only be a copy that drifts. In every other case use
+     * {@link #allowedOrigins(Collection)}: the push services an application's subscriptions come from are few and
+     * known, and naming them costs one configuration line.
+     *
+     * @return a policy that rejects nothing
+     */
+    public static EndpointPolicy unrestricted() {
+        return UNRESTRICTED;
+    }
 
     /**
      * A policy allowing exactly the given origins; see {@link #allowedOrigins(Collection)}.

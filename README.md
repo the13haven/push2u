@@ -85,7 +85,8 @@ Subscription subscription = Subscription.fromBase64(
     browserSubscription.auth());
 
 PushSender sender = PushSender.builder(
-        VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com")
+        VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com",
+        EndpointPolicies.allowedOrigins("https://fcm.googleapis.com"))
     .build();
 
 PushMessage message = PushMessage.builder(payloadBytes)
@@ -114,7 +115,14 @@ with a problem to report about your application server has no other way to reach
 therefore a parameter of the factory method — omitting it does not compile, and a blank one is
 rejected with an `IllegalArgumentException`. To delegate signing to an external `VapidSigner` (for
 example the [Vault Transit signer](#vault-transit-signer)), pass the signer instead of the keys:
-`PushSender.builder(signer, "mailto:ops@example.com")`.
+`PushSender.builder(signer, "mailto:ops@example.com", policy)`.
+
+The third parameter is the [endpoint policy](#endpoint-policy-ssrf-hardening), and it is required
+for the same reason the contact is: a subscription's endpoint decides where the send goes, and a
+sender built without a rule would POST wherever that endpoint points. The library does not choose
+the rule for you — `EndpointPolicies.allowedOrigins(…)` names the push services your users arrive
+from, and `EndpointPolicies.unrestricted()` says, in your own source, that this deployment applies
+no restriction.
 
 A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
 and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
@@ -188,10 +196,19 @@ The signer reads the public half from Vault itself; see
 
 ## Sending in detail
 
-Everything on the builder is optional. Two steps are named nowhere else here: `defaultTtl(Duration)`
-is the `TTL` header used when a message carries none — 24 hours unless you change it — and
-`jwtExpiry(Duration)` is how long each VAPID JWT stays valid, 12 hours by default, with RFC 8292 §2
-capping it at 24 (the builder rejects more, and anything not strictly positive).
+Everything on the builder is optional — the key source, the contact and the endpoint policy are the
+factory method's three parameters, and there is nothing else a sender needs. Two steps are named
+nowhere else here: `defaultTtl(Duration)` is the `TTL` header used when a message carries none —
+24 hours unless you change it — and `jwtExpiry(Duration)` is how long each VAPID JWT stays valid,
+12 hours by default, with RFC 8292 §2 capping it at 24 (the builder rejects more, and anything not
+strictly positive).
+
+The examples below are about one builder step each, so they pass the policy as a variable built
+once at startup — the allowlist itself is in [Endpoint policy](#endpoint-policy-ssrf-hardening):
+
+```java
+EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
+```
 
 ### Asynchronous sending
 
@@ -201,7 +218,7 @@ pipeline runs on a library-owned virtual-thread-per-task executor by default, ne
 their own executor:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .executor(pushExecutor)
     .build();
 ```
@@ -220,7 +237,7 @@ figure down), so the default admits **3993 bytes of plaintext** — the figure R
 The record size defaults to 4096 as well, so raising one without the other rejects the message.
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .maxEncryptedBodyBytes(8192)  // the endpoint is known to accept a larger body
     .recordSize(8192)             // rs must cover the payload as well
     .build();
@@ -245,7 +262,7 @@ delta-seconds and all HTTP-date forms required by RFC 9110 are accepted; malform
 values fall back to the exponential schedule.
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .retryPolicy(new RetryPolicy(
         5,
         Duration.ofMillis(500),
@@ -285,12 +302,21 @@ push2u:
     public-key: "${VAPID_PUBLIC_KEY}"
     private-key: "${VAPID_PRIVATE_KEY}"
     subject: "mailto:ops@example.com"
+  allowed-origins:
+    - "https://fcm.googleapis.com"
+    - "https://updates.push.services.mozilla.com"
+    - "https://web.push.apple.com"
 ```
 
-That is a complete configuration: everything else has a default. [`SPRING.md`](docs/SPRING.md) is
-the reference — every `push2u.*` property and what a rejected value does to startup, the
-`allowed-origins` property beside an `EndpointPolicy` bean, and the health indicator with its
-cache.
+That is a complete configuration: everything else has a default. `allowed-origins` is not
+optional, though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context
+with neither it nor an `EndpointPolicy` bean fails to start with a message naming both ways to
+fix it. There is deliberately no property for the unrestricted mode: under Spring it is an
+application `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`, so that turning
+the control off is a code change someone reviews rather than a line copied between profiles.
+[`SPRING.md`](docs/SPRING.md) is the reference — every `push2u.*` property and what a rejected
+value does to startup, the `allowed-origins` property beside an `EndpointPolicy` bean, and the
+health indicator with its cache.
 
 ## Vault Transit signer
 
@@ -311,7 +337,7 @@ VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(
         new VaultToken(vaultToken))
     .build();
 
-PushSender sender = PushSender.builder(signer, "mailto:ops@example.com").build();
+PushSender sender = PushSender.builder(signer, "mailto:ops@example.com", pushServices).build();
 ```
 
 For Spring Boot, combine the core starter with the Vault signer starter. The latter already
@@ -338,16 +364,19 @@ that address from inside your network, and the visible outcome (`PushResult.stat
 `PushDeliveryException`, plus timing) is a blind SSRF oracle for internal host and port
 existence.
 
-Restrict where a sender may POST with an endpoint policy — for almost every deployment, an
-origin allowlist naming the browser push services its users can actually arrive from:
+Which endpoints a sender may POST to is therefore a decision the deployment has to make, and
+`PushSender` takes it as the third parameter of its factory method rather than as an optional
+builder step — there is no way to obtain a sender without naming a policy. For almost every
+deployment that policy is an origin allowlist naming the browser push services its users can
+actually arrive from:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
-    .endpointPolicy(EndpointPolicies.allowedOrigins(
-        "https://fcm.googleapis.com",           // Chrome
-        "https://updates.push.services.mozilla.com", // Firefox
-        "https://web.push.apple.com"))          // Safari
-    .build();
+EndpointPolicy pushServices = EndpointPolicies.allowedOrigins(
+    "https://fcm.googleapis.com",                // Chrome
+    "https://updates.push.services.mozilla.com", // Firefox
+    "https://web.push.apple.com");               // Safari
+
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
 ```
 
 The policy runs on every send — `sendAsync` included, it goes through the same pipeline —
@@ -375,8 +404,16 @@ deployment startup instead of misbehaving at send time.
 egress rules or custom DNS checks can be expressed directly. The policy is fixed when the sender
 is built and receives only the URI — a rule that varies by tenant means one sender per tenant.
 
-No policy is configured by default, and then any absolute `https` endpoint `Subscription` accepts
-is sent to. Know the limits either way: a URI-level check cannot close DNS rebinding, and it
+**Sending anywhere is still possible, and has a name.** `EndpointPolicies.unrestricted()` accepts
+every endpoint `Subscription` accepts — loopback, private-range and cloud-metadata addresses
+included — and is the right choice where subscriptions never arrive from untrusted clients (they
+are entered by operators, or imported from a system inside your trust boundary), or where egress
+is already pinned in a proxy or firewall this library cannot see. It is a required argument like
+any other, so choosing it puts a line in your own source that shows up in a diff, a review and a
+grep. That is the whole difference from an omitted configuration step, which shows up in none of
+them.
+
+Know the limits either way: a URI-level check cannot close DNS rebinding, and it
 cannot see what happens after the connection. The one gap it would otherwise leave — a `3xx`
 steering the POST to a host the allowlist never saw — is closed in the transport (see
 [Redirects must never be followed](#redirects-must-never-be-followed)). Strict guarantees
@@ -390,7 +427,7 @@ Implement `PushHttpClient` when the application needs a different HTTP stack, pr
 observability integration:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .httpClient(customPushHttpClient)
     .build();
 ```
@@ -430,7 +467,7 @@ HttpClient client = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(10))
     .build();
 
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .httpClient(new JdkPushHttpClient(client, Duration.ofSeconds(30)))
     .build();
 ```
@@ -454,7 +491,7 @@ binds the encryption primitives and, when the local signer is used, EC key impor
 signing to that provider:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .cryptoProvider(provider)
     .build();
 ```

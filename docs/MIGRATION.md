@@ -108,20 +108,28 @@ PushService pushService = new PushService(
 
 ```java
 // push2u
+EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
+
 PushSender sender = PushSender.builder(
-                VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com")
+                VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com",
+                pushServices)
         .build();
 ```
 
-The key source and the contact are required, so they are parameters of the factory method rather
-than builder steps — `build()` has no missing value left to refuse. Everything else (`retryPolicy`,
-`endpointPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `recordSize`, `maxEncryptedBodyBytes`,
-`executor`, `cryptoProvider`) is optional and lives on the builder. A `PushSender` is immutable and
-thread-safe once built; build it once and share it, as you would a `PushService`.
+The key source, the contact and the endpoint policy are required, so they are parameters of the
+factory method rather than builder steps — `build()` has no missing value left to refuse.
+Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `recordSize`,
+`maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and lives on the builder. A
+`PushSender` is immutable and thread-safe once built; build it once and share it, as you would a
+`PushService`.
 
-`PushSender.builder(signer, contact)` takes a `VapidSigner` instead of the keys, which is how the
-Vault Transit signer is plugged in. `web-push` has no equivalent seam — `AbstractPushService`
-signs with a `java.security.PrivateKey` it holds.
+The third parameter has no counterpart in `web-push`, and it is the one that will stop a
+mechanical port: see [`EndpointPolicy` — a decision you now have to
+make](#endpointpolicy--a-decision-you-now-have-to-make) for what to pass.
+
+`PushSender.builder(signer, contact, policy)` takes a `VapidSigner` instead of the keys, which is
+how the Vault Transit signer is plugged in. `web-push` has no equivalent seam —
+`AbstractPushService` signs with a `java.security.PrivateKey` it holds.
 
 ### Turning a browser subscription into the library's type
 
@@ -199,8 +207,8 @@ if (result.isDelivered()) {
 `EndpointRejectedException` — all unchecked, all extending `RuntimeException` directly. The five
 checked exceptions on `PushService.send` have no counterpart; a `try`/`catch` block written for
 them will not compile against push2u and should be rewritten around those three — or around the
-first two, if you configure no `EndpointPolicy`, since `EndpointRejectedException` cannot be thrown
-until you do.
+first two, if the policy you pass is `EndpointPolicies.unrestricted()` — the only built-in one that
+never throws `EndpointRejectedException`.
 
 ### Asynchronous sending
 
@@ -240,7 +248,7 @@ JDK one.
 | `AbstractPushService.setSubject` | `PushSender.builder(…, contact)` | Required, not optional |
 | `setGcmApiKey`, `Notification.isGcm()` | — | Legacy GCM is not supported |
 | — | `VapidSigner` | External key custody (Vault Transit, KMS) |
-| — | `EndpointPolicy` | Egress allowlist |
+| — | `EndpointPolicy` | Egress rule, required by `PushSender.builder(…)` |
 | — | `RetryPolicy` | Retries are built in |
 
 ## Differences that change behaviour
@@ -311,7 +319,7 @@ each of your outer attempts costs one POST, not three. Either delete yours or co
 `RetryPolicy.none()`:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
         .retryPolicy(RetryPolicy.none())
         .build();
 ```
@@ -322,7 +330,7 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
 push2u's default is **one day**, and it is a property of the sender rather than the message:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
         .defaultTtl(Duration.ofDays(28))    // only if you were relying on the old default
         .build();
 ```
@@ -409,30 +417,39 @@ sends the endpoint the browser gave it, with a VAPID `Authorization` header and 
 FCM endpoints work as ordinary RFC 8030 endpoints; if you still hold pre-VAPID GCM registrations,
 they are not migrated by this library.
 
-### `EndpointPolicy` — off by default, and worth turning on
+### `EndpointPolicy` — a decision you now have to make
 
-Neither library restricts where a send may POST unless you ask. push2u has the seam for it, and it
-addresses a real exposure: the endpoint inside a `Subscription` is attacker-influenced data, since a
-typical integration accepts the browser's subscription JSON at a public registration endpoint.
-Nothing stops a client posting a hand-crafted subscription pointing into your own network, and the
-visible outcome (`PushResult.statusCode()` versus `PushDeliveryException`, plus timing) then works
-as a blind SSRF oracle for internal host and port existence.
+`web-push` does not restrict where a send may POST, and has no seam for it. push2u makes the rule a
+required argument of `PushSender.builder(…)`, so this is the one difference a port cannot skip past:
+existing call sites will not compile until each one names a policy.
+
+The exposure behind it is real. The endpoint inside a `Subscription` is attacker-influenced data,
+since a typical integration accepts the browser's subscription JSON at a public registration
+endpoint. Nothing stops a client posting a hand-crafted subscription pointing into your own network,
+and the visible outcome (`PushResult.statusCode()` versus `PushDeliveryException`, plus timing) then
+works as a blind SSRF oracle for internal host and port existence.
+
+For almost every deployment the answer is an allowlist of the push services its users arrive from:
 
 ```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
-        .endpointPolicy(EndpointPolicies.allowedOrigins(
-                "https://fcm.googleapis.com",                 // Chrome
-                "https://updates.push.services.mozilla.com",  // Firefox
-                "https://web.push.apple.com"))                // Safari
-        .build();
+EndpointPolicy pushServices = EndpointPolicies.allowedOrigins(
+        "https://fcm.googleapis.com",                 // Chrome
+        "https://updates.push.services.mozilla.com",  // Firefox
+        "https://web.push.apple.com");                // Safari
+
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
 ```
 
 The policy runs before encryption, before the VAPID signature and before any I/O; a rejection
 throws `EndpointRejectedException` and costs none of them. Matching is exact and fail-closed —
 subdomains are not included, and a malformed allowlist entry fails at construction so the mistake
-surfaces at deployment. With no policy configured the behaviour matches what you have today: any
-absolute `https` endpoint is sent to. See
-[`README.md` → Endpoint policy](../README.md#endpoint-policy-ssrf-hardening) for the limits of a
+surfaces at deployment.
+
+`EndpointPolicies.unrestricted()` reproduces exactly what you have today: any absolute `https`
+endpoint is sent to, loopback and private-range addresses included. It is a reasonable first move
+if you are porting under time pressure and your subscriptions do not come from untrusted clients —
+and unlike the behaviour it replaces, it is a line in your own source that a later review can find.
+See [`README.md` → Endpoint policy](../README.md#endpoint-policy-ssrf-hardening) for the limits of a
 URI-level check — it is a coarse filter, not a sandbox.
 
 ### Redirects are never followed
@@ -507,7 +524,9 @@ signer in [`VAULT.md`](VAULT.md).
 8. Check that every endpoint you send to — test fixtures included — is `https`.
 9. Check payload sizes against the 3993-byte plaintext default, and topics against the
    RFC 8030 §5.4 shape.
-10. Configure `EndpointPolicies.allowedOrigins(…)` with the push services your users arrive from.
+10. Pass an `EndpointPolicy` to every `PushSender.builder(…)` — `EndpointPolicies.allowedOrigins(…)`
+    naming the push services your users arrive from, or `EndpointPolicies.unrestricted()` if this
+    deployment deliberately restricts nothing.
 11. On Spring Boot, consider `push2u-spring-boot-starter` — it binds `push2u.*`, builds the
     `PushSender` bean and adds an Actuator health indicator that signs a probe and verifies it. See
     [`SPRING.md`](SPRING.md).

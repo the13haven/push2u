@@ -22,7 +22,7 @@ is [`DESIGN.md`](../DESIGN.md); how to use the library is [`README.md`](../../RE
 | [013](0013-release-and-publication-process.md) | Release and publication process | Accepted | A version constant in the build; a release implied by a merge; a namespace on a domain the project does not own |
 | [014](0014-jpms-explicit-and-automatic-modules.md) | JPMS: explicit modules for the library, automatic for the starters | Accepted | A module or package name changed after release; a package split across two artifacts; a descriptor on a starter |
 | [015](0015-vault-address-scheme-policy.md) | Vault address scheme: https, or loopback/opted-in http | Accepted | A non-HTTP scheme; a loopback decision made by name resolution; a configuration-only path to plaintext transport of the Vault token |
-| [016](0016-endpoint-policy-is-a-required-decision.md) | The endpoint policy is a required decision | Proposed | A `PushSender` without an egress decision; an allowlist shipped by the library; a policy derived by resolving the endpoint; a configuration-only path to unrestricted egress under Spring |
+| [016](0016-endpoint-policy-is-a-required-decision.md) | The endpoint policy is a required decision | Accepted | A `PushSender` without an egress decision; an allowlist shipped by the library; a policy derived by resolving the endpoint; a configuration-only path to unrestricted egress under Spring |
 
 ## An ADR is immutable once implemented
 

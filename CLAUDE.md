@@ -138,8 +138,12 @@ Three SPIs, and only three (ADR-005):
   P-256 public point, both returned as fresh arrays the caller owns (the kit checks that by array
   identity). Implementations: `LocalEcVapidSigner`, `VaultTransitVapidSigner`.
 - `PushHttpClient` — push transport. Response bodies are never read (untrusted capability URLs).
-- `EndpointPolicy` — deployment egress policy (SSRF control). Off by default;
-  `EndpointPolicies.allowedOrigins` is the standard implementation.
+- `EndpointPolicy` — deployment egress policy (SSRF control). A required argument of both
+  `PushSender.builder` overloads, so no sender exists without one (ADR-016);
+  `EndpointPolicies.allowedOrigins` is the standard implementation and
+  `EndpointPolicies.unrestricted()` the named opt-out. Under Spring it comes from
+  `push2u.allowed-origins` or an `EndpointPolicy` bean — neither present fails the context, and
+  there is deliberately no property for the unrestricted mode.
 
 The encryptor, HKDF and origin serialization are deliberately concrete — an alternative
 implementation would only add a silent wrong-ciphertext failure mode (ADR-003).
@@ -179,19 +183,20 @@ starter is ordered before the core starter and outranks the local signer.
   is predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
 - **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
   method, optional ones become builder steps — `PushMessage.builder(payload)`,
-  `PushSender.builder(keys, contact)`. The firm rule is that `build()` must not be able to refuse
-  over a missing required value: that is the compiler's job, not the runtime's (an invalid-but-
-  present value still gets an `IllegalArgumentException` at the factory). Several same-typed
-  required values are made swap-proof by value types, not by argument order — `TransitKeyName` and
-  `VaultToken` cannot be transposed, and a value type earns its place by also carrying validation
-  or redaction, as `VaultToken` carries its character-set validation and a redacting `toString()`. A
-  staged builder (one type per required step) is for genuinely many required values, four-five up;
-  its steps must be public and exported, with `sealed` — not package-hiding — keeping them closed.
+  `PushSender.builder(keys, contact, endpointPolicy)`. The firm rule is that `build()` must not be
+  able to refuse over a missing required value: that is the compiler's job, not the runtime's (an
+  invalid-but-present value still gets an `IllegalArgumentException` at the factory). Several
+  same-typed required values are made swap-proof by value types, not by argument order —
+  `TransitKeyName` and `VaultToken` cannot be transposed, and a value type earns its place by also
+  carrying validation or redaction, as `VaultToken` carries its character-set validation and a
+  redacting `toString()`. A staged builder (one type per required step) is for genuinely many
+  required values, four-five up; its steps must be public and exported, with `sealed` — not
+  package-hiding — keeping them closed.
   One way to assemble a type means `builder()`; several ways that differ in *contract* get one
   `builderWith<what exactly>()` each and no bare `builder()` (`builderWithFetchedPublicKey(…)`
   reads Vault inside `build()`, `builderWithSuppliedPublicKey(…)` does nothing over the network).
   Entry points differing only in a required parameter are overloads: `PushSender.builder(keys,
-  contact)` / `builder(signer, contact)`.
+  contact, endpointPolicy)` / `builder(signer, contact, endpointPolicy)`.
 - **Licence header:** every `.java` file in every source set opens with the Apache-2.0 SPDX header
   from `config/quality/license/header.txt` (ADR-008), and the build fails without it. Spotless
   writes it into a new file on `qualityCheck` and verifies it on `qualityCheckCi`. Two file kinds

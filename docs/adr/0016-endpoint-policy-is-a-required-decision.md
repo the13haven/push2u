@@ -1,6 +1,6 @@
 # ADR-016 — The endpoint policy is a required decision
 
-**Status:** Proposed
+**Status:** Accepted
 
 The endpoint inside a `Subscription` is attacker-influenced: the ordinary integration accepts the
 browser's `PushSubscription` JSON at a public registration endpoint, and nothing stops a client
