@@ -125,7 +125,8 @@ public final class Push2uAutoConfiguration {
      * <p>{@code push2u.vapid.subject} is required for this autoconfigured sender even when the signer itself comes from
      * another starter (e.g. the Vault Transit signer starter, which supplies only key custody, not a contact address):
      * it is checked here, with a message naming the property, so a missing subject fails with an actionable diagnostic
-     * rather than {@link PushSender#builder(VapidSigner, String)}'s generic {@code "contact is required"}.
+     * rather than {@link PushSender#builder(VapidSigner, String, EndpointPolicy)}'s generic {@code "contact is
+     * required"}.
      *
      * <p>{@code push2u.jwt-expiry}, {@code push2u.default-ttl}, {@code push2u.record-size} and
      * {@code push2u.max-encrypted-body-bytes} failures from {@link PushSender.Builder#jwtExpiry(Duration)},

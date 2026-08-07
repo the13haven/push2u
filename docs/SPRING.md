@@ -139,9 +139,9 @@ the rest of a `PushSender` is configuration the builder validated at startup.
 
 While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
 a startup failure naming `push2u.vapid.subject` or `push2u.allowed-origins`), so this changes
-nothing there. Where it matters
-is a context that *excludes* `Push2uAutoConfiguration` and wires its own `PushSender` around a
-signer kept as a bean: the probe then applies to exactly the signer that sender uses.
+nothing there. Where it matters is a context that *excludes* `Push2uAutoConfiguration` and wires its
+own `PushSender` around a signer kept as a bean: the probe then applies to exactly the signer that
+sender uses.
 
 An application that supplies its own `PushSender` and no `push2u.vapid.*` therefore gets no
 indicator: that sender's signer lives inside it, where the starter cannot reach it, and an

@@ -207,7 +207,7 @@ if (result.isDelivered()) {
 `EndpointRejectedException` — all unchecked, all extending `RuntimeException` directly. The five
 checked exceptions on `PushService.send` have no counterpart; a `try`/`catch` block written for
 them will not compile against push2u and should be rewritten around those three — or around the
-first two, if the policy you pass is `EndpointPolicies.unrestricted()`, which is the only one that
+first two, if the policy you pass is `EndpointPolicies.unrestricted()` — the only built-in one that
 never throws `EndpointRejectedException`.
 
 ### Asynchronous sending
