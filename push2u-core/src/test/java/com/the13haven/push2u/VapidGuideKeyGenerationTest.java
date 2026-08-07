@@ -27,13 +27,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Executes the VAPID key-generation snippet that is in {@code README.md} — the file itself, not a copy of it — and
- * feeds what it prints to {@link VapidKeys#fromBase64} and {@link LocalEcVapidSigner}.
+ * Executes the VAPID key-generation snippet that is in {@code VAPID.md} — the file itself, not a copy of it — and feeds
+ * what it prints to {@link VapidKeys#fromBase64} and {@link LocalEcVapidSigner}.
  *
- * <p>The point is drift. push2u ships no key generator, so the README's snippet is the only instruction a new user
+ * <p>The point is drift. push2u ships no key generator, so that guide's snippet is the only instruction a new user
  * gets, and a test carrying its own frozen copy of that snippet would stay green while the documented one rotted. So
  * this test locates the block by the HTML-comment anchors around it ({@code vapid-keygen:begin} /
- * {@code vapid-keygen:end}, invisible when the README is rendered), pins the heredoc wrapper the block opens and closes
+ * {@code vapid-keygen:end}, invisible when the guide is rendered), pins the heredoc wrapper the block opens and closes
  * with — otherwise the command could be broken while the Java inside it stayed correct — and runs the body through the
  * {@code jshell} of the JVM running the tests.
  *
@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
  * the part that is easy to get wrong, and both of its plausible regressions — dropping the left-padding, copying from
  * the wrong end of {@code toByteArray()} — survive most single draws. Dropping the left-padding, the worse of the two,
  * shows up in about one generated pair in two hundred. So a second run appends probe lines to the body it feeds
- * {@code jshell} (never to the README, which stays minimal and copy-pasteable), calling the block's <em>own</em>
+ * {@code jshell} (never to the guide, which stays minimal and copy-pasteable), calling the block's <em>own</em>
  * {@code fixed32} on fixed values covering each shape {@link java.math.BigInteger#toByteArray()} produces, and compares
  * all 32 returned bytes. That check is a pure function of the snippet: it fails on the first pull request that breaks
  * the padding, not on the unlucky one.
@@ -53,27 +53,25 @@ import org.junit.jupiter.api.io.TempDir;
  * value costs no brittleness. Those are the only things here checked by reading rather than by running, because there
  * is nothing to run — the values are random, and a green run proves nothing about the next one.
  *
- * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.readme} system property is a
- * failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The README's
- * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../README.md} would be a guess
+ * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.vapid.guide} system property
+ * is a failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The guide's
+ * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../VAPID.md} would be a guess
  * about the test's working directory.
  *
  * <p><b>What this guards, and what it does not.</b> It guards an ordinary edit — to the snippet, or to
  * {@link VapidKeys} and {@link LocalEcVapidSigner} underneath it — that makes the documented instructions print a key
  * push2u or a browser rejects. It does not guard against someone with commit access deliberately hiding broken code
- * from a text check: whoever can edit {@code README.md} can edit this file beside it, so hardening against that buys
+ * from a text check: whoever can edit {@code VAPID.md} can edit this file beside it, so hardening against that buys
  * nothing and costs the brittleness that gets a guard deleted. "A block comment, a text block, an escape or dead code
  * could hide a pinned statement" is out of scope by construction, not an open gap.
  *
  * <p>The one real limit that follows: a pinned statement being <em>present</em> is not proof that it produced the value
  * that was printed, and this file does not try to close that.
  */
-class ReadmeVapidKeyGenerationTest {
+class VapidGuideKeyGenerationTest {
 
-    /**
-     * System property carrying the absolute path of the repository's {@code README.md}, set by the Gradle test task.
-     */
-    private static final String README_PROPERTY = "push2u.readme";
+    /** System property carrying the absolute path of the repository's {@code VAPID.md}, set by the Gradle test task. */
+    private static final String GUIDE_PROPERTY = "push2u.vapid.guide";
 
     private static final String BEGIN_ANCHOR = "<!-- vapid-keygen:begin -->";
     private static final String END_ANCHOR = "<!-- vapid-keygen:end -->";
@@ -130,7 +128,7 @@ class ReadmeVapidKeyGenerationTest {
                     "0000000000000000000000000000000000000000000000000000000000000001"));
 
     @Test
-    void readmeSnippetStillCallsFixed32AndTheUrlSafeEncoder() {
+    void documentedSnippetStillCallsFixed32AndTheUrlSafeEncoder() {
         // snippetBody() fails unless the block opens with HEREDOC_OPEN and closes with HEREDOC_CLOSE.
         String body = snippetBody();
 
@@ -174,7 +172,7 @@ class ReadmeVapidKeyGenerationTest {
     }
 
     @Test
-    void readmeSnippetPrintsAPairThatVapidKeysAndTheLocalSignerAccept(@TempDir Path workingDir) throws Exception {
+    void documentedSnippetPrintsAPairThatVapidKeysAndTheLocalSignerAccept(@TempDir Path workingDir) throws Exception {
         JshellRun result = run(snippetBody(), workingDir);
 
         String publicKey = capture(PUBLIC_KEY_LINE, result, "public");
@@ -210,7 +208,7 @@ class ReadmeVapidKeyGenerationTest {
     }
 
     @Test
-    void readmeSnippetsFixed32PadsEveryShapeBigIntegerProduces(@TempDir Path workingDir) throws Exception {
+    void documentedSnippetsFixed32PadsEveryShapeBigIntegerProduces(@TempDir Path workingDir) throws Exception {
         JshellRun result = run(withFixed32Probes(snippetBody()), workingDir);
         Map<String, String> printed = probeResults(result.printed());
 
@@ -220,21 +218,21 @@ class ReadmeVapidKeyGenerationTest {
                     .as(
                             "%s",
                             "fixed32(" + probe.expression() + "), from the block between " + BEGIN_ANCHOR + " and "
-                                    + END_ANCHOR + " in " + readme() + " — the " + probe.label()
+                                    + END_ANCHOR + " in " + guide() + " — the " + probe.label()
                                     + " shape, which is where a padding mistake shows.\nstderr:\n"
                                     + result.diagnostics())
                     .containsEntry(probe.label(), probe.expectedHex());
         }
     }
 
-    /** The heredoc body of the anchored block: everything the README feeds to {@code jshell}, wrapper excluded. */
+    /** The heredoc body of the anchored block: everything the guide feeds to {@code jshell}, wrapper excluded. */
     private static String snippetBody() {
-        List<String> block = fencedBlockBetweenAnchors(readme());
+        List<String> block = fencedBlockBetweenAnchors(guide());
 
         if (block.size() < 3
                 || !HEREDOC_OPEN.equals(block.get(0))
                 || !HEREDOC_CLOSE.equals(block.get(block.size() - 1))) {
-            return fail("The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + readme()
+            return fail("The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + guide()
                     + " must open with \"" + HEREDOC_OPEN + "\" and close with \"" + HEREDOC_CLOSE
                     + "\". It opens with \"" + block.get(0) + "\" and closes with \""
                     + block.get(block.size() - 1) + "\".");
@@ -245,14 +243,14 @@ class ReadmeVapidKeyGenerationTest {
 
     /**
      * The same body with lines printing {@code fixed32}'s output for each {@link #FIXED32_PROBES} entry, spliced in
-     * ahead of the block's own {@code /exit}. The README stays as short as a reader wants it; the determinism lives
+     * ahead of the block's own {@code /exit}. The guide stays as short as a reader wants it; the determinism lives
      * here.
      */
     private static String withFixed32Probes(String body) {
         List<String> lines = new ArrayList<>(body.lines().toList());
         int exit = lines.lastIndexOf(EXIT_COMMAND);
         if (exit < 0) {
-            return fail("The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + readme()
+            return fail("The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + guide()
                     + " no longer ends its session with \"" + EXIT_COMMAND + "\", so there is nowhere to splice the"
                     + " fixed32 probes in. Body was:\n" + body);
         }
@@ -278,22 +276,22 @@ class ReadmeVapidKeyGenerationTest {
         return results;
     }
 
-    private static List<String> fencedBlockBetweenAnchors(Path readme) {
-        String text = read(readme);
+    private static List<String> fencedBlockBetweenAnchors(Path guide) {
+        String text = read(guide);
 
         int begin = text.indexOf(BEGIN_ANCHOR);
         int end = text.indexOf(END_ANCHOR);
         if (begin < 0 || end < 0) {
-            return fail("Could not find the " + (begin < 0 ? BEGIN_ANCHOR : END_ANCHOR) + " anchor in " + readme
+            return fail("Could not find the " + (begin < 0 ? BEGIN_ANCHOR : END_ANCHOR) + " anchor in " + guide
                     + ". The anchors mark the snippet this test executes; without them there is nothing to verify,"
                     + " and skipping would leave the documented snippet unchecked.");
         }
         if (begin != text.lastIndexOf(BEGIN_ANCHOR) || end != text.lastIndexOf(END_ANCHOR)) {
-            return fail("The anchors " + BEGIN_ANCHOR + " / " + END_ANCHOR + " occur more than once in " + readme
+            return fail("The anchors " + BEGIN_ANCHOR + " / " + END_ANCHOR + " occur more than once in " + guide
                     + "; exactly one block can be the documented one.");
         }
         if (end < begin) {
-            return fail(END_ANCHOR + " precedes " + BEGIN_ANCHOR + " in " + readme + ".");
+            return fail(END_ANCHOR + " precedes " + BEGIN_ANCHOR + " in " + guide + ".");
         }
 
         // Trailing whitespace only — leading whitespace is the snippet's own indentation.
@@ -309,35 +307,35 @@ class ReadmeVapidKeyGenerationTest {
         }
 
         if (lines.size() < 3 || !FENCE_OPEN.equals(lines.get(0)) || !FENCE.equals(lines.get(lines.size() - 1))) {
-            return fail("The text between the anchors in " + readme + " must be exactly one " + FENCE_OPEN
+            return fail("The text between the anchors in " + guide + " must be exactly one " + FENCE_OPEN
                     + " fenced block. Found:\n" + String.join("\n", lines));
         }
         List<String> inside = lines.subList(1, lines.size() - 1);
         if (inside.stream().anyMatch(line -> line.startsWith(FENCE))) {
-            return fail("More than one fenced block sits between the anchors in " + readme + ".");
+            return fail("More than one fenced block sits between the anchors in " + guide + ".");
         }
         return List.copyOf(inside);
     }
 
-    private static Path readme() {
-        String configured = System.getProperty(README_PROPERTY);
+    private static Path guide() {
+        String configured = System.getProperty(GUIDE_PROPERTY);
         if (configured == null || configured.isBlank()) {
-            return fail("The system property " + README_PROPERTY + " is not set, so the README cannot be located."
+            return fail("The system property " + GUIDE_PROPERTY + " is not set, so VAPID.md cannot be located."
                     + " The Gradle test task passes it (push2u-core/build.gradle.kts); running this test outside"
-                    + " Gradle needs -D" + README_PROPERTY + "=/path/to/README.md.");
+                    + " Gradle needs -D" + GUIDE_PROPERTY + "=/path/to/VAPID.md.");
         }
-        Path readme = Path.of(configured);
-        if (!Files.isRegularFile(readme)) {
-            return fail(README_PROPERTY + " points at " + readme.toAbsolutePath() + ", which is not a regular file.");
+        Path guide = Path.of(configured);
+        if (!Files.isRegularFile(guide)) {
+            return fail(GUIDE_PROPERTY + " points at " + guide.toAbsolutePath() + ", which is not a regular file.");
         }
-        return readme;
+        return guide;
     }
 
-    private static String read(Path readme) {
+    private static String read(Path guide) {
         try {
-            return Files.readString(readme, UTF_8);
+            return Files.readString(guide, UTF_8);
         } catch (IOException e) {
-            return fail("Could not read " + readme.toAbsolutePath(), e);
+            return fail("Could not read " + guide.toAbsolutePath(), e);
         }
     }
 
@@ -351,7 +349,7 @@ class ReadmeVapidKeyGenerationTest {
      */
     private record JshellRun(String printed, String diagnostics) {}
 
-    /** Runs the given body exactly as the README prescribes: the documented command, with the body on stdin. */
+    /** Runs the given body exactly as the guide prescribes: the documented command, with the body on stdin. */
     private static JshellRun run(String body, Path workingDir) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(jshell().toString());
@@ -378,12 +376,12 @@ class ReadmeVapidKeyGenerationTest {
 
         if (!process.waitFor(JSHELL_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
             process.destroyForcibly();
-            return fail("The README snippet did not finish within " + JSHELL_TIMEOUT_MINUTES + " minutes."
+            return fail("The documented snippet did not finish within " + JSHELL_TIMEOUT_MINUTES + " minutes."
                     + diagnostics(output, diagnostics));
         }
         if (process.exitValue() != 0) {
-            return fail(
-                    "The README snippet exited with " + process.exitValue() + "." + diagnostics(output, diagnostics));
+            return fail("The documented snippet exited with " + process.exitValue() + "."
+                    + diagnostics(output, diagnostics));
         }
         return new JshellRun(Files.readString(output, UTF_8), contents(diagnostics));
     }
@@ -397,7 +395,7 @@ class ReadmeVapidKeyGenerationTest {
                 return candidate;
             }
         }
-        return fail("No jshell in " + bin + ". This test runs the README's documented snippet and must not be"
+        return fail("No jshell in " + bin + ". This test runs the documented key-generation snippet and must not be"
                 + " skipped when the tool is missing — run the build on a full JDK.");
     }
 
@@ -405,7 +403,7 @@ class ReadmeVapidKeyGenerationTest {
         Matcher matcher = pattern.matcher(run.printed());
         if (!matcher.find()) {
             // stderr, not only stdout: a snippet that no longer compiles prints nothing here and everything there.
-            return fail("The README snippet printed no \"" + label + ":\" line.\nstdout:\n" + run.printed()
+            return fail("The documented snippet printed no \"" + label + ":\" line.\nstdout:\n" + run.printed()
                     + "\nstderr:\n" + run.diagnostics());
         }
         return matcher.group(1);
@@ -421,7 +419,7 @@ class ReadmeVapidKeyGenerationTest {
             return VapidKeys.fromBase64(publicKey, privateKey);
         } catch (RuntimeException e) {
             return fail(
-                    "The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + readme()
+                    "The block between " + BEGIN_ANCHOR + " and " + END_ANCHOR + " in " + guide()
                             + " printed a pair that VapidKeys.fromBase64 rejects. That block is what a new user is told to"
                             + " run, and this test executes it rather than a copy of it, so it is the block that needs"
                             + " fixing — start at its fixed32 helper."

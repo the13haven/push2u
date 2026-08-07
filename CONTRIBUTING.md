@@ -287,8 +287,8 @@ Categories are matched in that order, so a PR that is both breaking and a featur
 
 Before merging, `main` requires the `quality` check and CodeQL analysis to pass. A change to prose
 skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`) and still reports
-success — with one exception, `README.md`. Its VAPID key-generation snippet is executed by
-`ReadmeVapidKeyGenerationTest`, straight out of the file, so editing that file runs the full quality
+success — with one exception, `VAPID.md`. Its key-generation snippet is executed by
+`VapidGuideKeyGenerationTest`, straight out of the file, so editing that file runs the full quality
 gate (about three and a half minutes rather than ten seconds), even for a typo fix. CodeQL still
 skips: the snippet is executed, not compiled, and the tree it scans is unchanged.
 
