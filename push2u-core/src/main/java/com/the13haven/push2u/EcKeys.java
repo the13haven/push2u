@@ -11,6 +11,8 @@ import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECFieldFp;
@@ -29,13 +31,14 @@ import org.jspecify.annotations.Nullable;
  * X9.62 uncompressed point ({@code 0x04 || X || Y}, 65 bytes) for public keys ({@code p256dh}, VAPID {@code k}) and the
  * raw 32-byte scalar for the VAPID private key.
  */
-// GodClass: tipped over the metric (WMC 48 against the rule's 47) by one added branch of the
-// generated-key verification, which refuses a degenerate provider answer by name instead of
-// dereferencing it. The class is the single home for P-256 key import/export and the provider
-// checks guarding those operations; splitting the checks out to satisfy the metric would separate
-// them from what they guard. If the metric fires again, the seam to split at is codec versus key
-// agreement — decode/encode/writeFixed serialise the wire forms, generateP256 and ecdh with their
-// verification helpers guard the provider — never a cut through the middle of a verification.
+// GodClass: over the metric (WMC 56 against the rule's 47), pushed there branch by branch as the
+// provider checks grew to refuse each degenerate provider answer — a missing pair, a null or
+// foreign key, absent parameters, no point — by name instead of dereferencing it. The class is the
+// single home for P-256 key import/export and the provider checks guarding those operations;
+// splitting the checks out to satisfy the metric would separate them from what they guard. If a
+// split ever becomes worth it, the seam is codec versus key agreement — decode/encode/writeFixed
+// serialise the wire forms, generateP256 and ecdh with their verification helpers guard the
+// provider — never a cut through the middle of a verification.
 @SuppressWarnings("PMD.GodClass")
 final class EcKeys {
 
@@ -47,7 +50,8 @@ final class EcKeys {
 
     /**
      * Parse a 65-byte uncompressed P-256 point into a public key, refusing any point that is not on the curve (see
-     * {@link #requireOnCurve}) before the provider ever sees it.
+     * {@link #requireOnCurve}) before the provider ever sees it, and refusing a factory answer that is not an EC key
+     * (see {@link #notAnImportedEcKey}) before it is returned as one.
      */
     static ECPublicKey decodeP256PublicKey(byte[] uncompressed, Jca jca) {
         P256PublicKeys.requireUncompressedPoint(uncompressed, "public key");
@@ -55,12 +59,17 @@ final class EcKeys {
         BigInteger y = new BigInteger(1, Arrays.copyOfRange(uncompressed, 1 + COORDINATE_LENGTH, UNCOMPRESSED_LENGTH));
         ECParameterSpec parameters = jca.p256Parameters();
         requireOnCurve(x, y, parameters);
+        PublicKey imported;
         try {
             KeyFactory keyFactory = jca.ecKeyFactory();
-            return (ECPublicKey) keyFactory.generatePublic(new ECPublicKeySpec(new ECPoint(x, y), parameters));
+            imported = keyFactory.generatePublic(new ECPublicKeySpec(new ECPoint(x, y), parameters));
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("Invalid P-256 public key", e);
         }
+        if (!(imported instanceof ECPublicKey key)) {
+            throw notAnImportedEcKey(imported, "public");
+        }
+        return key;
     }
 
     /**
@@ -98,18 +107,42 @@ final class EcKeys {
         }
     }
 
-    /** Build a private key from the raw 32-byte P-256 scalar {@code d}. */
+    /**
+     * Build a private key from the raw 32-byte P-256 scalar {@code d}, refusing a factory answer that is not an EC key
+     * (see {@link #notAnImportedEcKey}) before it is returned as one.
+     */
     static ECPrivateKey decodeP256PrivateKey(byte[] scalar, Jca jca) {
         if (scalar.length != COORDINATE_LENGTH) {
             throw new IllegalArgumentException("Expected a 32-byte P-256 private scalar");
         }
         BigInteger s = new BigInteger(1, scalar);
+        PrivateKey imported;
         try {
             KeyFactory keyFactory = jca.ecKeyFactory();
-            return (ECPrivateKey) keyFactory.generatePrivate(new ECPrivateKeySpec(s, jca.p256Parameters()));
+            imported = keyFactory.generatePrivate(new ECPrivateKeySpec(s, jca.p256Parameters()));
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("Invalid P-256 private key", e);
         }
+        if (!(imported instanceof ECPrivateKey key)) {
+            throw notAnImportedEcKey(imported, "private");
+        }
+        return key;
+    }
+
+    /**
+     * The import-side twin of {@link #notAnEcKey}: {@link KeyFactory#generatePublic} and
+     * {@link KeyFactory#generatePrivate} return whatever the provider's factory implementation built, and nothing in
+     * the JDK stops a defective one from answering {@code null} — which the unchecked cast this guard replaces would
+     * have passed through as this library's own (never-{@code null}) return value, deferring the failure to whichever
+     * caller touches the key next — or a key of some other algorithm, which the cast would have surfaced as a
+     * {@link ClassCastException} instead of the crypto failure it is.
+     */
+    private static PushCryptoException notAnImportedEcKey(@Nullable Key key, String half) {
+        if (key == null) {
+            return new PushCryptoException("P-256 " + half + " key import returned no key at all");
+        }
+        return new PushCryptoException(
+                "P-256 " + half + " key import returned a " + key.getAlgorithm() + " key, not an EC one");
     }
 
     /**
@@ -135,11 +168,11 @@ final class EcKeys {
      * {@code secp256r1} name itself, so the verification {@link Jca#p256Parameters()} applies to imported keys does not
      * reach this path — and the generated pair sits on the same trust boundary: its public half is published in the
      * {@code aes128gcm} header and its private half drives the ECDH agreement. Hence the returned pair gets the same
-     * standard of verification before it is used (see {@link #requireGeneratedOnP256}): both halves must be EC keys
-     * whose declared domain parameters match the published NIST P-256 constants value for value, and the public point
-     * must additionally satisfy the curve equation — so a generator that honoured the name with some other curve, or
-     * with P-256's curve under a substituted order, generator point or cofactor, fails loudly here instead of deriving
-     * the content-encryption keys on parameters nobody chose.
+     * standard of verification before it is used (see {@link #requireGeneratedOnP256}): the pair must be there at all,
+     * both halves must be EC keys whose declared domain parameters match the published NIST P-256 constants value for
+     * value, and the public point must additionally satisfy the curve equation — so a generator that answered with no
+     * pair, or honoured the name with some other curve, or with P-256's curve under a substituted order, generator
+     * point or cofactor, fails loudly here instead of deriving the content-encryption keys on parameters nobody chose.
      */
     static KeyPair generateP256(Jca jca) {
         KeyPair pair;
@@ -155,15 +188,17 @@ final class EcKeys {
     }
 
     /**
-     * Refuse a generated pair that fails what this library verifies of a NIST P-256 key pair — three checks, exactly:
-     * both halves must be EC keys, both halves' declared domain parameters must equal the published NIST P-256
-     * constants value for value, and the public point must lie on the curve of those constants. The generator already
-     * answered the {@code secp256r1} lookup, so honouring the name must be proven rather than assumed, and the last two
-     * checks prove different things — parameter equality proves what the generator <em>declares</em>, the curve
-     * equation proves the point it actually <em>returned</em> lies on the declared curve. The parameter comparison is
-     * what catches the sharpest checkable defect: a wrong order {@code n} leaves every generated point genuinely on
-     * P-256, but {@code n} bounds the private scalar, so a small substituted order draws a guessable scalar and a
-     * guessable ECDH secret.
+     * Refuse a generated pair that fails what this library verifies of a NIST P-256 key pair. The pair reference itself
+     * comes first: {@link KeyPairGenerator#generateKeyPair} is the provider's own implementation answering, and nothing
+     * in the JDK obliges a defective one to answer a pair at all, so a {@code null} is refused by name before either
+     * half is read. A pair that exists then gets three checks, exactly: both halves must be EC keys, both halves'
+     * declared domain parameters must equal the published NIST P-256 constants value for value, and the public point
+     * must lie on the curve of those constants. The generator already answered the {@code secp256r1} lookup, so
+     * honouring the name must be proven rather than assumed, and the last two checks prove different things — parameter
+     * equality proves what the generator <em>declares</em>, the curve equation proves the point it actually
+     * <em>returned</em> lies on the declared curve. The parameter comparison is what catches the sharpest checkable
+     * defect: a wrong order {@code n} leaves every generated point genuinely on P-256, but {@code n} bounds the private
+     * scalar, so a small substituted order draws a guessable scalar and a guessable ECDH secret.
      *
      * <p>Two failure modes are outside this check's reach, on purpose. A provider that declares the correct parameters
      * and simply draws a weak or attacker-known scalar passes undetected — no parameter verification can catch that,
@@ -179,7 +214,10 @@ final class EcKeys {
      * <p>The messages quote no coordinates or scalars: the values are fresh key material, and the failure is
      * structural.
      */
-    private static void requireGeneratedOnP256(KeyPair pair) {
+    private static void requireGeneratedOnP256(@Nullable KeyPair pair) {
+        if (pair == null) {
+            throw new PushCryptoException("P-256 key-pair generation returned no key pair at all");
+        }
         if (!(pair.getPublic() instanceof ECPublicKey publicKey)) {
             throw notAnEcKey(pair.getPublic(), "public");
         }

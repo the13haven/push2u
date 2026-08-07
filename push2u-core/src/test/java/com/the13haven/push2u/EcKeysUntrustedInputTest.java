@@ -559,6 +559,21 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
+     * More degenerate than any defective half: {@code generateKeyPair()} itself is the provider's own implementation
+     * answering, and nothing in the JDK obliges a defective one to answer a pair at all. The halves, the parameters and
+     * the point are all checked (below), but they arrive inside this container — a {@code null} here must be refused by
+     * name as the library's own {@link PushCryptoException}, not dereferenced for its public half.
+     */
+    @Test
+    void aGeneratorAnsweringNoKeyPairAtAllFailsClosedAsACryptoException() {
+        Jca dishonest = Jca.using(FixedKeyPairProvider.answeringNoPairAtAll());
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no key pair at all");
+    }
+
+    /**
      * The maximally degenerate generator: {@code KeyPair} stores whatever references its constructor was handed,
      * {@code null} included, and the refusal must still arrive as the library's own {@link PushCryptoException} — a
      * {@link NullPointerException} escaping from the diagnostic itself would be a crypto failure surfacing outside the
@@ -566,7 +581,7 @@ class EcKeysUntrustedInputTest {
      */
     @Test
     void aGeneratedPairWithANullPublicHalfFailsClosedAsACryptoException() {
-        Jca dishonest = Jca.using(new FixedKeyPairProvider(null));
+        Jca dishonest = Jca.using(new FixedKeyPairProvider((PublicKey) null));
 
         assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
                 .isInstanceOf(PushCryptoException.class)
@@ -636,9 +651,74 @@ class EcKeysUntrustedInputTest {
                 .hasMessageContaining("no domain parameters at all");
     }
 
+    // ---- the key factory answering an import degenerately --------------------------------------
+
+    /**
+     * The import twin of the null-pair case above: {@code KeyFactory.generatePublic}/{@code generatePrivate} are the
+     * provider's own factory implementation answering, and a defective one can answer {@code null} — which the
+     * unchecked cast the decode methods used to end with would have passed through as the library's own return value,
+     * deferring the {@link NullPointerException} to whichever caller touches the key next, in a library whose decode
+     * methods promise never to return {@code null}.
+     */
+    @Test
+    void aKeyFactoryAnsweringNoPublicKeyAtAllFailsClosedAsACryptoException() {
+        Jca defective = Jca.using(new FixedKeyFactoryProvider(null, null));
+
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), defective))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("public key import returned no key at all");
+    }
+
+    @Test
+    void aKeyFactoryAnsweringNoPrivateKeyAtAllFailsClosedAsACryptoException() {
+        Jca defective = Jca.using(new FixedKeyFactoryProvider(null, null));
+
+        assertThatThrownBy(() -> EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), defective))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("private key import returned no key at all");
+    }
+
+    /** The non-null degenerate answer: a key of some other algorithm must fail closed, not class-cast. */
+    @Test
+    void aKeyFactoryAnsweringWithANonEcKeyFailsClosedInsteadOfClassCasting() {
+        Jca defective = Jca.using(new FixedKeyFactoryProvider(nonEcPublicKey(), nonEcPrivateKey()));
+
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), defective))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("XDH")
+                .hasMessageContaining("not an EC one");
+        assertThatThrownBy(() -> EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), defective))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("XDH")
+                .hasMessageContaining("not an EC one");
+    }
+
     /** A genuine P-256 point (the RFC 8291 worked example's {@code ua_public}) to pair with substituted parameters. */
     private ECPoint genuineP256Point() {
         return EcKeys.decodeP256PublicKey(validPoint(), jca).getW();
+    }
+
+    /** A public key that is not an EC key at all — the import-side twin of {@link #nonEcPrivateKey()}. */
+    private static PublicKey nonEcPublicKey() {
+        return new PublicKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public String getAlgorithm() {
+                return "XDH";
+            }
+
+            @Override
+            public String getFormat() {
+                return "X.509";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        };
     }
 
     /** A private key that is not an EC key at all — the shape an unguarded cast would explode on. */
@@ -700,7 +780,8 @@ class EcKeysUntrustedInputTest {
     /**
      * A provider whose only registration answers the EC {@code KeyPairGenerator} lookup with a generator returning a
      * fixed key pair — the defective-generator shape the fail-closed tests above need. The one-argument form pairs the
-     * given public key with a genuine platform-derived private half, for the tests that probe the public side only.
+     * given public key with a genuine platform-derived private half, for the tests that probe the public side only;
+     * {@link #answeringNoPairAtAll()} makes the generator return {@code null} in place of a pair.
      */
     private static final class FixedKeyPairProvider extends Provider {
 
@@ -712,6 +793,14 @@ class EcKeysUntrustedInputTest {
         }
 
         FixedKeyPairProvider(PublicKey publicKey, PrivateKey privateKey) {
+            this(new KeyPair(publicKey, privateKey));
+        }
+
+        static FixedKeyPairProvider answeringNoPairAtAll() {
+            return new FixedKeyPairProvider((KeyPair) null);
+        }
+
+        private FixedKeyPairProvider(KeyPair pair) {
             super("push2u-fixed-keypair", "1.0", "answers EC key-pair generation with a fixed key pair");
             putService(
                     new Service(
@@ -723,21 +812,19 @@ class EcKeysUntrustedInputTest {
                             null) {
                         @Override
                         public Object newInstance(Object constructorParameter) {
-                            return new FixedKeyPairGenerator(publicKey, privateKey);
+                            return new FixedKeyPairGenerator(pair);
                         }
                     });
         }
     }
 
-    /** A {@code KeyPairGenerator} SPI returning the fixed key pair it was built with. */
+    /** A {@code KeyPairGenerator} SPI returning the fixed key pair — possibly {@code null} — it was built with. */
     public static final class FixedKeyPairGenerator extends KeyPairGeneratorSpi {
 
-        private final PublicKey publicKey;
-        private final PrivateKey privateKey;
+        private final KeyPair pair;
 
-        FixedKeyPairGenerator(PublicKey publicKey, PrivateKey privateKey) {
-            this.publicKey = publicKey;
-            this.privateKey = privateKey;
+        FixedKeyPairGenerator(KeyPair pair) {
+            this.pair = pair;
         }
 
         @Override
@@ -752,7 +839,68 @@ class EcKeysUntrustedInputTest {
 
         @Override
         public KeyPair generateKeyPair() {
-            return new KeyPair(publicKey, privateKey);
+            return pair;
+        }
+    }
+
+    /**
+     * A provider whose EC {@code KeyFactory} answers every import with the fixed keys it was built with — {@code null}
+     * included — while its {@code AlgorithmParameters} are real (delegated to the stock provider), so the parameter
+     * verification passes and the import is genuinely reached.
+     */
+    private static final class FixedKeyFactoryProvider extends Provider {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        FixedKeyFactoryProvider(PublicKey publicKey, PrivateKey privateKey) {
+            super("push2u-fixed-keyfactory", "1.0", "answers EC key imports with fixed keys");
+            Provider.Service source =
+                    java.security.Security.getProvider("SunEC").getService("AlgorithmParameters", Algorithms.EC);
+            putService(new Service(this, "AlgorithmParameters", Algorithms.EC, source.getClassName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) throws java.security.NoSuchAlgorithmException {
+                    return source.newInstance(constructorParameter);
+                }
+            });
+            putService(new Service(this, "KeyFactory", Algorithms.EC, FixedKeyFactory.class.getName(), null, null) {
+                @Override
+                public Object newInstance(Object constructorParameter) {
+                    return new FixedKeyFactory(publicKey, privateKey);
+                }
+            });
+        }
+    }
+
+    /** The {@code KeyFactorySpi} behind {@link FixedKeyFactoryProvider}: answers every import with its fixed keys. */
+    public static final class FixedKeyFactory extends java.security.KeyFactorySpi {
+
+        private final PublicKey publicKey;
+        private final PrivateKey privateKey;
+
+        FixedKeyFactory(PublicKey publicKey, PrivateKey privateKey) {
+            this.publicKey = publicKey;
+            this.privateKey = privateKey;
+        }
+
+        @Override
+        protected PublicKey engineGeneratePublic(java.security.spec.KeySpec keySpec) {
+            return publicKey;
+        }
+
+        @Override
+        protected PrivateKey engineGeneratePrivate(java.security.spec.KeySpec keySpec) {
+            return privateKey;
+        }
+
+        @Override
+        protected <T extends java.security.spec.KeySpec> T engineGetKeySpec(java.security.Key key, Class<T> keySpec) {
+            throw new UnsupportedOperationException("imports only");
+        }
+
+        @Override
+        protected java.security.Key engineTranslateKey(java.security.Key key) {
+            throw new UnsupportedOperationException("imports only");
         }
     }
 

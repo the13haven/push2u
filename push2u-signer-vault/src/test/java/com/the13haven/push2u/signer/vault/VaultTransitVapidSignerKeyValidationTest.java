@@ -286,6 +286,17 @@ class VaultTransitVapidSignerKeyValidationTest {
     }
 
     /**
+     * One step earlier than the degenerate keys above: the factory itself — {@code KeyFactory.generatePublic} runs the
+     * provider's own implementation — can answer the parse with no key at all. Before this was refused by name, the
+     * non-EC diagnostic asked the missing key for its algorithm name and the NPE surfaced from the diagnostic itself.
+     * Same delivery through the production path, same global-state scoping, same sequential-build dependency as above.
+     */
+    @Test
+    void aKeyFactoryAnsweringNoKeyAtAllIsRefusedAsACryptoException() throws Exception {
+        assertRefusedThroughTheBuilder(null, "no key at all");
+    }
+
+    /**
      * The platform-parameter lookup itself, answered degenerately: {@code AlgorithmParameters.getParameterSpec} runs in
      * whichever provider wins the resolution, and one answering {@code null} must be refused before the curve
      * comparison dereferences it. The provider also registers a {@code KeyFactory} handing back the pre-parsed genuine

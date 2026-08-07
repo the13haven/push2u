@@ -170,7 +170,16 @@ public final class P256PublicKeys {
      * {@link ECParameterSpec}, {@link EllipticCurve} and {@link ECPoint} instances, whose constructors reject
      * {@code null} components — whereas a provider hostile enough to subclass those types and lie through overridden
      * getters could be chased one accessor deeper without end. So the line is drawn at the values a provider returns
-     * from its own implementation, and the components <em>inside</em> a non-null spec are not re-checked.
+     * from its own implementation — the containers those values arrive in included: the {@code KeyPair} a generator
+     * answers and the key a {@code KeyFactory} answers are such values, refused by name before their contents are read
+     * — and the components <em>inside</em> a non-null spec are not re-checked.
+     *
+     * <p>The line has a second side, equally chosen: a provider output this library never inspects but only passes
+     * onward — the ECDH shared-secret bytes, a cipher's or a MAC's output — gets no {@code null} refusal at all. There
+     * is no verification at those sites for a {@code null} to slip past: nothing here reads the value before handing it
+     * on, so a check would guard no dereference of this library's own and its only effect would be re-badging the
+     * failure the value's next consumer raises anyway. The refusals belong to the verification sites, not to every
+     * provider return.
      */
     @Nullable
     static String nistP256Mismatch(@Nullable ECParameterSpec parameters) {
