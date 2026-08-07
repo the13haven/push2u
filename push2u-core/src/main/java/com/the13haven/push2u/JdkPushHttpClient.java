@@ -55,8 +55,8 @@ public final class JdkPushHttpClient implements PushHttpClient {
      * Uses the given {@link HttpClient} (bring your own proxy, executor, or TLS configuration) and per-request timeout.
      *
      * @param httpClient the HTTP client to send requests with; must be built with {@link HttpClient.Redirect#NEVER}
-     * @param requestTimeout the per-request timeout, applied to every request
-     * @throws IllegalArgumentException if the client follows redirects
+     * @param requestTimeout the per-request timeout, applied to every request; must be positive
+     * @throws IllegalArgumentException if the client follows redirects, or the timeout is not positive
      */
     public JdkPushHttpClient(HttpClient httpClient, Duration requestTimeout) {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
@@ -73,7 +73,15 @@ public final class JdkPushHttpClient implements PushHttpClient {
                     + " body and its headers to a host no policy ever saw, and would report that host's answer as"
                     + " the delivery result. Build the client with followRedirects(HttpClient.Redirect.NEVER)");
         }
-        this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+        Objects.requireNonNull(requestTimeout, "requestTimeout");
+        if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+            // HttpRequest.Builder.timeout(Duration) throws its own IllegalArgumentException for a
+            // non-positive duration, but only once post() builds the request — rejecting here
+            // turns a misconfiguration into a clear failure where the value was supplied, not on
+            // the first delivery attempt.
+            throw new IllegalArgumentException("requestTimeout must be positive, got " + requestTimeout);
+        }
+        this.requestTimeout = requestTimeout;
     }
 
     @Override
