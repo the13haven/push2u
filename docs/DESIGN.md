@@ -418,22 +418,23 @@ the application's boundary. At decode time, inside the send pipeline, the point 
 — coordinates inside the prime field, then the P-256 curve equation — against the now-verified
 parameters of the provider that is about to run ECDH, before the point reaches that provider's
 `KeyFactory`. Refusing an invalid-curve point therefore never depends on whether the configured
-provider validates in `KeyAgreement.doPhase`. The equation arithmetic itself lives once, in
+provider validates in `KeyAgreement.doPhase`. Within the core the equation arithmetic lives once, in
 `P256PublicKeys`; only the parameter source differs. The value-wise parameter comparison lives once
 there as well, against the hard-coded constants, and answers for both places a provider's
 `secp256r1` claim enters the core — the import seam above and the ephemeral generator. The Vault
 signer performs its own, deliberately separate checks on the key it fetches (§7) — a parameter
-comparison of the same shape and the same refuse-not-truncate serialization — duplicated because
-`P256PublicKeys.nistP256Mismatch` is package-private to `push2u-core` and no other module can call
-it. Its reference is weaker as well as separate: there the fetched key is compared against the
-platform's `AlgorithmParameters` answer for `secp256r1`, taken as given rather than verified against
-the published constants — extending the lookup exactly the trust this section opens by withholding.
-What that costs is diagnostic rather than secret-exposing — a platform answering the name with some
-other curve makes the genuine P-256 key Vault returns fail the comparison, so such a deployment
-fails loudly when the signer is built instead of signing on a curve nobody chose, and the VAPID
-private key never exists locally in any case. What the module *can* call it does call:
-`P256PublicKeys.requireOnCurve`, against the core's hard-coded constants, runs on the key either
-mode publishes.
+comparison of the same shape, its own inlined copy of the curve equation, and the same
+refuse-not-truncate serialization — all three duplicated because their counterparts
+(`nistP256Mismatch`, `satisfiesCurveEquation`, and `EcKeys` entire) are package-private to
+`push2u-core`, so no other module can call them. The parameter comparison's reference is weaker as
+well as separate: there the fetched key is compared against the platform's `AlgorithmParameters`
+answer for `secp256r1`, taken as given rather than verified against the published constants —
+extending the lookup exactly the trust this section opens by withholding. What that costs is
+diagnostic rather than secret-exposing — a platform answering the name with some other curve makes
+the genuine P-256 key Vault returns fail the comparison, so such a deployment fails loudly when the
+signer is built instead of signing on a curve nobody chose, and the VAPID private key never exists
+locally in any case. What the module *can* call it does call: `P256PublicKeys.requireOnCurve`,
+against the core's hard-coded constants, runs on the key either mode publishes.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
@@ -540,7 +541,10 @@ No traversal route through OSS Vault is claimed here.
   import and at verification time. Coordinates are likewise never truncated to fit the 32-byte
   P-256 fields. Without all three, an `ecdsa-p384` key yields a syntactically valid but unusable
   VAPID key, and the misconfiguration surfaces only as an unexplained push-service rejection on the
-  first send.
+  first send. Those three are what the metadata read itself performs; the canonical constructor
+  then puts the same key through `P256PublicKeys.requireOnCurve` — the core's check, against its
+  hard-coded constants — before the signer exists, which is what §6 weighs against the unverified
+  reference the parameter step uses.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The supplied key gets
   the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
