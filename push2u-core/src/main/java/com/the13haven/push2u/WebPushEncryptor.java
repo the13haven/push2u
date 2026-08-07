@@ -111,28 +111,39 @@ final class WebPushEncryptor {
         KeyPair ephemeral = EcKeys.generateP256(jca);
         byte[] salt = new byte[SALT_LENGTH];
         random.nextBytes(salt);
-        return encrypt(uaPublicKey, authSecret, plaintext, recordSize, ephemeral, salt);
+        // The casts cannot fail: generateP256 has already refused any pair whose halves are not
+        // EC keys on the published NIST P-256 parameters.
+        return encrypt(
+                uaPublicKey,
+                authSecret,
+                plaintext,
+                recordSize,
+                (ECPrivateKey) ephemeral.getPrivate(),
+                (ECPublicKey) ephemeral.getPublic(),
+                salt);
     }
 
     /**
-     * Deterministic core with the ephemeral application-server key pair and salt injected — the form the RFC 8291 §5
-     * vectors exercise. In production the convenience overload above supplies a random pair and salt; a test supplies
-     * the fixed RFC values to reproduce the worked example byte-for-byte. Returns the {@code aes128gcm} body.
+     * Deterministic core with the ephemeral application-server key halves and salt injected — the form the RFC 8291 §5
+     * vectors exercise. In production the convenience overload above supplies a freshly generated pair and a random
+     * salt; a test supplies the fixed RFC values to reproduce the worked example byte-for-byte. The halves are typed EC
+     * parameters rather than a {@link KeyPair} so the compiler, not a runtime cast, guarantees what ECDH and the header
+     * encoding need. Returns the {@code aes128gcm} body.
      */
     byte[] encrypt(
             byte[] uaPublicKey,
             byte[] authSecret,
             byte[] plaintext,
             int recordSize,
-            KeyPair applicationServerKeyPair,
+            ECPrivateKey applicationServerPrivateKey,
+            ECPublicKey applicationServerPublicKey,
             byte[] salt) {
         checkRecordSize(plaintext.length, recordSize);
 
         ECPublicKey uaPublic = EcKeys.decodeP256PublicKey(uaPublicKey, jca);
-        ECPrivateKey asPrivate = (ECPrivateKey) applicationServerKeyPair.getPrivate();
-        byte[] asPublicKey = EcKeys.encodeUncompressed((ECPublicKey) applicationServerKeyPair.getPublic());
+        byte[] asPublicKey = EcKeys.encodeUncompressed(applicationServerPublicKey);
 
-        byte[] ecdhSecret = EcKeys.ecdh(asPrivate, uaPublic, jca);
+        byte[] ecdhSecret = EcKeys.ecdh(applicationServerPrivateKey, uaPublic, jca);
         byte[] prkKey = hkdf.extract(authSecret, ecdhSecret);
         byte[] keyInfo = concat(KEY_INFO_PREFIX, uaPublicKey, asPublicKey);
         byte[] ikm = hkdf.expand(prkKey, keyInfo, IKM_LENGTH);

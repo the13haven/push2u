@@ -13,9 +13,11 @@ import java.math.BigInteger;
 import java.security.AlgorithmParametersSpi;
 import java.security.KeyPair;
 import java.security.KeyPairGeneratorSpi;
+import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.ECFieldF2m;
@@ -500,8 +502,152 @@ class EcKeysUntrustedInputTest {
     }
 
     /**
+     * The sharper defective-generator shape: the returned public <em>point</em> genuinely lies on P-256 — the curve
+     * equation cannot refuse it — while the key's declared domain parameters differ from NIST P-256 in a component the
+     * equation never looks at. The order {@code n} is the case that matters most: {@code n} bounds the private scalar,
+     * so a generator configured with a small order draws a guessable {@code d} whose public point {@code d·G} is still
+     * a perfectly good P-256 point. Pinned: the value-wise parameter comparison, not the equation, is what refuses the
+     * pair, with the message naming the mismatched component.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("substitutedGeneratedKeyParameters")
+    void aGeneratedKeyOnP256WithSubstitutedParametersFailsClosed(
+            String component, ECParameterSpec substituted, String expectedFragment) {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(keyAt(genuineP256Point(), substituted)));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining(expectedFragment)
+                .hasMessageContaining("NIST P-256");
+    }
+
+    private static Stream<Arguments> substitutedGeneratedKeyParameters() {
+        return Stream.of(
+                Arguments.of("wrong (small) order", withOrder(BigInteger.valueOf(65_537)), "wrong order n"),
+                Arguments.of(
+                        "wrong generator",
+                        withGenerator(new ECPoint(BigInteger.ONE, BigInteger.TWO)),
+                        "wrong generator"),
+                Arguments.of("wrong cofactor", withCofactor(4), "wrong cofactor h"));
+    }
+
+    /** The private half drives ECDH directly, so a non-EC private key must fail closed, not class-cast later. */
+    @Test
+    void aGeneratedPrivateHalfThatIsNotAnEcKeyFailsClosedInsteadOfClassCasting() {
+        ECPublicKey genuine = EcKeys.decodeP256PublicKey(validPoint(), jca);
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(genuine, nonEcPrivateKey()));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("private key, not an EC");
+    }
+
+    /**
+     * The private half carries its own parameter set, and it is the scalar's parameters — not the public point's — that
+     * the ECDH agreement runs on, so they get the same value-wise verification as the public half's.
+     */
+    @Test
+    void aGeneratedPrivateHalfWithNonP256ParametersFailsClosed() {
+        ECPublicKey genuine = EcKeys.decodeP256PublicKey(validPoint(), jca);
+        ECParameterSpec secp256k1 = withCurve(SECP256K1_P, BigInteger.ZERO, BigInteger.valueOf(7));
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(genuine, privateKeyOn(secp256k1)));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("private")
+                .hasMessageContaining("NIST P-256");
+    }
+
+    /**
+     * The maximally degenerate generator: {@code KeyPair} stores whatever references its constructor was handed,
+     * {@code null} included, and the refusal must still arrive as the library's own {@link PushCryptoException} — a
+     * {@link NullPointerException} escaping from the diagnostic itself would be a crypto failure surfacing outside the
+     * library's stated exception taxonomy.
+     */
+    @Test
+    void aGeneratedPairWithANullPublicHalfFailsClosedAsACryptoException() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(null));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no public key");
+    }
+
+    @Test
+    void aGeneratedPairWithANullPrivateHalfFailsClosedAsACryptoException() {
+        ECPublicKey genuine = EcKeys.decodeP256PublicKey(validPoint(), jca);
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(genuine, null));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no private key");
+    }
+
+    /** A genuine P-256 point (the RFC 8291 worked example's {@code ua_public}) to pair with substituted parameters. */
+    private ECPoint genuineP256Point() {
+        return EcKeys.decodeP256PublicKey(validPoint(), jca).getW();
+    }
+
+    /** A private key that is not an EC key at all — the shape an unguarded cast would explode on. */
+    private static PrivateKey nonEcPrivateKey() {
+        return new PrivateKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public String getAlgorithm() {
+                return "XDH";
+            }
+
+            @Override
+            public String getFormat() {
+                return "PKCS#8";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        };
+    }
+
+    /** An EC private key reporting the given parameter set — the wrong-curve private half the tests above need. */
+    private static ECPrivateKey privateKeyOn(ECParameterSpec params) {
+        return new ECPrivateKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public BigInteger getS() {
+                return BigInteger.TWO;
+            }
+
+            @Override
+            public ECParameterSpec getParams() {
+                return params;
+            }
+
+            @Override
+            public String getAlgorithm() {
+                return Algorithms.EC;
+            }
+
+            @Override
+            public String getFormat() {
+                return "PKCS#8";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        };
+    }
+
+    /**
      * A provider whose only registration answers the EC {@code KeyPairGenerator} lookup with a generator returning a
-     * fixed public key — the defective-generator shape the fail-closed tests above need.
+     * fixed key pair — the defective-generator shape the fail-closed tests above need. The one-argument form pairs the
+     * given public key with a genuine platform-derived private half, for the tests that probe the public side only.
      */
     private static final class FixedKeyPairProvider extends Provider {
 
@@ -509,7 +655,11 @@ class EcKeysUntrustedInputTest {
         private static final long serialVersionUID = 1L;
 
         FixedKeyPairProvider(PublicKey publicKey) {
-            super("push2u-fixed-keypair", "1.0", "answers EC key-pair generation with a fixed key");
+            this(publicKey, EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), Jca.platform()));
+        }
+
+        FixedKeyPairProvider(PublicKey publicKey, PrivateKey privateKey) {
+            super("push2u-fixed-keypair", "1.0", "answers EC key-pair generation with a fixed key pair");
             putService(
                     new Service(
                             this,
@@ -520,19 +670,21 @@ class EcKeysUntrustedInputTest {
                             null) {
                         @Override
                         public Object newInstance(Object constructorParameter) {
-                            return new FixedKeyPairGenerator(publicKey);
+                            return new FixedKeyPairGenerator(publicKey, privateKey);
                         }
                     });
         }
     }
 
-    /** A {@code KeyPairGenerator} SPI returning the fixed public key it was built with (the private half is unused). */
+    /** A {@code KeyPairGenerator} SPI returning the fixed key pair it was built with. */
     public static final class FixedKeyPairGenerator extends KeyPairGeneratorSpi {
 
         private final PublicKey publicKey;
+        private final PrivateKey privateKey;
 
-        FixedKeyPairGenerator(PublicKey publicKey) {
+        FixedKeyPairGenerator(PublicKey publicKey, PrivateKey privateKey) {
             this.publicKey = publicKey;
+            this.privateKey = privateKey;
         }
 
         @Override
@@ -542,12 +694,12 @@ class EcKeysUntrustedInputTest {
 
         @Override
         public void initialize(AlgorithmParameterSpec params, SecureRandom random) {
-            // Accept the ECGenParameterSpec("secp256r1") init and return the fixed key anyway.
+            // Accept the ECGenParameterSpec("secp256r1") init and return the fixed pair anyway.
         }
 
         @Override
         public KeyPair generateKeyPair() {
-            return new KeyPair(publicKey, EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), Jca.platform()));
+            return new KeyPair(publicKey, privateKey);
         }
     }
 

@@ -139,6 +139,21 @@ public final class P256PublicKeys {
     }
 
     /**
+     * Whether {@code (x, y)} is an affine point on NIST P-256, checked against the hard-coded published constants: both
+     * coordinates inside the prime field ({@code 0 <= x, y < p}) and the curve equation satisfied. The coordinate-wise
+     * twin of {@link #requireOnCurve} for callers that already hold {@code BigInteger} coordinates — the ephemeral-key
+     * generation holds a generated key to the published values through this, rather than to whatever the generating
+     * provider declares.
+     */
+    static boolean isOnNistP256(BigInteger x, BigInteger y) {
+        return x.signum() >= 0
+                && x.compareTo(P) < 0
+                && y.signum() >= 0
+                && y.compareTo(P) < 0
+                && satisfiesCurveEquation(x, y, P, A, B);
+    }
+
+    /**
      * The first component in which {@code parameters} differs from the published NIST P-256 domain parameters, as a
      * short log-safe phrase naming the component and no values — or {@code null} when every component matches. The
      * comparison is value-wise because {@link ECParameterSpec} has no {@code equals}: providers hand back
@@ -191,10 +206,11 @@ public final class P256PublicKeys {
 
     /**
      * Whether {@code (x, y)} satisfies the short Weierstrass equation {@code y² ≡ x³ + ax + b (mod p)}. The one
-     * implementation of the equation in this module: the public check above runs it on the hard-coded P-256 parameters,
-     * and {@code EcKeys} runs it on the configured provider's parameters before ECDH — same arithmetic, deliberately
-     * different parameter source (see the class Javadoc). Callers ensure {@code 0 <= x, y < p} first; this method only
-     * evaluates the equation.
+     * implementation of the equation in this module, reached three ways: the public check above and
+     * {@link #isOnNistP256} run it on the hard-coded P-256 parameters — for wire-format key material and for the
+     * generated ephemeral pair respectively — and {@code EcKeys} runs it on the configured provider's parameters before
+     * ECDH. Same arithmetic, deliberately different parameter sources (see the class Javadoc). Callers ensure {@code 0
+     * <= x, y < p} first; this method only evaluates the equation.
      */
     static boolean satisfiesCurveEquation(BigInteger x, BigInteger y, BigInteger p, BigInteger a, BigInteger b) {
         BigInteger left = y.multiply(y).mod(p);

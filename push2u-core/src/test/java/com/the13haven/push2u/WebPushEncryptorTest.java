@@ -11,7 +11,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
@@ -29,9 +28,6 @@ class WebPushEncryptorTest {
 
     @Test
     void encryptsRfc8291Section5ExampleByteForByte() {
-        KeyPair applicationServerKeyPair = new KeyPair(
-                EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
-                EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
         byte[] plaintext = TestVectors.PLAINTEXT.getBytes(StandardCharsets.US_ASCII);
 
         byte[] body = encryptor.encrypt(
@@ -39,7 +35,8 @@ class WebPushEncryptorTest {
                 b64(TestVectors.AUTH_SECRET),
                 plaintext,
                 4096,
-                applicationServerKeyPair,
+                EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca),
+                EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
                 b64(TestVectors.SALT));
 
         // body = header || ciphertext (RFC 8291 §5); a byte-for-byte match pins the whole path.
@@ -100,15 +97,14 @@ class WebPushEncryptorTest {
 
     @Test
     void rejectsRecordSizeTooSmallForPayload() {
-        KeyPair keyPair = new KeyPair(
-                EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca),
-                EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca));
+        var asPrivate = EcKeys.decodeP256PrivateKey(b64(TestVectors.AS_PRIVATE), jca);
+        var asPublic = EcKeys.decodeP256PublicKey(b64(TestVectors.AS_PUBLIC), jca);
         byte[] uaPublic = b64(TestVectors.UA_PUBLIC);
         byte[] auth = b64(TestVectors.AUTH_SECRET);
         byte[] salt = b64(TestVectors.SALT);
         byte[] plaintext = new byte[100];
 
-        assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 50, keyPair, salt))
+        assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, plaintext, 50, asPrivate, asPublic, salt))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
