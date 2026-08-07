@@ -36,10 +36,15 @@ class VaultTransitVapidSignerSignResponseTest {
     private static final String TOKEN = "s.push2u-test-vault-token";
     private static final Base64.Encoder BASE64_URL = Base64.getUrlEncoder().withoutPadding();
 
+    /** A genuine P-256 point (the RFC 8291 §5 user-agent key): the supplied key is validated against the curve. */
+    private static byte[] validPublicKey() {
+        return Base64.getUrlDecoder()
+                .decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
+    }
+
     /** An explicit-mode signer whose Vault always answers {@code responseBody} (HTTP 200). */
     private static VaultTransitVapidSigner signer(String responseBody) {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        byte[] publicKey = validPublicKey();
         VaultHttpTransport stub = new VaultHttpTransport() {
             @Override
             public VaultHttpResponse get(URI uri, Map<String, String> headers) {
@@ -67,8 +72,7 @@ class VaultTransitVapidSignerSignResponseTest {
 
     /** An explicit-mode signer pinned to {@code keyVersion}, whose Vault always answers {@code responseBody}. */
     private static VaultTransitVapidSigner pinnedSigner(String responseBody, int keyVersion) {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        byte[] publicKey = validPublicKey();
         VaultHttpTransport stub = new VaultHttpTransport() {
             @Override
             public VaultHttpResponse get(URI uri, Map<String, String> headers) {

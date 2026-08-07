@@ -28,13 +28,27 @@ import java.util.regex.Pattern;
 
 import org.jspecify.annotations.Nullable;
 
+import com.the13haven.push2u.P256PublicKeys;
 import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.VapidSigner;
 
 /**
  * A {@link VapidSigner} that signs the VAPID JWT via HashiCorp Vault Transit — the private key never leaves Vault. It
- * POSTs the signing input to {@code {vaultAddress}/v1/{mount}/sign/{keyName}} with {@code marshaling_algorithm=jws}, so
- * Vault returns the raw {@code r || s} pair JOSE wants, and decodes it.
+ * POSTs the signing input to {@code {vaultAddress}/v1/{mount}/sign/{keyName}} — any trailing slash of the address
+ * dropped before the join — with {@code marshaling_algorithm=jws}, so Vault returns the raw {@code r || s} pair JOSE
+ * wants, and decodes it.
+ *
+ * <p><b>The Vault address</b> is validated at both factory methods: it must be an absolute URI with a host and must
+ * carry neither a query nor a fragment — Vault API paths are appended to it, so neither could survive the join. A path
+ * is legal and preserved: {@code https://gw.example/vault} (with or without a trailing slash — the two are the same
+ * base) addresses a Vault served under the {@code /vault} prefix of a reverse proxy or Kubernetes ingress, and the
+ * signer then calls {@code https://gw.example/vault/v1/{mount}/sign/{keyName}}. The path follows the same per-segment
+ * rule as {@code mount} — every {@code /}-separated segment non-empty, not {@code .} or {@code ..}, drawn from
+ * {@code [A-Za-z0-9_.-]} — for the same reasons (see {@link #requireValidVaultPath}'s rationale): the prefix rides in
+ * front of every token-bearing request path, so a segment a normalizing hop would rewrite must fail loudly at
+ * configuration instead. The <em>scheme</em> is deliberately not restricted to {@code https} — Vault's dev server
+ * listens on plain {@code http}, and the Vault CLI and Spring Vault accept it the same way — but a production address
+ * must be {@code https}: on plain HTTP the {@code X-Vault-Token} header travels in clear text.
  *
  * <p>The Vault key must be an {@code ecdsa-p256} Transit key. The VAPID public key is your published identity; Vault
  * holds only the private half. There are two ways to supply the public key, one builder each — the two differ in
@@ -46,10 +60,12 @@ import com.the13haven.push2u.VapidSigner;
  *       performs no I/O. The Vault token then needs only the {@code sign} capability ({@code update} on
  *       {@code transit/sign/<key>}); the public key is never read from Vault. Use this for a strict sign-only token or
  *       an air-gapped public key.
- *       <p>The supplied key is checked <em>structurally only</em> — 65 bytes with the {@code 0x04} uncompressed tag. It
- *       is not verified to be a point on P-256, and nothing here can check that it is the public half of the Transit
- *       key being signed with: that remains the caller's responsibility. The P-256 validation described below applies
- *       to the fetched mode alone.
+ *       <p>The supplied key is validated as a <em>point on P-256</em> — 65 bytes with the {@code 0x04} uncompressed
+ *       tag, both coordinates in the field, the curve equation satisfied — because the {@link VapidSigner} contract
+ *       requires exactly that of {@code publicKey()}, and no legal VAPID key can fail it. What nothing here can check
+ *       is that it is the public half of the Transit key being signed with: that remains the caller's responsibility,
+ *       and a mismatch surfaces on the first signature to a VAPID-bound subscription, as a push-service rejection of
+ *       the JWT. The Vault-side validation described below applies to the fetched mode alone.
  *   <li><b>Fetched</b> ({@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}) — omit the public key.
  *       The signer reads {@code transit/keys/<key>} once, inside {@code build()} (a {@code GET}), takes the
  *       {@code latest_version} and <em>that version's</em> public key as an atomic pair, and reduces the PEM to the
@@ -170,11 +186,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * from Vault, so it performs I/O and can fail with a {@link PushCryptoException}. It has no {@code keyVersion} step
      * — the version comes from Vault together with the public key it belongs to, as one atomic pair.
      *
-     * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+     * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
+     *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
+     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
+     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
+     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
      *     (this mode reads the key metadata)
      * @return a new builder
+     * @throws IllegalArgumentException if {@code address} is not an absolute URI with a host, carries a query or
+     *     fragment, or has a path violating the per-segment rule (empty, {@code .} or {@code ..} segments, or
+     *     characters outside {@code [A-Za-z0-9_.-]})
      */
     public static FetchedPublicKeyBuilder builderWithFetchedPublicKey(
             URI address, TransitKeyName keyName, VaultToken token) {
@@ -185,13 +208,20 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * A builder for the <b>explicit</b> mode: the caller supplies the published VAPID public key, and
      * {@link SuppliedPublicKeyBuilder#build()} contacts nothing. The Vault token then needs only {@code sign}.
      *
-     * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+     * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
+     *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
+     *     contract; a production address must be {@code https}). Userinfo in the address is preserved, but the built-in
+     *     transport does not use it — no {@code Authorization} header is formed from it; Vault authentication is the
+     *     token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth fronting proxy
      * @param keyName the {@code ecdsa-p256} Transit key name
      * @param token the Vault token authorising {@code sign} on the key — this mode never reads the key metadata, so a
      *     sign-only token is enough
-     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed P-256 point
+     * @param publicKey the VAPID public key — a 65-byte X9.62 uncompressed point on the P-256 curve, validated here
+     *     ({@link P256PublicKeys#requireOnCurve}) because the {@link VapidSigner} contract requires it; that it is the
+     *     public half of the Transit key remains the caller's responsibility
      * @return a new builder
-     * @throws IllegalArgumentException if {@code publicKey} is not a 65-byte uncompressed point
+     * @throws IllegalArgumentException if {@code publicKey} does not encode a point on P-256, or if {@code address}
+     *     violates the contract of {@link #builderWithFetchedPublicKey(URI, TransitKeyName, VaultToken)}
      */
     public static SuppliedPublicKeyBuilder builderWithSuppliedPublicKey(
             URI address, TransitKeyName keyName, VaultToken token, byte[] publicKey) {
@@ -211,13 +241,16 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(keyName, "keyName");
         Objects.requireNonNull(publicKey, "publicKey");
-        if (publicKey.length != UNCOMPRESSED_LENGTH || publicKey[0] != UNCOMPRESSED_TAG) {
-            throw new IllegalArgumentException("publicKey must be a 65-byte uncompressed P-256 point (0x04 prefix)");
-        }
+        // The full on-curve check: the VapidSigner contract (and the published conformance kit)
+        // requires publicKey() to return a point on P-256, so a signer violating it must be
+        // unbuildable. For the fetched mode's array this re-checks what fetchKeyMetadata already
+        // validated; what no check here can establish is the supplied key's agreement with the
+        // Transit key — that surfaces on the first signature (see the class Javadoc).
+        P256PublicKeys.requireOnCurve(publicKey, "publicKey");
         if (keyVersion != null && keyVersion < 1) {
             throw new IllegalArgumentException("keyVersion must be >= 1, got " + keyVersion);
         }
-        this.signUri = vaultAddress.resolve("/v1/" + mount + "/sign/" + keyName.value());
+        this.signUri = vaultApiUri(vaultAddress, "/v1/" + mount + "/sign/" + keyName.value());
         // Unwrapped once, here: a VaultToken is valid by construction (visible ASCII, hence
         // header-safe), so nothing downstream re-validates it — and the raw String never
         // reaches any toString() or exception message.
@@ -289,7 +322,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         Objects.requireNonNull(keyName, "keyName");
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(transport, "transport");
-        URI keyUri = vaultAddress.resolve("/v1/" + mount + "/keys/" + keyName.value());
+        URI keyUri = vaultApiUri(vaultAddress, "/v1/" + mount + "/keys/" + keyName.value());
         // No token or namespace validation here: a VaultToken is valid by construction (visible
         // ASCII, hence header-safe), and the namespace was validated at the namespace(...) step
         // that set it — so this call, which in the fetched mode runs before the canonical
@@ -850,6 +883,110 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
+     * Validate the Vault base address where it is set — both factory methods, so an unusable address fails the call
+     * that supplied it and {@code build()} never trips over it. The address must be absolute and carry a host (a
+     * relative or opaque URI names no server to call), and must carry neither a query nor a fragment: the signer
+     * appends {@code /v1/…} API paths to it, and RFC 3986 §5.3 gives a base's query and fragment no way into the joined
+     * URI — a value that would be silently discarded is a misconfiguration worth naming. The scheme is deliberately
+     * unrestricted (see the class Javadoc: Vault's dev server is plain {@code http}); production addresses must be
+     * {@code https}.
+     *
+     * <p>The path — the reverse-proxy or ingress prefix the API paths are appended after — is validated by the same
+     * per-segment rule as {@code mount}, for the same reasons ({@link #requireValidVaultPath}): it rides in front of
+     * every token-bearing request path, so a {@code .}/{@code ..} segment (or a percent-encoded {@code %2e%2e}, which
+     * the allowed set excludes wholesale) must fail loudly at configuration instead of reaching a hop that rewrites it.
+     * A single trailing slash is legal — {@code https://gw.example/vault/} and {@code https://gw.example/vault} are the
+     * same base, and the join drops it — but an empty interior segment ({@code //}) is refused: two operators cannot
+     * agree on what it addresses, and a collapsing hop answers for neither.
+     */
+    private static URI requireValidVaultAddress(URI address) {
+        Objects.requireNonNull(address, "address");
+        if (!address.isAbsolute()
+                || address.getHost() == null
+                || address.getHost().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "address must be an absolute URI with a host, e.g. https://vault.example:8200"
+                            + " or https://gw.example/vault");
+        }
+        if (address.getRawQuery() != null) {
+            throw new IllegalArgumentException("address must not carry a query — it is a base address the Vault API"
+                    + " paths (/v1/…) are appended to, and a base's query has no way into the joined URI");
+        }
+        if (address.getRawFragment() != null) {
+            throw new IllegalArgumentException("address must not carry a fragment — it is a base address the Vault API"
+                    + " paths (/v1/…) are appended to, and a base's fragment has no way into the joined URI");
+        }
+        requireValidVaultAddressPath(address.getRawPath());
+        return address;
+    }
+
+    /**
+     * The path half of {@link #requireValidVaultAddress}: empty is the common case (no prefix), otherwise every segment
+     * of the <em>raw</em> path — checked raw so percent-encoding cannot smuggle what the literal check refuses — must
+     * be non-empty, not {@code .} or {@code ..}, and drawn from the {@link #allowedVaultPathCharacter same allowed set
+     * as mount}, which contains no {@code %}. One trailing empty segment (a single trailing slash) is tolerated and
+     * later dropped by {@link #vaultApiUri}.
+     */
+    private static void requireValidVaultAddressPath(@Nullable String rawPath) {
+        if (rawPath == null || rawPath.isEmpty()) {
+            return;
+        }
+        String[] segments = rawPath.split("/", -1);
+        // segments[0] is the empty run before the leading '/' (a URI with an authority can carry
+        // no other path shape); a trailing '/' contributes one final empty segment, tolerated.
+        for (int i = 1; i < segments.length; i++) {
+            String segment = segments[i];
+            if (segment.isEmpty()) {
+                if (i == segments.length - 1) {
+                    continue;
+                }
+                throw new IllegalArgumentException(
+                        "address path must not contain an empty '//' segment — a Vault behind a path prefix is"
+                                + " written like https://gw.example/vault, one non-empty segment per '/'");
+            }
+            if (".".equals(segment) || "..".equals(segment)) {
+                throw new IllegalArgumentException("address path must not contain a '" + segment + "' segment — the"
+                        + " path prefixes every token-bearing Vault request, and a normalizing proxy in front of"
+                        + " Vault would collapse such a segment before Vault sees it, so the request's destination"
+                        + " would depend on which hops are deployed");
+            }
+            for (int j = 0; j < segment.length(); j++) {
+                if (!allowedVaultPathCharacter(segment.charAt(j))) {
+                    throw new IllegalArgumentException("address path contains a character outside the allowed set"
+                            + " [A-Za-z0-9_.-] and '/'. The set is deliberately narrower than URLs allow, for the"
+                            + " same reason as the mount rule: a percent-encoded sequence would survive to a"
+                            + " decoding hop that rewrites the request path, and the conservative set can be"
+                            + " widened later without breaking compatibility");
+                }
+            }
+        }
+    }
+
+    /**
+     * The URI of a Vault API path below the validated base address: scheme and authority verbatim, then the address's
+     * path with any single trailing slash dropped, then {@code pathBelowRoot} (which starts with {@code /v1/}).
+     *
+     * <p>Assembled by concatenation, deliberately not {@link URI#resolve}: per RFC 3986 §5.3 an absolute-path reference
+     * ({@code resolve("/v1/…")}) replaces the base's path <em>entirely</em>, silently discarding a reverse-proxy prefix
+     * like {@code /vault} — and the relative form ({@code resolve("v1/…")}) is no fix, because merging drops everything
+     * after the base path's last {@code /}, so a prefix without a trailing slash would lose its final segment, just
+     * more quietly. The concatenation is exact because {@link #requireValidVaultAddress} already pinned the shape:
+     * absolute, host present, no query or fragment, and a path of plain allowed-set segments, so scheme + authority +
+     * path is the whole of the address.
+     */
+    private static URI vaultApiUri(URI address, String pathBelowRoot) {
+        String prefix = address.getRawPath();
+        if (prefix == null) {
+            prefix = "";
+        } else if (prefix.endsWith("/")) {
+            // At most one: the per-segment rule refuses interior empty segments, so a validated
+            // path can end in a single '/' only.
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        return URI.create(address.getScheme() + "://" + address.getRawAuthority() + prefix + pathBelowRoot);
+    }
+
+    /**
      * Validate a slash-separated Vault path value where it is set — both builders' {@code mount(...)} and
      * {@code namespace(...)} steps share this one rule, with {@code name} naming the offending value in the failure and
      * {@code nestedExample} showing the legal nested shape. The rule is looser than {@link TransitKeyName}'s because
@@ -966,7 +1103,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         private VaultHttpTransport transport;
 
         private FetchedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token) {
-            this.address = Objects.requireNonNull(address, "address");
+            // Validated here, so the failure points at the factory call that supplied the value
+            // rather than at build() — which in this mode also performs I/O and must not be the
+            // first place a bad address is noticed.
+            this.address = requireValidVaultAddress(address);
             this.keyName = Objects.requireNonNull(keyName, "keyName");
             this.token = Objects.requireNonNull(token, "token");
         }
@@ -1083,18 +1223,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // The key is copied at the factory method, not only in the constructor the builder
         // eventually calls: otherwise the caller's array stays live for as long as the builder
         // does, and a mutation between builderWithSuppliedPublicKey(...) and build() would change
-        // the advertised key. Its shape is also checked here, so an invalid key fails at the
-        // factory call that supplied it (the canonical constructor re-checks the same invariant
-        // for the fetched mode's array).
+        // the advertised key. It is also validated here — the full on-curve check — so an invalid
+        // key fails at the factory call that supplied it (the canonical constructor re-checks the
+        // same invariant for the fetched mode's array).
         private SuppliedPublicKeyBuilder(URI address, TransitKeyName keyName, VaultToken token, byte[] publicKey) {
-            this.address = Objects.requireNonNull(address, "address");
+            // Validated here, like the key below, so the failure points at the factory call that
+            // supplied the value (build() must never refuse over it).
+            this.address = requireValidVaultAddress(address);
             this.keyName = Objects.requireNonNull(keyName, "keyName");
             this.token = Objects.requireNonNull(token, "token");
             Objects.requireNonNull(publicKey, "publicKey");
-            if (publicKey.length != UNCOMPRESSED_LENGTH || publicKey[0] != UNCOMPRESSED_TAG) {
-                throw new IllegalArgumentException(
-                        "publicKey must be a 65-byte uncompressed P-256 point (0x04 prefix)");
-            }
+            P256PublicKeys.requireOnCurve(publicKey, "publicKey");
             this.publicKey = publicKey.clone();
         }
 

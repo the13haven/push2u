@@ -15,22 +15,25 @@ import org.junit.jupiter.api.Test;
 
 class DomainTypesTest {
 
+    /** A real point (the RFC 8291 worked example): the constructor validates {@code p256dh} against the curve. */
+    private static byte[] uaPublic() {
+        return TestVectors.b64(TestVectors.UA_PUBLIC);
+    }
+
     @Test
     void subscriptionDefensivelyCopiesInputsAndAccessors() {
-        byte[] p256dh = new byte[65];
-        p256dh[0] = 0x04;
+        byte[] p256dh = uaPublic();
+        byte[] original = uaPublic();
         byte[] auth = new byte[16];
         Subscription subscription = new Subscription("https://push.example.net/x", p256dh, auth);
 
-        p256dh[1] = 0x7f;
+        p256dh[1] ^= 0x7f;
         auth[0] = 0x7f;
-        assertThat(subscription.p256dh()[1])
-                .as("input mutation does not leak in")
-                .isZero();
+        assertThat(subscription.p256dh()).as("input mutation does not leak in").isEqualTo(original);
         assertThat(subscription.auth()[0]).isZero();
 
-        subscription.p256dh()[1] = 0x7f;
-        assertThat(subscription.p256dh()[1]).as("accessor returns a fresh copy").isZero();
+        subscription.p256dh()[1] ^= 0x7f;
+        assertThat(subscription.p256dh()).as("accessor returns a fresh copy").isEqualTo(original);
     }
 
     @Test
@@ -38,9 +41,7 @@ class DomainTypesTest {
         assertThatThrownBy(() -> new Subscription("x", new byte[64], new byte[16]))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        byte[] validPoint = new byte[65];
-        validPoint[0] = 0x04;
-        assertThatThrownBy(() -> new Subscription("x", validPoint, new byte[15]))
+        assertThatThrownBy(() -> new Subscription("x", uaPublic(), new byte[15]))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -54,8 +55,7 @@ class DomainTypesTest {
 
     @Test
     void subscriptionHasContentValueEqualityAndRedactsTheSecret() {
-        byte[] p256dh = new byte[65];
-        p256dh[0] = 0x04;
+        byte[] p256dh = uaPublic();
         byte[] auth = "0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
 
         Subscription a = new Subscription("https://push.example.net/x", p256dh.clone(), auth.clone());
@@ -75,8 +75,7 @@ class DomainTypesTest {
 
     @Test
     void subscriptionRejectsNonHttpsEndpoint() {
-        byte[] p256dh = new byte[65];
-        p256dh[0] = 0x04;
+        byte[] p256dh = uaPublic();
         byte[] auth = new byte[16];
 
         assertThatThrownBy(() -> new Subscription("http://push.example.net/secret-path", p256dh, auth))
@@ -222,8 +221,23 @@ class DomainTypesTest {
     void vapidKeysValidatesLengths() {
         assertThatThrownBy(() -> VapidKeys.of(new byte[64], new byte[32])).isInstanceOf(IllegalArgumentException.class);
 
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        byte[] publicKey = TestVectors.b64(TestVectors.VAPID_PUBLIC_K);
         assertThatThrownBy(() -> VapidKeys.of(publicKey, new byte[31])).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * The public key must encode a point on P-256 — a corrupted or transposed configuration value is caught where the
+     * pair is created, with the input named, instead of surfacing as {@code LocalEcVapidSigner}'s later
+     * {@code PushCryptoException}.
+     */
+    @Test
+    void vapidKeysRejectsAPublicKeyOffTheCurve() {
+        byte[] offCurve = TestVectors.b64(TestVectors.VAPID_PUBLIC_K);
+        offCurve[64] ^= 0x01;
+
+        assertThatThrownBy(() -> VapidKeys.of(offCurve, new byte[32]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("VAPID public key")
+                .hasMessageContaining("curve equation");
     }
 }

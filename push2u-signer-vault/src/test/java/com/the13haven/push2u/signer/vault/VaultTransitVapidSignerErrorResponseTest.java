@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -137,24 +138,35 @@ class VaultTransitVapidSignerErrorResponseTest {
     // does not compile. A token or key name that is present but invalid is rejected by VaultToken /
     // TransitKeyName at construction — see VaultTokenTest and TransitKeyNameTest.
 
-    /** The supplied public key is validated at the factory call that supplies it, before any Vault request. */
+    /**
+     * The supplied public key is validated at the factory call that supplies it, before any Vault request — the full
+     * on-curve check, because the {@code VapidSigner} contract (pinned by the published conformance kit) requires
+     * {@code publicKey()} to return a point on P-256, so a signer violating it must be unbuildable.
+     */
     @Test
-    void anExplicitPublicKeyOfTheWrongShapeIsRejectedAtTheFactory() {
+    void anExplicitPublicKeyThatIsNotAP256PointIsRejectedAtTheFactory() {
         byte[] wrongPrefix = new byte[65];
         wrongPrefix[0] = 0x03;
-
         assertThatThrownBy(() -> suppliedBuilder(wrongPrefix))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("0x04");
 
         assertThatThrownBy(() -> suppliedBuilder(new byte[64])).isInstanceOf(IllegalArgumentException.class);
+
+        // The right shape, off the curve: no legal VAPID key fails this, and a corrupted one would
+        // otherwise surface only as an opaque push-service 401 on every send.
+        byte[] offCurve = validPublicKey();
+        offCurve[64] ^= 0x01;
+        assertThatThrownBy(() -> suppliedBuilder(offCurve))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("publicKey")
+                .hasMessageContaining("curve equation");
     }
 
     /** {@code keyVersion} is validated where it is set, so the failure points at the offending call. */
     @Test
     void aKeyVersionBelowOneIsRejected() {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        byte[] publicKey = validPublicKey();
 
         for (int version : new int[] {0, -1}) {
             assertThatThrownBy(() -> suppliedBuilder(publicKey).keyVersion(version))
@@ -179,8 +191,7 @@ class VaultTransitVapidSignerErrorResponseTest {
      */
     @Test
     void aMountThatWouldAlterTheRequestUrlIsRejectedAtTheStep() {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        byte[] publicKey = validPublicKey();
 
         for (String mount : new String[] {
             "",
@@ -228,12 +239,16 @@ class VaultTransitVapidSignerErrorResponseTest {
                 .transport(alwaysFails());
     }
 
+    /** A genuine P-256 point (the RFC 8291 §5 user-agent key): the supplied key is validated against the curve. */
+    private static byte[] validPublicKey() {
+        return Base64.getUrlDecoder()
+                .decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
+    }
+
     /** An explicit-mode signer whose Vault always answers {@code response} to a sign request. */
     private static VaultTransitVapidSigner explicitSigner(VaultHttpResponse response) {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
         return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), publicKey)
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), validPublicKey())
                 .mount("transit")
                 .transport(new VaultHttpTransport() {
                     @Override
