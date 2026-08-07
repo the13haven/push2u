@@ -104,13 +104,43 @@ class VaultSignerAutoConfigurationTest {
     void aPublicKeyThatIsNotBase64urlFailsNamingTheProperty() {
         // Base64's own message ("Illegal base64 character 2c") names neither the property nor the
         // expected encoding, which leaves the operator guessing which push2u.* value is at fault.
+        //
+        // The type is pinned as well as the message: one unusable value is an
+        // IllegalArgumentException here, as the on-curve check on this same property already is,
+        // while an IllegalStateException means the configuration is incoherent as a whole. Asserting
+        // on the message alone let that distinction drift once already. Not rootCause(), which is
+        // Base64's own rejection — this pins the one the starter composes on top of it.
         vaultRunner()
                 .withPropertyValues("push2u.signer.vault.public-key=not base64url!")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .hasStackTraceContaining("push2u.signer.vault.public-key is not base64url");
+                    assertThat(inChainNaming(
+                                    context.getStartupFailure(), "push2u.signer.vault.public-key is not base64url"))
+                            .isInstanceOf(IllegalArgumentException.class);
+                    // The type change removed what used to make a doubled prefix impossible: an
+                    // IllegalStateException could not be caught by translated(...), an
+                    // IllegalArgumentException can. Folding this decode into the translated(...)
+                    // block beside it would read like a tidy-up and compose the property name twice.
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .doesNotContain("public-key: push2u.signer.vault.public-key");
                 });
+    }
+
+    /**
+     * The first throwable in the chain whose message opens with {@code prefix} — the rejection the starter composes,
+     * not the {@code rootCause()} underneath it. Fails naming the prefix rather than returning null, so a miss reads as
+     * "nothing in the chain said this" instead of a generic complaint about null.
+     */
+    private static Throwable inChainNaming(Throwable failure, String prefix) {
+        for (Throwable throwable = failure; throwable != null; throwable = throwable.getCause()) {
+            String message = throwable.getMessage();
+            if (message != null && message.startsWith(prefix)) {
+                return throwable;
+            }
+        }
+        throw new AssertionError("no throwable in the failure chain opens with: " + prefix);
     }
 
     @Test
@@ -507,6 +537,12 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .rootCause()
+                            // The other half of the taxonomy, pinned by type as well as by message:
+                            // this is the starter's own pre-flight over two settings at once, which
+                            // is what IllegalStateException means here, while one value's form
+                            // being rejected is an IllegalArgumentException. Leaving either half on
+                            // a message-only assertion is how the distinction drifted before.
+                            .isInstanceOf(IllegalStateException.class)
                             .hasMessageContaining("key-version requires push2u.signer.vault.public-key");
                 });
     }

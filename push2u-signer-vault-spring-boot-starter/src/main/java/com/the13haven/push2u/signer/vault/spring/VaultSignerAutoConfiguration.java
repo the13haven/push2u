@@ -222,12 +222,18 @@ public final class VaultSignerAutoConfiguration {
      * The configured public key, decoded from base64url. {@link Base64}'s own message names neither the property nor
      * the expected encoding, and a context failure that only says "Illegal base64 character" leaves the operator
      * guessing which of the {@code push2u.*} values is at fault.
+     *
+     * <p>The rejection is an {@link IllegalArgumentException}, which is what both starters raise when one value's
+     * <em>form</em> is rejected — by the library, by the JDK, or here — as the on-curve check on this same property
+     * does. An {@link IllegalStateException} is reserved for the starter's own coherence pre-flight over several
+     * settings at once: a required one absent or blank, or two of them contradicting each other. A public key that is
+     * not base64url is neither.
      */
     private static byte[] decodePublicKey(String publicKey) {
         try {
             return Base64.getUrlDecoder().decode(publicKey);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException(
+            throw new IllegalArgumentException(
                     "push2u.signer.vault.public-key is not base64url: expected the 65-byte uncompressed"
                             + " P-256 point as base64url (RFC 4648 §5)",
                     e);
