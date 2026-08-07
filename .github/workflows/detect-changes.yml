@@ -2,7 +2,7 @@ name: Detect changes
 
 # Answers two questions for the workflows that gate a merge — could this change alter what a build
 # does (`build`), and does it touch anything a source analyser would read (`code`)? They differ over
-# exactly one file, README.md; see the `case` block below.
+# exactly one file, VAPID.md; see the `case` block below.
 #
 # It exists as a reusable workflow rather than as a `paths-ignore` filter under `on:` because of how
 # GitHub treats required status checks. `quality` and the two CodeQL `Analyze` jobs are required in
