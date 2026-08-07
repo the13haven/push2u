@@ -24,12 +24,13 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     proxy or ingress prefix, e.g. {@code https://gw.example/vault}. It must be an absolute URI with a host and no
  *     query or fragment; the path prefix, when present, is preserved in front of every Vault API path. The scheme must
  *     be {@code http} or {@code https}. {@code https} is always accepted; plain {@code http} only towards a literal
- *     loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4 literal, or a
- *     bracketed IP literal denoting a loopback address — {@code [::1]} in any spelling, and the IPv4-mapped writings
- *     such as {@code [::ffff:127.0.0.1]}) — the TLS-terminating Vault Agent or sidecar pattern. Plain {@code http} to
- *     any other host fails startup: the Vault token header would cross the network in clear text, and there is
- *     deliberately no property to permit it — a deployment that accepts that risk defines its own
- *     {@code VaultTransitVapidSigner} bean (built with {@code allowInsecureHttp()}), which this starter yields to
+ *     loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4 dotted-quad in
+ *     canonical decimal — so {@code 127.0.0.1}, but neither {@code 127.1} nor {@code 0177.0.0.1} — or a bracketed IP
+ *     literal denoting a loopback address, {@code [::1]} in any spelling and the IPv4-mapped writings such as
+ *     {@code [::ffff:127.0.0.1]}) — the TLS-terminating Vault Agent or sidecar pattern. Plain {@code http} to any other
+ *     host fails startup: the Vault token header would cross the network in clear text, and there is deliberately no
+ *     property to permit it — a deployment that accepts that risk defines its own {@code VaultTransitVapidSigner} bean
+ *     (built with {@code allowInsecureHttp()}), which this starter yields to
  * @param mount the Transit mount path (default {@code transit})
  * @param namespace the Vault Enterprise/HCP namespace the Transit engine lives in, possibly nested
  *     ({@code team-a/sub}), sent as the {@code X-Vault-Namespace} header on every Vault call; <b>optional</b> — when
