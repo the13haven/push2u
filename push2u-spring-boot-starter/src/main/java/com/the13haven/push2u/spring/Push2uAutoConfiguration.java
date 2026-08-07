@@ -53,15 +53,16 @@ public final class Push2uAutoConfiguration {
      *
      * @param properties the bound configuration
      * @return the local signer
-     * @throws IllegalArgumentException if either key is not valid base64url, has the wrong length, or is a public key
-     *     that does not encode a point on P-256 ({@code VapidKeys} validates the point on construction) — with
-     *     {@code push2u.vapid.public-key} / {@code .private-key} named, since the core's own message names only the
-     *     half
-     * @throws PushCryptoException if the values are individually well-formed but no signer can be built from them — a
-     *     private scalar outside {@code [1, n-1]} or a pair whose halves do not belong together, which the key-pair
-     *     self-test is the first thing to reject — and equally if the configured JCA provider cannot supply what the
-     *     signer needs. They all arrive the same way, which is why the message says the signer could not be built
-     *     rather than blaming the properties
+     * @throws IllegalArgumentException if either key is not valid base64url, has the wrong length, is a public key that
+     *     does not encode a point on P-256 ({@code VapidKeys} validates the point on construction), or is a pair whose
+     *     halves do not belong together — {@link LocalEcVapidSigner}'s construction-time key-pair self-test treats a
+     *     mismatch as bad input, the same category {@code VapidKeys.fromBase64} already reports every other rejection
+     *     as, rather than as a failure of an otherwise well-formed pair — with {@code push2u.vapid.public-key} /
+     *     {@code .private-key} named, since the core's own message names only the half
+     * @throws PushCryptoException if the values are individually well-formed and belong together but no signer can
+     *     still be built from them — a private scalar outside {@code [1, n-1]}, or the configured JCA provider unable
+     *     to supply what the signer needs. Both arrive the same way, which is why the message says the signer could not
+     *     be built rather than blaming the properties
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
@@ -82,15 +83,17 @@ public final class Push2uAutoConfiguration {
             // the same translation the pushSender properties get. Not one key or the other, because
             // the core's message already says which half when it is one of them. This branch also
             // carries the off-curve typo — one character changed in the middle of the public key
-            // keeps its length and its 0x04 tag, and fails VapidKeys' own curve check instead.
+            // keeps its length and its 0x04 tag, and fails VapidKeys' own curve check instead — and
+            // a pair whose halves do not belong together, which LocalEcVapidSigner's construction-time
+            // self-test rejects as bad input rather than as a crypto failure of a well-formed pair.
             throw new IllegalArgumentException(
                     "push2u.vapid.public-key / push2u.vapid.private-key: " + e.getMessage(), e);
         } catch (PushCryptoException e) {
-            // What remains crypto-shaped: a private scalar no provider accepts, a pair whose halves
-            // do not belong together (LocalEcVapidSigner's self-test), a provider missing what the
-            // signer needs. Rethrown as the same type on purpose: IllegalArgumentException here
-            // would put a provider failure, which arrives the same way, into the bad-input category
-            // it deliberately stays out of.
+            // What remains crypto-shaped: a private scalar no provider accepts, and a provider
+            // missing what the signer needs — never a mismatched pair, which the key-pair self-test
+            // reports as IllegalArgumentException and the catch above already handles. Rethrown as
+            // the same type on purpose: IllegalArgumentException here would put a provider failure,
+            // which arrives the same way, into the bad-input category it deliberately stays out of.
             //
             // And phrased as "building the signer from", not as a property prefix: the same branch
             // carries a JVM with no EC KeyFactory or no ES256 Signature, where the two properties

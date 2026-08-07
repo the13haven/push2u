@@ -116,6 +116,8 @@ class Push2uAutoConfigurationTest {
                         "push2u.vapid.subject=mailto:admin@example.com")
                 .run(context -> {
                     assertThat(context).hasFailed();
+                    // The self-test's own exception, unwrapped: bad input, same as every other
+                    // rejection VapidKeys.fromBase64 reports — not a crypto-shaped failure.
                     assertThat(context.getStartupFailure())
                             .rootCause()
                             .isInstanceOf(IllegalArgumentException.class)
@@ -124,6 +126,15 @@ class Push2uAutoConfigurationTest {
                             .rootCause()
                             .hasMessageNotContaining(otherPublicKeyB64)
                             .hasMessageNotContaining(privateKeyB64);
+                    // And the starter's own translation of it, naming both YAML properties like
+                    // every other IllegalArgumentException out of this bean — pinning the type here
+                    // is what would catch a catch-block regression that the root-cause check above
+                    // cannot: the root cause is the same exception regardless of which catch clause
+                    // it is re-thrown from.
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalArgumentException.class, "does not correspond"))
+                            .hasMessageContaining("push2u.vapid.public-key")
+                            .hasMessageContaining("push2u.vapid.private-key");
                 });
     }
 
