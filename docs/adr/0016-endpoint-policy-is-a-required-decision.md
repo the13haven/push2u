@@ -51,10 +51,17 @@ The decision:
   a review. A `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()` is that code
   change. The asymmetry noted there decides it here too — a property can be added later without
   breaking anyone, and cannot be removed after a release.
+- **Every published example builds a sender with an allowlist.** An example is the shape a consumer
+  copies, so one that omits the policy would reinstate the old default in the only place it still
+  could. `allowedOrigins` is the ordinary case wherever this project shows a sender being built, and
+  `unrestricted()` appears only where the surrounding text is about that exception and says what
+  makes it safe there.
 
-This is settled before `0.1.0` because it cannot be settled after one: adding a required parameter
-to a published factory method, or turning a permitted configuration into a startup failure, is a
-breaking change for everybody. Nothing depends on the current signatures yet.
+This has to be settled before `0.1.0`, because settling it later costs a breaking change to both
+the API and the configuration: a required parameter added to a factory method consumers already
+call, and a permitted configuration turned into a startup failure. No published consumer contract
+depends on the current signatures yet — the call sites that do are in this repository, and they move
+with the change.
 
 Rejected alternatives:
 
