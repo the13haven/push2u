@@ -17,11 +17,11 @@ and Spring Boot auto-configuration.
 [Spring Boot](#spring-boot) · [Vault Transit signer](#vault-transit-signer) ·
 [Endpoint policy](#endpoint-policy-ssrf-hardening) · [Modules](#modules)
 
-Coming from `nl.martijndwars:web-push`? [`MIGRATION.md`](MIGRATION.md) maps the two APIs onto each
-other, lists the 26 transitive artifacts and the BouncyCastle provider registration a migration
+Coming from `nl.martijndwars:web-push`? [`MIGRATION.md`](docs/MIGRATION.md) maps the two APIs onto
+each other, lists the 26 transitive artifacts and the BouncyCastle provider registration a migration
 removes, and is explicit about where push2u is stricter — `https`-only endpoints, up-front size
 limits, `aes128gcm` only, and a VAPID private key that has to be exactly 32 bytes.
-[`DESIGN.md`](DESIGN.md) has the architecture and the decisions behind it.
+[`DESIGN.md`](docs/DESIGN.md) has the architecture and the decisions behind it.
 
 ## Features
 
@@ -162,9 +162,9 @@ re-subscribe. The public key is not secret; it is published to browsers by desig
 The public key is the **65-byte uncompressed X9.62 point** that
 [RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) defines and browsers take
 as `applicationServerKey`; the private key is the **raw 32-byte scalar** `VapidKeys` takes. Both
-unpadded base64url. [`VAPID.md`](VAPID.md) is the recipe — a `jshell` block that prints exactly those
-two, and an npm alternative. It prints the private half to the terminal, so run it where you would
-handle any other secret: a workstation or a bastion, not CI.
+unpadded base64url. [`VAPID.md`](docs/VAPID.md) is the recipe — a `jshell` block that prints exactly
+those two, and an npm alternative. It prints the private half to the terminal, so run it where you
+would handle any other secret: a workstation or a bastion, not CI.
 
 ### Where the two values go
 
@@ -215,9 +215,9 @@ RFC 8030 §7.2 allows a push service to refuse an entity body larger than 4096 b
 with `IllegalArgumentException` before encrypting it or contacting the push service.
 
 The single-record `aes128gcm` body adds a fixed 103 bytes of header, padding delimiter and
-authentication tag to the plaintext ([`DESIGN.md` §4](DESIGN.md#4-send-pipeline) breaks the figure
-down), so the default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives. The
-record size defaults to 4096 as well, so raising one without the other rejects the message.
+authentication tag to the plaintext ([`DESIGN.md` §4](docs/DESIGN.md#4-send-pipeline) breaks the
+figure down), so the default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives.
+The record size defaults to 4096 as well, so raising one without the other rejects the message.
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com")
@@ -287,8 +287,8 @@ push2u:
     subject: "mailto:ops@example.com"
 ```
 
-That is a complete configuration: everything else has a default. [`SPRING.md`](SPRING.md) is the
-reference — every `push2u.*` property and what a rejected value does to startup, the
+That is a complete configuration: everything else has a default. [`SPRING.md`](docs/SPRING.md) is
+the reference — every `push2u.*` property and what a rejected value does to startup, the
 `allowed-origins` property beside an `EndpointPolicy` bean, and the health indicator with its
 cache.
 
@@ -324,7 +324,7 @@ dependencies {
 }
 ```
 
-[`VAULT.md`](VAULT.md) is the reference — the two key modes and what each validates, the
+[`VAULT.md`](docs/VAULT.md) is the reference — the two key modes and what each validates, the
 `push2u.signer.vault.*` properties, Vault namespaces on Enterprise/HCP, and the transport seam
 every Vault call goes through.
 
@@ -402,8 +402,8 @@ URL taken from the (untrusted) subscription and a hostile server must not be abl
 sender an arbitrarily large response. Custom implementations should do the same.
 
 This seam covers push delivery only. The Vault signer module has its own —
-[`VaultHttpTransport`](VAULT.md#vault-http-transport) — because the Vault API sits in a different
-trust domain and its responses must be read.
+[`VaultHttpTransport`](docs/VAULT.md#vault-http-transport) — because the Vault API sits in a
+different trust domain and its responses must be read.
 
 ## Redirects must never be followed
 
@@ -445,7 +445,7 @@ and let the caller judge it — `PushSender` for a `PushHttpClient`, the Vault s
 
 On the push side there is nothing to accommodate: RFC 8030 §5 delivery has no redirect step. A
 Vault topology that genuinely answers `307` — an HA standby, typically — is dealt with in
-[`VAULT.md`](VAULT.md#vault-http-transport).
+[`VAULT.md`](docs/VAULT.md#vault-http-transport).
 
 ## JCE provider selection
 
@@ -575,7 +575,7 @@ Do not report a vulnerability in a public issue. Use GitHub's private reporting 
 ## Releases
 
 Releases are cut manually from GitHub Actions; the procedure, the required repository secrets and
-the one-time publishing setup are in [`RELEASING.md`](RELEASING.md).
+the one-time publishing setup are in [`RELEASING.md`](docs/RELEASING.md).
 
 ## License
 

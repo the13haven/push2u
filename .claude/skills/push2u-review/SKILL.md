@@ -25,7 +25,7 @@ will review them as generic Java.
 `git diff main...HEAD` for a branch, `gh pr diff <n>` for a pull request. Read all of it before
 judging any hunk. The send pipeline is ordered on purpose (size checks → endpoint policy → crypto →
 signature → POST), so a hunk that looks wrong alone is often right in place, and one that looks
-harmless can be fatal three steps later. `DESIGN.md` §4 and §5 describe that order and the SPI
+harmless can be fatal three steps later. `docs/DESIGN.md` §4 and §5 describe that order and the SPI
 seams; read them if they are not already in context.
 
 Then ask what the change is *for*. A review that never forms a view on the intent can only check
@@ -203,7 +203,7 @@ it leaves the documents describing a design the code no longer follows.
 Two edits are findings on sight: an ADR whose decision is implemented being reworded or amended
 (immutable — a moved decision is a new ADR, and the old one only ever gets `Superseded by ADR-NNN`
 on its status line), and a description of how the code currently works being added to an ADR instead
-of to `DESIGN.md`.
+of to `docs/DESIGN.md`.
 
 ### 5.7 Dependencies and supply chain
 
@@ -237,10 +237,10 @@ of to `DESIGN.md`.
 
 Cheap to check, silently wrong when missed: the pull request carries a changelog label (the label
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
-without `!`, `breaking-change` stay manual); `DESIGN.md` is updated if architecture moved, and a new
-file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
-`SPRING.md` / `VAULT.md` / `VAPID.md` — is updated if consumer-facing API, properties or limits
-changed; a new suppression or rule exclusion states its reason next to it.
+without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
+a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
+`docs/SPRING.md` / `docs/VAULT.md` / `docs/VAPID.md` — is updated if consumer-facing API, properties
+or limits changed; a new suppression or rule exclusion states its reason next to it.
 
 ## 6. Calibrate before reporting
 

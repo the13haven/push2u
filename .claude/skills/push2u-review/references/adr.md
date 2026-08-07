@@ -8,7 +8,7 @@ to do what it does.
 rules out" per decision in `docs/adr/README.md`.** Read that index rather than a copy of it: an
 index kept in two places drifts, and the one that drifts is the one nobody publishes. The ADRs are
 the settled decisions — not documentation of the code, but the reasons the code is shaped the way it
-is. `DESIGN.md` is the companion piece and describes the architecture as it stands.
+is. `docs/DESIGN.md` is the companion piece and describes the architecture as it stands.
 
 ## Reviewing against them
 
@@ -37,10 +37,10 @@ improves. What it should have done instead:
 - a decision that *moves*: a new file with the next free number, stating the new decision and what it
   replaces, plus one edit to the old file — its status line becomes
   `**Status:** Superseded by [ADR-NNN](NNNN-slug.md)`. The superseded file is never deleted; its
-  number is cited from other ADRs, from `DESIGN.md` and from the code review procedure;
-- a description of how things now *work*: that belongs in `DESIGN.md`, the document meant to be
-  rewritten as the code moves. An ADR describing the present tense goes stale and may not be edited
-  to catch up, which is precisely why the split exists;
+  number is cited from other ADRs, from `docs/DESIGN.md` and from the code review procedure;
+- a description of how things now *work*: that belongs in `docs/DESIGN.md`, the document meant to
+  be rewritten as the code moves. An ADR describing the present tense goes stale and may not be
+  edited to catch up, which is precisely why the split exists;
 - a decision that was never implemented: still a draft, still freely editable, and its status line
   says `Proposed`.
 
@@ -48,8 +48,8 @@ improves. What it should have done instead:
 
 ## Two things no ADR states, and a reviewer has to
 
-`RELEASING.md` is the operational companion to ADR-013 — a release-process change usually touches
-both, and only one of them is an ADR.
+`docs/RELEASING.md` is the operational companion to ADR-013 — a release-process change usually
+touches both, and only one of them is an ADR.
 
 Published sources cite no ADR at all. Every module ships a `sources.jar`, so a comment saying
 "(ADR-014)" or "see `DESIGN.md`" reaches a consumer with no repository to follow it into; the

@@ -13,7 +13,7 @@ and accepted work. Participation is covered by the
 
 ## Before you start
 
-Read [`DESIGN.md`](DESIGN.md) for the architecture as it stands, and
+Read [`DESIGN.md`](docs/DESIGN.md) for the architecture as it stands, and
 [`docs/adr/`](docs/adr/README.md) for the decisions that are already settled — one file per
 decision, indexed there. Two of them shape most contributions:
 
@@ -33,11 +33,11 @@ follows.
 **An ADR is immutable once its decision is implemented.** Do not edit one to match a change: a
 decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
 its title and its body while its status line becomes `Superseded by ADR-NNN`. Descriptions of how
-the code works now belong in `DESIGN.md`, which is meant to be rewritten as the architecture moves.
-[`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
+the code works now belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture
+moves. [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
-The [non-goals](DESIGN.md#non-goals) are equally settled: subscription persistence, browser-side
-code, legacy `aesgcm`, general JSON parsing.
+The [non-goals](docs/DESIGN.md#non-goals) are equally settled: subscription persistence,
+browser-side code, legacy `aesgcm`, general JSON parsing.
 
 ## Building
 
@@ -287,7 +287,7 @@ Categories are matched in that order, so a PR that is both breaking and a featur
 
 Before merging, `main` requires the `quality` check and CodeQL analysis to pass. A change to prose
 skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`) and still reports
-success — with one exception, `VAPID.md`. Its key-generation snippet is executed by
+success — with one exception, `docs/VAPID.md`. Its key-generation snippet is executed by
 `VapidGuideKeyGenerationTest`, straight out of the file, so editing that file runs the full quality
 gate (about three and a half minutes rather than ten seconds), even for a typo fix. CodeQL still
 skips: the snippet is executed, not compiled, and the tree it scans is unchanged.
@@ -296,14 +296,14 @@ One more thing gates a merge, and no check reports it: **nothing merges into `ma
 Release workflow is running.** A release works from the commit it checked out, and a merge landing
 underneath it breaks the run at its most expensive point. If *Actions → Release* shows a run in
 progress, wait for it — it is a matter of tens of minutes. See
-[`RELEASING.md`](RELEASING.md#freeze-main-while-a-release-runs).
+[`RELEASING.md`](docs/RELEASING.md#freeze-main-while-a-release-runs).
 
 Also update, when your change touches them:
 
 - `README.md` — the consumer-facing documentation. Keep Maven coordinates in the literal form
   `com.the13haven:<module>:X.Y.Z`; a release hook rewrites every such coordinate to the released
   version, matching any `X.Y.Z` — so do not write one to name a historical version.
-- `DESIGN.md` — the architecture, whenever the change moves it.
+- `docs/DESIGN.md` — the architecture, whenever the change moves it.
 - `docs/adr/` — a *new* file, plus its row in `docs/adr/README.md`, when the change settles
   something the existing ADRs do not cover or replaces a decision one of them records. Never an edit
   to an ADR that is already implemented.

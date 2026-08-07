@@ -2,7 +2,7 @@
 
 push2u ships no key generator: the VAPID (RFC 8292) P-256 pair is your application's identity to
 the push services, so it is created once, outside the application, and handed to it as
-configuration. This is that one-time recipe — [`README.md` → VAPID keys](README.md#vapid-keys)
+configuration. This is that one-time recipe — [`README.md` → VAPID keys](../README.md#vapid-keys)
 covers the pair's lifecycle and where its two halves go afterwards.
 
 ## What has to come out

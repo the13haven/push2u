@@ -7,9 +7,9 @@ description: How to make a change in the push2u Web Push library — the procedu
 
 This is how work gets done in this repository — the procedures that span more than one file and are
 easy to complete only halfway. It does not restate what is already written elsewhere: `CLAUDE.md`
-carries the facts that are always true, `DESIGN.md` the architecture as it stands, `docs/adr/` the
-settled decisions, and `.claude/skills/push2u-review/SKILL.md` what a reviewer will check when you
-are finished.
+carries the facts that are always true, `docs/DESIGN.md` the architecture as it stands, `docs/adr/`
+the settled decisions, and `.claude/skills/push2u-review/SKILL.md` what a reviewer will check when
+you are finished.
 
 If you delegate part of the work to a subagent, note that it starts fresh and does not inherit this
 skill — only the repository's `CLAUDE.md` reaches it. Put the relevant recipe in the delegation
@@ -130,7 +130,7 @@ This is the procedure most often left half-finished, because the useful part wor
    about what the sampling does and does not decide.
 
 4. **Document it.** The README property table, and the protocol-limits section if the option changes
-   a limit. `DESIGN.md` too if it changes the pipeline's contract rather than a number.
+   a limit. `docs/DESIGN.md` too if it changes the pipeline's contract rather than a number.
 
 5. **Test all three levels.** The builder's validation in `push2u-core`, the binding in
    `Push2uPropertiesTest`, and the wiring in `Push2uAutoConfigurationTest` — including the failure
@@ -221,14 +221,14 @@ compiling into that source set is a build failure rather than a green run.
 
 Run `./gradlew qualityCheck` — it formats, analyses, tests and checks the aggregated coverage floor
 in one pass. Then check the things no tool can see: is the documentation that describes this
-behaviour still true, does the change move something `DESIGN.md` describes, and does a new public
-member deserve to be permanent, since it ships to Maven Central and cannot be withdrawn.
+behaviour still true, does the change move something `docs/DESIGN.md` describes, and does a new
+public member deserve to be permanent, since it ships to Maven Central and cannot be withdrawn.
 
 If the change settles something the ADRs do not cover, or replaces a decision one of them records,
 write a **new** file in `docs/adr/` and add its row to `docs/adr/README.md`. Do not edit an ADR
 whose decision is implemented — a superseded one keeps its body and gets `Superseded by ADR-NNN` on
-its status line, and `docs/adr/README.md` carries the procedure. `DESIGN.md` is the document that
-tracks the code; the ADRs are the record of what was decided and when.
+its status line, and `docs/adr/README.md` carries the procedure. `docs/DESIGN.md` is the document
+that tracks the code; the ADRs are the record of what was decided and when.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

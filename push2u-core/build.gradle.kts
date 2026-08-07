@@ -79,14 +79,14 @@ dependencies {
     // disjoint classpaths.
 }
 
-// VapidGuideKeyGenerationTest runs the VAPID key-generation snippet that is actually in VAPID.md
-// — push2u ships no key generator, so that snippet is the only instruction a new user gets, and a
-// test holding its own copy of it would stay green while the documented one drifted. The test
-// therefore needs the file itself. A relative "../VAPID.md" would be a guess about the test's
-// working directory, so Gradle resolves it: layout.settingsDirectory is the directory holding
-// settings.gradle.kts, i.e. the repository root, and unlike rootProject it is not a reach into
-// another project's model.
-val vapidGuide: RegularFile = layout.settingsDirectory.file("VAPID.md")
+// VapidGuideKeyGenerationTest runs the VAPID key-generation snippet that is actually in
+// docs/VAPID.md — push2u ships no key generator, so that snippet is the only instruction a new user
+// gets, and a test holding its own copy of it would stay green while the documented one drifted.
+// The test therefore needs the file itself. A relative "../docs/VAPID.md" would be a guess about
+// the test's working directory, so Gradle resolves it: layout.settingsDirectory is the directory
+// holding settings.gradle.kts, i.e. the repository root, and unlike rootProject it is not a reach
+// into another project's model.
+val vapidGuide: RegularFile = layout.settingsDirectory.file("docs/VAPID.md")
 tasks.test {
     systemProperty("push2u.vapid.guide", vapidGuide.asFile.absolutePath)
     // Declared as an input as well: the system property only carries the path, so without this an

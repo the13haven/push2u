@@ -5,7 +5,7 @@
 push2u is an implemented, standalone Java library for server-side Web Push delivery. Artifacts are
 released to Maven Central under the `com.the13haven` group ID; the version is derived from git
 tags rather than stored in the build
-([ADR-013](docs/adr/0013-release-and-publication-process.md)). Java packages are
+([ADR-013](adr/0013-release-and-publication-process.md)). Java packages are
 `com.the13haven.push2u.*`.
 
 The library implements:
@@ -23,8 +23,8 @@ narrow seams only where applications have a legitimate reason to replace behavio
 
 **This document describes the architecture as it stands, and why it is that way.** The decisions
 behind it — with the context they were taken in and the alternatives rejected — are one file per
-decision in [`docs/adr/`](docs/adr/README.md); they are cited here rather than restated. How to
-*use* the library belongs to the consumer-facing references instead: [`README.md`](README.md) for
+decision in [`docs/adr/`](adr/README.md); they are cited here rather than restated. How to
+*use* the library belongs to the consumer-facing references instead: [`README.md`](../README.md) for
 the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations,
 [`VAPID.md`](VAPID.md) for generating the key pair, and the Javadoc for individual contracts.
 
@@ -32,14 +32,14 @@ the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integra
 
 The library exists to replace `nl.martijndwars:web-push`, the JVM's usual answer for Web Push,
 whose transitive surface and BouncyCastle-typed public API are what
-[ADR-002](docs/adr/0002-zero-dependency-core.md) records as the motive for the dependency posture.
+[ADR-002](adr/0002-zero-dependency-core.md) records as the motive for the dependency posture.
 [`MIGRATION.md`](MIGRATION.md) maps the two APIs onto each other for consumers making the move.
 
 ### Goals
 
 - Zero runtime *implementation* dependencies in `push2u-core` — its one dependency is JSpecify, an
   annotation-only jar exposed as API metadata
-  ([ADR-012](docs/adr/0012-nullness-declared-with-jspecify.md)).
+  ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 - Java 21 runtime baseline.
 - Standards conformance pinned by published RFC test vectors.
 - A small synchronous API with an asynchronous convenience wrapper.
@@ -90,7 +90,7 @@ application's runtime one.
 ### JPMS identity
 
 Each artifact carries a module name it will keep
-([ADR-014](docs/adr/0014-jpms-explicit-and-automatic-modules.md)). `push2u-core` and
+([ADR-014](adr/0014-jpms-explicit-and-automatic-modules.md)). `push2u-core` and
 `push2u-signer-vault` are explicit modules with a `module-info.java`; the two starters and the
 published test kit are automatic modules with a fixed `Automatic-Module-Name`:
 
@@ -182,7 +182,7 @@ configured limit, and the maximum plaintext; the second names the minimum `rs` r
 The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
 hard-coded, so the plaintext maximum tracks a configured body limit
-([ADR-011](docs/adr/0011-size-limit-expressed-on-the-encrypted-body.md)). The RFC 8291 §4 rule has
+([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)). The RFC 8291 §4 rule has
 a single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check
 and by the encryptor itself.
 
@@ -231,7 +231,7 @@ to — because which hosts a deployment may POST to is a statement about its egr
 cannot make on its behalf; it is described under its SPI below.
 
 Three seams in the core are public, and only three
-([ADR-005](docs/adr/0005-public-spis-in-the-core.md)).
+([ADR-005](adr/0005-public-spis-in-the-core.md)).
 
 ### Boundary validators
 
@@ -259,7 +259,7 @@ byte[] sign(byte[] signingInput);
 byte[] publicKey();
 ```
 
-This SPI represents key custody ([ADR-010](docs/adr/0010-pluggable-vapid-key-custody.md)). The
+This SPI represents key custody ([ADR-010](adr/0010-pluggable-vapid-key-custody.md)). The
 default signer holds a private scalar in process. Vault, KMS, or HSM implementations can keep
 private material outside the JVM.
 
@@ -344,7 +344,7 @@ resolution/egress pinning inside a `PushHttpClient` implementation.
 ### Deliberately concrete components
 
 The RFC 8291 encryptor, the HKDF implementation and the origin serialization are not public SPIs
-([ADR-003](docs/adr/0003-concrete-hkdf-implementation.md)). Alternative implementations would not
+([ADR-003](adr/0003-concrete-hkdf-implementation.md)). Alternative implementations would not
 change intended behavior and would introduce a silent wrong-ciphertext failure mode.
 
 JCE provider selection uses the standard `java.security.Provider` abstraction rather than a custom
@@ -360,7 +360,7 @@ Every package carries JSpecify's `@NullMarked`, so a reference type in the publi
 unless it is annotated `@Nullable`; the annotated exceptions are the optional message headers
 (`PushMessage.ttl`, `urgency`, `topic`), the unset builder fields, and the Spring properties. The
 annotations are part of the published surface — NullAway, IntelliJ and the Kotlin compiler read
-the same ones ([ADR-012](docs/adr/0012-nullness-declared-with-jspecify.md)).
+the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
 ## 6. Cryptography
 
@@ -374,7 +374,7 @@ the same ones ([ADR-012](docs/adr/0012-nullness-declared-with-jspecify.md)).
 | Base64url | `java.util.Base64` |
 
 The implementation supports only modern `aes128gcm` encoding
-([ADR-006](docs/adr/0006-aes128gcm-only.md)) and emits a single RFC 8188 record. Because that one
+([ADR-006](adr/0006-aes128gcm-only.md)) and emits a single RFC 8188 record. Because that one
 record carries the whole payload, `rs` must be strictly greater than the plaintext plus the
 padding delimiter plus the authentication tag (RFC 8291 §4); equality is rejected. The record is
 not zero-padded up to `rs`, so the body size depends only on the payload.
@@ -440,7 +440,7 @@ otherwise cross the network in clear text. That one rule lives in `build()` rath
 factory — the opt-in is a builder step, callable only after the factory has returned — and runs
 before the fetched mode's Vault read, so a refused address contacts nothing. Loopback is decided
 from the literal host text, never by resolution, keeping the rule readable from the address alone
-([ADR-015](docs/adr/0015-vault-address-scheme-policy.md)). The Spring starter deliberately adds no
+([ADR-015](adr/0015-vault-address-scheme-policy.md)). The Spring starter deliberately adds no
 opt-in property: plaintext transport for the token costs a code change (an application-supplied
 signer bean), not a YAML edit. The API paths are joined onto the address by explicit normalization
 — scheme and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` —

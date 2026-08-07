@@ -27,8 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Executes the VAPID key-generation snippet that is in {@code VAPID.md} — the file itself, not a copy of it — and feeds
- * what it prints to {@link VapidKeys#fromBase64} and {@link LocalEcVapidSigner}.
+ * Executes the VAPID key-generation snippet that is in {@code docs/VAPID.md} — the file itself, not a copy of it — and
+ * feeds what it prints to {@link VapidKeys#fromBase64} and {@link LocalEcVapidSigner}.
  *
  * <p>The point is drift. push2u ships no key generator, so that guide's snippet is the only instruction a new user
  * gets, and a test carrying its own frozen copy of that snippet would stay green while the documented one rotted. So
@@ -55,22 +55,25 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>It never skips. A missing {@code jshell}, a missing anchor or a missing {@code push2u.vapid.guide} system property
  * is a failure, because a skip here reproduces exactly the always-green outcome the test exists to prevent. The guide's
- * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../VAPID.md} would be a guess
- * about the test's working directory.
+ * path comes from Gradle (see {@code push2u-core/build.gradle.kts}); a relative {@code ../docs/VAPID.md} would be a
+ * guess about the test's working directory.
  *
  * <p><b>What this guards, and what it does not.</b> It guards an ordinary edit — to the snippet, or to
  * {@link VapidKeys} and {@link LocalEcVapidSigner} underneath it — that makes the documented instructions print a key
  * push2u or a browser rejects. It does not guard against someone with commit access deliberately hiding broken code
- * from a text check: whoever can edit {@code VAPID.md} can edit this file beside it, so hardening against that buys
- * nothing and costs the brittleness that gets a guard deleted. "A block comment, a text block, an escape or dead code
- * could hide a pinned statement" is out of scope by construction, not an open gap.
+ * from a text check: whoever can edit {@code docs/VAPID.md} can edit this file beside it, so hardening against that
+ * buys nothing and costs the brittleness that gets a guard deleted. "A block comment, a text block, an escape or dead
+ * code could hide a pinned statement" is out of scope by construction, not an open gap.
  *
  * <p>The one real limit that follows: a pinned statement being <em>present</em> is not proof that it produced the value
  * that was printed, and this file does not try to close that.
  */
 class VapidGuideKeyGenerationTest {
 
-    /** System property carrying the absolute path of the repository's {@code VAPID.md}, set by the Gradle test task. */
+    /**
+     * System property carrying the absolute path of the repository's {@code docs/VAPID.md}, set by the Gradle test
+     * task.
+     */
     private static final String GUIDE_PROPERTY = "push2u.vapid.guide";
 
     private static final String BEGIN_ANCHOR = "<!-- vapid-keygen:begin -->";
@@ -320,9 +323,9 @@ class VapidGuideKeyGenerationTest {
     private static Path guide() {
         String configured = System.getProperty(GUIDE_PROPERTY);
         if (configured == null || configured.isBlank()) {
-            return fail("The system property " + GUIDE_PROPERTY + " is not set, so VAPID.md cannot be located."
+            return fail("The system property " + GUIDE_PROPERTY + " is not set, so docs/VAPID.md cannot be located."
                     + " The Gradle test task passes it (push2u-core/build.gradle.kts); running this test outside"
-                    + " Gradle needs -D" + GUIDE_PROPERTY + "=/path/to/VAPID.md.");
+                    + " Gradle needs -D" + GUIDE_PROPERTY + "=/path/to/docs/VAPID.md.");
         }
         Path guide = Path.of(configured);
         if (!Files.isRegularFile(guide)) {

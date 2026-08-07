@@ -3,7 +3,7 @@
 One file per decision, `NNNN-slug.md` — the ADR's number zero-padded to four digits, so ADR-005 is
 `0005-public-spis-in-the-core.md`. These record *why* the library is shaped the way it is — the
 context at the time, the decision, and what it rules out. What the architecture looks like *now*
-is [`DESIGN.md`](../../DESIGN.md); how to use the library is [`README.md`](../../README.md).
+is [`DESIGN.md`](../DESIGN.md); how to use the library is [`README.md`](../../README.md).
 
 | ADR | Decision | Status | What it rules out |
 |---|---|---|---|
@@ -38,7 +38,7 @@ becomes:
 ```
 
 That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is
-referenced from other ADRs, from `DESIGN.md` and from the review procedure, and a numbered
+referenced from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered
 decision that vanishes leaves those references dangling.
 
 Before the decision is implemented, an ADR is still a draft and can be revised freely — the status
@@ -53,13 +53,13 @@ encryptor would only introduce a silent wrong-ciphertext failure mode" is.
 Match the house style: the heading `# ADR-NNN — Title`, a `**Status:**` line, then prose. State
 the context as it was at the time, the decision, and what it rules out — including the
 alternatives that were rejected and why, which is the part a later reader cannot reconstruct. Keep
-the description of how things currently work in `DESIGN.md`, where it can be updated; an ADR that
-describes the present tense goes stale the moment the code moves, and it may not be edited to
+the description of how things currently work in `docs/DESIGN.md`, where it can be updated; an ADR
+that describes the present tense goes stale the moment the code moves, and it may not be edited to
 catch up.
 
 After adding one: the table above, and the cross-references that carry the range — `CLAUDE.md`,
-`CONTRIBUTING.md` where it points contributors at the settled decisions, and `DESIGN.md` wherever
-the architecture it constrains is described.
+`CONTRIBUTING.md` where it points contributors at the settled decisions, and `docs/DESIGN.md`
+wherever the architecture it constrains is described.
 
 Published sources are the one place an ADR is never cited: `push2u` ships a `sources.jar`, and a
 consumer reading a comment there has no repository to follow the reference into. Code and Javadoc
