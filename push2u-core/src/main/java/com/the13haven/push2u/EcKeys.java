@@ -31,14 +31,10 @@ import org.jspecify.annotations.Nullable;
  * X9.62 uncompressed point ({@code 0x04 || X || Y}, 65 bytes) for public keys ({@code p256dh}, VAPID {@code k}) and the
  * raw 32-byte scalar for the VAPID private key.
  */
-// GodClass: over the metric (WMC 56 against the rule's 47), pushed there branch by branch as the
-// provider checks grew to refuse each degenerate provider answer — a missing pair, a null or
-// foreign key, absent parameters, no point — by name instead of dereferencing it. The class is the
-// single home for P-256 key import/export and the provider checks guarding those operations;
-// splitting the checks out to satisfy the metric would separate them from what they guard. If a
-// split ever becomes worth it, the seam is codec versus key agreement — decode/encode/writeFixed
-// serialise the wire forms, generateP256 and ecdh with their verification helpers guard the
-// provider — never a cut through the middle of a verification.
+// GodClass cannot fit a stateless codec: static methods sharing only a few constants score as low
+// cohesion, and reading other types' key material is the job, not a smell — two of the rule's
+// three conditions hold by shape alone, leaving a complexity threshold that exhaustive fail-closed
+// validation crosses by doing its work.
 @SuppressWarnings("PMD.GodClass")
 final class EcKeys {
 
