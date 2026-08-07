@@ -562,8 +562,8 @@ consumers' analysers, IntelliJ and the Kotlin compiler read the same annotations
 ## Contributing
 
 Bug reports, proposals and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
-the build, what the quality gate enforces, [how to build against unreleased
-changes](CONTRIBUTING.md#developing-against-unpublished-changes), and the two design constraints
+the build, what the quality gate enforces, [how to build against a local
+checkout](CONTRIBUTING.md#developing-against-unpublished-changes), and the two design constraints
 most changes run into — the zero-dependency core and the small set of extension points.
 
 ## Security
