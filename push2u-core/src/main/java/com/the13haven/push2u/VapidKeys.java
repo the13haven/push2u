@@ -20,10 +20,14 @@ public final class VapidKeys {
     private final byte[] publicKey;
     private final byte[] privateScalar;
 
+    // The public key gets the full on-curve check, not merely the structural one. This is operator
+    // configuration rather than attacker input, but a corrupted or transposed value is caught here
+    // — at VapidKeys creation, typically config-loading time, with the input named — instead of as
+    // LocalEcVapidSigner's later PushCryptoException; and no 65-byte non-point can ever be a valid
+    // VAPID key, so nothing legal is refused. The check needs no JCA provider (this type
+    // deliberately carries no JCA state).
     private VapidKeys(byte[] publicKey, byte[] privateScalar) {
-        if (publicKey.length != EcKeys.UNCOMPRESSED_LENGTH || publicKey[0] != 0x04) {
-            throw new IllegalArgumentException("VAPID public key must be a 65-byte uncompressed P-256 point");
-        }
+        P256PublicKeys.requireOnCurve(publicKey, "VAPID public key");
         if (privateScalar.length != EcKeys.COORDINATE_LENGTH) {
             throw new IllegalArgumentException("VAPID private key must be a 32-byte P-256 scalar");
         }
@@ -34,9 +38,11 @@ public final class VapidKeys {
     /**
      * Wraps the 65-byte uncompressed public key and the raw 32-byte private scalar.
      *
-     * @param publicKey the 65-byte uncompressed P-256 public key
+     * @param publicKey the 65-byte uncompressed P-256 public key — it must encode a point on the curve
+     *     ({@link P256PublicKeys#requireOnCurve}), so a corrupted value fails here rather than at the first send
      * @param privateScalar the raw 32-byte private scalar
      * @return the key pair
+     * @throws IllegalArgumentException if the public key does not encode a point on P-256 or the scalar is not 32 bytes
      */
     public static VapidKeys of(byte[] publicKey, byte[] privateScalar) {
         Objects.requireNonNull(publicKey, "publicKey");
@@ -50,6 +56,8 @@ public final class VapidKeys {
      * @param publicKey the base64url-encoded uncompressed public key
      * @param privateKey the base64url-encoded private scalar
      * @return the key pair
+     * @throws IllegalArgumentException if either half is not valid base64url, the public key does not encode a point on
+     *     P-256, or the scalar is not 32 bytes
      */
     public static VapidKeys fromBase64(String publicKey, String privateKey) {
         Objects.requireNonNull(publicKey, "publicKey");

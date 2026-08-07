@@ -45,7 +45,6 @@ import org.springframework.context.annotation.Configuration;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
-import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
 import com.the13haven.push2u.PushResponse;
@@ -298,8 +297,9 @@ class Push2uAutoConfigurationTest {
     @Test
     void aKeyThatDecodesButIsNotOnTheCurveAlsoNamesTheKeys() {
         // The other likely typo: one character changed keeps the length and the 0x04 tag, so it
-        // passes every length check and fails the curve equation instead — as a PushCryptoException,
-        // which the base64 branch does not catch.
+        // passes every length check and fails VapidKeys' own curve check instead — an
+        // IllegalArgumentException, bad input like the base64 case, so it takes the same
+        // property-naming translation.
         //
         // The character is changed in the MIDDLE, not at the end. 65 bytes encode to 87 characters,
         // and the last of them carries only 4 bits of data — its low 2 bits are padding the decoder
@@ -313,14 +313,13 @@ class Push2uAutoConfigurationTest {
         keyedRunner().withPropertyValues("push2u.vapid.public-key=" + offCurve).run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), PushCryptoException.class, "push2u.vapid.public-key"))
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.vapid.public-key"))
                     // as(...) labels every assertion after it, so the two claims are described
-                    // separately rather than letting the wording rationale caption a curve regression.
-                    .as("worded as the signer not being buildable, since a provider failure lands here too")
+                    // separately rather than letting one rationale caption a curve regression.
+                    .as("named for the properties the pair came from")
                     .hasMessageContaining("push2u.vapid.public-key")
-                    .hasMessageContaining("while building the VAPID signer")
-                    .as("and the reason is the curve check, not some other PushCryptoException")
-                    .hasMessageContaining("curve");
+                    .as("and the reason is the curve check, not some other rejection")
+                    .hasMessageContaining("curve equation");
         });
     }
 

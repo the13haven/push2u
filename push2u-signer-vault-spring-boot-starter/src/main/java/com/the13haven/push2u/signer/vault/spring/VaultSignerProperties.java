@@ -20,7 +20,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * {@code VaultHttpTransport} bean, and {@code connect-timeout} is additionally ignored when a
  * {@code push2uVaultHttpClient}-qualified {@code HttpClient} bean is supplied (the client owns its connect timeout).
  *
- * @param address the Vault base address, e.g. {@code https://vault.example:8200}
+ * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
+ *     proxy or ingress prefix, e.g. {@code https://gw.example/vault}. It must be an absolute URI with a host and no
+ *     query or fragment; the path prefix, when present, is preserved in front of every Vault API path. The scheme is
+ *     not restricted to {@code https} (Vault's dev server is plain {@code http}), but a production address must be
+ *     {@code https} — on plain HTTP the Vault token header travels in clear text
  * @param mount the Transit mount path (default {@code transit})
  * @param namespace the Vault Enterprise/HCP namespace the Transit engine lives in, possibly nested
  *     ({@code team-a/sub}), sent as the {@code X-Vault-Namespace} header on every Vault call; <b>optional</b> — when
@@ -28,8 +32,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param keyName the {@code ecdsa-p256} Transit key name
  * @param token the Vault token authorising {@code sign} on the key (plus {@code read} on {@code transit/keys/<key>}
  *     when {@code publicKey} is omitted)
- * @param publicKey the VAPID public key as base64url (the 65-byte uncompressed P-256 point); <b>optional</b> — when
- *     null/blank the signer reads it from Vault at startup
+ * @param publicKey the VAPID public key as base64url (the 65-byte uncompressed point, which must encode a point on the
+ *     P-256 curve); <b>optional</b> — when null/blank the signer reads it from Vault at startup
  * @param keyVersion the Transit key version {@code publicKey} belongs to, pinned on every sign request; <b>optional</b>
  *     and only valid together with {@code publicKey} (the fetched mode pins the version it reads from Vault itself).
  *     Without it the explicit mode signs with Vault's latest version, which breaks after a key rotation — set it

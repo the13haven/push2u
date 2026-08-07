@@ -542,12 +542,16 @@ class VaultTransitVapidSignerParserFuzzTest {
         return "vault:v1:" + BASE64_URL.encodeToString(impostor);
     }
 
+    /** A genuine P-256 point (the RFC 8291 §5 user-agent key): the supplied key is validated against the curve. */
+    private static byte[] validPublicKey() {
+        return Base64.getUrlDecoder()
+                .decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
+    }
+
     /** Run a whole {@code sign} round trip against a signer whose Vault answers {@code responseBody}. */
     private static byte[] signAgainst(String responseBody) {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
         return VaultTransitVapidSigner.builderWithSuppliedPublicKey(
-                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), publicKey)
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN), validPublicKey())
                 .mount("transit")
                 .transport(canned(responseBody))
                 .build()

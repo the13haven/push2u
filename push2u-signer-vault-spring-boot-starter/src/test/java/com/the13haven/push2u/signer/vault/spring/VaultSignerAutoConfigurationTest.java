@@ -145,6 +145,69 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
+    void anInvalidAddressFailsNamingTheProperty() {
+        // The factory's own message says "address", not the YAML the operator wrote — the starter
+        // translates it like every other configuration failure. '..' is the case worth pinning
+        // (the path prefix rides in front of every token-bearing request path), and a query is the
+        // plain-misconfiguration shape.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.address=https://gw.example/vault/../sys")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.address")
+                            .hasStackTraceContaining("'..' segment");
+                });
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.address=https://vault.example:8200?ns=team-a")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.address")
+                            .hasStackTraceContaining("query");
+                });
+    }
+
+    @Test
+    void aPathPrefixedAddressIsAccepted() {
+        // Vault behind a reverse-proxy or ingress prefix is a legitimate topology; the explicit
+        // mode contacts nothing at build, so acceptance alone proves the address passed the rule.
+        // The joined request URIs are pinned in the signer module's own address tests.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.address=https://gw.example/vault/")
+                .run(context -> assertThat(context).hasSingleBean(VapidSigner.class));
+    }
+
+    @Test
+    void anInvalidPublicKeyFailsNamingTheProperty() {
+        // The supplied-key factory validates both the address and the key (the full on-curve
+        // check); the starter probes the key first so each rejection is attributed to its own
+        // property — this pins that a bad key is never mislabelled as a bad address.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.public-key="
+                        + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.public-key")
+                            .hasStackTraceContaining("65-byte uncompressed");
+                });
+        // The right shape, off the curve — the VapidSigner contract requires a point on P-256,
+        // so a corrupted configured key fails startup instead of drawing a push-service 401.
+        byte[] offCurve = Base64.getUrlDecoder().decode(publicKeyB64);
+        offCurve[64] ^= 0x01;
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.public-key="
+                        + Base64.getUrlEncoder().withoutPadding().encodeToString(offCurve))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.public-key")
+                            .hasStackTraceContaining("curve equation");
+                });
+    }
+
+    @Test
     void aMountWithADotDotSegmentFailsNamingTheProperty() {
         // The '..' segment is the load-bearing case: a normalizing proxy in front of Vault
         // collapses it before Vault sees it, and Vault's own handler answers the decoded form

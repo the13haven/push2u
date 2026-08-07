@@ -159,8 +159,10 @@ class VaultTransitVapidSignerNamespaceTest {
      */
     @Test
     void aNamespaceThatWouldAlterTheRequestIsRejectedAtTheStep() {
-        byte[] publicKey = new byte[65];
-        publicKey[0] = 0x04;
+        // A genuine P-256 point (the RFC 8291 §5 user-agent key): the supplied key is validated
+        // against the curve, so a placeholder array would fail before the namespace step runs.
+        byte[] publicKey = Base64.getUrlDecoder()
+                .decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
 
         for (String namespace : new String[] {
             "",

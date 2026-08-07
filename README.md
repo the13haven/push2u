@@ -65,6 +65,19 @@ The browser supplies the endpoint, `p256dh`, and `auth` values — the endpoint 
 JSON parsing remains an application responsibility. Use only the HTTPS endpoint returned by the
 browser, and treat the complete endpoint as a secret: Web Push endpoints are capability URLs.
 
+`Subscription` validates what it accepts: the endpoint must be an absolute `https` URL, `auth`
+must be 16 bytes, and `p256dh` must decode to a real point on the P-256 curve — not merely a
+65-byte value of the right shape. Both `p256dh` and the endpoint are attacker-influenced (a
+registration endpoint accepts whatever a client posts), and a subscription carrying an off-curve
+point can never be sent to, so it is rejected with an `IllegalArgumentException` where the
+subscription is created instead of failing as a `PushCryptoException` on every later send. The
+curve check runs on the fixed FIPS 186-4 P-256 parameters and needs no JCA provider, so it works
+wherever the subscription is built. To enforce the same contract at your own registration
+boundary — rejecting a bad registration before persisting it — the checks are public:
+`Endpoints.requireSecure(endpoint)` for the endpoint, `P256PublicKeys.requireOnCurve(bytes,
+"p256dh")` for the key material (and `P256PublicKeys.requireUncompressedPoint` when only the
+shape matters).
+
 ```java
 Subscription subscription = Subscription.fromBase64(
     browserSubscription.endpoint(),

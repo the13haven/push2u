@@ -233,6 +233,25 @@ cannot make on its behalf; it is described under its SPI below.
 Three seams in the core are public, and only three
 ([ADR-005](docs/adr/0005-public-spis-in-the-core.md)).
 
+### Boundary validators
+
+Two public utility classes let an application enforce the `Subscription` contract at its own
+registration boundary — rejecting a bad registration before persisting it — instead of storing
+data every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030
+contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. `P256PublicKeys`
+carries two checks of deliberately different strength: `requireUncompressedPoint` is structural
+(65 bytes, the `0x04` X9.62 tag) and `requireOnCurve` is the full check — coordinates inside the
+P-256 prime field and the curve equation satisfied. The full check runs on hard-coded FIPS 186-4
+domain parameters and touches no JCA provider, so it works wherever a `Subscription` is created,
+before and independently of any `PushSender`; hard-coding is sound because P-256 is a fixed named
+curve, and a test (with a BC-FIPS twin) pins each constant against what a provider answers for
+`secp256r1`. `Subscription`'s constructor applies `requireOnCurve` to `p256dh` — the value is
+attacker-supplied, and an off-curve point would otherwise be accepted, persisted, and then raise
+`PushCryptoException` (documented as "the deployment is broken") on every send, far from the
+request that supplied it. `VapidKeys` applies the same full check to its public half, catching a
+corrupted configuration value where the pair is created. Section 6 describes how these checks
+relate to the provider-parameter check the send pipeline still performs.
+
 ### VapidSigner
 
 ```java
@@ -360,13 +379,20 @@ record carries the whole payload, `rs` must be strictly greater than the plainte
 padding delimiter plus the authentication tag (RFC 8291 §4); equality is rejected. The record is
 not zero-padded up to `rs`, so the body size depends only on the payload.
 
-The subscription public key (`p256dh`) is attacker-reachable input, and the library validates the
-point itself at decode time — coordinates inside the prime field, then the P-256 curve equation —
-before it reaches the provider's `KeyFactory`. Refusing an invalid-curve point therefore does not
-depend on whether the configured provider validates in `KeyAgreement.doPhase`; with a provider
-whose `secp256r1` parameters are not over a prime field, the check fails closed. The Vault signer
-performs its own, deliberately separate check on the key it fetches (§7), which additionally
-compares domain parameters by value because there the parameters come from the input.
+The subscription public key (`p256dh`) is attacker-reachable input, and it is validated twice, on
+purpose. At construction, `Subscription` runs `P256PublicKeys.requireOnCurve` (§5) against the
+hard-coded FIPS 186-4 parameters — no provider involved — so a hostile off-curve key is refused at
+the application's boundary. At decode time, inside the send pipeline, the point is validated again
+— coordinates inside the prime field, then the P-256 curve equation — against the parameters of
+the provider that is about to run ECDH, before the point reaches that provider's `KeyFactory`.
+The second check is not a duplicate of the first: it asks a different question ("does the provider
+that will compute agree this is on its curve?"), and with a provider whose `secp256r1` parameters
+are not over a prime field it fails closed rather than assuming the constants. Refusing an
+invalid-curve point therefore never depends on whether the configured provider validates in
+`KeyAgreement.doPhase`. The equation arithmetic itself lives once, in `P256PublicKeys`; only the
+parameter source differs. The Vault signer performs its own, deliberately separate check on the
+key it fetches (§7), which additionally compares domain parameters by value because there the
+parameters come from the input.
 
 Key and payload arrays exposed by public value types are defensively copied. `Subscription`
 redacts both the `auth` secret and the capability-bearing part of its endpoint from `toString`.
@@ -385,7 +411,19 @@ one of them: in the fetched mode the version is Vault's to state, taken from the
 the public key. A bare `builder()` would have made one of two equal modes the default by omission.
 
 Everything required is a factory-method parameter, so an incomplete signer does not compile and
-`build()` never refuses over a missing value. The key name and the token travel as the value types
+`build()` never refuses over a missing value — and everything required is also validated at the
+factory. The address must be an absolute URI with a host and no query or fragment, and its path —
+legal, because a Vault behind a reverse proxy or ingress prefix is a legitimate topology — obeys
+the same per-segment rule as `mount` below, since it prefixes every token-bearing request path.
+The scheme is deliberately unrestricted (Vault's dev server is plain `http`; the docs say
+production must be `https`). The API paths are joined onto the address by explicit normalization —
+scheme and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` —
+and deliberately not by `URI.resolve`: per RFC 3986 §5.3 an absolute-path reference
+(`resolve("/v1/…")`) replaces the base path entirely, silently discarding a prefix like `/vault`,
+and the relative form (`resolve("v1/…")`) merges by dropping everything after the base path's last
+`/`, so a prefix without a trailing slash would lose its final segment — quieter, not better.
+`https://gw.example/vault` and `https://gw.example/vault/` therefore address the same Vault, and a
+root address like `https://vault.example:8200` joins as it reads. The key name and the token travel as the value types
 `TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
 arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
 enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
@@ -403,15 +441,16 @@ nesting (`secrets/transit`, `team-a/sub`) is legal, and every `/`-separated segm
 non-empty, not `.` or `..`, and drawn from `[A-Za-z0-9_.-]`.
 
 The allowed set — rather than a blacklist — is what a percent-encoded probe cannot reopen: a
-literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path —
-`URI.resolve` does *not* normalize dot segments in the absolute-path references this signer
-builds, so the path goes onto the wire as written. What happens next depends on the hops: Vault's
-own Go router decodes the path before routing, so a `%2F` addresses a different mount inside Vault
-itself; a decoded dot segment draws a *307 redirect* to the collapsed path from Vault's handler
-(`cleanPath` in `http/handler.go`) — the default `Redirect.NEVER` transport refuses it loudly, but
-a redirect-following custom transport would execute it, re-sending `X-Vault-Token` to the other
-path; and a normalizing proxy in front of Vault (nginx `proxy_pass` with a URI part, HAProxy
-`normalize-uri`) collapses the path before Vault sees it at all.
+literal `..` check alone admits `%2e%2e` (or `%2F`), which travels in the raw request path — the
+signer assembles its request URIs by direct concatenation onto the validated base, with no
+dot-segment normalization anywhere on the way, so the path goes onto the wire as written. What
+happens next depends on the hops: Vault's own Go router decodes the path before routing, so a
+`%2F` addresses a different mount inside Vault itself; a decoded dot segment draws a *307
+redirect* to the collapsed path from Vault's handler (`cleanPath` in `http/handler.go`) — the
+default `Redirect.NEVER` transport refuses it loudly, but a redirect-following custom transport
+would execute it, re-sending `X-Vault-Token` to the other path; and a normalizing proxy in front
+of Vault (nginx `proxy_pass` with a URI part, HAProxy `normalize-uri`) collapses the path before
+Vault sees it at all.
 
 The set is deliberately narrower than either Vault or a URL requires — policy, not necessity:
 Vault accepts any printable Unicode in a mount path (`validateMountPath`, canonical per
@@ -421,7 +460,6 @@ anyway because some of that punctuation is treated specially by intermediaries (
 path parameter to some hops), and admitting only what every hop treats literally can be widened
 later without breaking anyone — the reverse is not true. Refusing at the step also replaces
 `URI.create`'s later raw "Malformed escape pair" failure.
-
 The namespace travels differently — in the `X-Vault-Namespace` HTTP header, not the URL — so none
 of those hops act on it, and the same rule is applied for two other reasons. Definite: a header
 value must be header-safe, which the allowed set guarantees — a strict subset of visible ASCII
@@ -446,9 +484,12 @@ No traversal route through OSS Vault is claimed here.
   produced a syntactically valid but unusable VAPID key, and the misconfiguration surfaced only as
   an unexplained push-service rejection on the first send.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
-  Supplying the matching Transit key version pins signing to that version. The supplied key is
-  checked structurally only (65 bytes, `0x04` tag) — neither its point nor its correspondence to
-  the Transit key can be established here, so both stay with the caller.
+  Supplying the matching Transit key version pins signing to that version. The supplied key gets
+  the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
+  published conformance kit — requires `publicKey()` to return a point on P-256, so a signer
+  violating it must be unbuildable, and no legal VAPID key can fail the check. Its correspondence
+  to the Transit key cannot be established here and stays with the caller; a mismatch surfaces on
+  the first signature to a VAPID-bound subscription, as a push-service rejection.
 
 Signing uses `marshaling_algorithm=jws`, so Vault returns the raw JOSE-compatible ECDSA form. A
 pinned signer also sends `key_version`; taking the version and public key from the same metadata
@@ -566,6 +607,12 @@ The automated suite covers:
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`);
 - HTTP delivery, status mapping, and retry behavior;
+- the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
+  parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
+  shapes at `Subscription` construction (`SubscriptionValueTest`) and at decode time
+  (`EcKeysUntrustedInputTest`);
+- the Vault address contract: the path-preserving join for root and path-prefixed addresses, and
+  every factory-level rejection (`VaultTransitVapidSignerAddressTest`);
 - Spring Boot auto-configuration — the property wiring and the diagnostics that name the YAML key,
   and, reproducing the two documented Vault Spring Boot YAML examples as property values, that the
   core and Vault Transit signer starters compose into a working `PushSender`

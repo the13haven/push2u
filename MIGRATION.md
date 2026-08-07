@@ -137,10 +137,11 @@ Subscription subscription = Subscription.fromBase64(endpoint, p256dh, auth);
 ```
 
 `push2u`'s `Subscription` is a record that validates on construction: an absolute `https` endpoint
-with a host, a 65-byte uncompressed `p256dh` (`0x04` prefix), a 16-byte `auth`. A bad subscription
-fails where it is registered instead of on every later send, and the failure message never contains
-the endpoint's path or query — a push endpoint is a capability URL. `Endpoints.requireSecure` is
-public so you can apply the same check at your own registration boundary before persisting.
+with a host, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must be a real point on the
+P-256 curve, a 16-byte `auth`. A bad subscription fails where it is registered instead of on every
+later send, and the failure message never contains the endpoint's path or query — a push endpoint
+is a capability URL. `Endpoints.requireSecure` and `P256PublicKeys.requireOnCurve` are public so
+you can apply the same checks at your own registration boundary before persisting.
 
 ### Sending
 
