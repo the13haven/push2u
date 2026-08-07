@@ -76,9 +76,9 @@ public final class JdkPushHttpClient implements PushHttpClient {
         Objects.requireNonNull(requestTimeout, "requestTimeout");
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             // HttpRequest.Builder.timeout(Duration) throws its own IllegalArgumentException for a
-            // non-positive duration, but only once a request is sent — rejecting here turns a
-            // misconfiguration into a clear failure where the value was supplied, not on the
-            // first delivery attempt.
+            // non-positive duration, but only once post() builds the request — rejecting here
+            // turns a misconfiguration into a clear failure where the value was supplied, not on
+            // the first delivery attempt.
             throw new IllegalArgumentException("requestTimeout must be positive, got " + requestTimeout);
         }
         this.requestTimeout = requestTimeout;
