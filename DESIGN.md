@@ -431,20 +431,19 @@ The scheme must be `http` or `https` (case-insensitively), whitelisted at the fa
 speaks Vault's HTTP API and nothing else, and `ftp://vault.example` used to pass validation only to
 fail on the first sign inside the transport. `https` is always accepted; plain `http` is accepted
 out of the box only towards a literal loopback host (`localhost`, names under `.localhost`,
-`127.0.0.0/8` dotted-quads, and a bracketed IP literal denoting a loopback address — the IPv6
-loopback in any spelling, and the IPv4-mapped writings such as `[::ffff:127.0.0.1]`, which the
-platform resolves to the `127.0.0.0/8` address they map) — the Vault Agent/sidecar pattern, where
-TLS is terminated beside the application — and to any other host requires the builders' explicit
-`allowInsecureHttp()` step, because the `X-Vault-Token` header would otherwise cross the network
-in clear text. That one rule lives in `build()` rather than at the factory — the opt-in is a
-builder step, callable only after the factory has returned — and runs before the fetched mode's
-Vault read, so a refused address contacts nothing. Loopback is decided from the literal host text,
-never by resolution, keeping the rule readable from the address alone
+`127.0.0.0/8` dotted-quads in canonical decimal, and a bracketed IP literal denoting a loopback
+address — the IPv6 loopback in any spelling, and the IPv4-mapped writings such as
+`[::ffff:127.0.0.1]`, which the platform resolves to the `127.0.0.0/8` address they map) — the Vault
+Agent/sidecar pattern, where TLS is terminated beside the application — and to any other host
+requires the builders' explicit `allowInsecureHttp()` step, because the `X-Vault-Token` header would
+otherwise cross the network in clear text. That one rule lives in `build()` rather than at the
+factory — the opt-in is a builder step, callable only after the factory has returned — and runs
+before the fetched mode's Vault read, so a refused address contacts nothing. Loopback is decided
+from the literal host text, never by resolution, keeping the rule readable from the address alone
 ([ADR-015](docs/adr/0015-vault-address-scheme-policy.md)). The Spring starter deliberately adds no
 opt-in property: plaintext transport for the token costs a code change (an application-supplied
-signer bean), not a YAML edit. The API paths are joined onto the address by explicit
-normalization —
-scheme and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` —
+signer bean), not a YAML edit. The API paths are joined onto the address by explicit normalization
+— scheme and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` —
 and deliberately not by `URI.resolve`: per RFC 3986 §5.3 an absolute-path reference
 (`resolve("/v1/…")`) replaces the base path entirely, silently discarding a prefix like `/vault`,
 and the relative form (`resolve("v1/…")`) merges by dropping everything after the base path's last

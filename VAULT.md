@@ -109,12 +109,12 @@ the properties), Vault's own default mount for the Transit secrets engine, `name
 none (see *Vault namespaces* below), `transport` defaults to a `JdkVaultHttpTransport` (see
 *Vault HTTP transport* below), and `allowInsecureHttp()` defaults to off (see *Vault address*
 above — plain `http` beyond a literal loopback host is refused without it). `mount` is validated
-where it is set, per segment: nested mounts
-like `secrets/transit` are legal, and every `/`-separated segment must be non-empty, not `.` or
-`..`, and use only `[A-Za-z0-9_.-]`. That it is an allowed set rather than a `..` blacklist is what
-percent-encoding cannot reopen, and the set is deliberately narrower than either Vault or a URL
-permits — [`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration) has the routes it closes and why
-a conservative set can be widened later but not narrowed.
+where it is set, per segment: nested mounts like `secrets/transit` are legal, and every
+`/`-separated segment must be non-empty, not `.` or `..`, and use only `[A-Za-z0-9_.-]`. That it is
+an allowed set rather than a `..` blacklist is what percent-encoding cannot reopen, and the set is
+deliberately narrower than either Vault or a URL permits
+— [`DESIGN.md` §7](DESIGN.md#7-vault-transit-integration) has the routes it closes and why a
+conservative set can be widened later but not narrowed.
 
 The equivalent Spring Boot configuration is:
 
