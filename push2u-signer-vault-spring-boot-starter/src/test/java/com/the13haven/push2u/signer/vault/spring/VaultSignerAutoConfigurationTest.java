@@ -238,9 +238,12 @@ class VaultSignerAutoConfigurationTest {
     }
 
     @Test
-    void aNonHttpSchemeFailsStartupNamingTheProperty() {
+    void aNonHttpSchemeFailsStartupNamingThePropertyWithoutThePlainHttpAdvice() {
         // The scheme whitelist lives at the library's factory; the starter translates that
-        // rejection to the YAML property like every other address failure.
+        // rejection to the YAML property like every other address failure — and only that. The
+        // plain-http advice ("no configuration property for that opt-in") belongs to a different
+        // failure, and appending it here would send the operator after an opt-in that would not
+        // have helped: ftp:// is refused whatever the opt-in says.
         runner.withPropertyValues(
                         "push2u.signer.vault.address=ftp://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
@@ -251,6 +254,30 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(context.getStartupFailure())
                             .hasStackTraceContaining("push2u.signer.vault.address")
                             .hasStackTraceContaining("scheme must be http or https");
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .doesNotContain("no configuration property for that opt-in");
+                });
+    }
+
+    @Test
+    void anUnrelatedIllegalArgumentFromBuildReachesTheOperatorUntouched() {
+        // The build()-time translation must stay aimed at the one failure it is about. Fetched mode
+        // performs a startup Vault read through the application's own VaultHttpTransport bean, so a
+        // transport that rejects the request is an IllegalArgumentException out of build() that has
+        // nothing to do with the address — it must arrive with its own message and without the
+        // address property name or the plain-http advice bolted onto it.
+        runner.withPropertyValues(
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token")
+                .withUserConfiguration(RejectingTransportConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(rootMessage(context.getStartupFailure()))
+                            .isEqualTo(RejectingTransportConfiguration.REJECTION);
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .doesNotContain("no configuration property for that opt-in")
+                            .doesNotContain("push2u.signer.vault.address:");
                 });
     }
 
@@ -952,6 +979,33 @@ class VaultSignerAutoConfigurationTest {
                     + "\n-----END PUBLIC KEY-----\n";
             return "{\"data\":{\"keys\":{\"1\":{\"public_key\":\"" + pem.replace("\n", "\\n")
                     + "\"}},\"latest_version\":1,\"type\":\"ecdsa-p256\"}}";
+        }
+    }
+
+    /**
+     * A {@link VaultHttpTransport} stub that refuses every call with an {@link IllegalArgumentException} — the shape of
+     * an application transport that vets what it is asked to send. In fetched mode that rejection travels out of the
+     * signer's {@code build()}, which is what makes it the reachable case for the starter's build()-time translation
+     * having to let an unrelated {@link IllegalArgumentException} through untouched.
+     */
+    @Configuration(proxyBeanMethods = false)
+    static class RejectingTransportConfiguration {
+
+        static final String REJECTION = "this transport was asked for something it refuses to send";
+
+        @Bean
+        VaultHttpTransport rejectingTransport() {
+            return new VaultHttpTransport() {
+                @Override
+                public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+                    throw new IllegalArgumentException(REJECTION);
+                }
+
+                @Override
+                public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+                    throw new IllegalArgumentException(REJECTION);
+                }
+            };
         }
     }
 
