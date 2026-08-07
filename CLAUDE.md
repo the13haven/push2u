@@ -9,13 +9,21 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
 `README.md` documents the public API for consumers; `VAULT.md` and `SPRING.md` carry the reference
-for the two integrations, which README introduces in a few lines and links to. `DESIGN.md` documents
-the architecture and carries the ADRs (ADR-001…014) — read the relevant ADR before changing anything
-structural, and amend it in the same change if the decision moves. `MIGRATION.md` is the guide for
+for the two integrations, which README introduces in a few lines and links to. `DESIGN.md` describes
+the architecture as it stands — why it is shaped this way, never how to use it — and `docs/adr/`
+holds the decisions behind it, one file per ADR (ADR-001…014) with `docs/adr/README.md` as the
+index. Read the relevant ADR before changing anything structural. `MIGRATION.md` is the guide for
 consumers coming from `nl.martijndwars:web-push` — it states the other library's API and dependency
 set as verified facts, so anything added there must be checked against the published artifact.
 `RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of the
 conventions below, and `SECURITY.md` the vulnerability policy.
+
+**An ADR is immutable once its decision is implemented.** It is not reworded, not brought up to date
+with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
+and the superseded one keeps its number, title and body while its status line becomes
+`Superseded by ADR-NNN` — the only edit its body ever takes. The description of how things currently
+work belongs in `DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md`
+carries the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
@@ -186,6 +194,16 @@ starter is ordered before the core starter and outranks the local signer.
   automatically. `LICENSE` itself keeps the canonical Apache appendix with its `[yyyy]` placeholder
   — the notice belongs in the files, and each published jar carries the licence as
   `META-INF/LICENSE`.
+- **Published code explains itself.** Every module ships a `sources.jar`, so a comment or Javadoc in
+  a `main` source set is read by consumers who have no clone of this repository: "ADR-014" or "see
+  `DESIGN.md`" is a dead end for them. State the reason in the text instead — `// ADR-002's
+  zero-dependency claim` becomes a sentence saying what this code keeps true. Checkstyle's
+  `checkstyleReferences` task fails the build on `ADR`, a `*.md` filename or `readme` in any case,
+  anywhere in `main`. A URL is exempt — any whitespace-delimited token containing `://`, whatever
+  `#`, `?` or `%` it carries — because a link the consumer can open is not a dangling pointer; the
+  exemption covers that token and not the rest of the line. Test sources are free to cite whatever
+  they like. The rule reads lines rather than an AST, which is what lets it cover `module-info.java`
+  and `package-info.java`.
 - **Suppressions:** a rule exclusion carries a comment stating why; a per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope, next to the reason.
 - **Gradle 10 readiness:** the build avoids removed idioms on purpose — `register<Type>(name)` not

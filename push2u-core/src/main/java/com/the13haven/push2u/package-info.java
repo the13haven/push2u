@@ -8,8 +8,13 @@
  * dependencies (only JSpecify's annotations): VAPID-authenticated, end-to-end-encrypted delivery of push messages to
  * browser push services from a Java application server.
  *
- * <p>This package is the public surface of {@code push2u-core}. Module boundaries and architectural decisions are
- * documented in the repository's {@code DESIGN.md}.
+ * <p>This package is the public surface of {@code push2u-core}: {@link com.the13haven.push2u.PushSender} and the
+ * immutable value types it sends, plus the three seams a deployment may replace —
+ * {@link com.the13haven.push2u.VapidSigner} for VAPID key custody, {@link com.the13haven.push2u.PushHttpClient} for the
+ * delivery transport, and {@link com.the13haven.push2u.EndpointPolicy} for the hosts a sender is allowed to POST to.
+ * Everything else — the encryption, the key derivation, the origin serialization — is deliberately concrete: an
+ * alternative implementation could only produce a message the browser fails to decrypt, long after the send reported
+ * success.
  */
 @NullMarked
 package com.the13haven.push2u;

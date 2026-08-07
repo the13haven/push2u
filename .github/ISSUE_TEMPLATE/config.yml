@@ -19,4 +19,5 @@ contact_links:
     url: https://github.com/the13haven/push2u#readme
     about: >-
       The README documents the API, the Spring Boot properties, the Vault Transit signer and the
-      protocol limits. DESIGN.md explains why the library behaves the way it does.
+      protocol limits. DESIGN.md explains why the library is built the way it is, and
+      docs/adr/ records the decisions behind it.

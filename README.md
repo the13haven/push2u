@@ -620,7 +620,7 @@ Every package is [JSpecify](https://jspecify.dev) `@NullMarked`: a reference typ
 non-null unless annotated `@Nullable` — the annotated exceptions are the optional message headers,
 the unset builder fields and the Spring properties. NullAway fails the build on a violation, and
 consumers' analysers, IntelliJ and the Kotlin compiler read the same annotations
-([ADR-012](DESIGN.md#adr-012--nullness-declared-with-jspecify)).
+([ADR-012](docs/adr/0012-nullness-declared-with-jspecify.md)).
 
 ## Contributing
 

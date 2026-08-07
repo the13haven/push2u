@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Published sources explain themselves.
+
+    Every module ships a -sources jar, so a comment or Javadoc line in a `main` source set is read
+    by consumers who hold the artifact and nothing else. "(ADR-014)" or "see DESIGN.md" is a dead
+    end for them: the reasoning has to be in the sentence, not in a pointer to a file only this
+    repository has. The rule is about published code alone — the `checkstyleReferences` task feeds
+    it `main` and nothing else, and test sources may cite whatever they like.
+
+    Both rules sit on Checker rather than TreeWalker, so they read source lines instead of a parsed
+    AST. That is what lets them cover module-info.java, which Checkstyle's grammar cannot parse at
+    all, and package-info.java, whose Javadoc is where such a reference is most likely to be
+    written.
+-->
+<module name="Checker">
+    <property name="severity" value="error"/>
+    <property name="charset" value="UTF-8"/>
+
+    <!-- ADR-NNN, "the ADRs", "an ADR" — the decisions live in docs/adr/, which consumers do not have. -->
+    <module name="RegexpSingleline">
+        <property name="format" value="\bADRs?\b"/>
+        <property name="fileExtensions" value="java"/>
+        <property name="message"
+                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so an ADR citation leads nowhere. State the reason in the sentence instead."/>
+    </module>
+
+    <!--
+        DESIGN.md, CONTRIBUTING.md, README … any repository document by name, in any case: `readme`
+        and `Readme` name the same file `README` does.
+
+        A URL is deliberately NOT a violation, and the pattern says so rather than leaving it to a
+        suppression: a link a consumer can open is not a dangling pointer, which is the only thing
+        this rule is about. The alternative — a SuppressWithPlainTextCommentFilter — would have to be
+        switched on inside the file being checked, so the escape hatch itself would ship in the
+        sources jar, and it would open the same opt-out to exactly the citation the rule exists to
+        catch.
+
+        The unit of the exemption is the whitespace-delimited token, not a character class of what
+        may appear in a URL. Enumerating URL characters is how the first version of this rule broke:
+        `#`, `?`, `%`, `&` and `=` all end a `scheme://host/path` run for a rule that reasons in
+        characters, which made `https://…/push2u#readme` and `https://…/search?q=README.md` fail
+        even though both open in one click. So: a match may only begin where a token begins
+        (`(?&lt;!\S)`), and a token holding `://` anywhere is skipped whole (`(?!\S*://)`). Only the
+        rest of the line is then still scanned — a URL earlier on a line does not license a bare
+        `DESIGN.md` later on it.
+
+        The two halves are deliberately asymmetric, because a false positive costs more than a miss:
+        this rule is an aid to review, not the thing that catches every case. `.md` needs a non-empty
+        filename in front of it, so prose about `the .md suffix` is not a violation; `readme` is a
+        word, so it only counts standing alone as a token (with at most a wrapping parenthesis or a
+        closing punctuation mark). That leaves `com.example.readme`, `config.readme()`, `-readme`,
+        `"readme"` and `#readme` alone — all legitimate code — at the price of missing
+        `path/to/readme`, which a reviewer can see and a red build on an identifier would cost
+        somebody an afternoon.
+
+        Known and accepted: gluing `://` onto a filename (`DESIGN.md://`) silences the rule. It is
+        not the reason a SuppressWithPlainTextCommentFilter was rejected — that would be a supported,
+        conventional opt-out, invisible in review because it reads as configuration; `://` after a
+        filename reads as a mistake to anyone looking at the diff. Requiring the scheme at the start
+        of the token instead would fail every `&lt;a href="https://…"&gt;` in the Javadoc, which is
+        how a URL actually appears here.
+    -->
+    <module name="RegexpSingleline">
+        <property name="format" value="(?&lt;!\S)(?!\S*://)(?:\S*?[\w-]+\.md\b|\(?(?i:readme)[.,;:!?)]?(?!\S))"/>
+        <property name="fileExtensions" value="java"/>
+        <property name="message"
+                  value="Published sources must explain themselves: a consumer reading this in the sources jar has no repository, so a reference to a repository document leads nowhere. Say what it says, here — or link something the consumer can open (any http:// or https:// URL is allowed)."/>
+    </module>
+</module>

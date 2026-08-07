@@ -13,20 +13,28 @@ and accepted work. Participation is covered by the
 
 ## Before you start
 
-Read [`DESIGN.md`](DESIGN.md) for the architecture, and its ADRs (§9) for the decisions that are
-already settled. Two of them shape most contributions:
+Read [`DESIGN.md`](DESIGN.md) for the architecture as it stands, and
+[`docs/adr/`](docs/adr/README.md) for the decisions that are already settled — one file per
+decision, indexed there. Two of them shape most contributions:
 
-- **ADR-002, zero-dependency core.** `push2u-core` declares exactly one non-test dependency:
-  JSpecify, an annotation-only jar. A change that adds a runtime dependency to the core will not
-  be accepted — the library exists to replace one that leaked a heavy transitive surface into its
-  API. Framework and remote-system integrations live in the optional modules.
-- **ADR-005, two SPIs in the core** (plus `EndpointPolicy`, added later under the same test). New
-  extension points need an articulable reason the library cannot decide the behaviour for the
-  deployment. Protocol steps stay concrete.
+- **[ADR-002](docs/adr/0002-zero-dependency-core.md), zero-dependency core.** `push2u-core` declares
+  exactly one non-test dependency: JSpecify, an annotation-only jar. A change that adds a runtime
+  dependency to the core will not be accepted — the library exists to replace one that leaked a
+  heavy transitive surface into its API. Framework and remote-system integrations live in the
+  optional modules.
+- **[ADR-005](docs/adr/0005-public-spis-in-the-core.md), three public SPIs in the core**
+  (`VapidSigner`, `PushHttpClient`, `EndpointPolicy`). New extension points need an articulable
+  reason the library cannot decide the behaviour for the deployment. Protocol steps stay concrete.
 
-If a change contradicts an ADR, that is not automatically wrong — but it has to amend the ADR in
-the same pull request, with the reasoning, rather than leave the document describing a design the
-code no longer follows.
+If a change contradicts an ADR, that is not automatically wrong — but it has to say so, in the
+pull request and in the documents, rather than leave them describing a design the code no longer
+follows.
+
+**An ADR is immutable once its decision is implemented.** Do not edit one to match a change: a
+decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
+its title and its body while its status line becomes `Superseded by ADR-NNN`. Descriptions of how
+the code works now belong in `DESIGN.md`, which is meant to be rewritten as the architecture moves.
+[`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
 The [non-goals](DESIGN.md#non-goals) are equally settled: subscription persistence, browser-side
 code, legacy `aesgcm`, general JSON parsing.
@@ -117,7 +125,7 @@ warn. Aggregated instruction coverage must stay at or above 80 %.
 | Tool                 | What it enforces                                            | Configuration                                |
 |----------------------|-------------------------------------------------------------|----------------------------------------------|
 | Spotless             | Palantir Java Format, import order                           | `build-logic/.../push2u-quality.gradle.kts`  |
-| Checkstyle           | Naming, Javadoc on the public API, import grouping           | `config/quality/checkstyle/checkstyle.xml`   |
+| Checkstyle           | Naming, Javadoc on the public API, import grouping, the licence header, no repository references in published sources | `config/quality/checkstyle/`                 |
 | PMD                  | Best practices, design, error-prone patterns, performance    | `config/quality/pmd/ruleset.xml`             |
 | SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
 | Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
@@ -146,6 +154,16 @@ Practical consequences:
 
   Copy the year from a file you are adding alongside it rather than from this example — the check
   accepts any four digits, so a stale year copied from documentation would pass unnoticed.
+- **Published code and Javadoc explain themselves, without pointing at this repository.** Every
+  module ships a `sources.jar`, so a comment in a `main` source set is read by people who have only
+  the artifact: `(ADR-014)` or "see `DESIGN.md`" sends them nowhere. Write the reason into the
+  sentence instead of citing where it is recorded. Checkstyle enforces it — `ADR`, any `*.md`
+  filename and the word `readme` in any case fail the build anywhere in a `main` source set, through
+  the `checkstyleReferences` task, which reads source lines rather than a parsed AST so that
+  `module-info.java` and `package-info.java` are covered too. A URL is fine — `http://` or
+  `https://`, `#readme` anchor or `?q=README.md` query included — because a consumer can open it;
+  the exemption is the link itself, not the rest of the line it sits on. Test sources are exempt;
+  nothing ships them.
 - A rule exclusion carries a comment saying why. A per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope that covers it, next to its reason.
 - **Boolean methods are named by what they are, in three kinds.** Checkstyle does not enforce this
@@ -285,7 +303,10 @@ Also update, when your change touches them:
 - `README.md` — the consumer-facing documentation. Keep Maven coordinates in the literal form
   `com.the13haven:<module>:X.Y.Z`; a release hook rewrites every such coordinate to the released
   version, matching any `X.Y.Z` — so do not write one to name a historical version.
-- `DESIGN.md` — the architecture and its ADRs.
+- `DESIGN.md` — the architecture, whenever the change moves it.
+- `docs/adr/` — a *new* file, plus its row in `docs/adr/README.md`, when the change settles
+  something the existing ADRs do not cover or replaces a decision one of them records. Never an edit
+  to an ADR that is already implemented.
 
 ## Public API
 

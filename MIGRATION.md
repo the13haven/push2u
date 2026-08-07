@@ -63,8 +63,8 @@ an artifact that receives no further releases.
 push2u's side of the same table: `push2u-core` declares exactly one dependency,
 [JSpecify][jspecify] — annotations, no code — carried as `api` so the nullness contract reaches
 consumers, and as `requires static` on the module path so nothing resolves it at runtime
-([ADR-002](DESIGN.md#adr-002--zero-dependency-core) and
-[ADR-012](DESIGN.md#adr-012--nullness-declared-with-jspecify) in `DESIGN.md`). The Vault signer
+([ADR-002](docs/adr/0002-zero-dependency-core.md) and
+[ADR-012](docs/adr/0012-nullness-declared-with-jspecify.md)). The Vault signer
 and the Spring Boot starters are separate optional modules; neither can reach the core.
 
 ```diff
@@ -233,7 +233,7 @@ JDK one.
 | `Notification` | `PushMessage` + `Subscription` | The target and the message are separate values |
 | `Notification.builder()` | `PushMessage.builder(payload)` | Payload is required, so it is a factory parameter |
 | `Encoding.AES128GCM` | (implicit) | `aes128gcm` is the only content coding |
-| `Encoding.AESGCM` | — | Not supported ([ADR-006](DESIGN.md#adr-006--aes128gcm-only)) |
+| `Encoding.AESGCM` | — | Not supported ([ADR-006](docs/adr/0006-aes128gcm-only.md)) |
 | `Urgency.NORMAL`, `.getHeaderValue()` | `Urgency.NORMAL`, `.headerValue()` | Same four values |
 | `org.apache.http.HttpResponse` / `org.asynchttpclient.Response` | `PushResult` | Status interpreted, body never read |
 | `Utils.loadPublicKey`, `Utils.loadPrivateKey` | `VapidKeys.fromBase64` / `VapidKeys.of` | No BouncyCastle types in the API |
@@ -256,7 +256,7 @@ the legacy content coding, not `aes128gcm`. (The other entry points differ:
 whether or not you meant to be.
 
 push2u implements `aes128gcm` only, deliberately and permanently: RFC 8291 is the standard, and
-there is no builder option to change it ([ADR-006](DESIGN.md#adr-006--aes128gcm-only)). For
+there is no builder option to change it ([ADR-006](docs/adr/0006-aes128gcm-only.md)). For
 anything running a current browser this is a no-op — `aes128gcm` is what the user agents that
 matter negotiate. But the encryption is end-to-end to the *user agent*, so if you knowingly serve
 clients old enough to understand only `aesgcm`, push2u cannot reach them and is not a drop-in for
@@ -281,7 +281,7 @@ Neither library throws on `404`/`410`. The difference is who interprets the stat
 hands back the transport's response object and you write the mapping; push2u has already made it
 (`DELIVERED` / `SUBSCRIPTION_EXPIRED` / `FAILED`), and expiry is deliberately not an exception so
 that pruning a dead subscription stays ordinary control flow
-([ADR-007](DESIGN.md#adr-007--expired-subscription-is-a-result)).
+([ADR-007](docs/adr/0007-expired-subscription-is-a-result.md)).
 
 Two consequences for a port:
 

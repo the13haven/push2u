@@ -7,8 +7,9 @@ description: How to make a change in the push2u Web Push library — the procedu
 
 This is how work gets done in this repository — the procedures that span more than one file and are
 easy to complete only halfway. It does not restate what is already written elsewhere: `CLAUDE.md`
-carries the facts that are always true, `DESIGN.md` §9 the settled decisions, and
-`.claude/skills/push2u-review/SKILL.md` what a reviewer will check when you are finished.
+carries the facts that are always true, `DESIGN.md` the architecture as it stands, `docs/adr/` the
+settled decisions, and `.claude/skills/push2u-review/SKILL.md` what a reviewer will check when you
+are finished.
 
 If you delegate part of the work to a subagent, note that it starts fresh and does not inherit this
 skill — only the repository's `CLAUDE.md` reaches it. Put the relevant recipe in the delegation
@@ -56,6 +57,15 @@ writes it into a new file with the current year, and leaves the year alone from 
 thing the gate cannot do for you is `package-info.java` and `module-info.java` — Spotless skips both
 by name so it cannot swallow their Javadoc, so a new package means copying the header in by hand.
 Checkstyle fails the build if you forget.
+
+**A comment or Javadoc in a `main` source set may not point at this repository.** Every module ships
+a `sources.jar`, so those lines are read by people holding the artifact and nothing else: `(ADR-014)`
+or "see `DESIGN.md`" is a dead end for them. Write the reason into the sentence — what this code
+keeps true, not where the decision is filed. The `checkstyleReferences` task fails the build on
+`ADR`, any `*.md` filename and the word `readme` in any case, anywhere in `main` —
+`module-info.java` and `package-info.java` included, since it reads lines rather than an AST. A URL
+is exempt — any whitespace-delimited token containing `://`, anchors and query strings included,
+because a consumer can follow it — and test sources may cite whatever they like.
 
 ## Changing encryption, VAPID or protocol behaviour
 
@@ -162,7 +172,8 @@ its public API. Work through the options in this order:
    because the failure mode of general parsing is a surprise, and the surprise is in a security
    path.
 3. **A real library** — then it goes in an optional module and never in the core, and that is an
-   ADR-level decision to argue in the pull request, not a dependency line to slip in.
+   ADR-level decision to argue in the pull request (a *new* file in `docs/adr/`, since ADR-002
+   itself is immutable), not a dependency line to slip in.
 
 Test-scoped dependencies and `compileOnly` in the starters are not exceptions to this: neither
 reaches a consumer's runtime classpath. Framework artifacts in the starters stay BOM-managed so
@@ -210,8 +221,14 @@ compiling into that source set is a build failure rather than a green run.
 
 Run `./gradlew qualityCheck` — it formats, analyses, tests and checks the aggregated coverage floor
 in one pass. Then check the things no tool can see: is the documentation that describes this
-behaviour still true, does a change to architecture need its ADR amended, and does a new public
+behaviour still true, does the change move something `DESIGN.md` describes, and does a new public
 member deserve to be permanent, since it ships to Maven Central and cannot be withdrawn.
+
+If the change settles something the ADRs do not cover, or replaces a decision one of them records,
+write a **new** file in `docs/adr/` and add its row to `docs/adr/README.md`. Do not edit an ADR
+whose decision is implemented — a superseded one keeps its body and gets `Superseded by ADR-NNN` on
+its status line, and `docs/adr/README.md` carries the procedure. `DESIGN.md` is the document that
+tracks the code; the ADRs are the record of what was decided and when.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

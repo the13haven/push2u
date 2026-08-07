@@ -8,8 +8,8 @@
  *
  * <p>This package is the whole of the {@code push2u-testkit} artifact, which belongs on a consumer's <em>test</em>
  * classpath and not in an application's runtime. It is a separate package from {@code com.the13haven.push2u} because
- * the core is an explicit JPMS module (ADR-014) and would refuse to share its package with a second artifact on the
- * module path.
+ * the core is an explicit JPMS module: a package split across two artifacts cannot be resolved from the module path, so
+ * a consumer holding both jars would get a {@code ResolutionException} rather than a test kit.
  *
  * <p>Its one member today is {@link com.the13haven.push2u.testkit.VapidSignerContractTest}, which every
  * {@link com.the13haven.push2u.VapidSigner} implementation extends.

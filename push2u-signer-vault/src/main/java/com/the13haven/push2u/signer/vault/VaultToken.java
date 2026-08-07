@@ -30,9 +30,8 @@ import java.util.Objects;
  *
  * <p>The token's <em>format</em> is deliberately not validated. Vault issues {@code hvs.}/{@code hvb.}/{@code hvr.}
  * prefixes today, issued {@code s.}/{@code b.} before Vault 1.10, and a dev-mode server accepts an arbitrary string as
- * its root token ({@code -dev-root-token-id=root}) — the Testcontainers-backed test in this repository runs Vault with
- * {@code push2u-test-root}. A prefix or shape check would break all of those while catching no real mistake the
- * character-set check does not already catch.
+ * its root token ({@code -dev-root-token-id=root}), which need not resemble a generated one at all. A prefix or shape
+ * check would break all of those while catching no real mistake the character-set check does not already catch.
  *
  * <p>{@link #toString()} is overridden to never print the value — the record-generated form would put the live token
  * into any log line or debugger dump that renders this object.

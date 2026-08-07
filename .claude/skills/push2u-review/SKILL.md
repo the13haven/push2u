@@ -144,8 +144,8 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
   whole call rather than truncating, because the targeted JSON extraction could otherwise find a
   complete-looking `data.signature` before the cut. A per-request timeout is required, not just a
   connect timeout: in fetched mode a Vault that accepts and never answers would hang startup.
-- The two seams stay separate (ADR-005). Unifying them is a design change needing an ADR amendment,
-  not a refactor.
+- The two seams stay separate (ADR-005). Unifying them is a design change needing a new ADR that
+  supersedes ADR-005, not a refactor — and not an edit to ADR-005 either (§5.6).
 
 ### 5.3 Secrets and capability URLs in diagnostics
 
@@ -195,9 +195,15 @@ Nothing in the toolchain checks this, which makes it the easiest thing to lose.
 ### 5.6 ADR conformance
 
 If the change touches architecture, module boundaries, an SPI, the dependency posture or the release
-process, check it against the ADRs — and read `.claude/skills/push2u-review/references/adr.md` for
-the index and the amendment procedure. A change that contradicts an ADR is not automatically wrong; a change that contradicts
-one *silently* is, because it leaves `DESIGN.md` describing a design the code no longer follows.
+process, check it against the ADRs in `docs/adr/` — and read
+`.claude/skills/push2u-review/references/adr.md` for how to review against them. A change that
+contradicts an ADR is not automatically wrong; a change that contradicts one *silently* is, because
+it leaves the documents describing a design the code no longer follows.
+
+Two edits are findings on sight: an ADR whose decision is implemented being reworded or amended
+(immutable — a moved decision is a new ADR, and the old one only ever gets `Superseded by ADR-NNN`
+on its status line), and a description of how the code currently works being added to an ADR instead
+of to `DESIGN.md`.
 
 ### 5.7 Dependencies and supply chain
 
@@ -231,9 +237,10 @@ one *silently* is, because it leaves `DESIGN.md` describing a design the code no
 
 Cheap to check, silently wrong when missed: the pull request carries a changelog label (the label
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
-without `!`, `breaking-change` stay manual); `DESIGN.md` is updated if architecture moved;
-`README.md` is updated if consumer-facing API, properties or limits changed; a new suppression or
-rule exclusion states its reason next to it.
+without `!`, `breaking-change` stay manual); `DESIGN.md` is updated if architecture moved, and a new
+file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
+`SPRING.md` / `VAULT.md` — is updated if consumer-facing API, properties or limits changed; a new
+suppression or rule exclusion states its reason next to it.
 
 ## 6. Calibrate before reporting
 
