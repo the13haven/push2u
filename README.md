@@ -159,75 +159,12 @@ re-subscribe. The public key is not secret; it is published to browsers by desig
 
 ### Generate a pair
 
-Any P-256 generator will do, as long as it emits the encodings used here: the public key as the
-**65-byte uncompressed X9.62 point**, which is what
-[RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) defines for the `k`
-parameter and what browsers take as `applicationServerKey`, and the private key as the **raw 32-byte
-scalar**, which is what `VapidKeys` takes. Both unpadded base64url. The JDK you already build with can do it, through `jshell`.
-
-Run it where you would handle any other secret — a workstation or a bastion, not CI. The private
-half is printed to the terminal, so it lands in scrollback and in whatever your multiplexer or
-terminal emulator keeps; move it into the secret store, then clear the buffer. Nothing here writes
-it to disk, and the heredoc keeps it out of shell history, which records the command and not its
-output.
-
-<!-- vapid-keygen:begin -->
-```bash
-jshell -q - <<'EOF'
-import java.math.BigInteger;
-import java.security.*;
-import java.security.interfaces.*;
-import java.security.spec.*;
-import java.util.Base64;
-
-byte[] fixed32(BigInteger value) {
-    byte[] raw = value.toByteArray(), out = new byte[32];
-    int len = Math.min(raw.length, 32);
-    System.arraycopy(raw, raw.length - len, out, 32 - len, len);
-    return out;
-}
-
-var generator = KeyPairGenerator.getInstance("EC");
-generator.initialize(new ECGenParameterSpec("secp256r1"));
-var pair = generator.generateKeyPair();
-
-var point = ((ECPublicKey) pair.getPublic()).getW();
-var publicKey = new byte[65];
-publicKey[0] = 0x04;
-System.arraycopy(fixed32(point.getAffineX()), 0, publicKey, 1, 32);
-System.arraycopy(fixed32(point.getAffineY()), 0, publicKey, 33, 32);
-var privateKey = fixed32(((ECPrivateKey) pair.getPrivate()).getS());
-
-var base64url = Base64.getUrlEncoder().withoutPadding();
-System.out.println("public:  " + base64url.encodeToString(publicKey));
-System.out.println("private: " + base64url.encodeToString(privateKey));
-/exit
-EOF
-```
-<!-- vapid-keygen:end -->
-
-That block is POSIX-shell syntax — `bash`, `zsh` or `sh`. On PowerShell or `cmd.exe`, save everything
-between the `jshell -q - <<'EOF'` line and the closing `EOF` to a file, say `vapid.jsh`, and run
-`jshell -q vapid.jsh` instead.
-
-**`fixed32` is the reason this is longer than a three-liner, and it is not optional.** The JCA hands
-out `BigInteger` coordinates, and `toByteArray()` is a two's-complement encoding rather than a fixed
-32-byte field element: it prepends a `0x00` sign byte whenever the high bit is set — about half of
-all generated pairs — and drops leading zeros, returning fewer than 32 bytes about once in two
-hundred. So "strip the sign byte" is wrong half the time, and "strip but do not left-pad" is wrong
-once in two hundred — the worse of the two, because the key looks perfectly fine right up to the
-point where a signature does not verify. That second defect is exactly the one
-`nl.martijndwars:web-push`'s own generator has (see
-[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)); copying the block whole avoids both. push2u's
-own test suite runs this block out of this file, so a snippet that stops printing a usable pair
-fails the build.
-
-If you already have Node.js around, the npm `web-push` package prints the same two values in the
-same encoding, and either source is equally good:
-
-```bash
-npx web-push generate-vapid-keys
-```
+The public key is the **65-byte uncompressed X9.62 point** that
+[RFC 8292 §3.2](https://datatracker.ietf.org/doc/html/rfc8292#section-3.2) defines and browsers take
+as `applicationServerKey`; the private key is the **raw 32-byte scalar** `VapidKeys` takes. Both
+unpadded base64url. [`VAPID.md`](VAPID.md) is the recipe — a `jshell` block that prints exactly those
+two, and an npm alternative. It prints the private half to the terminal, so run it where you would
+handle any other secret: a workstation or a bastion, not CI.
 
 ### Where the two values go
 
@@ -239,8 +176,8 @@ the application server.
 
 Holding the private key in a secret store you would rather not hand to the application at all is
 what the [Vault Transit signer](#vault-transit-signer) is for: the key stays in Vault, and push2u
-sends signing requests instead of loading a scalar. **If that is where you are heading, do not run
-the snippet above at all** — create the key inside Vault, so the scalar never exists outside it:
+sends signing requests instead of loading a scalar. **If that is where you are heading, do not
+generate a pair at all** — create the key inside Vault, so the scalar never exists outside it:
 
 ```bash
 vault write -f transit/keys/<name> type=ecdsa-p256

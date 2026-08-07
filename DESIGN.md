@@ -25,8 +25,8 @@ narrow seams only where applications have a legitimate reason to replace behavio
 behind it — with the context they were taken in and the alternatives rejected — are one file per
 decision in [`docs/adr/`](docs/adr/README.md); they are cited here rather than restated. How to
 *use* the library belongs to the consumer-facing references instead: [`README.md`](README.md) for
-the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations, and the
-Javadoc for individual contracts.
+the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations,
+[`VAPID.md`](VAPID.md) for generating the key pair, and the Javadoc for individual contracts.
 
 ## 2. Goals and non-goals
 

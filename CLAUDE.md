@@ -9,14 +9,19 @@ push2u is a JVM Web Push library (RFC 8030/8188/8291/8292/5869): VAPID-authentic
 Gradle multi-project build, published to Maven Central as `com.the13haven:*`.
 
 `README.md` documents the public API for consumers; `VAULT.md` and `SPRING.md` carry the reference
-for the two integrations, which README introduces in a few lines and links to. `DESIGN.md` describes
-the architecture as it stands — why it is shaped this way, never how to use it — and `docs/adr/`
-holds the decisions behind it, one file per ADR (ADR-001…014) with `docs/adr/README.md` as the
-index. Read the relevant ADR before changing anything structural. `MIGRATION.md` is the guide for
-consumers coming from `nl.martijndwars:web-push` — it states the other library's API and dependency
-set as verified facts, so anything added there must be checked against the published artifact.
-`RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of the
-conventions below, and `SECURITY.md` the vulnerability policy.
+for the two integrations, and `VAPID.md` the one-time recipe for generating a VAPID key pair — all
+three are what README introduces in a few lines and links to. `VAPID.md` is the one with a moving
+part: its `jshell` block sits between the `vapid-keygen:begin` / `vapid-keygen:end` anchors and is
+executed by `VapidGuideKeyGenerationTest` out of the file itself, so the anchors, the fenced block
+and the heredoc wrapper are load-bearing and `.github/workflows/detect-changes.yml` treats an edit
+there as a build change. `DESIGN.md` describes the architecture as it stands — why it is shaped this
+way, never how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR
+(ADR-001…014) with `docs/adr/README.md` as the index. Read the relevant ADR before changing anything
+structural. `MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it
+states the other library's API and dependency set as verified facts, so anything added there must be
+checked against the published artifact. `RELEASING.md` covers the release procedure,
+`CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
+vulnerability policy.
 
 **An ADR is immutable once its decision is implemented.** It is not reworded, not brought up to date
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
@@ -27,11 +32,11 @@ carries the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
-string written into `VAULT.md`, `SPRING.md`, `MIGRATION.md` or anywhere else freezes at whatever
-version it was written with and starts lying at the next release. Those documents point at README's
-Installation section instead. The exception is a document that is *about* one version and is never
-read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a frozen
-coordinate there is correct.
+string written into `VAULT.md`, `SPRING.md`, `VAPID.md`, `MIGRATION.md` or anywhere else freezes at
+whatever version it was written with and starts lying at the next release. Those documents point at
+README's Installation section instead. The exception is a document that is *about* one version and
+is never read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a
+frozen coordinate there is correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main`. It loads automatically alongside this file.

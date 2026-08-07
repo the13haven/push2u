@@ -38,7 +38,7 @@ concurrency:
 jobs:
   # The same workflow the quality gate uses, for the same reason — see
   # .github/workflows/detect-changes.yml — but a different output. This one reads `code`, the
-  # narrower of the two: the quality gate's `build` also counts a README.md edit, because a test
+  # narrower of the two: the quality gate's `build` also counts a VAPID.md edit, because a test
   # executes the key-generation snippet in it, and that is not a reason to re-analyse a source tree
   # nothing changed in. On a schedule or a manual dispatch there is no range to compare, and it
   # answers "code changed", so the weekly scan runs whatever it is asked to.

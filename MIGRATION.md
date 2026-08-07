@@ -385,8 +385,7 @@ actually send, where `web-push` would have accepted a compressed one.
 
 None of this is a reason to generate a fresh pair: re-encoding keeps every existing subscription
 alive, and a new pair kills all of them. For a genuinely new application,
-[`README.md` → VAPID keys](README.md#vapid-keys) has a generator that emits the 32-byte scalar
-directly.
+[`VAPID.md`](VAPID.md) has a generator that emits the 32-byte scalar directly.
 
 ### `Topic` is validated locally
 
