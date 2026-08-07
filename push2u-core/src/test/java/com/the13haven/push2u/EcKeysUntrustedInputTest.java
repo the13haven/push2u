@@ -583,6 +583,59 @@ class EcKeysUntrustedInputTest {
                 .hasMessageContaining("no private key");
     }
 
+    /**
+     * One step less degenerate than a null half: the half is an EC key, but its {@code getParams()} — the provider's
+     * own key implementation answering, with nothing in the JDK promising the answer is non-null — reports no domain
+     * parameters. The refusal must be the library's own {@link PushCryptoException}, naming the half and what is
+     * missing, not a {@link NullPointerException} escaping from inside the parameter comparison.
+     */
+    @Test
+    void aGeneratedPublicHalfWithNullParametersFailsClosedAsACryptoException() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(keyAt(genuineP256Point(), null)));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("public")
+                .hasMessageContaining("no domain parameters at all");
+    }
+
+    @Test
+    void aGeneratedPrivateHalfWithNullParametersFailsClosedAsACryptoException() {
+        ECPublicKey genuine = EcKeys.decodeP256PublicKey(validPoint(), jca);
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(genuine, privateKeyOn(null)));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("private")
+                .hasMessageContaining("no domain parameters at all");
+    }
+
+    /**
+     * {@code ECPoint.POINT_INFINITY.equals(null)} is {@code false} — the infinity guard quietly waves a null point
+     * through — so a {@code getW()} of {@code null} must be refused by name, before that comparison, or it dereferences
+     * on the affine coordinates one line later.
+     */
+    @Test
+    void aGeneratedPublicHalfWithANullPointFailsClosedAsACryptoException() {
+        Jca dishonest = Jca.using(new FixedKeyPairProvider(keyAt(null, jca.p256Parameters())));
+
+        assertThatThrownBy(() -> EcKeys.generateP256(dishonest))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no point at all");
+    }
+
+    /**
+     * The same degenerate answer at the other provider seam: {@code AlgorithmParameters.getParameterSpec} from a custom
+     * provider can return {@code null}, and the value-wise parameter verification must then fail closed as the
+     * library's crypto exception instead of dereferencing the spec.
+     */
+    @Test
+    void aProviderAnsweringTheParameterLookupWithNullFailsClosed() {
+        assertThatThrownBy(() -> EcKeys.decodeP256PublicKey(validPoint(), Jca.using(new ParametersProvider(null))))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no domain parameters at all");
+    }
+
     /** A genuine P-256 point (the RFC 8291 worked example's {@code ua_public}) to pair with substituted parameters. */
     private ECPoint genuineP256Point() {
         return EcKeys.decodeP256PublicKey(validPoint(), jca).getW();

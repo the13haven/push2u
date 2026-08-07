@@ -160,9 +160,20 @@ public final class P256PublicKeys {
      * equivalent-but-distinct instances (named-curve subclasses, cached singletons), so only comparing each component
      * against the constants above can tell P-256 from an impostor. {@code Jca} runs this on whatever the configured
      * provider answers for {@code secp256r1} before any key is imported on those parameters.
+     *
+     * <p>A {@code parameters} of {@code null} is itself a mismatch — "no domain parameters at all" — rather than a
+     * dereference: a provider's own key or {@code AlgorithmParameters} implementation is what answers
+     * {@code getParams()} and {@code getParameterSpec(...)}, and nothing in the JDK stops a defective one answering
+     * {@code null}, so every caller feeding this method a provider-supplied value is covered here at once. That is also
+     * where the null-handling deliberately stops: the components <em>inside</em> a non-null spec are never checked for
+     * {@code null}, because the {@link ECParameterSpec}, {@link EllipticCurve} and {@link ECPoint} constructors all
+     * reject {@code null} arguments, so a constructed instance cannot carry a null component.
      */
     @Nullable
-    static String nistP256Mismatch(ECParameterSpec parameters) {
+    static String nistP256Mismatch(@Nullable ECParameterSpec parameters) {
+        if (parameters == null) {
+            return "no domain parameters at all";
+        }
         String curveMismatch = curveMismatch(parameters.getCurve());
         if (curveMismatch != null) {
             return curveMismatch;

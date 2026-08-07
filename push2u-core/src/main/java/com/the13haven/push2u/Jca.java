@@ -221,9 +221,11 @@ final class Jca {
      * coefficients {@code a} and {@code b}, generator {@code G}, order {@code n}, cofactor {@code h}. The comparison
      * itself lives with the hard-coded FIPS 186-4 reference values in {@link P256PublicKeys} (which the build pins
      * against two independent providers); this method turns a mismatch into the failure. The message names the
-     * component that differs and quotes no values — the component name is what an operator needs.
+     * component that differs and quotes no values — the component name is what an operator needs. A provider whose
+     * {@code AlgorithmParameters} answers the spec lookup with {@code null} is reported the same way — as carrying no
+     * domain parameters at all — rather than dereferenced.
      */
-    private void requireNistP256(ECParameterSpec parameters) {
+    private void requireNistP256(@Nullable ECParameterSpec parameters) {
         String mismatch = P256PublicKeys.nistP256Mismatch(parameters);
         if (mismatch != null) {
             throw new PushCryptoException("The " + Algorithms.SECP256R1 + " parameters from " + providerDescription()

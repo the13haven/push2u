@@ -249,6 +249,67 @@ class VaultTransitVapidSignerKeyValidationTest {
                 .isNotZero();
     }
 
+    /**
+     * The two degenerate shapes a provider's own key implementation can produce — {@code getW()} or {@code getParams()}
+     * answering {@code null} — cannot be delivered through the PEM path the other tests use: the platform
+     * {@code KeyFactory} never builds such a key, and installing a hostile provider ahead of it would leak into every
+     * other test in the JVM. So these call the check directly with a hand-rolled key, which is what its package-private
+     * visibility exists for. The null point is the sharper case: {@code ECPoint.POINT_INFINITY.equals(null)} is
+     * {@code false}, so the infinity guard alone would wave the null through to the affine-coordinate arithmetic.
+     */
+    @Test
+    void aKeyReportingNoPointAtAllIsRefusedAsACryptoException() throws Exception {
+        assertThatThrownBy(() -> VaultTransitVapidSigner.requireP256PublicKey(keyReporting(null, p256())))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no point at all");
+    }
+
+    @Test
+    void aKeyReportingNoDomainParametersAtAllIsRefusedAsACryptoException() {
+        ECPoint anyPoint = new ECPoint(BigInteger.ONE, BigInteger.TWO);
+
+        assertThatThrownBy(() -> VaultTransitVapidSigner.requireP256PublicKey(keyReporting(anyPoint, null)))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("no EC domain parameters");
+    }
+
+    /**
+     * A hand-rolled key answering exactly the given point and parameters, {@code null}s included — the shape only a
+     * defective provider's {@code KeyFactory} can produce, which the real {@link #keyAt} (going through the platform
+     * factory) cannot.
+     */
+    private static ECPublicKey keyReporting(ECPoint w, ECParameterSpec parameters) {
+        return new ECPublicKey() {
+            @java.io.Serial
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public ECPoint getW() {
+                return w;
+            }
+
+            @Override
+            public ECParameterSpec getParams() {
+                return parameters;
+            }
+
+            @Override
+            public String getAlgorithm() {
+                return "EC";
+            }
+
+            @Override
+            public String getFormat() {
+                return "X.509";
+            }
+
+            @Override
+            public byte[] getEncoded() {
+                return new byte[0];
+            }
+        };
+    }
+
     private static VaultTransitVapidSigner signerFor(String metadataBody) {
         return VaultTransitVapidSigner.builderWithFetchedPublicKey(
                         VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
