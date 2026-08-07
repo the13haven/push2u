@@ -31,6 +31,13 @@ The scheme is deliberately not restricted to `https`: Vault's dev server listens
 and the Vault CLI and Spring Vault accept that the same way. A production address must be `https`
 — on plain HTTP the `X-Vault-Token` header travels in clear text.
 
+Userinfo in the address (`https://user:password@gw.example/vault`) is preserved but unused by the
+built-in transport; a custom `VaultHttpTransport` may honour it, for a basic-auth proxy in front of
+Vault. It is treated as a credential wherever it could be printed: `JdkVaultHttpTransport` strips it
+from the URIs it names in failure messages, and the starter's `VaultSignerProperties.toString()`
+renders it as `https://***@gw.example/vault` — masked, the same way it renders the token as `***`,
+rather than dropped, so a configuration dump cannot read as "no proxy credentials configured".
+
 ## Fetched public key
 
 The recommended configuration treats the Transit key as the single source of truth. At startup,

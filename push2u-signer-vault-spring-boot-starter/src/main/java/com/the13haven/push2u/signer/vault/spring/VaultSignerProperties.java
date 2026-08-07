@@ -83,12 +83,21 @@ public record VaultSignerProperties(
      * The record-generated {@code toString()} prints every component, {@code token} included — and while push2u never
      * stringifies this record and the actuator env/configprops endpoints mask values by default, the consuming
      * application is one accidental {@code log.info("{}", properties)} or debugger dump away from its live Vault token
-     * in a log line. The token renders as {@code ***} when set (and as {@code null} when not, so the mask never reads
-     * as "a token is configured"); everything else keeps the generated shape.
+     * in a log line. Two components are therefore rendered rather than printed:
+     *
+     * <ul>
+     *   <li>{@code token} renders as {@code ***} when set, and as {@code null} when not — so the mask never reads as "a
+     *       token is configured";
+     *   <li>{@code address} renders without its credentials — any userinfo becomes {@code ***}, and a query or a
+     *       fragment is dropped. An address may legitimately carry userinfo (basic auth for a proxy in front of Vault,
+     *       honoured by a custom transport), and that password is exactly as secret as the token beside it.
+     * </ul>
+     *
+     * Everything else keeps the generated shape.
      */
     @Override
     public String toString() {
-        return "VaultSignerProperties[address=" + address
+        return "VaultSignerProperties[address=" + redactedAddress(address)
                 + ", mount=" + mount
                 + ", namespace=" + namespace
                 + ", keyName=" + keyName
@@ -98,5 +107,53 @@ public record VaultSignerProperties(
                 + ", requestTimeout=" + requestTimeout
                 + ", connectTimeout=" + connectTimeout
                 + ", maxResponseBytes=" + maxResponseBytes + "]";
+    }
+
+    /**
+     * The address as it is rendered above: any userinfo replaced by {@code ***}, and any query or fragment dropped.
+     *
+     * <p>Userinfo is a supported part of a Vault address — the signer preserves it so a custom transport can use it as
+     * basic auth for a proxy in front of Vault — and a password smuggled into the authority is as secret as the Vault
+     * token beside it. It is replaced rather than removed, because a rendering that simply dropped it would tell an
+     * operator reading the dump that no proxy credentials are configured; the mask says "configured, not shown" without
+     * revealing the user name either, both halves of userinfo being the operator's to keep. A query and a fragment are
+     * dropped instead of masked: the signer refuses either in a base address at startup, naming the property, so their
+     * presence is a misconfiguration this rendering has no need to report — while a query can name secrets, which is
+     * why one that is present anyway (this record binds before the signer validates it) must not be printed.
+     *
+     * <p>The built-in Vault transport applies the same rule to the URIs in its failure messages. This is a deliberate
+     * second copy rather than a shared one: sharing it would mean adding a public member to the signer library that
+     * every consumer would then be able to depend on for good, and the two renderings are not the same anyway — the
+     * transport strips userinfo outright, keeping its messages a URI an operator can copy, while a configuration dump
+     * has to keep saying that something was configured there.
+     */
+    private static @Nullable String redactedAddress(@Nullable URI address) {
+        if (address == null) {
+            return null;
+        }
+        String text = address.toString();
+        int cut = text.length();
+        int query = text.indexOf('?');
+        if (query >= 0) {
+            cut = query;
+        }
+        int fragment = text.indexOf('#');
+        if (fragment >= 0 && fragment < cut) {
+            cut = fragment;
+        }
+        String stripped = text.substring(0, cut);
+        // Userinfo sits between "//" and the last "@" of the authority: an "@" may legally recur
+        // inside the userinfo itself, so the last one before the path is the delimiter, and taking
+        // the last one keeps the whole of a multi-"@" authority masked.
+        int authorityStart = stripped.indexOf("//");
+        if (authorityStart >= 0) {
+            int pathStart = stripped.indexOf('/', authorityStart + 2);
+            int authorityEnd = pathStart >= 0 ? pathStart : stripped.length();
+            int at = stripped.lastIndexOf('@', authorityEnd - 1);
+            if (at > authorityStart) {
+                stripped = stripped.substring(0, authorityStart + 2) + "***@" + stripped.substring(at + 1);
+            }
+        }
+        return stripped;
     }
 }

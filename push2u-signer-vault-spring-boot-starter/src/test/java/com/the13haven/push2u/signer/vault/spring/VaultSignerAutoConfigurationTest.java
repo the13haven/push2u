@@ -9,6 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -165,6 +167,28 @@ class VaultSignerAutoConfigurationTest {
                     assertThat(context.getStartupFailure())
                             .hasStackTraceContaining("push2u.signer.vault.address")
                             .hasStackTraceContaining("query");
+                });
+    }
+
+    @Test
+    void anAddressCarryingUserinfoIsAcceptedAndNeverEchoedOnFailure() {
+        // Userinfo in the address is supported on purpose — basic auth for a proxy in front of
+        // Vault, which a custom transport may honour — so it must keep being accepted; redaction is
+        // not a ban.
+        vaultRunner()
+                .withPropertyValues("push2u.signer.vault.address=https://proxy-user:PROXY-SECRET@gw.example/vault")
+                .run(context -> assertThat(context).hasSingleBean(VapidSigner.class));
+        // And when the same address fails the address rule, the failure must name the property
+        // without carrying the credential into the startup stack trace, which is logged whole.
+        vaultRunner()
+                .withPropertyValues(
+                        "push2u.signer.vault.address=https://proxy-user:PROXY-SECRET@gw.example/vault/../sys")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.address")
+                            .satisfies(
+                                    failure -> assertThat(stackTrace(failure)).doesNotContain("PROXY-SECRET"));
                 });
     }
 
@@ -326,6 +350,15 @@ class VaultSignerAutoConfigurationTest {
     }
 
     /** The root cause's message, where the token rejection surfaces. */
+    /** The whole failure as it reaches a log: every message in the chain, plus the frames. */
+    private static String stackTrace(Throwable failure) {
+        StringWriter rendered = new StringWriter();
+        try (PrintWriter writer = new PrintWriter(rendered)) {
+            failure.printStackTrace(writer);
+        }
+        return rendered.toString();
+    }
+
     private static String rootMessage(Throwable failure) {
         Throwable cursor = failure;
         while (cursor.getCause() != null) {
