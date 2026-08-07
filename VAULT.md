@@ -33,10 +33,13 @@ and the Vault CLI and Spring Vault accept that the same way. A production addres
 
 Userinfo in the address (`https://user:password@gw.example/vault`) is preserved but unused by the
 built-in transport; a custom `VaultHttpTransport` may honour it, for a basic-auth proxy in front of
-Vault. It is treated as a credential wherever it could be printed: `JdkVaultHttpTransport` strips it
-from the URIs it names in failure messages, and the starter's `VaultSignerProperties.toString()`
-renders it as `https://***@gw.example/vault` — masked, the same way it renders the token as `***`,
-rather than dropped, so a configuration dump cannot read as "no proxy credentials configured".
+Vault. It is treated as a credential everywhere push2u prints an address: `JdkVaultHttpTransport`
+strips it from the URIs it names in failure messages, and the starter's
+`VaultSignerProperties.toString()` renders it as `https://***@gw.example/vault` — masked, the same
+way it renders the token as `***`, rather than dropped, so a configuration dump cannot read as "no
+proxy credentials configured". Routes push2u does not own still print what was configured: Spring
+Boot's startup failure report echoes the raw property value (`Value: "…"`) when a value fails to
+bind, so a malformed address that carries userinfo is reported verbatim.
 
 ## Fetched public key
 
