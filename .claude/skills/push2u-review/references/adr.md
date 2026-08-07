@@ -32,9 +32,7 @@ breaks ADR-002.
 
 **An ADR whose decision is implemented is immutable.** A change that edits one — rewording it,
 bringing it up to date with the code, appending an amendment — is a finding, whatever the edit
-improves. The immutability is about the decision, not the file's links: a relative path repaired
-because the file it points at moved is a mechanical reference fix, not an edit to the record. What
-it should have done instead:
+improves. What it should have done instead:
 
 - a decision that *moves*: a new file with the next free number, stating the new decision and what it
   replaces, plus one edit to the old file — its status line becomes

@@ -37,11 +37,9 @@ becomes:
 **Status:** Superseded by [ADR-NNN](NNNN-the-new-decision.md)
 ```
 
-That line is the only edit its *decision* ever takes. A relative link is not part of the decision:
-when the file it points at moves, the path is repaired like any other reference, and that is the one
-other change an implemented ADR accepts. A superseded ADR is not deleted: its number is referenced
-from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered decision that
-vanishes leaves those references dangling.
+That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is
+referenced from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered
+decision that vanishes leaves those references dangling.
 
 Before the decision is implemented, an ADR is still a draft and can be revised freely — the status
 line says so (`Proposed`).

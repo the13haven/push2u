@@ -34,9 +34,7 @@ follows.
 decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
 its title and its body while its status line becomes `Superseded by ADR-NNN`. Descriptions of how
 the code works now belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture
-moves. [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style. An
-ADR's links are not part of its decision — a relative path broken by a file moving is fixed like any
-other reference.
+moves. [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
 The [non-goals](docs/DESIGN.md#non-goals) are equally settled: subscription persistence,
 browser-side code, legacy `aesgcm`, general JSON parsing.

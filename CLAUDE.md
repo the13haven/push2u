@@ -34,16 +34,15 @@ with the code, and not amended. A decision that moves gets a *new* ADR with the 
 and the superseded one keeps its number, title and body while its status line becomes
 `Superseded by ADR-NNN` — the only edit its body ever takes. The description of how things currently
 work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
-`docs/adr/README.md` carries the procedure. An ADR's *links* are not part of its decision: a
-relative path broken by a file moving is fixed like any other reference.
+`docs/adr/README.md` carries the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
 string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/VAPID.md`, `docs/MIGRATION.md` or
 anywhere else freezes at whatever version it was written with and starts lying at the next release.
-Those documents point at README's Installation section instead. The exception is a document that is *about* one version and
-is never read as current: `.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a
-frozen coordinate there is correct.
+Those documents point at README's Installation section instead. The exception is a document that is
+*about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
+version on purpose, and a frozen coordinate there is correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main`. It loads automatically alongside this file.
