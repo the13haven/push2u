@@ -65,10 +65,12 @@ way it renders the token as `***`, rather than dropped, so a configuration dump 
 proxy credentials configured". Both renderings are composed from the URI's parsed components and
 fail closed: an address Java did not parse as `scheme://host` (a schemeless
 `user:pass@vault.example:8200`, a relative reference), one carrying a query or fragment, or one
-whose parsed path carries `@` (the tail of a credential whose head happened to parse as
-`host:port`, as in `https://u:1971/restOfPassword@vault.example:8200`) — shapes that can never be
-a valid Vault address — is replaced whole by the fixed marker `<unrenderable address>`, because a
-credential in such a string can sit outside anything Java reports as userinfo. Routes push2u does not own still print what was configured: Spring
+whose *raw* path carries `@` or `%` — the tail of a credential whose head happened to parse as
+`host:port`, as in `https://u:1971/restOfPassword@vault.example:8200`, whether the delimiter is
+literal or percent-encoded at any depth (`%40`, `%2540`) — is replaced whole by the fixed marker
+`<unrenderable address>`, because a credential in such a string can sit outside anything Java
+reports as userinfo. Neither `@` nor `%` can appear in a valid Vault address path, so the marker
+never swallows an address the signer would accept. Routes push2u does not own still print what was configured: Spring
 Boot's startup failure report echoes the raw property value (`Value: "…"`) when a value fails to
 bind, so a malformed address that carries userinfo is reported verbatim.
 

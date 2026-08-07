@@ -131,19 +131,23 @@ public record VaultSignerProperties(
      * original string: once Java has not parsed a server-based authority, a credential can sit anywhere in the text — a
      * password carrying {@code /} or {@code ?}, both ordinary characters in a generated one, dissolves the authority as
      * Java reads it — and no string-level cut can find it without guessing. A parsed authority alone is not enough,
-     * which is why a raw path carrying {@code @} routes to the marker too: when the text before a password's first
-     * {@code /} happens to parse as {@code host[:port]} ({@code https://u:1971/restOfPassword@vault.example:8200}),
-     * Java reads the user name as the host and drops the rest of the credential — its {@code @} and the real host
-     * included — into the path. A credential in an authority is always delimited by {@code @}, so a path with no
-     * {@code @} can hide no tail of one; that delimiter is the whole guard, deliberately, and it swallows nothing
-     * renderable, the signer's address rule admitting no {@code @} in an address path. The marker is deliberately
-     * distinct from {@code null} (no address configured) and from the token's {@code ***} (a value, hidden): it says an
-     * address is configured but its shape cannot be rendered without risking a credential. The shapes it covers — a
-     * relative reference, a schemeless {@code user:pass@vault.example:8200} (Java reads {@code user} as the scheme, so
-     * there is no host), an address carrying a query, a fragment or an {@code @} in its path — are exactly the shapes
-     * that can never be a valid Vault address, so the signer refuses them at startup naming the property; the operator
-     * who needs the value has it in their own configuration, and the signer library itself already refuses a bad
-     * address without quoting it, which this rendering merely stops departing from. A valid address is unaffected.
+     * which is why a <em>raw</em> path carrying {@code @} routes to the marker too: when the text before a password's
+     * first {@code /} happens to parse as {@code host[:port]}
+     * ({@code https://u:1971/restOfPassword@vault.example:8200}), Java reads the user name as the host and drops the
+     * rest of the credential — its {@code @} and the real host included — into the path. A credential in an authority
+     * is always delimited by {@code @}, so a raw path with no {@code @} can hide no tail of one — provided the path is
+     * literal text, which is what that argument reasons about. A raw path carrying {@code %} is not literal text: it is
+     * an encoding, {@code %40} at any encoding depth spells the delimiter without ever showing it, and decoding to some
+     * chosen depth before looking would just move the guessing one level down. So {@code %} routes to the marker as
+     * well — an encoded path is refused, not reasoned about. Neither guard swallows anything renderable: the signer's
+     * address rule admits neither {@code @} nor {@code %} in an address path. The marker is deliberately distinct from
+     * {@code null} (no address configured) and from the token's {@code ***} (a value, hidden): it says an address is
+     * configured but its shape cannot be rendered without risking a credential. The shapes it covers — a relative
+     * reference, a schemeless {@code user:pass@vault.example:8200} (Java reads {@code user} as the scheme, so there is
+     * no host), an address carrying a query, a fragment, or an {@code @} or {@code %} in its raw path — are exactly the
+     * shapes that can never be a valid Vault address, so the signer refuses them at startup naming the property; the
+     * operator who needs the value has it in their own configuration, and the signer library itself already refuses a
+     * bad address without quoting it, which this rendering merely stops departing from. A valid address is unaffected.
      *
      * <p>The built-in Vault transport ({@code JdkVaultHttpTransport}) renders the URIs in its failure messages by the
      * same fail-closed rule. This is a deliberate second copy rather than a shared one: sharing it would mean adding a
@@ -163,7 +167,8 @@ public record VaultSignerProperties(
                 || address.getHost() == null
                 || address.getRawQuery() != null
                 || address.getRawFragment() != null
-                || rawPath.indexOf('@') >= 0) {
+                || rawPath.indexOf('@') >= 0
+                || rawPath.indexOf('%') >= 0) {
             return "<unrenderable address>";
         }
         StringBuilder rendered = new StringBuilder(address.getScheme()).append("://");

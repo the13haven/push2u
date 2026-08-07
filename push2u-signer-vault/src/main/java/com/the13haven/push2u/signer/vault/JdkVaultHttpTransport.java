@@ -50,12 +50,13 @@ import com.the13haven.push2u.PushCryptoException;
  * <p>Exception messages carry the HTTP method and a fail-closed rendering of the request URI: rebuilt from its parsed
  * components without its userinfo (credentials in the authority — {@code https://user:secret@vault:8200} — are secrets
  * too), or replaced whole by a fixed marker when the URI is not a plain {@code scheme://host} shape, carries a query or
- * fragment (a Vault query can name secrets), or carries {@code @} in its path (the tail of a credential whose head
- * parsed as {@code host:port}). They never carry any request header — the Vault token travels in {@code X-Vault-Token}
- * and must not leak into logs. That includes a header the JDK client itself refuses (e.g. a token with a trailing
- * newline, illegal in an HTTP field value): the client's {@code IllegalArgumentException} spells out the whole value,
- * so it is reported as a {@link PushCryptoException} without the value — and without the original as its cause, whose
- * message would leak into any logged stack trace just the same.
+ * fragment (a Vault query can name secrets), or carries {@code @} or {@code %} in its raw path (the tail of a
+ * credential whose head parsed as {@code host:port}, literal or encoded). They never carry any request header — the
+ * Vault token travels in {@code X-Vault-Token} and must not leak into logs. That includes a header the JDK client
+ * itself refuses (e.g. a token with a trailing newline, illegal in an HTTP field value): the client's
+ * {@code IllegalArgumentException} spells out the whole value, so it is reported as a {@link PushCryptoException}
+ * without the value — and without the original as its cause, whose message would leak into any logged stack trace just
+ * the same.
  */
 public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
@@ -211,16 +212,21 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
      * <p>Any other shape renders as the fixed marker {@code <unrenderable address>}, with not one character of the
      * original: once Java has not parsed a server-based authority, a credential can sit anywhere in the text — a
      * password carrying {@code /} or {@code ?} dissolves the authority as Java reads it — and no string-level cut can
-     * find it without guessing. A parsed authority alone is not enough, which is why a raw path carrying {@code @}
-     * routes to the marker too: when the text before a password's first {@code /} happens to parse as
+     * find it without guessing. A parsed authority alone is not enough, which is why a <em>raw</em> path carrying
+     * {@code @} routes to the marker too: when the text before a password's first {@code /} happens to parse as
      * {@code host[:port]} ({@code https://u:1971/restOfPassword@vault:8200}), Java reads the user name as the host and
      * drops the rest of the credential — its {@code @} and the real host included — into the path. A credential in an
-     * authority is always delimited by {@code @}, so a path with no {@code @} can hide no tail of one; that delimiter
-     * is the whole guard, deliberately, and it swallows nothing renderable, the signer's address rule admitting no
-     * {@code @} in an address path. Every URI the signer sends through this transport is built from an address it
-     * validated up front, which guarantees the safe branch, so for the signer the marker is unreachable and exists as
-     * defence in depth for any other caller of this public transport. When it does fire, only the path is withheld —
-     * the HTTP method is printed beside the rendering either way, so a sign POST still reads apart from a keys GET.
+     * authority is always delimited by {@code @}, so a raw path with no {@code @} can hide no tail of one — provided
+     * the path is literal text, which is what that argument reasons about. A raw path carrying {@code %} is not literal
+     * text: it is an encoding, {@code %40} at any encoding depth spells the delimiter without ever showing it, and
+     * decoding to some chosen depth before looking would just move the guessing one level down. So {@code %} routes to
+     * the marker as well — an encoded path is refused, not reasoned about — and neither guard swallows anything
+     * renderable, the signer's address rule admitting neither {@code @} nor {@code %} in an address path. Every URI the
+     * signer sends through this transport keeps the marker unreachable twice over: its base address was validated up
+     * front, and its request path is concatenated from validated segments (address path, mount, Transit key name) whose
+     * allowed characters include neither {@code @} nor {@code %}. The marker therefore exists as defence in depth for
+     * any other caller of this public transport, and when it does fire, only the path is withheld — the HTTP method is
+     * printed beside the rendering either way, so a sign POST still reads apart from a keys GET.
      *
      * <p>The Vault signer starter renders the address its bound properties print by this same fail-closed rule, the one
      * difference being that it masks a userinfo as {@code ***@} rather than dropping it — a configuration dump has to
@@ -234,7 +240,8 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
                 || uri.getHost() == null
                 || uri.getRawQuery() != null
                 || uri.getRawFragment() != null
-                || rawPath.indexOf('@') >= 0) {
+                || rawPath.indexOf('@') >= 0
+                || rawPath.indexOf('%') >= 0) {
             return "<unrenderable address>";
         }
         StringBuilder rendered = new StringBuilder(uri.getScheme()).append("://");

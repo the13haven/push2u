@@ -307,6 +307,37 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
+    void aPercentEncodedPathIsReplacedByTheMarker() {
+        // The encoded sliver of the same class: "%40" is "@" spelt without the literal character,
+        // so a literal-"@" guard alone would render the first URI whole. Any "%" in the raw path
+        // routes to the marker — the delimiter argument reasons about literal text, an encoded
+        // path is not literal text, and refusing it (rather than decoding to some depth) is what
+        // also closes the double-encoded "%2540". Signer-built request paths concatenate validated
+        // segments that admit neither "@" nor "%", so the marker stays unreachable for them; the
+        // middle URI pins the literal-beside-encoded overlap so the two guards cannot regress
+        // independently. Mirrors the starter's test of the same shapes; reached through the
+        // header-rejection path, which renders without ever connecting.
+        for (String address : new String[] {
+            "https://u:1971/rest%40vault.test:8200",
+            "https://u:1971/re%40st@vault.test:8200",
+            "https://u:1971/rest%2540vault.test:8200"
+        }) {
+            URI uri = URI.create(address);
+
+            assertThatThrownBy(() ->
+                            transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                    .as("address %s", address)
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("<unrenderable address>")
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .doesNotContain("rest%40vault")
+                            .doesNotContain("re%40st")
+                            .doesNotContain("rest%2540vault")
+                            .doesNotContain("vault.test"));
+        }
+    }
+
+    @Test
     void aRelativeReferenceIsReplacedByTheMarker() {
         // "/vault//a@b" has no scheme and no authority — nothing but path, whose "@" is an
         // ordinary character. It is still withheld: the rendering trusts only a parsed

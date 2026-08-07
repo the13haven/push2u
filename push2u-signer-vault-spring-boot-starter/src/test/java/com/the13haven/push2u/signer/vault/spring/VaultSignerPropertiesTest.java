@@ -203,6 +203,36 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
+    void aPercentEncodedPathRendersAsTheMarker() {
+        // The encoded sliver of the same class: "%40" is "@" spelt without the literal character,
+        // so a literal-"@" guard alone would render "https://u:1971/rest%40vault.example:8200"
+        // whole. The "@"-delimiter argument reasons about literal text; an encoded path is not
+        // literal text, so any "%" routes to the marker rather than being decoded to some depth
+        // and reasoned about — which is also what closes the double-encoded "%2540", one decode
+        // away from "%40" and two from "@". A valid Vault address path admits neither "@" nor "%",
+        // so no renderable address is lost.
+        assertThat(properties(URI.create("https://u:1971/rest%40vault.example:8200"))
+                        .toString())
+                .doesNotContain("rest%40vault")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        // An encoded "@" beside a literal one: already caught by the literal guard, pinned so the
+        // pair of guards cannot regress independently.
+        assertThat(properties(URI.create("https://u:1971/re%40st@vault.example:8200"))
+                        .toString())
+                .doesNotContain("re%40st")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://u:1971/rest%2540vault.example:8200"))
+                        .toString())
+                .doesNotContain("rest%2540vault")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+    }
+
+    @Test
     void anAddressCarryingAQueryOrFragmentRendersAsTheMarker() {
         // A base address may carry neither — the signer refuses one at startup, naming the property
         // — but the binding that fills this record happens first, and a Vault query can name
