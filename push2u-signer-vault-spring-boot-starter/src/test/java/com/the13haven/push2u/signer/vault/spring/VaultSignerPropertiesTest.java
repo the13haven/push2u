@@ -37,11 +37,12 @@ class VaultSignerPropertiesTest {
     @Test
     void anUnsetTokenIsRenderedAsNullNotAsAMask() {
         // "***" for an unset token would read as "a token is configured" — the mask must only
-        // stand in for an actual value.
+        // stand in for an actual value. The unset address prints null for the same reason: it must
+        // stay distinguishable from the marker an unrenderable-but-configured address gets.
         VaultSignerProperties properties = new VaultSignerProperties(
                 null, "transit", null, null, null, null, null, Duration.ofSeconds(30), Duration.ofSeconds(10), 1024);
 
-        assertThat(properties.toString()).contains("token=null");
+        assertThat(properties.toString()).contains("token=null").contains("address=null");
     }
 
     @Test
@@ -72,40 +73,47 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
-    void toStringMasksUserinfoUpToItsLastAtSign() {
-        // An "@" may recur inside the userinfo (Java parses such an authority as registry-based, so
-        // the signer refuses the address at startup — but this record binds before that, and holds
-        // whatever was configured). The last "@" before the path is the delimiter, so masking up to
-        // it leaves no part of the credential behind.
+    void anAuthorityWithASecondAtSignRendersAsTheMarker() {
+        // Java parses "user@name:PASSWORD-MARKER@vault.example:8200" as a registry-based authority
+        // — getHost() is null — so no component says where a credential ends and the host begins.
+        // The host is not shown either, deliberately: an address of this shape can never be a valid
+        // Vault address, the signer refuses it at startup naming the property, and reconstructing
+        // "the host part" from the string would be exactly the guessing that used to leak.
         VaultSignerProperties properties =
                 properties(URI.create("https://user@name:PASSWORD-MARKER@vault.example:8200"));
 
         assertThat(properties.toString())
                 .doesNotContain("PASSWORD-MARKER")
                 .doesNotContain("user@name")
-                .contains("address=https://***@vault.example:8200");
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
     }
 
     @Test
-    void toStringMasksCredentialsInAnAddressThatHasNoAuthority() {
-        // "user:secret@vault.example:8200" — the address as an operator types a host:port, without
-        // a scheme — is a valid URI whose scheme is "user" and whose whole scheme-specific part is
-        // "secret@vault.example:8200": no "//", so URI.getUserInfo() is null and an authority-only
-        // rule would print the password verbatim. The signer refuses such an address (no host), but
-        // this record binds before any signer exists, and holds it either way.
+    void aSchemelessAddressRendersAsTheMarker() {
+        // "proxy-user:PROXY-PASSWORD-MARKER@vault.example:8200" — a host:port typed without a
+        // scheme — parses as the scheme "proxy-user" with everything else opaque behind it: no
+        // host, and the password sits outside any userinfo Java reports. Under the old string-level
+        // cut the host was kept; it no longer is, because an address with no parsed host can never
+        // be a valid Vault address (the signer refuses it at startup, naming the property), and
+        // only a parse-level authority says which characters are safely printable.
         VaultSignerProperties properties =
                 properties(URI.create("proxy-user:PROXY-PASSWORD-MARKER@vault.example:8200"));
 
         assertThat(properties.toString())
                 .doesNotContain("PROXY-PASSWORD-MARKER")
                 .doesNotContain("proxy-user")
-                .contains("address=***@vault.example:8200");
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
     }
 
     @Test
     void anEmptyUserinfoIsNotMasked() {
-        // "https://@vault.example:8200" delimits a userinfo that is empty — no credential was
-        // configured, so a mask here would claim one exactly as a "***" for an unset token would.
+        // "https://@vault.example:8200" delimits a userinfo that is empty — Java reports "" rather
+        // than null — so no credential was configured, and a mask here would claim one exactly as
+        // a "***" for an unset token would. The address is valid apart from the stray "@" and
+        // renders as configured.
+        assertThat(URI.create("https://@vault.example:8200").getUserInfo()).isEmpty();
         VaultSignerProperties properties = properties(URI.create("https://@vault.example:8200"));
 
         assertThat(properties.toString())
@@ -114,61 +122,144 @@ class VaultSignerPropertiesTest {
     }
 
     @Test
-    void aDoubleSlashInThePathIsNotAnAuthority() {
-        // An authority is the "//" right after the scheme's colon and nothing else. A "//" further
-        // along is an empty path segment, and the "@" behind it is an ordinary path character —
-        // masking there would both claim credentials that do not exist and mangle the address.
+    void aRelativeReferenceRendersAsTheMarker() {
+        // "/vault//a@b" has no scheme and no authority at all — nothing but path. Its "@" is an
+        // ordinary path character, but the rendering no longer reasons about characters: an address
+        // without a parsed scheme://host can never be a valid Vault address, so it is withheld
+        // whole rather than echoed on the strength of a guess about which parts are safe.
         VaultSignerProperties properties = properties(URI.create("/vault//a@b"));
 
-        assertThat(properties.toString()).contains("address=/vault//a@b").doesNotContain("***@");
+        assertThat(properties.toString())
+                .contains("address=<unrenderable address>")
+                .doesNotContain("/vault//a@b");
     }
 
     @Test
-    void aCredentialCarryingASlashIsLeftInPlace() {
-        // A known limit, pinned so it is found here rather than in an incident. The masking cut ends
-        // at the first "/", and it cannot be moved past it: "vault.example:8200/a@b" is the same
-        // string shape and its "@" is an ordinary path character that must survive, so a password
-        // containing "/" — an ordinary character in a generated one — survives the rendering with
-        // it. Java reports no userinfo for either address below, which is what the rendering masks.
+    void aCredentialCarryingASlashRendersAsTheMarker() {
+        // Previously the leak this fix closes: "/" ends the authority as Java reads it, so both
+        // addresses parse with no host and no userinfo, and the old string-level cut — anchored on
+        // an "@" it could no longer find — printed the password whole. "/" is an ordinary character
+        // in a generated password. Fail-closed, the whole address is withheld: no parsed host means
+        // no component is known to be credential-free.
         assertThat(URI.create("user:PA/SS@vault.example:8200").getUserInfo()).isNull();
         assertThat(properties(URI.create("user:PA/SS@vault.example:8200")).toString())
-                .contains("address=user:PA/SS@vault.example:8200");
+                .doesNotContain("PA/SS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
 
         assertThat(URI.create("https://u:PA/SS@vault.example:8200").getUserInfo())
                 .isNull();
         assertThat(properties(URI.create("https://u:PA/SS@vault.example:8200")).toString())
-                .contains("address=https://u:PA/SS@vault.example:8200");
+                .doesNotContain("PA/SS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
     }
 
     @Test
-    void textInTheUserinfoPositionThatIsNotUserinfoIsLeftInPlace() {
-        // The other half of the same known limit: "?" and "/" end the authority before the "@" is
-        // reached, so there is no "@" in the authority left to anchor a mask on — the query cut
-        // removes it outright in the first address, the path cut puts it out of reach in the second.
-        // Java reports no userinfo for either, and userinfo is what this rendering masks.
+    void aCredentialAheadOfAQueryOrPathRendersAsTheMarker() {
+        // The other previously pinned leak: "?" ends the authority before the "@", so
+        // "https://u:PASS?@vault.example" parses with no host and the old query cut rendered it as
+        // "https://u:PASS" — the password standing alone. The "/" variant parses hostless the same
+        // way. Both are withheld whole now: no parsed host, nothing safely printable.
         assertThat(URI.create("https://u:PASS?@vault.example").getUserInfo()).isNull();
         assertThat(properties(URI.create("https://u:PASS?@vault.example")).toString())
-                .contains("address=https://u:PASS,")
-                .doesNotContain("***@");
+                .doesNotContain("PASS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
 
         assertThat(URI.create("https://u:PASS/@vault.example").getUserInfo()).isNull();
         assertThat(properties(URI.create("https://u:PASS/@vault.example")).toString())
-                .contains("address=https://u:PASS/@vault.example")
-                .doesNotContain("***@");
+                .doesNotContain("PASS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
     }
 
     @Test
-    void toStringDropsAQueryAndFragmentFromTheAddress() {
+    void aCredentialWhoseHeadParsesAsHostAndPortRendersAsTheMarker() {
+        // The subtlest of the leak class: when the text before a password's first "/" happens to
+        // parse as host[:port], Java produces a perfectly server-based authority — user name as
+        // the host, digits as the port — and drops the rest of the credential, "@" and real host
+        // included, into the path. A host check alone passes these, so the guard keys on the "@"
+        // in the parsed path: a credential in an authority is always delimited by "@", and a valid
+        // Vault address path never carries one.
+        assertThat(properties(URI.create("https://u:1971/restOfPassword@vault.example:8200"))
+                        .toString())
+                .doesNotContain("restOfPassword")
+                .doesNotContain("1971")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://u:/PASS@vault.example:8200")).toString())
+                .doesNotContain("PASS")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://user.name:443/secret@vault.example"))
+                        .toString())
+                .doesNotContain("secret")
+                .doesNotContain("user.name")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+    }
+
+    @Test
+    void aPercentEncodedPathRendersAsTheMarker() {
+        // The encoded sliver of the same class: "%40" is "@" spelt without the literal character,
+        // so a literal-"@" guard alone would render "https://u:1971/rest%40vault.example:8200"
+        // whole. The "@"-delimiter argument reasons about literal text; an encoded path is not
+        // literal text, so any "%" routes to the marker rather than being decoded to some depth
+        // and reasoned about — which is also what closes the double-encoded "%2540", one decode
+        // away from "%40" and two from "@". A valid Vault address path admits neither "@" nor "%",
+        // so no renderable address is lost.
+        assertThat(properties(URI.create("https://u:1971/rest%40vault.example:8200"))
+                        .toString())
+                .doesNotContain("rest%40vault")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        // An encoded "@" beside a literal one: already caught by the literal guard, pinned so the
+        // pair of guards cannot regress independently.
+        assertThat(properties(URI.create("https://u:1971/re%40st@vault.example:8200"))
+                        .toString())
+                .doesNotContain("re%40st")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+
+        assertThat(properties(URI.create("https://u:1971/rest%2540vault.example:8200"))
+                        .toString())
+                .doesNotContain("rest%2540vault")
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+    }
+
+    @Test
+    void anAddressCarryingAQueryOrFragmentRendersAsTheMarker() {
         // A base address may carry neither — the signer refuses one at startup, naming the property
         // — but the binding that fills this record happens first, and a Vault query can name
-        // secrets, so a value that is present anyway must not be printed on the way there.
+        // secrets. The address used to render truncated at the "?"; that truncation is what left
+        // "https://u:PASS?@vault.example" printing a password, so a query or fragment now withholds
+        // the address whole rather than trusting a cut.
         VaultSignerProperties properties =
                 properties(URI.create("https://vault.example:8200?token=QUERY-MARKER#FRAGMENT-MARKER"));
 
         assertThat(properties.toString())
                 .doesNotContain("QUERY-MARKER")
                 .doesNotContain("FRAGMENT-MARKER")
-                .contains("address=https://vault.example:8200");
+                .doesNotContain("vault.example")
+                .contains("address=<unrenderable address>");
+    }
+
+    @Test
+    void validAddressShapesRenderAsConfigured() {
+        // The marker must never swallow an address the signer would accept: every shape here passes
+        // the signer's validation and renders exactly as configured (userinfo aside, masked above).
+        assertThat(properties(URI.create("https://vault.example")).toString())
+                .contains("address=https://vault.example,");
+        assertThat(properties(URI.create("https://vault.example:8200")).toString())
+                .contains("address=https://vault.example:8200,");
+        assertThat(properties(URI.create("https://gw.example/vault")).toString())
+                .contains("address=https://gw.example/vault,");
+        assertThat(properties(URI.create("https://[::1]:8200")).toString()).contains("address=https://[::1]:8200,");
     }
 
     /** The record with everything but the address fixed, so a test names only what it is about. */

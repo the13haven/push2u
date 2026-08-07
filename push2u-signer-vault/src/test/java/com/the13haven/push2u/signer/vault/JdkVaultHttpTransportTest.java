@@ -186,21 +186,38 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
-    void exceptionMessagesCarryNeitherTheTokenNorTheQuery() throws Exception {
+    void aQueryCarryingUriIsReplacedByTheMarkerWholeNotTruncated() throws Exception {
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-            // Vault APIs put sensitive detail in queries (e.g. list=true on secret paths) — the
-            // message may name the path, never the query.
+            // Vault APIs put sensitive detail in queries (e.g. list=true on secret paths). The old
+            // rendering cut the query off and kept the rest; the cut is what once left a password
+            // standing ("https://u:PASS?@vault" cut to "https://u:PASS"), so a query- or
+            // fragment-carrying URI is now withheld whole. No URI the signer builds carries one —
+            // it validates the base address up front — so nothing the signer can send loses its
+            // path diagnostic (the clean-URI tests above pin that the path is named).
             URI uri = URI.create(
                     "http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid?secret-query=marker");
 
             assertThatThrownBy(() -> transport(Duration.ofMillis(500), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
                     .isInstanceOf(PushCryptoException.class)
-                    .hasMessageContaining("/v1/transit/keys/vapid")
+                    .hasMessageContaining("GET <unrenderable address>")
                     .satisfies(e -> assertThat(e.getMessage())
                             .doesNotContain(TOKEN)
                             .doesNotContain("secret-query")
-                            .doesNotContain("marker"));
+                            .doesNotContain("marker")
+                            .doesNotContain("/v1/transit/keys/vapid"));
         }
+
+        // The same property through the header-rejection path, which renders without connecting:
+        // every message site funnels through one rendering today, but that is an implementation
+        // fact a future edit can break per site, so the query's absence is pinned on both.
+        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessageContaining("GET <unrenderable address>")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain("secret-query")
+                        .doesNotContain("marker"));
     }
 
     @Test
@@ -213,66 +230,129 @@ class JdkVaultHttpTransportTest {
         // in fetched mode it would surface in the constructor, putting the live token into the
         // application's startup stack trace. Port 9 (discard): header validation fires before
         // any connection is attempted.
-        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+        URI uri = URI.create("http://127.0.0.1:9/v1/transit/keys/vapid");
 
         assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
                 .isInstanceOf(PushCryptoException.class)
                 .hasMessageContaining("GET")
                 .hasMessageContaining("/v1/transit/keys/vapid")
                 .hasNoCause()
-                .satisfies(e -> assertThat(e.getMessage())
-                        .doesNotContain(TOKEN)
-                        .doesNotContain("secret-query")
-                        .doesNotContain("marker"));
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
     }
 
     @Test
     void userinfoInTheVaultAddressNeverReachesTheExceptionMessage() {
         // Credentials in the URI authority (https://user:secret@vault:8200) are exactly as
-        // secret as a query — an operator who smuggles basic-auth credentials for a fronting
-        // proxy into the Vault address must not find them in every transport failure. Exercised
+        // secret as the token — an operator who smuggles basic-auth credentials for a fronting
+        // proxy into the Vault address must not find them in every transport failure. The rest of
+        // the URI stays: a failure message is most useful as a URI an operator can copy. Exercised
         // through the header-rejection path, which renders the URI without ever connecting.
-        URI uri = URI.create("http://vault-user:secret-cred@127.0.0.1:9/v1/transit/keys/vapid?secret-query=marker");
+        URI uri = URI.create("http://vault-user:secret-cred@127.0.0.1:9/v1/transit/keys/vapid");
 
         assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
                 .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("/v1/transit/keys/vapid")
-                .satisfies(e -> assertThat(e.getMessage())
-                        .doesNotContain("secret-cred")
-                        .doesNotContain("vault-user")
-                        .doesNotContain("secret-query"));
-    }
-
-    @Test
-    void credentialsOutsideAnAuthorityNeverReachTheExceptionMessage() {
-        // A URI can carry credentials without an authority at all: "user:secret@vault:8200" — a
-        // host:port typed with no scheme — parses as the scheme "user" with everything else as its
-        // scheme-specific part, so URI.getUserInfo() is null and a "//"-only rule would print the
-        // password. The signer's own validation keeps such an address away from this transport;
-        // the rendering must not depend on that, since it is what stands between a URI and a log.
-        URI uri = URI.create("vault-user:secret-cred@vault.test:8200/v1/transit/keys/vapid");
-
-        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
-                .isInstanceOf(PushCryptoException.class)
-                .hasNoCause()
+                .hasMessageContaining("http://127.0.0.1:9/v1/transit/keys/vapid")
                 .satisfies(e ->
                         assertThat(e.getMessage()).doesNotContain("secret-cred").doesNotContain("vault-user"));
     }
 
     @Test
-    void aDoubleSlashInThePathIsNotAnAuthority() {
-        // An authority is the "//" right after the scheme's colon and nothing else. A "//" further
-        // along is an empty path segment whose "@" is an ordinary path character, so cutting there
-        // would mangle a URI that carries no credential — and mangle it in the one message an
-        // operator has to work from. Mirrors the starter's test of the same shape: the two
-        // renderings are separate copies of one rule and can only stay in step if both are pinned.
-        // Reached through the URI-rejection path, which renders without ever connecting.
+    void credentialsOutsideAnAuthorityAreWithheldWithTheWholeUri() {
+        // A URI can carry credentials without an authority at all: "user:secret@vault:8200" — a
+        // host:port typed with no scheme — parses as the scheme "user" with everything else as its
+        // scheme-specific part, so no parsed component says which characters are credential. The
+        // signer's own validation keeps such an address away from this transport; the rendering
+        // must not depend on that, since it is what stands between a URI and a log — so a URI with
+        // no parsed host is replaced by the marker whole, host included, rather than echoed on the
+        // strength of a guess.
+        URI uri = URI.create("vault-user:secret-cred@vault.test:8200/v1/transit/keys/vapid");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                .isInstanceOf(PushCryptoException.class)
+                .hasNoCause()
+                .hasMessageContaining("<unrenderable address>")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain("secret-cred")
+                        .doesNotContain("vault-user")
+                        .doesNotContain("vault.test"));
+    }
+
+    @Test
+    void aCredentialWhoseHeadParsesAsHostAndPortIsReplacedByTheMarker() {
+        // The subtlest of the leak class: when the text before a password's first "/" happens to
+        // parse as host[:port], Java produces a perfectly server-based authority — user name as
+        // the host, digits as the port — and drops the rest of the credential, "@" and real host
+        // included, into the path. A host check alone passes these, so the guard keys on the "@"
+        // in the parsed path, which a valid Vault address path never carries. Mirrors the
+        // starter's test of the same shapes. Reached through the header-rejection path, which
+        // renders without ever connecting.
+        for (String address : new String[] {
+            "https://u:1971/restOfPassword@vault.test:8200",
+            "https://u:/PASS@vault.test:8200",
+            "https://user.name:443/secret@vault.test"
+        }) {
+            URI uri = URI.create(address);
+
+            assertThatThrownBy(() ->
+                            transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                    .as("address %s", address)
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("<unrenderable address>")
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .doesNotContain("restOfPassword")
+                            .doesNotContain("PASS")
+                            .doesNotContain("secret")
+                            .doesNotContain("vault.test"));
+        }
+    }
+
+    @Test
+    void aPercentEncodedPathIsReplacedByTheMarker() {
+        // The encoded sliver of the same class: "%40" is "@" spelt without the literal character,
+        // so a literal-"@" guard alone would render the first URI whole. Any "%" in the raw path
+        // routes to the marker — the delimiter argument reasons about literal text, an encoded
+        // path is not literal text, and refusing it (rather than decoding to some depth) is what
+        // also closes the double-encoded "%2540". Signer-built request paths concatenate validated
+        // segments that admit neither "@" nor "%", so the marker stays unreachable for them; the
+        // middle URI pins the literal-beside-encoded overlap so the two guards cannot regress
+        // independently. Mirrors the starter's test of the same shapes; reached through the
+        // header-rejection path, which renders without ever connecting.
+        for (String address : new String[] {
+            "https://u:1971/rest%40vault.test:8200",
+            "https://u:1971/re%40st@vault.test:8200",
+            "https://u:1971/rest%2540vault.test:8200"
+        }) {
+            URI uri = URI.create(address);
+
+            assertThatThrownBy(() ->
+                            transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN + "\n")))
+                    .as("address %s", address)
+                    .isInstanceOf(PushCryptoException.class)
+                    .hasMessageContaining("<unrenderable address>")
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .doesNotContain("rest%40vault")
+                            .doesNotContain("re%40st")
+                            .doesNotContain("rest%2540vault")
+                            .doesNotContain("vault.test"));
+        }
+    }
+
+    @Test
+    void aRelativeReferenceIsReplacedByTheMarker() {
+        // "/vault//a@b" has no scheme and no authority — nothing but path, whose "@" is an
+        // ordinary character. It is still withheld: the rendering trusts only a parsed
+        // scheme://host shape, and reasoning about which hostless strings are harmless is exactly
+        // the guessing that used to leak a password carrying "/". Mirrors the starter's test of
+        // the same shape: the two renderings are separate copies of one rule and can only stay in
+        // step if both are pinned. Reached through the URI-rejection path, which renders without
+        // ever connecting.
         URI uri = URI.create("/vault//a@b");
 
         assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
                 .isInstanceOf(PushCryptoException.class)
                 .hasNoCause()
-                .hasMessageContaining("/vault//a@b");
+                .hasMessageContaining("<unrenderable address>")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("/vault//a@b"));
     }
 
     @Test
