@@ -423,8 +423,8 @@ and deliberately not by `URI.resolve`: per RFC 3986 §5.3 an absolute-path refer
 and the relative form (`resolve("v1/…")`) merges by dropping everything after the base path's last
 `/`, so a prefix without a trailing slash would lose its final segment — quieter, not better.
 `https://gw.example/vault` and `https://gw.example/vault/` therefore address the same Vault, and a
-root address like `https://vault.example:8200` joins as it reads. The key name and the token travel as the value types
-`TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
+root address like `https://vault.example:8200` joins as it reads. The key name and the token
+travel as the value types `TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
 arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
 enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
 Vault's `path_keys.go` — so no name Vault would accept is refused, while every URL-breaking
@@ -455,11 +455,12 @@ Vault sees it at all.
 The set is deliberately narrower than either Vault or a URL requires — policy, not necessity:
 Vault accepts any printable Unicode in a mount path (`validateMountPath`, canonical per
 `path.Clean`), and `~ ! $ & ' ( ) * + , ; = : @` are legal raw in a URI path segment, so a mount
-like `transit+prod` is real and was addressable through this signer before the rule. It is refused
+like `transit+prod` is real and would otherwise be addressable through this signer. It is refused
 anyway because some of that punctuation is treated specially by intermediaries (`;` reads as a
 path parameter to some hops), and admitting only what every hop treats literally can be widened
 later without breaking anyone — the reverse is not true. Refusing at the step also replaces
 `URI.create`'s later raw "Malformed escape pair" failure.
+
 The namespace travels differently — in the `X-Vault-Namespace` HTTP header, not the URL — so none
 of those hops act on it, and the same rule is applied for two other reasons. Definite: a header
 value must be header-safe, which the allowed set guarantees — a strict subset of visible ASCII
@@ -480,9 +481,9 @@ No traversal route through OSS Vault is claimed here.
   (mod p)` with both coordinates in `[0, p)`. None of the three implies another: the metadata is
   only Vault's claim, and correct parameters say nothing about the point — the JCA validates
   neither, so SunEC accepts a key at `(1, 2)` both on import and at verification time. Coordinates
-  are likewise never truncated to fit the 32-byte P-256 fields. Without this, an `ecdsa-p384` key
-  produced a syntactically valid but unusable VAPID key, and the misconfiguration surfaced only as
-  an unexplained push-service rejection on the first send.
+  are likewise never truncated to fit the 32-byte P-256 fields. Without all three, an `ecdsa-p384`
+  key yields a syntactically valid but unusable VAPID key, and the misconfiguration surfaces only
+  as an unexplained push-service rejection on the first send.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The supplied key gets
   the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
