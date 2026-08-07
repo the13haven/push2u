@@ -22,13 +22,27 @@ import javax.crypto.Mac;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Single point of access to the JCA: every {@code getInstance(...)} the library makes goes through here, optionally
- * bound to a specific {@link Provider}.
+ * Single point of access to the JCA for the cryptographic pipeline: every {@code getInstance(...)} whose provider a
+ * consumer can configure goes through here, optionally bound to a specific {@link Provider}. One lookup deliberately
+ * sits outside this seam: the endpoint-redaction fingerprint hashes with the platform's own SHA-256 regardless of any
+ * configured provider, because it is diagnostics, not protocol.
  *
  * <p>This is the JCE seam — instead of a bespoke {@code CryptoProvider} SPI, the optional
  * {@code .cryptoProvider(java.security.Provider)} builder option constructs {@link #using(Provider)}; everything else
  * uses {@link #platform()} and resolves against the JVM's default provider chain. Centralizing it here means the
  * encryptor and the local signer never touch a provider directly — they ask this helper.
+ *
+ * <p>The seam is also where the library's rule for a provider's <em>answers</em> is drawn. A value a provider returns
+ * from its own implementation can be degenerately defective — {@code null} where the JDK's types promise nothing — and
+ * it is refused by name, as a {@link PushCryptoException}, wherever the value can <em>travel</em>: leave the library as
+ * a public method's own (never-{@code null}) answer, outlive the call that obtained it as stored state, or otherwise
+ * carry its failure away from the seam it came from. The {@code KeyPair} a generator answers, the key a
+ * {@code KeyFactory} answers, the {@code secp256r1} parameters an {@code AlgorithmParameters} lookup answers and the
+ * bytes an ES256 {@code Signature} produces all travel that way, and each is refused beside the verification that
+ * inspects it. An answer that cannot travel — a MAC's or a cipher's output, the ECDH shared secret — dies in the next
+ * step of the same operation whether checked or not: a {@code null} there already fails immediately, loudly and next to
+ * its cause, so a refusal would change only the exception's name, and that defensive padding would spread to every
+ * provider call without end.
  */
 final class Jca {
 

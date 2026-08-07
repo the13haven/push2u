@@ -815,6 +815,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new PushCryptoException("Vault Transit returned a public key PEM that is not valid base64", e);
         }
         PublicKey key = KeyFactory.getInstance(EC).generatePublic(new X509EncodedKeySpec(der));
+        if (key == null) {
+            // The parse runs in the provider's own KeyFactory implementation, and nothing in the
+            // JDK stops a defective one answering null — refused by name here, before the non-EC
+            // diagnostic below would ask the missing key for its algorithm name.
+            throw new PushCryptoException("The EC KeyFactory answered the Vault Transit public key parse with no key"
+                    + " at all, so there is no key to verify");
+        }
         if (!(key instanceof ECPublicKey ecKey)) {
             // Defensive: an EC KeyFactory normally rejects foreign SPKIs outright, but a provider
             // returning some other key type must not blow up as a ClassCastException.

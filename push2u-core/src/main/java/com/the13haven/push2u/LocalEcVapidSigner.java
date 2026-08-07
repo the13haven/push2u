@@ -12,6 +12,8 @@ import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * The default {@link VapidSigner}: holds the P-256 private key in memory and signs in-JVM, always producing the raw
  * {@code r || s} pair JOSE wants. When the configured provider registers raw-format ECDSA
@@ -75,7 +77,7 @@ public final class LocalEcVapidSigner implements VapidSigner {
             Signature probeSigner = jca.es256().delegate();
             probeSigner.initSign(privateKey);
             probeSigner.update(SELF_TEST_INPUT);
-            byte[] probeSignature = probeSigner.sign();
+            byte[] probeSignature = requireSignatureProduced(probeSigner.sign());
 
             Signature probeVerifier = jca.es256().delegate();
             probeVerifier.initVerify(advertised);
@@ -100,11 +102,28 @@ public final class LocalEcVapidSigner implements VapidSigner {
             Signature signature = es256.delegate();
             signature.initSign(privateKey);
             signature.update(signingInput);
-            byte[] raw = signature.sign();
+            byte[] raw = requireSignatureProduced(signature.sign());
             return es256.encoding() == Jca.EcdsaSignature.Encoding.DER ? EcdsaDer.toP1363(raw) : raw;
         } catch (GeneralSecurityException e) {
             throw new PushCryptoException("VAPID ES256 signing failed", e);
         }
+    }
+
+    /**
+     * Refuse a {@link Signature#sign()} answer of {@code null}. The provider's own signature implementation is what
+     * answers, nothing in the JDK obliges a defective one to answer bytes at all, and this answer travels: on a
+     * raw-format provider it would leave {@code sign(byte[])} — a public method that promises never to return
+     * {@code null} — as this library's own answer, ending up wherever the caller puts it. A provider answer of that
+     * kind is refused wherever it is obtained, so the construction-time self-test applies the same refusal rather than
+     * handing the missing bytes back to the provider's verify, whose {@link NullPointerException} would escape a public
+     * constructor. Refused by name as the library's crypto failure; the DER conversion's own {@code null} rejection
+     * stays as defence in depth behind this.
+     */
+    private static byte[] requireSignatureProduced(@Nullable byte[] signature) {
+        if (signature == null) {
+            throw new PushCryptoException("VAPID ES256 signing returned no signature at all");
+        }
+        return signature;
     }
 
     @Override
