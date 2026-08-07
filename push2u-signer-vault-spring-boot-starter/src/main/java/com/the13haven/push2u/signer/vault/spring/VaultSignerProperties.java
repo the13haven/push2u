@@ -88,9 +88,11 @@ public record VaultSignerProperties(
      * <ul>
      *   <li>{@code token} renders as {@code ***} when set, and as {@code null} when not — so the mask never reads as "a
      *       token is configured";
-     *   <li>{@code address} renders without its credentials — any userinfo becomes {@code ***}, and a query or a
+     *   <li>{@code address} renders without its credentials — its userinfo becomes {@code ***}, and a query or a
      *       fragment is dropped. An address may legitimately carry userinfo (basic auth for a proxy in front of Vault,
-     *       honoured by a custom transport), and that password is exactly as secret as the token beside it.
+     *       honoured by a custom transport), and that password is exactly as secret as the token beside it. What is
+     *       masked is userinfo as Java parses it, which is not every string an operator may have typed in that
+     *       position; the rendering below says where the two part company.
      * </ul>
      *
      * Everything else keeps the generated shape.
@@ -110,7 +112,8 @@ public record VaultSignerProperties(
     }
 
     /**
-     * The address as it is rendered above: any userinfo replaced by {@code ***}, and any query or fragment dropped.
+     * The address as it is rendered above: the URI's userinfo replaced by {@code ***}, and any query or fragment
+     * dropped.
      *
      * <p>Userinfo is a supported part of a Vault address — the signer preserves it so a custom transport can use it as
      * basic auth for a proxy in front of Vault — and a password smuggled into the authority is as secret as the Vault
@@ -122,7 +125,18 @@ public record VaultSignerProperties(
      * why one that is present anyway (this record binds before the signer validates it) must not be printed.
      *
      * <p>An address typed without a scheme ({@code user:secret@vault.example:8200}) carries its credentials outside any
-     * authority — Java reads {@code user} as the scheme — so the same cut is made there, taking the scheme with it.
+     * authority — Java reads {@code user} as the scheme — so the same cut is made there, taking the scheme with it. It
+     * takes the scheme even where the {@code @} is no credential at all ({@code mailto:ops@example.com} renders as
+     * {@code ***@example.com}), which costs a word the operator can reconstruct; the host always survives, the cut
+     * being always at an {@code @}.
+     *
+     * <p>Both cuts end at the first {@code /}, {@code ?} or {@code #}, since userinfo may contain none of the three —
+     * so a credential that does contain one is left where it stands. {@code user:PA/SS@vault.example:8200} and
+     * {@code https://u:PA/SS@vault.example:8200} render whole, and {@code https://u:PASS?@vault.example} renders as
+     * {@code https://u:PASS}; {@code /} in particular is an ordinary character in a generated password. Java reports no
+     * userinfo for any of them, which is the honest form of the promise: what is masked is userinfo, not every string
+     * typed where userinfo goes. Nor can the rule be widened to reach them — {@code vault.example:8200/a@b} is the same
+     * shape as the first, and its {@code @} is an ordinary path character that must stay.
      *
      * <p>The built-in Vault transport ({@code JdkVaultHttpTransport}) applies the same rule to the URIs in its failure
      * messages. This is a deliberate second copy rather than a shared one: sharing it would mean adding a public member

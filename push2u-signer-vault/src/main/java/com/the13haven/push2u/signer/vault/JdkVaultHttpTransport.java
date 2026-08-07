@@ -203,6 +203,18 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
      * {@code https://user:secret@vault:8200}, basic auth for a fronting proxy) are exactly as secret as a query and
      * would otherwise ride into every transport failure.
      *
+     * <p>A URI typed without a scheme ({@code user:secret@vault:8200}) carries its credentials outside any authority —
+     * Java reads {@code user} as the scheme — and is cut the same way, scheme included; that cut takes the scheme even
+     * where the {@code @} is no credential at all, and the host always survives, the cut being always at an {@code @}.
+     *
+     * <p>Both cuts end at the first {@code /}, {@code ?} or {@code #}, since userinfo may contain none of the three —
+     * so a credential that does contain one is left where it stands. {@code user:PA/SS@vault:8200} and
+     * {@code https://u:PA/SS@vault:8200} are rendered whole, and {@code https://u:PASS?@vault} as
+     * {@code https://u:PASS}; {@code /} in particular is an ordinary character in a generated password. Java reports no
+     * userinfo for any of them, which is the honest form of the promise: what is stripped is userinfo, not every string
+     * typed where userinfo goes. Nor can the rule be widened to reach them — {@code vault:8200/a@b} is the same shape
+     * as the first, and its {@code @} is an ordinary path character that must stay.
+     *
      * <p>The Vault signer starter applies this same rule to the address its bound properties print, the one difference
      * being that it masks the userinfo as {@code ***@} rather than dropping it — a configuration dump has to keep
      * saying that something was configured there, while a failure message is more useful as a URI an operator can copy.
