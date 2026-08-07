@@ -481,7 +481,7 @@ if you forget.
 ## Conformance kit for a custom signer
 
 The check above is what your signer meets on every send; `push2u-testkit` is how it finds out in
-its own test suite instead. It is a test-scoped artifact holding one abstract JUnit 5 class:
+its own test suite instead. It is a test-scoped artifact holding one abstract JUnit Jupiter class:
 
 ```kotlin
 dependencies {
@@ -508,7 +508,7 @@ on a FIPS-only JVM: the kit prefers
 `SHA256withECDSAinP1363Format` and, where a provider registers only DER-form `SHA256withECDSA`
 (BC-FIPS), re-encodes the raw signature to minimal DER and verifies through that name — the same
 fallback the library itself makes. It is the same contract `LocalEcVapidSigner` and the Vault
-Transit signer are held to. The kit brings JUnit 5 and AssertJ with it, which is why it is a
+Transit signer are held to. The kit brings JUnit Jupiter and AssertJ with it, which is why it is a
 separate artifact and never a dependency of `push2u-core`.
 
 ## Modules
