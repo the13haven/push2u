@@ -279,16 +279,23 @@ dependencies {
 // Checks promoted to ERROR, so a quality run fails on them instead of printing a warning nobody
 // reads. Two groups:
 //   * the defects Error Prone actually caught in this codebase (Finally, StringSplitter,
-//     AddressSelection, ArrayRecordComponent) — each one is fixed or explicitly suppressed at the
-//     site, so a new occurrence is a regression;
+//     AddressSelection, ArrayRecordComponent, NullablePrimitiveArray) — each one is fixed or
+//     explicitly suppressed at the site, so a new occurrence is a regression;
 //   * MissingOverride and ReferenceEquality, which config/quality/pmd/ruleset.xml excludes on the
 //     grounds that Error Prone owns them. That claim only holds if they fail the build.
+//
+// NullablePrimitiveArray is the one NullAway cannot stand in for. JSpecify's @Nullable is TYPE_USE,
+// so `@Nullable byte[]` annotates the component type rather than the array reference, and NullAway
+// reads that exactly as written — a non-null parameter. `byte @Nullable []` is the nullable one,
+// and only this check tells the two apart.
+//
 // Extend the list when a new check proves it earns a build failure here.
 val blockingChecks = listOf(
     "AddressSelection",
     "ArrayRecordComponent",
     "Finally",
     "MissingOverride",
+    "NullablePrimitiveArray",
     "ReferenceEquality",
     "StringSplitter",
 )

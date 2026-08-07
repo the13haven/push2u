@@ -119,7 +119,7 @@ public final class LocalEcVapidSigner implements VapidSigner {
      * constructor. Refused by name as the library's crypto failure; the DER conversion's own {@code null} rejection
      * stays as defence in depth behind this.
      */
-    private static byte[] requireSignatureProduced(@Nullable byte[] signature) {
+    private static byte[] requireSignatureProduced(byte @Nullable [] signature) {
         if (signature == null) {
             throw new PushCryptoException("VAPID ES256 signing returned no signature at all");
         }
