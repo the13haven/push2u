@@ -59,10 +59,15 @@ own `VaultTransitVapidSigner` bean (built with `allowInsecureHttp()`), and the s
 Userinfo in the address (`https://user:password@gw.example/vault`) is preserved but unused by the
 built-in transport; a custom `VaultHttpTransport` may honour it, for a basic-auth proxy in front of
 Vault. It is treated as a credential everywhere push2u prints an address: `JdkVaultHttpTransport`
-strips it from the URIs it names in failure messages, and the starter's
+drops it from the URIs it names in failure messages, and the starter's
 `VaultSignerProperties.toString()` renders it as `https://***@gw.example/vault` — masked, the same
 way it renders the token as `***`, rather than dropped, so a configuration dump cannot read as "no
-proxy credentials configured". Routes push2u does not own still print what was configured: Spring
+proxy credentials configured". Both renderings are composed from the URI's parsed components and
+fail closed: an address Java did not parse as `scheme://host` (a schemeless
+`user:pass@vault.example:8200`, a relative reference) or one carrying a query or fragment — shapes
+that can never be a valid Vault address — is replaced whole by the fixed marker
+`<unrenderable address>`, because a credential in such a string can sit outside anything Java
+reports as userinfo. Routes push2u does not own still print what was configured: Spring
 Boot's startup failure report echoes the raw property value (`Value: "…"`) when a value fails to
 bind, so a malformed address that carries userinfo is reported verbatim.
 

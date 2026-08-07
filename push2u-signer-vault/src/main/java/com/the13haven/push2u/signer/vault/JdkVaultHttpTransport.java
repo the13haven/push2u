@@ -47,13 +47,14 @@ import com.the13haven.push2u.PushCryptoException;
  * receive the token. A supplied client whose {@link HttpClient#followRedirects()} is not
  * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way.
  *
- * <p>Exception messages carry the HTTP method and the request URI without its query (a Vault query can name secrets)
- * and without its userinfo (credentials in the authority — {@code https://user:secret@vault:8200} — are secrets too),
- * and never any request header — the Vault token travels in {@code X-Vault-Token} and must not leak into logs. That
- * includes a header the JDK client itself refuses (e.g. a token with a trailing newline, illegal in an HTTP field
- * value): the client's {@code IllegalArgumentException} spells out the whole value, so it is reported as a
- * {@link PushCryptoException} without the value — and without the original as its cause, whose message would leak into
- * any logged stack trace just the same.
+ * <p>Exception messages carry the HTTP method and a fail-closed rendering of the request URI: rebuilt from its parsed
+ * components without its userinfo (credentials in the authority — {@code https://user:secret@vault:8200} — are secrets
+ * too), or replaced whole by a fixed marker when the URI is not a plain {@code scheme://host} shape or carries a query
+ * or fragment (a Vault query can name secrets). They never carry any request header — the Vault token travels in
+ * {@code X-Vault-Token} and must not leak into logs. That includes a header the JDK client itself refuses (e.g. a token
+ * with a trailing newline, illegal in an HTTP field value): the client's {@code IllegalArgumentException} spells out
+ * the whole value, so it is reported as a {@link PushCryptoException} without the value — and without the original as
+ * its cause, whose message would leak into any logged stack trace just the same.
  */
 public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
@@ -175,7 +176,7 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
         } catch (IOException e) {
             // The JDK client surfaces a body-subscriber failure wrapped in IOException — recover
             // the size-cap violation from the cause chain and report it as what it is, naming the
-            // call (method + query-less URI) so operators can tell the sign POST from the keys GET.
+            // call (method + redacted URI) so operators can tell the sign POST from the keys GET.
             ResponseTooLargeException tooLarge = findTooLarge(e);
             if (tooLarge != null) {
                 throw new PushCryptoException(tooLarge.getMessage() + ": " + method + " " + redacted(uri), e);
@@ -198,76 +199,45 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
     }
 
     /**
-     * The request URI as rendered into exception messages: without query or fragment — a Vault query can name secrets;
-     * the path may not — and without userinfo, because credentials smuggled into the authority (e.g.
-     * {@code https://user:secret@vault:8200}, basic auth for a fronting proxy) are exactly as secret as a query and
-     * would otherwise ride into every transport failure.
+     * The request URI as rendered into exception messages, composed from its parsed components — never from its string
+     * form. A URI Java parsed as {@code scheme://[userinfo@]host[:port][/path]} with no query and no fragment is
+     * rebuilt from its scheme, host, port and raw path, without its userinfo: credentials smuggled into the authority
+     * ({@code https://user:secret@vault:8200}, basic auth for a fronting proxy) are exactly as secret as the Vault
+     * token and would otherwise ride into every transport failure. Dropped rather than masked, because a failure
+     * message is most useful as a URI an operator can copy; an empty userinfo ({@code https://@vault:8200}) keeps its
+     * {@code @}, which delimits no credential, so the copyable URI stays exactly the configured one.
      *
-     * <p>A URI typed without a scheme ({@code user:secret@vault:8200}) carries its credentials outside any authority —
-     * Java reads {@code user} as the scheme — and is cut the same way, scheme included; that cut takes the scheme even
-     * where the {@code @} is no credential at all, and the host always survives, the cut being always at an {@code @}.
+     * <p>Any other shape renders as the fixed marker {@code <unrenderable address>}, with not one character of the
+     * original: once Java has not parsed a server-based authority, a credential can sit anywhere in the text — a
+     * password carrying {@code /} or {@code ?} dissolves the authority as Java reads it — and no string-level cut can
+     * find it without guessing. Every URI the signer sends through this transport is built from an address it validated
+     * up front (absolute, host present, no query or fragment), so for the signer that branch is unreachable and exists
+     * as defence in depth for any other caller of this public transport. When it does fire, only the path is withheld —
+     * the HTTP method is printed beside the rendering either way, so a sign POST still reads apart from a keys GET.
      *
-     * <p>Both cuts end at the first {@code /}, {@code ?} or {@code #}, since userinfo may contain none of the three —
-     * so a credential that does contain one is left where it stands. {@code user:PA/SS@vault:8200} and
-     * {@code https://u:PA/SS@vault:8200} are rendered whole, and {@code https://u:PASS?@vault} as
-     * {@code https://u:PASS}; {@code /} in particular is an ordinary character in a generated password. Java reports no
-     * userinfo for any of them, which is the honest form of the promise: what is stripped is userinfo, not every string
-     * typed where userinfo goes. Nor can the rule be widened to reach them — {@code vault:8200/a@b} is the same shape
-     * as the first, and its {@code @} is an ordinary path character that must stay.
-     *
-     * <p>The Vault signer starter applies this same rule to the address its bound properties print, the one difference
-     * being that it masks the userinfo as {@code ***@} rather than dropping it — a configuration dump has to keep
-     * saying that something was configured there, while a failure message is more useful as a URI an operator can copy.
-     * Keep {@code VaultSignerProperties} in step when this changes.
+     * <p>The Vault signer starter renders the address its bound properties print by this same fail-closed rule, the one
+     * difference being that it masks a userinfo as {@code ***@} rather than dropping it — a configuration dump has to
+     * keep saying that something was configured there. Keep {@code VaultSignerProperties} in step when this changes.
      */
     private static String redacted(URI uri) {
-        String text = uri.toString();
-        int cut = text.length();
-        int query = text.indexOf('?');
-        if (query >= 0) {
-            cut = query;
+        if (uri.getScheme() == null
+                || uri.getHost() == null
+                || uri.getRawQuery() != null
+                || uri.getRawFragment() != null) {
+            return "<unrenderable address>";
         }
-        int fragment = text.indexOf('#');
-        if (fragment >= 0 && fragment < cut) {
-            cut = fragment;
+        StringBuilder rendered = new StringBuilder(uri.getScheme()).append("://");
+        String userInfo = uri.getUserInfo();
+        if (userInfo != null && userInfo.isEmpty()) {
+            rendered.append('@');
         }
-        String stripped = text.substring(0, cut);
-        // An authority is the "//" that follows the scheme's colon (or opens a relative reference)
-        // and nothing else: a "//" further along is two path segments, whose "@" is an ordinary
-        // path character and no credential.
-        String scheme = uri.getScheme();
-        int schemeEnd = scheme == null ? 0 : scheme.length() + 1;
-        if (stripped.startsWith("//", schemeEnd)) {
-            // Userinfo sits between the "//" and the last "@" of the authority. An "@" at the
-            // authority's very first character delimits an empty userinfo — nothing was configured
-            // there, and the address is left as it stands.
-            int authorityStart = schemeEnd + 2;
-            int at = lastAtBeforeThePath(stripped, authorityStart);
-            if (at > authorityStart) {
-                return stripped.substring(0, authorityStart) + stripped.substring(at + 1);
-            }
-        } else if (scheme != null) {
-            // No authority, yet the credentials can still be there: "user:secret@vault:8200" typed
-            // without a scheme parses as the scheme "user" with all of "secret@vault:8200" behind
-            // it. Everything up to the last "@" before the path goes, the scheme included — it is
-            // the user name half of the userinfo.
-            int at = lastAtBeforeThePath(stripped, schemeEnd);
-            if (at >= schemeEnd) {
-                return stripped.substring(at + 1);
-            }
+        rendered.append(uri.getHost());
+        if (uri.getPort() >= 0) {
+            rendered.append(':').append(uri.getPort());
         }
-        return stripped;
-    }
-
-    /**
-     * The index of the last {@code @} in front of the path, searching from {@code from}, or {@code -1} if there is
-     * none. An {@code @} may legally recur inside userinfo, so the last one is the delimiter and everything before it
-     * is credential; past the first {@code /} the {@code @} is an ordinary path character.
-     */
-    private static int lastAtBeforeThePath(String stripped, int from) {
-        int pathStart = stripped.indexOf('/', from);
-        int end = pathStart >= 0 ? pathStart : stripped.length();
-        return stripped.lastIndexOf('@', end - 1);
+        // A URI with a parsed host always carries a path, possibly empty; the fallback only
+        // states that in a form the nullness checker can see.
+        return rendered.append(Objects.requireNonNullElse(uri.getRawPath(), "")).toString();
     }
 
     private static @Nullable ResponseTooLargeException findTooLarge(Throwable failure) {
