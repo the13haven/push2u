@@ -88,7 +88,7 @@ public final class Push2uHealthAutoConfiguration {
     @ConditionalOnBean(VapidSigner.class)
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "push2u.health", name = "enabled", matchIfMissing = true)
-    public Push2uHealthIndicator push2uHealthIndicator(VapidSigner signer, Push2uProperties properties) {
+    Push2uHealthIndicator push2uHealthIndicator(VapidSigner signer, Push2uProperties properties) {
         try {
             return new Push2uHealthIndicator(signer, properties.health().cacheTtl());
         } catch (IllegalArgumentException e) {

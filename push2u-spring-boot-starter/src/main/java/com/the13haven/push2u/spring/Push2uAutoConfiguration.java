@@ -68,7 +68,7 @@ public final class Push2uAutoConfiguration {
     @ConditionalOnProperty(
             prefix = "push2u.vapid",
             name = {"public-key", "private-key"})
-    public VapidSigner push2uVapidSigner(Push2uProperties properties) {
+    VapidSigner push2uVapidSigner(Push2uProperties properties) {
         Push2uProperties.Vapid vapid = properties.vapid();
         // @ConditionalOnProperty already gates this bean on both keys being set; restated as a
         // check so the contract holds in the type system too, and so a future change to the
@@ -109,7 +109,7 @@ public final class Push2uAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public PushHttpClient push2uPushHttpClient() {
+    PushHttpClient push2uPushHttpClient() {
         return new JdkPushHttpClient();
     }
 
@@ -159,7 +159,7 @@ public final class Push2uAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnBean(VapidSigner.class)
-    public PushSender pushSender(
+    PushSender pushSender(
             VapidSigner signer,
             PushHttpClient httpClient,
             ObjectProvider<EndpointPolicy> endpointPolicy,
