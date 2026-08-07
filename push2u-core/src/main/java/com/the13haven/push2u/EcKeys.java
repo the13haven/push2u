@@ -157,10 +157,11 @@ final class EcKeys {
      * which is why the choice of provider remains a trust decision. And the two halves are not checked to belong
      * together ({@code W = d·G} is not evaluated): that needs point multiplication, which this library deliberately
      * does not implement, and it would buy nothing against a hostile provider, which can always hand over a
-     * self-consistent pair whose scalar it knows. The scalar's range is not checked either: a scalar of zero has no
-     * affine public point — its would-be point is infinity, which the point check refuses — a scalar at or above
-     * {@code n} acts as its residue {@code d mod n} and is no weaker for it, and the private-scalar import path applies
-     * no range check, which is the standard this path is held to.
+     * self-consistent pair whose scalar it knows. The scalar's range is not checked either: for a pair whose halves do
+     * belong together, a scalar of zero shows up as a public point at infinity, which the point check refuses — and for
+     * a mismatched pair it is no worse than any other scalar the previous sentence already leaves uncaught. A scalar at
+     * or above {@code n} acts as its residue {@code d mod n} and is no weaker for it, and the private-scalar import
+     * path applies no range check, which is the standard this path is held to.
      *
      * <p>The messages quote no coordinates or scalars: the values are fresh key material, and the failure is
      * structural.
