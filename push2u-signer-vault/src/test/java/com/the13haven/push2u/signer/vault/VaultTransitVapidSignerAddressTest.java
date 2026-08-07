@@ -261,9 +261,15 @@ class VaultTransitVapidSignerAddressTest {
     void plainHttpToALiteralLoopbackHostNeedsNoOptIn() {
         // The Vault Agent / service-mesh sidecar pattern: the application talks plain http to an
         // agent on the same machine and the agent terminates TLS — a mainstream production
-        // deployment that must work out of the box. The literal set is the browsers'
-        // secure-context one; host names compare case-insensitively (RFC 3986 §3.2.2), and the
-        // IPv6 loopback is recognised in any of its spellings, bracketed as URI.getHost() keeps it.
+        // deployment that must work out of the box. The literal set is essentially the browsers'
+        // secure-context one — essentially, because the IPv4-mapped writings below are admitted and
+        // no browser treats them as a secure context. Host names compare case-insensitively
+        // (RFC 3986 §3.2.2); a bracketed literal is decided by the address it denotes rather than
+        // its spelling, which is what admits [::1] however it is written and equally
+        // [::ffff:127.0.0.1] and [::ffff:7f00:1] — a different 128-bit value that InetAddress
+        // parses to the Inet4Address 127.0.0.1, so the traffic goes exactly where 127.0.0.1's does.
+        // Pinning the mapped pair is the point of this list: isLoopbackLiteral simplified to a
+        // string comparison against ::1 would still pass every other case here.
         for (String host : List.of(
                 "localhost",
                 "LocalHost",
@@ -271,7 +277,9 @@ class VaultTransitVapidSignerAddressTest {
                 "127.0.0.1",
                 "127.255.255.254",
                 "[::1]",
-                "[0:0:0:0:0:0:0:1]")) {
+                "[0:0:0:0:0:0:0:1]",
+                "[::ffff:127.0.0.1]",
+                "[::ffff:7f00:1]")) {
             assertThatCode(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
                                     URI.create("http://" + host + ":8200"),
                                     new TransitKeyName("vapid"),
@@ -289,11 +297,24 @@ class VaultTransitVapidSignerAddressTest {
         // never DNS — my-vault stands for a hosts-file alias of 127.0.0.1, which still needs the
         // opt-in; 127.0.0.1.evil.example wears a loopback prefix without being one; hTTp checks
         // the scheme comparison stays case-insensitive on the build() side too.
+        //
+        // The bracketed forms are the other edge of the mapped-literal admit pinned above.
+        // [::ffff:8.8.8.8] is a mapped writing of a public address — InetAddress parses it to the
+        // Inet4Address 8.8.8.8, which is not loopback — so admitting the mapped form of 127.0.0.1
+        // does not admit the mapped form of anything. [::127.0.0.1] is the deprecated
+        // IPv4-compatible spelling and is *not* the same value: it parses as the IPv6 address
+        // ::7f00:1, which is not the IPv6 loopback, so a reader who assumes any bracketed literal
+        // ending in 127.0.0.1 is loopback is wrong. [::ffff:0177.0.0.1] parses to 177.0.0.1 — the
+        // mapped path reads its embedded IPv4 as canonical decimal too, so it does not reopen the
+        // octal ambiguity the plain dotted-quad rule refuses leading zeros to close.
         for (String address : List.of(
                 "http://vault.internal:8200",
                 "http://my-vault:8200",
                 "http://127.0.0.1.evil.example:8200",
-                "hTTp://vault.internal:8200")) {
+                "hTTp://vault.internal:8200",
+                "http://[::ffff:8.8.8.8]:8200",
+                "http://[::127.0.0.1]:8200",
+                "http://[::ffff:0177.0.0.1]:8200")) {
             assertThatThrownBy(() -> VaultTransitVapidSigner.builderWithSuppliedPublicKey(
                                     URI.create(address),
                                     new TransitKeyName("vapid"),

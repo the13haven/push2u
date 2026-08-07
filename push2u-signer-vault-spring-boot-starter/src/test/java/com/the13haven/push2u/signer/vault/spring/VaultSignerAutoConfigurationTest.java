@@ -244,6 +244,14 @@ class VaultSignerAutoConfigurationTest {
         // plain-http advice ("no configuration property for that opt-in") belongs to a different
         // failure, and appending it here would send the operator after an opt-in that would not
         // have helped: ftp:// is refused whatever the opt-in says.
+        //
+        // What keeps the advice off here is structural, not the message-matching inside
+        // builtWithPlainHttpRejectionTranslated: the scheme rejection is thrown by the factory,
+        // which translated(...) wraps, so it leaves this bean method before the build() call the
+        // advice-appending wrapper guards is ever made. That wrapper's discrimination is what
+        // anUnrelatedIllegalArgumentFromBuildReachesTheOperatorUntouched exercises, because that
+        // failure does come out of build(). So this test pins the arrangement — the scheme decided
+        // where no plain-http advice can reach it — rather than the wrapper's matching.
         runner.withPropertyValues(
                         "push2u.signer.vault.address=ftp://vault.example:8200",
                         "push2u.signer.vault.key-name=vapid",
