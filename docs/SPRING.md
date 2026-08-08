@@ -19,10 +19,12 @@ push2u:
   default-ttl: 24h
   record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
-  allowed-origins:                  # required, unless an EndpointPolicy bean supplies it instead
-    - "https://fcm.googleapis.com"
+  allowed-origins:                  # one of the two is required, unless an EndpointPolicy bean
+    - "https://fcm.googleapis.com"  # supplies the allowlist instead
     - "https://updates.push.services.mozilla.com"
-    - "https://web.push.apple.com"
+  allowed-domains:                  # a whole DNS zone per entry — see Endpoint policy below
+    - "push.apple.com"
+    - "notify.windows.com"
   retry:
     max-attempts: 3
     initial-backoff: 1s
@@ -61,25 +63,42 @@ is attacker-influenced wherever subscriptions are registered by clients. See
 [`README.md` → Endpoint policy (SSRF hardening)](../README.md#endpoint-policy-ssrf-hardening) for
 the threat model and the limits of a URI-level check.
 
-The starter takes that decision from one of two sources, and exactly one of them:
+The starter takes that decision from one of two **sources**, and exactly one of them:
 
-- **`push2u.allowed-origins`**, which binds to `EndpointPolicies.allowedOrigins`. A malformed entry
-  fails the context with the message prefixed by the property name, like the size properties.
+- **The allowlist properties**, `push2u.allowed-origins` and `push2u.allowed-domains`. An origin
+  entry is one origin, matched exactly; a domain entry is a whole DNS zone, the apex and every
+  subdomain at any depth, over `https` on the default port only.
+  [`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four browser push services in this form — two
+  origins, and two domains for the two services that publish a zone rather than a host.
 - **An application `EndpointPolicy` bean**, which the autoconfigured sender picks up. This is the
-  route for anything the property cannot express — a corporate egress rule, a custom check, or
+  route for anything the properties cannot express — a corporate egress rule, a custom check, or
   `EndpointPolicies.unrestricted()`.
 
-Configuring **both** fails the context, naming the property and the bean — they express the same
-security control, and silently preferring one would leave the other believed-active but ignored.
-Configuring **neither** fails the context too, with a message naming both ways to fix it: a sender
-wired without a policy would POST wherever a subscription's endpoint points, and that is not an
-outcome anyone should reach by leaving a property out.
+**The two properties are not two sources.** They are two halves of one statement, and a context
+setting both gets one allowlist holding all of their entries — which is exactly the shape a
+deployment naming the browser push services needs, since some of them publish a host and some a
+zone. The decision is *expressed* when at least one of them is non-empty.
 
-One escape hatch: a service that *inherits* `push2u.allowed-origins` from a shared configuration
-it does not own cannot unset the property, so setting it to an explicitly **empty** value beside
-a bean means "deliberately not using the property here" and the bean wins. An empty value on its
-own still fails the context (`requires at least one origin`) — on the property's own terms, since
-emptying it is a statement about the property rather than a missing decision.
+Expressing it **and** supplying a bean fails the context, naming whichever property is non-empty
+and naming the bean — they express the same security control, and silently preferring one would
+leave the other believed-active but ignored. Expressing **neither** — both properties unset, no
+bean — fails the context too, with a message naming the three ways to fix it: a sender wired
+without a policy would POST wherever a subscription's endpoint points, and that is not an outcome
+anyone should reach by leaving a property out.
+
+One escape hatch, and it is per property: a service that *inherits* `push2u.allowed-origins` from
+a shared configuration it does not own cannot unset the property, so setting it to an explicitly
+**empty** value means "deliberately not using this property here" — beside a bean, the bean wins;
+beside the other property, that property carries the allowlist alone. Every set property empty with
+no bean still fails the context, with a message naming both keys: emptying them is a statement
+about the pair, and no single entry is left to refuse on its own terms.
+
+A malformed entry fails the context named exactly — the property it came from and its index in that
+property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from one
+entry of one named property. The entry appears in the message the way an endpoint appears in a
+rejection: an origin entry with its path and query stripped, because a pasted capability URL is
+precisely the mistake being reported, and a domain entry verbatim only when it is a plain
+host-shaped token.
 
 ### No property turns the restriction off
 
@@ -98,6 +117,28 @@ EndpointPolicy endpointPolicy() {
 A YAML flag reaches production by copying a dev profile; a bean is a code change that passes a
 review. A property could be added later without breaking anyone, and could not be removed after a
 release — so the asymmetry decides it.
+
+`push2u.allowed-domains` is not a hole in that. What the refusal is about is a *mode*: a flag whose
+danger is that it removes the control and travels between profiles as one copied line. A domain list
+is data — every value it can hold is a restriction, and there is no value of it that turns the
+restriction off. The asymmetry above still argues, as it always does, that withholding a property is
+the cheap default, and what overrides it here is the pressure withholding puts on a Spring
+deployment serving the two services that publish a zone rather than a host — Safari's and Edge's,
+between them most of the users a deployment has. A bean is exclusive with the properties, so
+reaching for one to express those two zones costs every ordinary origin its place in YAML too: what
+is left is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad answers the
+starter can otherwise give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an
+origins-only allowlist, which can express neither zone.
+
+That second answer is the quieter failure, and it is quiet in two different ways. Edge's endpoints
+sit on varying subdomains, so an origins-only allowlist refuses them now: the subscription is
+registered and then refused at every send for the rest of its life, and the application sees an
+`EndpointRejectedException` per send and nothing else, since the core has no logger of its own.
+Safari's sit on one host today, so naming that host works — until Apple uses the rest of the zone
+its own documentation reserves, and those subscriptions then fail the same way. Neither is unsafe
+and neither fails a startup, so there is nothing in a review to notice; the feature simply stops
+working for those users. The property exists so that the safe answer is reachable by the route
+operators already use.
 
 ## Health indicator
 
@@ -138,7 +179,7 @@ backend that can go down, holds a token that can expire, names a key that can be
 the rest of a `PushSender` is configuration the builder validated at startup.
 
 While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
-a startup failure naming `push2u.vapid.subject` or `push2u.allowed-origins`), so this changes
+a startup failure naming `push2u.vapid.subject` or the allowlist properties), so this changes
 nothing there. Where it matters is a context that *excludes* `Push2uAutoConfiguration` and wires its
 own `PushSender` around a signer kept as a bean: the probe then applies to exactly the signer that
 sender uses.

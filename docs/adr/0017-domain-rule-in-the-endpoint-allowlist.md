@@ -228,10 +228,10 @@ to rules of one kind and delegates.
   that withholding is the cheap default, and it is not overridden lightly. What overrides it here is
   the pressure withholding puts on a Spring deployment serving Edge, which is a claim about the
   choice on offer rather than a prediction of which branch is taken. A bean is exclusive with the
-  property, so one extra rule costs the three ordinary origins their place in YAML too; what is left
+  property, so one extra rule costs the two ordinary origins their place in YAML too; what is left
   is a `@Bean` carrying the hostnames *and* the matching rule, or one of two bad built-in outcomes
-  — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of the three
-  fixed origins, which leaves a major browser's users out. The second of those is not hypothetical:
+  — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of fixed
+  origins only, which leaves a major browser's users out. The second of those is not hypothetical:
   it is what the report behind this decision describes having done, over `unrestricted()` and
   knowingly. It is also a different failure from the first. An Edge subscription is registered and
   then rejected at every send for the rest of its life; what the application sees is an
@@ -243,7 +243,7 @@ to rules of one kind and delegates.
 - **The starter's existing rules are restated over two properties, and attribution becomes exact.**
   "Expressed" means at least one of the two properties is non-empty. **Two non-empty properties are
   not a conflict: they are unioned into one allowlist**, which is the shape the WNS case needs —
-  three origin entries beside one domain entry. The exclusivity ADR-016 established holds between
+  two origin entries beside two domain entries. The exclusivity ADR-016 established holds between
   the properties and a bean, never between the two properties, which are two halves of one statement
   rather than two statements of the same control. Both sources at once — expressed, plus a bean —
   still fails the context, naming which property is non-empty and naming the bean. Neither of them —
