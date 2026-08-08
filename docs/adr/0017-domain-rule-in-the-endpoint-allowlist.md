@@ -15,21 +15,35 @@ The subdomains are real and they vary: that same page's notification example pos
 endpoint names `wns2-ln2p.notify.windows.com`
 (https://github.com/MicrosoftEdge/DevTools/issues/262).
 
-So for a deployment serving Edge the safe rule is not expressible, and the only reachable answer is
-the one ADR-016 named unsafe. Enumerating the datacentre subdomains is not a workaround but exactly
-the failure mode ADR-016 named when it rejected a built-in browser allowlist: an allowlist that is
-mostly right, that goes stale as WNS adds a datacentre, and that fails silently when it does. The
-other three services are single fixed hosts, so WNS is the only one affected today — but the same
-shape returns for any self-hosted or intra-organisation push service fronted by more than one host,
-which ADR-016 lists as a legitimate deployment. ADR-016 set out to stop unrestricted egress from
-being what a deployment gets by not deciding; this is unrestricted egress being what it gets *after*
-deciding correctly, because the correct rule has no spelling.
+So for a deployment serving Edge the safe rule is not expressible through the library's built-in
+factories or its Spring properties: not `allowedOrigins`, whose match is exact per origin, and not
+the property that binds to it. The seam is not the gap. An application-supplied `EndpointPolicy`
+does express the WNS rule, and ADR-005 admitted that seam precisely so a deployment's own egress
+rule has somewhere to live — this is a question of what the built-in answers cover, not of a missing
+capability. What reaching for the seam costs is the point: the deployment re-implements, per
+consumer, the URI and origin handling the library already performs correctly and does not expose —
+the RFC 6454 serialization, the IDNA form and the default-port drop sit in a package-private class,
+and the userinfo refusal inside a private method of a public one, so no consumer can call any of the
+four — and it independently re-derives the label boundary that separates
+`notify.windows.com` from `evilnotify.windows.com`, which is the bug this decision names below and
+the kind no operator finds by testing the configuration they meant to write. Enumerating the
+datacentre subdomains is not a workaround either, but exactly the failure mode ADR-016 named when it
+rejected a built-in browser allowlist: an allowlist that is mostly right, that goes stale as WNS
+adds a datacentre, and that fails silently when it does. The other three services are single fixed
+hosts, so WNS is the only one affected today — but the same shape returns for any self-hosted or
+intra-organisation push service fronted by more than one host, which ADR-016 lists as a legitimate
+deployment. ADR-016 set out to stop unrestricted egress from being what a deployment gets by not
+deciding; here it is what a deployment can reach for *after* deciding correctly, because the correct
+rule has no spelling among the answers the library ships and the spelling it does have is forty
+lines of security-critical normalization the deployment has to get right on its own. That is a
+failure of correctness-by-default over a control every consumer would otherwise re-derive.
 
 This does not supersede ADR-016, and every decision in it stands: the policy remains a required
 argument of both factory methods, the library still ships no allowlist of its own, no policy is
 derived by resolving the endpoint, `unrestricted()` keeps its name as the single opt-out, and the
 Spring starter still fails to start when no decision is expressed. What widens is the answer space —
-one more rule a deployment can state, so that stating the correct one becomes possible.
+one more rule a deployment can state, so that stating the correct one stays inside the library's own
+vocabulary instead of being a lambda each deployment writes and has to get right on its own.
 
 The decision: an allowlist entry becomes a value that carries its own kind, and the standard
 allowlist is a list of those values rather than a list of strings whose meaning depends on which
@@ -180,10 +194,20 @@ to rules of one kind and delegates.
   disables the control. The asymmetry that decided ADR-015 and ADR-016 — a property can be added
   later without breaking anyone, and cannot be removed after a release — argues as it always did
   that withholding is the cheap default, and it is not overridden lightly. What overrides it here is
-  what withholding would do: a Spring deployment serving Edge would then choose between a `@Bean`
-  carrying a list of hostnames and `EndpointPolicies.unrestricted()`, and it picks the second. The
-  property is admitted precisely because it makes the safe answer reachable by the route operators
-  already use.
+  the pressure withholding puts on a Spring deployment serving Edge, which is a claim about the
+  choice on offer rather than a prediction of which branch is taken. A bean is exclusive with the
+  property, so one extra rule costs the three ordinary origins their place in YAML too; what is left
+  is a `@Bean` carrying the hostnames *and* the matching rule, or one of two bad built-in outcomes
+  — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of the three
+  fixed origins, which leaves a major browser's users out. The second of those is not hypothetical:
+  it is what the report behind this decision describes having done, over `unrestricted()` and
+  knowingly. It is also a different failure from the first. An Edge subscription is registered and
+  then rejected at every send for the rest of its life; what the application sees is an
+  `EndpointRejectedException` per send, which that report's deployment logs as a warning — the core
+  has no logger of its own to say anything, by the zero-dependency constraint. Nothing about it is
+  unsafe and no startup fails; the feature simply does not work for those users, and the exclusion
+  is invisible to review, which is how it survives one. The property is admitted precisely because
+  it makes the safe answer reachable by the route operators already use.
 - **The starter's existing rules are restated over two properties, and attribution becomes exact.**
   "Expressed" means at least one of the two properties is non-empty. **Two non-empty properties are
   not a conflict: they are unioned into one allowlist**, which is the shape the WNS case needs —
@@ -203,11 +227,35 @@ to rules of one kind and delegates.
   considered first had to borrow the starter's `retryPolicy` probe-and-discard precedent and then
   adjust it, because one call over two lists could not say which list a bad entry came from; none of
   that survives, and it is the strongest single argument for rules as values.
+- **Both property components are nullable, neither carries a `@DefaultValue`, and unset stays
+  distinguishable from explicitly empty.** An absent key binds as `null`; a key set to an empty
+  value binds as an empty list. Every Spring rule above rests on that difference and none survives
+  without it: "expressed" means at least one property is non-empty, the escape hatch *is* an
+  explicitly empty value, and the neither-case failure fires only when both are unset. A
+  `@DefaultValue` on either component would collapse the two — an unset property would arrive as an
+  empty list — and the starter would lose the distinction between "this deployment has not decided"
+  and "this deployment deliberately cedes to a bean", which are the two cases it has to answer
+  differently: a context failure naming three ways to fix it, against a bean quietly winning. This
+  is the shape the single `0.1.0` component already has; it is recorded as a decision because with
+  two properties it stops being an implementation detail of one binding and becomes the premise the
+  semantics above are stated in.
 - **The added `Push2uProperties` component changes that record's canonical constructor descriptor**,
-  and with it its `equals`, `hashCode`, `toString` and record patterns. That is accepted rather than
-  worked around: it is a `@ConfigurationProperties` record the framework binds from configuration,
-  the only direct constructions of it are this repository's own starter tests, and a consumer
-  instantiating it by hand would be assembling the very thing Spring is there to assemble.
+  and with it `equals`, `hashCode`, `toString` and the arity a record pattern spells. That is
+  accepted rather than worked around, and on a published promise rather than a guess about who calls
+  it: the release note for `0.1.0`, the version these constructors shipped in, says that a few names
+  and constructor shapes are worth revisiting once real integrations exist, and that `0.x` is where
+  that revision is honest rather than breaking. Anyone holding that API was told this shape could
+  still move, so accepting the change keeps that promise, while preserving the constructor would
+  withdraw it in a document no consumer reads. The asymmetry with the provenance-restricted `anyOf`
+  rejected below is stated here rather than left to be reconciled, since this document cannot be
+  amended once its decision is implemented: compatibility is not being weighed differently in the
+  two places, what differs is who holds the thing and what was published about it.
+  `EndpointPolicies.allowedOrigins` is the primary documented factory essentially every consumer
+  calls, and changing its return type breaks every one of them — for a gain that bullet rejects on
+  its own grounds regardless. This record's canonical constructor is a binding target the framework
+  invokes, and a constructor shape is precisely what the release note put on notice. Of everything
+  that moves, only the descriptor is a linkage failure for already-compiled code: `equals`,
+  `hashCode` and `toString` go on working, and a record pattern recompiles at the new arity.
 
 Rejected alternatives:
 
