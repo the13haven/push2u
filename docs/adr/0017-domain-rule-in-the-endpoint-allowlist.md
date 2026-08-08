@@ -115,10 +115,15 @@ on the main path.
   what was configured, domains-only and the union each getting their own. One message merged across
   all three configurations is ruled out for a reason of substance rather than of wording: the one
   thing an operator needs from a rejection is which rule refused.
-- **One refusal changes, and it is named here rather than left to the implementation**: an entry
-  containing `*` earns its own construction check, refusing it with a message naming
-  `allowedDomains`. It has to be its own check rather than a repointing of the branch it currently
-  falls into, because that branch is not `*`-specific — a leading dot, an empty label and a raw
+- **One refusal changes, and it is named here rather than left to the implementation**: an *origin*
+  entry carrying a `*` where a host label belongs earns its own construction check, refusing it with
+  a message naming `allowedDomains`. (A `*` in a *domain* entry is refused by the construction
+  checks above.) The criterion is the host position and not the presence of the character:
+  `https://example.com/*` and `https://a*b@example.com` are already refused today for being more
+  than a bare `scheme://host[:port]`, which is the right thing to tell their author, and a check
+  firing on a `*` anywhere would capture them and send them to `allowedDomains` instead. For the
+  same reason it has to be its own check rather than a repointing of the branch a wildcard host
+  currently falls into, which is not `*`-specific either — a leading dot, an empty label and a raw
   Unicode host all reach it too, since `java.net.URI` yields no host for any of them. The
   raw-Unicode entry's present advice — spell the host in its A-label form — is correct, and
   `allowedDomains` refuses raw Unicode as well, so repointing the branch would replace right advice
