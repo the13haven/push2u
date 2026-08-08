@@ -41,6 +41,34 @@ code is not an approval to merge — they are separate, and only the second one 
 Parallel subagents cannot share one working tree; they would be checking out over each other's
 branches. Give each one `isolation: "worktree"` so it works in its own checkout.
 
+## Work that starts from a tracker issue
+
+Someone filed it, and they are the one person guaranteed to want to know what became of it. Two
+places carry the reference, and both are written while the work is still open.
+
+**The pull request into `main` says `Closes #N` in its description.** Not only in a commit message:
+a closing keyword in a commit closes the issue but leaves the pull request unlisted as a linked one,
+which costs the reporter the single hop that leads them from the issue to the release the fix
+shipped in. GitHub closes a linked issue only when the pull request merges into the default branch,
+so this belongs on the pull request into `main` and on no other — a subtask pull request into a
+feature branch would close nothing and only add a second linked pull request to the issue. The
+reference can be added afterwards by editing a merged pull request's description, and the link does
+appear; doing it up front is what makes the close automatic and keeps anyone from closing the issue
+by hand and inventing a mechanism for it.
+
+**An ADR that comes out of an issue names it, and names it while the ADR is `Proposed`.** Once its
+decision is implemented the ADR is immutable, so a reference added later cannot be added at all. A
+plain URL is the form — the `checkstyleReferences` ban is on `main` sources, not on `docs/`.
+
+**No document, label, milestone or comment names the version the work will ship in.** That number
+does not exist until the release cuts the tag, the release notes are generated from the pull request
+labels at that moment, and a number written in advance is a guess that outlives the guessing. The
+issue links to the pull request; the pull request shows its release once there is one. If an issue
+has to state the release in its own words, that is said after the tag, never before.
+
+None of this applies to a vulnerability: there is no public issue to reference, and
+`.claude/skills/push2u-advisory/SKILL.md` carries that path instead.
+
 ## Delegating
 
 A subagent starts with a fresh context. It inherits `CLAUDE.md` and these rules, but **not** the
