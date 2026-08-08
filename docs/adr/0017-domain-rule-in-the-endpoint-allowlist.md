@@ -210,16 +210,21 @@ Rejected alternatives:
 - **A third property, `push2u.allowed-endpoints`, whose entries carry mandatory `origin:` /
   `domain:` tags.** The danger it guards against is real and its guard is the right one: tags have
   to be mandatory, because an entry taken for a domain merely by lacking a scheme would turn a
-  forgotten `https://` into a silently wider rule. But two typed keys already give exactly that
-  protection without a parser — **the YAML keys are the tags**, hoisted to where a typo fails the
-  binder instead of a hand-rolled split. A tag inside a value needs a specification of its own:
-  surrounding whitespace, case, an unknown tag, and splitting on the first colon only, since
-  `origin:https://x` carries a second one. And it would leave three spellings of one allowlist and a
-  matrix of legal combinations between them; ADR-016 declined to keep the optional builder step
-  beside the required parameter partly because one sender would have had two spellings, and three is
-  further along the same line. Failing fast on a mix of styles means nothing is silently ignored, so
-  this objection is about surface and documentation rather than about danger, and it is recorded as
-  that.
+  forgotten `https://` into a silently wider rule. What the unified key would buy is one list
+  holding both kinds interleaved, in the order the operator wrote them — which nothing needs today,
+  since a rule either matches or it does not and the order of the list carries no meaning. Against
+  that, two typed keys already give the same protection without a parser — **the YAML keys are the
+  tags**, hoisted to where a typo fails the binder instead of a hand-rolled split — while a tag
+  inside a value needs a specification of its own: surrounding whitespace, case, an unknown tag, and
+  splitting on the first colon only, since `origin:https://x` carries a second one. It would also
+  leave three spellings of one allowlist and a matrix of legal combinations between them; ADR-016
+  declined to keep the optional builder step beside the required parameter partly because one sender
+  would have had two spellings, and three is further along the same line. Failing fast on a mix of
+  styles means nothing is silently ignored, so this is a judgement about surface and documentation
+  rather than about danger. It is rejected now and on these grounds, not in principle: adopting a
+  unified key later would mean deprecating `push2u.allowed-origins`, which at `0.x` costs little, so
+  the case for two keys rests on the parser and the migration rather than on deprecation being
+  expensive.
 - **A wildcard entry such as `https://*.notify.windows.com` inside an origin rule.** It is the least
   legible possible spelling of "and this one is an entire DNS zone", sitting in a list of visually
   identical origins, when ADR-016's whole thesis is that the security-relevant choice must be
@@ -250,11 +255,10 @@ Rejected alternatives:
 
 This rules out a public combinator over `EndpointPolicy`, whether on `EndpointPolicies` or on the
 interface; a rule kind contributed from outside the library; a domain rule matching a scheme other
-than `https` or a port other than the default; a pattern or wildcard syntax inside an origin entry,
-and a tag grammar inside a configuration value; a public-suffix judgement made by the library, by
-dependency or by bundled data; and a push service's zone shipped as a default.
-`EndpointPolicies.unrestricted()` is untouched, and `Endpoints.requireSecure` stays what ADR-005
-called it: a protocol check, not a security control. Neither `module-info.java` changes — the new
-type joins an already-exported package — nor `push2u-testkit`, since a sealed hierarchy with private
-implementations is the opposite of a seam and there is no contract here for a third party to
-satisfy.
+than `https` or a port other than the default; a pattern or wildcard syntax inside an origin entry;
+a public-suffix judgement made by the library, by dependency or by bundled data; and a push
+service's zone shipped as a default. `EndpointPolicies.unrestricted()` is untouched, and
+`Endpoints.requireSecure` stays what ADR-005 called it: a protocol check, not a security control.
+Neither `module-info.java` changes — the new type joins an already-exported package — nor
+`push2u-testkit`, since a sealed hierarchy with private implementations is the opposite of a seam
+and there is no contract here for a third party to satisfy.
