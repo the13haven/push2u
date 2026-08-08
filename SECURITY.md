@@ -63,9 +63,10 @@ In scope — the properties the library is responsible for:
 - **Key handling**: EC key import and validation — including the point-on-curve and
   domain-parameter checks on a public key from Vault — and any path that exposes private key
   material through an exception message, log record, or `toString`.
-- **Endpoint policy**: a bypass of `EndpointPolicy` / `EndpointPolicies.allowedOrigins`, or any
-  path that reaches the network before the policy runs. The endpoint in a `Subscription` is
-  attacker-influenced, so this is the SSRF control point.
+- **Endpoint policy**: a bypass of `EndpointPolicy` or of an `EndpointPolicies` allowlist — an
+  endpoint matching a rule that should not admit it, or an entry accepted at construction that
+  covers more than what was written — and any path that reaches the network before the policy
+  runs. The endpoint in a `Subscription` is attacker-influenced, so this is the SSRF control point.
 - **Secret exposure in diagnostics**: `X-Vault-Token`, the Vault address, or the capability
   path/query of an endpoint reaching an exception message, log record, or health payload.
 - **Resource exhaustion reachable from a remote peer**: an unbounded read, a missing timeout, or
