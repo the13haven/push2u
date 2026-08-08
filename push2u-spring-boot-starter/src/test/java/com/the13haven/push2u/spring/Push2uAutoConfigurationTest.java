@@ -662,6 +662,43 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void theIndexIsCountedWithinItsOwnPropertyWhenBothAreConfigured() {
+        // The case the per-property index was designed for, and the one a single test populating
+        // one list can never fail on: with both lists populated, an index counted across the pair —
+        // or a property name captured once for whichever list ran first — still points somewhere,
+        // just not at the entry the operator has to fix. Asserted in both directions, since a shared
+        // counter is only visibly wrong for the list that is processed second.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://fcm.googleapis.com,https://push.example.test,"
+                                + "https://updates.push.services.mozilla.com",
+                        "push2u.allowed-domains=good.example,bad..example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-domains[1]:"))
+                            .as("the index is this property's own, not a position in the concatenated pair")
+                            .hasMessageNotContaining("push2u.allowed-origins")
+                            .hasMessageContaining("empty label");
+                });
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://fcm.googleapis.com,http://push.example",
+                        "push2u.allowed-domains=good.example,notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-origins[1]:"))
+                            .hasMessageNotContaining("push2u.allowed-domains")
+                            .hasMessageContaining("must be https");
+                });
+    }
+
+    @Test
     void allowedDomainsPropertyPlusPolicyBeanFailsTheContextNamingBoth() {
         // The exclusivity is between the properties and a bean, and it holds for the new property
         // exactly as for the old one — including naming WHICH property is non-empty, which with two
@@ -673,6 +710,26 @@ class Push2uAutoConfigurationTest {
                     assertThat(context).hasFailed();
                     assertThat(firstOfTypeContaining(
                                     context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-domains"))
+                            .hasMessageContaining("EndpointPolicy bean")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void bothAllowlistPropertiesPlusPolicyBeanNameBothPropertiesAndTheBean() {
+        // The plural branch of the same refusal. Naming which property collided is the whole point
+        // of that branch, and with both non-empty the answer is "both" — an operator told about one
+        // of them would empty it, restart, and meet the refusal again over the other.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://push.example.test", "push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                            .hasMessageContaining("push2u.allowed-domains")
                             .hasMessageContaining("EndpointPolicy bean")
                             .hasMessageContaining("'rejectingPolicy'")
                             .hasMessageContaining("Configure exactly one");

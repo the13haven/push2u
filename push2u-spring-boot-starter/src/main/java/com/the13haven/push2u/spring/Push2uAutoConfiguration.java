@@ -140,23 +140,26 @@ public final class Push2uAutoConfiguration {
      * backoff bounds together — and reports the two bounds through one shared message — so it cannot be blamed on a
      * single property by its message alone; {@code retryPolicy(…)} below carries the reasoning.
      *
-     * <p>The {@link EndpointPolicy} has three sources of entries but only two sources of the decision.
-     * {@code push2u.allowed-origins} and {@code push2u.allowed-domains} are two halves of one statement: their entries
-     * become {@link EndpointRule#origin} and {@link EndpointRule#domain} rules and are unioned into a single
-     * {@link EndpointPolicies#allowedEndpoints} allowlist, which is the ordinary cross-browser shape — a few exact
-     * origins beside one service whose hostnames vary within a DNS zone. They are therefore never in conflict with each
-     * other. The exclusivity is between them and an application-supplied {@code EndpointPolicy} bean: a non-empty
-     * property beside a bean fails the context, naming which property is non-empty and naming the bean, because the two
-     * express one security control and silently letting one win could leave the operator believing the ignored one is
-     * in force. The exception is a property explicitly set to an <em>empty</em> value, which is per property and cedes
-     * to a bean — the escape hatch for a service inheriting a key from shared configuration it does not own: it cannot
-     * unset the key, so emptying it means "deliberately not using this property here".
+     * <p>The {@link EndpointPolicy} comes from one of two sources, and exactly one of them: the allowlist properties,
+     * {@code push2u.allowed-origins} and {@code push2u.allowed-domains}, or an application-supplied
+     * {@code EndpointPolicy} bean. <b>The two properties are not two sources.</b> They are two halves of one statement:
+     * their entries become {@link EndpointRule#origin} and {@link EndpointRule#domain} rules and are unioned into a
+     * single {@link EndpointPolicies#allowedEndpoints} allowlist, which is the ordinary cross-browser shape — a few
+     * exact origins beside one service whose hostnames vary within a DNS zone — so the two are never in conflict with
+     * each other. The decision is <em>expressed</em> when at least one of them is non-empty.
+     *
+     * <p>Expressing it <em>and</em> supplying a bean fails the context, naming whichever property is non-empty and
+     * naming the bean, because the two sources express one security control and silently letting one win could leave
+     * the operator believing the ignored one is in force. The escape hatch is a property explicitly set to an
+     * <em>empty</em> value, and it is per property — a service inheriting a key from shared configuration it does not
+     * own cannot unset it, so emptying it means "deliberately not using this property here": beside a bean the bean
+     * wins, and beside the other property that property carries the allowlist alone.
      *
      * <p>Two ways of expressing nothing fail differently, and deliberately. With no bean and every set property empty,
      * the failure is this starter's own and names both keys: emptiness is now a statement about the pair, and no single
-     * core factory can speak for both. With no bean and both properties unset, the failure instead offers the three
-     * ways to decide — either property, or a bean, including one returning {@link EndpointPolicies#unrestricted()} as
-     * the named opt-out. Which hosts this application server may POST to is a decision the deployment has to express: a
+     * core factory can speak for both. With no bean and both properties unset, the failure instead names the three ways
+     * to fix it — either property, or a bean, including one returning {@link EndpointPolicies#unrestricted()} as the
+     * named opt-out. Which hosts this application server may POST to is a decision the deployment has to express: a
      * sender built without it would POST to whatever endpoint an attacker-influenced subscription names.
      *
      * @param signer the VAPID signer
@@ -263,23 +266,24 @@ public final class Push2uAutoConfiguration {
     }
 
     /**
-     * Resolves the endpoint policy from three sources of entries but two sources of the decision:
-     * {@code push2u.allowed-origins}, {@code push2u.allowed-domains} and an application-supplied {@link EndpointPolicy}
-     * bean. The two properties are halves of one statement and are unioned into a single allowlist, so they are never
-     * in conflict with each other. The exclusivity is between the properties and the bean: a non-empty property beside
-     * a bean fails, naming which property is non-empty and naming the bean, because they express the same security
-     * control and silently preferring one would leave the operator believing the ignored one is in force. An
-     * <em>empty</em> property beside a bean is the deliberate exception, per property (the bean wins): a service
-     * inheriting a key from a shared configuration cannot unset it, so explicitly emptying it is its only way to cede
-     * to a bean.
+     * Resolves the endpoint policy from one of its two sources, and exactly one of them: the allowlist properties
+     * {@code push2u.allowed-origins} and {@code push2u.allowed-domains}, or an application-supplied
+     * {@link EndpointPolicy} bean. <b>The two properties are not two sources</b> — they are halves of one statement,
+     * unioned into a single allowlist, so they are never in conflict with each other, and the decision counts as
+     * expressed when at least one of them is non-empty. The exclusivity is between the properties and the bean:
+     * expressing the decision beside a bean fails, naming whichever property is non-empty and naming the bean, because
+     * they express the same security control and silently preferring one would leave the operator believing the ignored
+     * one is in force. An <em>empty</em> property is the deliberate exception, per property: a service inheriting a key
+     * from a shared configuration cannot unset it, so explicitly emptying it is its only way to cede — to a bean, or to
+     * the other property.
      *
      * <p>Two ways of expressing nothing are answered separately. Both properties unset with no bean means the question
      * was never asked, and the failure offers the three ways to answer it — either property, or a bean, including one
      * returning {@code EndpointPolicies.unrestricted()}, which is the named opt-out and exists only as a bean so that
      * choosing it is a code change someone reviews rather than a line copied between profiles. Every set property empty
-     * with no bean is a different statement — the operator emptied a key that only cedes to a bean, and there is no
-     * bean — and this starter owns that message: with two properties the emptiness is a fact about the pair, and
-     * neither core factory can speak for both.
+     * with no bean is a different statement — the operator emptied a key, which cedes to a bean or to the other
+     * property, and neither of those is there to receive it — and this starter owns that message: with two properties
+     * the emptiness is a fact about the pair, and neither core factory can speak for both.
      *
      * <p>The check exists because the endpoint a send POSTs to comes from the subscription, which is
      * attacker-influenced wherever subscriptions are registered by clients: a deployment that has not said which

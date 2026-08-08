@@ -34,8 +34,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     out fails the context, because a sender with no policy POSTs wherever a subscription's endpoint points, which for
  *     client-registered subscriptions is a blind-SSRF surface. Malformed entries are rejected at startup, naming this
  *     property and the index of the entry. A non-empty value is mutually exclusive with an {@code EndpointPolicy} bean;
- *     an explicitly <em>empty</em> value beside a bean cedes to the bean — the escape hatch for a service that inherits
- *     this property from shared configuration it cannot unset
+ *     an explicitly <em>empty</em> value is the escape hatch for a service that inherits this property from shared
+ *     configuration it cannot unset, and cedes either to a bean or to the sibling property. Emptying every property
+ *     that is set, with no bean, fails the context naming both keys: with nothing left to cede to, the allowlist would
+ *     reject every send
  * @param allowedDomains the push-service domains the sender may POST to <em>together with every subdomain of each, at
  *     any depth</em>: {@code notify.windows.com} also admits {@code wns2-ln2p.notify.windows.com}. This is not an
  *     origin with the scheme left off — it is deliberately wider, and worth exactly what the DNS of each listed zone is
@@ -43,8 +45,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     is anchored at a DNS label boundary ({@code evilnotify.windows.com} is not admitted) and covers only
  *     {@code https} on the default port; an exact host with a port is named under {@code push2u.allowed-origins}
  *     instead. Each entry is a bare hostname of at least two labels, carrying no scheme, port, path or wildcard.
- *     Everything the sibling property says about being required, about the union, about startup rejection with the
- *     entry index, and about the bean applies here identically
+ *     Everything the sibling property says applies here identically: the union, being one of the two ways to express
+ *     the decision, startup rejection naming this property and the entry's index, exclusivity with an
+ *     {@code EndpointPolicy} bean, and an explicitly empty value as the per-property escape hatch — with every set
+ *     property empty and no bean failing the context on both keys at once
  * @param retry the retry policy
  * @param health the Actuator health probe settings; always present, defaults apply when unset
  */
