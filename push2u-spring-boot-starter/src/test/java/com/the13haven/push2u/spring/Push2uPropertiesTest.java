@@ -29,9 +29,11 @@ class Push2uPropertiesTest {
                 null,
                 null,
                 null,
-                // allowedOrigins: unset, which is what the binder produces when the property is
-                // absent. The autoconfiguration then requires an EndpointPolicy bean instead, or
-                // fails the context — but that is its business; this record only carries the value.
+                // allowedOrigins and allowedDomains: unset, which is what the binder produces when
+                // the properties are absent. The autoconfiguration then requires an EndpointPolicy
+                // bean instead, or fails the context — but that is its business; this record only
+                // carries the values.
+                null,
                 null,
                 new Push2uProperties.Retry(3, null, null),
                 // Values a binder could actually produce: cacheTtl is non-null (it carries a default).

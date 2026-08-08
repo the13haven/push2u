@@ -29,18 +29,21 @@
     </Match>
 
     <!--
-        EI_EXPOSE_REP: Push2uProperties' compact constructor snapshots allowedOrigins with
-        List.copyOf, so the stored component is already an unmodifiable copy and the accessor
-        hands back that immutable list. SpotBugs only sees the List interface and cannot tell —
-        the same false-positive shape as PushResponse.headers above.
+        EI_EXPOSE_REP: Push2uProperties' compact constructor snapshots allowedOrigins and
+        allowedDomains with List.copyOf, so each stored component is already an unmodifiable copy
+        and the accessor hands back that immutable list. SpotBugs only sees the List interface and
+        cannot tell — the same false-positive shape as PushResponse.headers above.
 
         EI_EXPOSE_REP2 is deliberately NOT excluded here: it does not fire precisely because the
-        constructor copies, so it is the check that catches anyone later deleting that
+        constructor copies, so it is the check that catches anyone later deleting either
         List.copyOf — the very fact this exclusion's justification depends on.
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP"/>
         <Class name="com.the13haven.push2u.spring.Push2uProperties"/>
-        <Field name="allowedOrigins"/>
+        <Or>
+            <Field name="allowedOrigins"/>
+            <Field name="allowedDomains"/>
+        </Or>
     </Match>
 </FindBugsFilter>
