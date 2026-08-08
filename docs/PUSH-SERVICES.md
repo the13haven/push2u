@@ -92,10 +92,15 @@ The four rows cover the browsers that implement the Push API, and the reason the
 browsers do not run a push service of their own.
 
 - **Samsung Internet** and **Yandex Browser** deliver through Google's service and are covered by
-  the FCM row. Yandex documents this itself — [Yandex Cloud, browser
+  the FCM row. The nearest thing to a first-party statement from Yandex is about its own push
+  product rather than about its browser: [Yandex Cloud, browser
   notifications](https://github.com/yandex-cloud/docs/blob/master/en/notifications/concepts/browser.md)
-  names only FCM and APNs as the delivery servers, and its quickstart's canonical example endpoint
-  is `https://fcm.googleapis.com/fcm/send/…`.
+  names only FCM and APNs as the servers that deliver browser notifications, and its
+  [endpoint-creation
+  page](https://github.com/yandex-cloud/docs/blob/master/en/notifications/operations/browser/endpoint-create.md)
+  uses `https://fcm.googleapis.com/fcm/send/…` as its example endpoint. Neither page mentions Yandex
+  Browser, so read those two as evidence about what Yandex's push product delivers through, not as a
+  statement about the browser.
 - **Opera, Brave and Vivaldi** are Chromium browsers on FCM, as the first row says.
 - **Opera Mini, Baidu Browser and the old Android Browser** do not implement the Push API at all, so
   there is nothing for them to allow.
@@ -104,24 +109,49 @@ browsers do not run a push service of their own.
   at.
 
 That the list is complete is the harder claim, and it rests on negative evidence worth showing
-rather than asserting. Three unrelated production systems ship the same four services and no
-vendor-specific host beyond them: [pushpad/known-push-services](https://github.com/pushpad/known-push-services),
-a push provider's allowlist built from roughly 200 million observed subscriptions and last updated
-2026-06-01, and independently phpBB and Basecamp's Fizzy. That is third-party observation and not
-anybody's documentation — it is evidence that nothing else is out there being subscribed to, which
-is a different and weaker thing than a vendor telling you so.
+rather than asserting — and worth counting honestly, because three production allowlists agreeing
+would be a stronger thing than what is actually there.
+
+[pushpad/known-push-services](https://github.com/pushpad/known-push-services) is a push provider's
+allowlist built from roughly 200 million observed subscriptions, last updated 2026-06-01. phpBB's is
+**not** independent of it: the line above `$allowed_services` in
+`phpBB/phpbb/ucp/controller/webpush.php` reads "See
+https://github.com/pushpad/known-push-services for list of known services", and the seven entries
+under it are pushpad's list, staging hosts and all, as it stood before pushpad added an eighth in
+June 2026. Basecamp's [Fizzy](https://github.com/basecamp/fizzy) is maintained separately —
+`PERMITTED_ENDPOINT_HOSTS` in `app/models/push/subscription.rb` names five hosts and shares no
+provenance with pushpad. So the count is one dataset, one list derived from it, and one
+independently maintained list, rather than three votes.
+
+What all of them agree on is that no *fifth* push service appears: every host in all three lists
+belongs to one of the same four vendors. They do carry more hosts than these four rows — Google's
+`android.googleapis.com` and `jmt17.google.com`, and Mozilla's two `mozaws.net` staging hosts — so
+the defensible claim is that nothing there belongs to a browser vendor's own push service beyond
+these four, not that there is no additional host anywhere. And it is third-party observation, not
+anybody's documentation: evidence that nothing else is out there being subscribed to, which is a
+different and weaker thing than a vendor telling you so.
 
 ### One host you may still hold
 
 `android.googleapis.com` is the pre-VAPID GCM endpoint. Chrome 51 and earlier, Opera for Android and
-Samsung Internet issued subscriptions there under `gcm_sender_id`, and it appears in all three
-allowlists named above. No current browser issues one — but a stored subscription outlives the
-browser version that created it, so a subscription table old enough may still hold endpoints on that
-host, and they will be refused with nothing to explain why.
+Samsung Internet issued subscriptions there under `gcm_sender_id`, and it appears in two of the
+three allowlists named above — pushpad's, and phpBB's through it. Basecamp's Fizzy does not carry
+it. No current browser issues one — but a stored subscription outlives the browser version that
+created it, so a subscription table old enough may still hold endpoints on that host, and they will
+be refused with nothing to explain why.
 
-This is a fact about old data rather than about a browser anyone is serving today, which is why it
-is not a row and is not in the configuration below. Whether your own table is old enough to need it
-is yours to determine; add it only if it is, and not on the strength of this note.
+The other Google host in those lists, `jmt17.google.com`, is named here only because an operator
+checking them will find it and wonder. It is not the same case and nothing here makes it one: it is
+in pushpad's list and Fizzy's but not phpBB's, pushpad added it on 2026-06-01 describing it as a
+Chrome *staging* endpoint, and the only other trace found for it is a 2015 IETF `webpush` message
+offering `https://jmt17.google.com/gcm/demo-webpush-00/…` as a protocol
+[demo](https://mailarchive.ietf.org/arch/msg/webpush/BpWvOvajNDYlQk5VGL-5PzR1fT4/). Those two
+descriptions do not agree, and neither of them is "a host production subscriptions were issued on",
+so this page makes no claim about it.
+
+All of this is about old or unexplained data rather than about a browser anyone is serving today,
+which is why neither host is a row and neither is in the configuration below. Whether your own table
+holds either is yours to determine; add one only if it does, and not on the strength of this note.
 
 ## The configuration
 

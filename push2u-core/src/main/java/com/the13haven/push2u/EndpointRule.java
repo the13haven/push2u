@@ -32,6 +32,12 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Instances are immutable and safe to share across threads.
  */
+// GodClass cannot fit a closed enumeration of rule kinds: the bulk of this class is two static
+// factories and the per-refusal validation behind them, which share constants rather than fields, so
+// cohesion measured by field sharing scores zero however the code is arranged. Moving the entry
+// validation out would put a second statement of "what a valid host is" in a second file, which is
+// the one thing this class exists to keep in one place.
+@SuppressWarnings("PMD.GodClass")
 public abstract sealed class EndpointRule {
 
     /**
@@ -55,6 +61,17 @@ public abstract sealed class EndpointRule {
             "allowed domain must be a DNS name, not an IP address literal — an address has no subdomains"
                     + " for a domain rule to cover; name an exact address with EndpointRule.origin instead";
 
+    /**
+     * The refusal for a control character anywhere in a domain entry. It is its own kind of mistake rather than a
+     * variant of the ones below: a configuration line copied out of a terminal drags the escape sequences that coloured
+     * it along with it, and a file written on Windows and read as text leaves a carriage return at the end of the
+     * value.
+     */
+    private static final String NOT_A_CONTROL_CHARACTER =
+            "allowed domain must not contain a control character — an entry copied out of a terminal can carry the"
+                    + " escape sequences that coloured it, and one read from a Windows text file can carry a trailing"
+                    + " carriage return; neither can be part of a hostname";
+
     /** Shared by the three URL delimiters, which have one cause: the entry is a pasted endpoint rather than a host. */
     private static final String NOT_A_URL =
             "allowed domain must be a bare hostname, not a URL — a path, query or fragment suggests a pasted"
@@ -65,6 +82,10 @@ public abstract sealed class EndpointRule {
      * presence means. This is a list rather than a chain of conditions because the order is checked in the order
      * written and that order is load-bearing — {@code '['} before {@code ':'}, or an address literal is refused for its
      * colons and the operator is told to remove a port that is not there.
+     *
+     * <p>The control-character refusal runs before this list rather than inside it, since it is a range of characters
+     * rather than one; an ANSI escape sequence carries a {@code '['}, so an entry holding one would otherwise be
+     * refused as an address literal.
      */
     private static final List<ForbiddenCharacter> FORBIDDEN_CHARACTERS = List.of(
             new ForbiddenCharacter('[', NOT_AN_ADDRESS),
@@ -169,8 +190,9 @@ public abstract sealed class EndpointRule {
      * <p>The entry is a bare hostname of at least two labels, compared and stored in the same normalized form the
      * endpoint's host arrives in — lowercased, with IDNA A-labels decoded — so {@code domain("NOTIFY.WINDOWS.COM")} and
      * {@code domain("xn--bcher-kva.example")} are live entries rather than dead ones. Refused: an empty entry; a scheme
-     * or port; a path, query or fragment; userinfo; a wildcard; a leading dot or an empty label; a trailing root dot; a
-     * single label; an IP address literal; and raw Unicode, which must be given in its A-label/Punycode form instead.
+     * or port; a path, query or fragment; userinfo; a wildcard; a control character; a leading dot or an empty label; a
+     * trailing root dot; a single label; an IP address literal; and raw Unicode, which must be given in its
+     * A-label/Punycode form instead.
      *
      * <p>The library makes no public-suffix judgement, having no authoritative data to make one with: a domain rule
      * over a shared hosting zone permits every tenant of that zone.
@@ -227,15 +249,19 @@ public abstract sealed class EndpointRule {
      * rather than being told the entry is not read back as itself. Do not collapse them into the parse.
      *
      * <p>The order is not free either, and it runs top to bottom through this method and then through
-     * {@link #requireLabelStructure}, which is split out only to keep either half readable. The bracket check precedes
-     * the colon check, or an IPv6 literal is refused for its colons; the trailing-root-dot check precedes the
-     * single-label check, or {@code "com."} is refused for being one label; and the non-ASCII check precedes everything
-     * the parser does, or a raw Unicode entry is refused for having no host instead of being told to spell it in its
-     * A-label form.
+     * {@link #requireLabelStructure}, which is split out only to keep either half readable. The control-character check
+     * precedes the bracket check, or an entry carrying an ANSI escape sequence is refused as an address literal for the
+     * {@code '['} inside it; the bracket check precedes the colon check, or an IPv6 literal is refused for its colons;
+     * the trailing-root-dot check precedes the single-label check, or {@code "com."} is refused for being one label;
+     * and the non-ASCII check precedes everything the parser does, or a raw Unicode entry is refused for having no host
+     * instead of being told to spell it in its A-label form.
      */
     private static void requireBareHostnameShape(String domain) {
         if (domain.isEmpty()) {
             throw new IllegalArgumentException("allowed domain must not be empty");
+        }
+        if (domain.codePoints().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(NOT_A_CONTROL_CHARACTER + quoted(domain));
         }
         for (ForbiddenCharacter forbidden : FORBIDDEN_CHARACTERS) {
             if (domain.indexOf(forbidden.marker()) >= 0) {

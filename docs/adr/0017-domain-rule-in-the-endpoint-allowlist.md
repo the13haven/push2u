@@ -34,8 +34,16 @@ the same instruction for the same purpose: under *Prepare your server to send pu
 its web push documentation reads, verbatim, "If your network infrastructure limits which URLs your
 server can access, allow access for `https://*.push.apple.com`"
 (https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers).
-That sentence is addressed to an egress allowlist, in the same role Microsoft's is, and what it
-names is a zone. Two of the four standard services therefore publish a zone rather than a host, and
+That sentence is addressed to an egress allowlist, which is a different role from the channel-URI
+validation quoted above. Microsoft publishes an egress instruction of its own, on a page this
+decision has not cited so far: its firewall allowlist guidance gives
+`<CloudServiceDNS><DNS FQDN="*.notify.windows.com"/></CloudServiceDNS>` and defines that element, in
+its own *Terms and notations* table, as "the FQDN filters for the WNS servers your cloud service
+will talk to send notifications to WNS"
+(https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config).
+So each of the two vendors publishes an egress instruction addressed to the sending server, and what
+each of those instructions names is a zone. Two of the four standard services therefore publish a
+zone rather than a host, and
 the same shape returns again for any self-hosted or intra-organisation push service fronted by more
 than one host, which ADR-016 lists as a legitimate deployment. ADR-016 set out to stop unrestricted
 egress from being what a deployment gets by not
@@ -228,8 +236,8 @@ to rules of one kind and delegates.
   that withholding is the cheap default, and it is not overridden lightly. What overrides it here is
   the pressure withholding puts on a Spring deployment serving Edge, which is a claim about the
   choice on offer rather than a prediction of which branch is taken. A bean is exclusive with the
-  property, so one extra rule costs the two ordinary origins their place in YAML too; what is left
-  is a `@Bean` carrying the hostnames *and* the matching rule, or one of two bad built-in outcomes
+  property, so two extra rules cost the two ordinary origins their place in YAML too; what is left
+  is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad built-in outcomes
   — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of fixed
   origins only, which leaves a major browser's users out. The second of those is not hypothetical:
   it is what the report behind this decision describes having done, over `unrestricted()` and
