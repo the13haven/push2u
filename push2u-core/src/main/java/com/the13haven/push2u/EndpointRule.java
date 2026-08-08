@@ -32,11 +32,15 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Instances are immutable and safe to share across threads.
  */
-// GodClass cannot fit a closed enumeration of rule kinds: the bulk of this class is two static
-// factories and the per-refusal validation behind them, which share constants rather than fields, so
-// cohesion measured by field sharing scores zero however the code is arranged. Moving the entry
-// validation out would put a second statement of "what a valid host is" in a second file, which is
-// the one thing this class exists to keep in one place.
+// GodClass: the entry validation stays in this class deliberately. Every check below is the
+// library's single statement of what a valid allowlist entry is, made through the same URI parser
+// the endpoint side is normalized with; extracting it into a class of its own would create a second
+// statement of the same thing, to be kept in step with the first by hand. That is the split this
+// design exists to avoid, and because these checks are a security control, drift between two copies
+// of them would be silent rather than loud. The metric fires for a structural reason and not a
+// design one: a closed enumeration of rule kinds is two static factories plus the refusals behind
+// them, sharing constants rather than fields, so cohesion measured by field sharing scores zero
+// however the code is arranged.
 @SuppressWarnings("PMD.GodClass")
 public abstract sealed class EndpointRule {
 

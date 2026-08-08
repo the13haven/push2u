@@ -129,7 +129,10 @@ to rules of one kind and delegates.
   deployment that genuinely needs `https://host.zone:8443` names it exactly with an origin rule,
   which is the right granularity for a port.
 - **A malformed domain entry fails at construction**, as a malformed origin entry already does.
-  Refused: an empty entry; `:` (which
+  Refused: an empty entry; a control character, which a line copied out of a terminal or read from a
+  Windows text file carries and which no hostname can hold — checked ahead of every delimiter below,
+  since an ANSI escape sequence carries a `[` and would otherwise be refused as an address literal;
+  `:` (which
   catches both a port and a pasted `https://x`, an entry that would otherwise parse with the host
   `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently ignored); `@`
   (`notify.windows.com@evil.example` parses with the host `evil.example`, so everything the operator
