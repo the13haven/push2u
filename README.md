@@ -386,16 +386,16 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 An allowlist entry is a value that carries its own kind, so the list says what each entry means
 rather than leaving the meaning to the factory it was passed to. An **origin** rule matches one
 origin exactly. A **domain** rule matches a whole DNS zone — the apex and every subdomain at any
-depth — which is what two of the four standard services ask for, in their own documentation and in
-the same role. Apple tells an application server to "allow access for `https://*.push.apple.com`"
-where its network limits which URLs the server can reach
-([Sending web push notifications in web apps and browsers](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)),
-and Microsoft — Edge delivers through WNS — says that "The subdomain of the channel URI is subject
-to change and should not be considered when validating the channel URI"
-([WNS overview](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)).
+depth — which is what two of the four standard services ask for, each in its own documentation.
+Apple tells a server in control of its push endpoints to "allow URLs from `*.push.apple.com`"
+([Web Push for Web Apps on iOS and iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)),
+and Microsoft gives `*.notify.windows.com` as the FQDN a cloud service sending to WNS — which is
+where Edge's endpoints live — must be allowed to reach, "because these will not change"
+([Firewall allowlist configuration](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config)).
 `allowedEndpoints` is therefore the ordinary cross-browser call, not an advanced one.
 [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) carries the four services and this same allowlist in
-both spellings, ready to copy, with what each vendor's page does and does not say.
+both spellings, ready to copy, with what each vendor's page does and does not say and why no
+browser is missing from it.
 
 `EndpointPolicies.allowedOrigins(…)` and `EndpointPolicies.allowedDomains(…)` are the convenience
 over it for a list of one kind — they take plain strings and build the rules for you. The rule
@@ -435,19 +435,19 @@ port of a zone would be an SSRF oracle again, relocated. A deployment that needs
 The library makes **no public-suffix judgement** — there is none in the JDK, and it will not carry
 a data file that ages between releases while looking authoritative. A domain rule is worth exactly
 what the DNS of that zone is worth, and over a shared hosting zone it permits every tenant of it.
-The rule of thumb is that a domain rule belongs only where the service operator *documents* that
-its hostnames vary within a zone, as Apple and Microsoft both do; anything else is an origin rule.
+The rule of thumb is that a domain rule belongs only where the service operator *publishes the
+zone* rather than the host — by documenting that its hostnames vary within it, or by naming the
+zone as what your server should be allowed to reach. Anything else is an origin rule.
 
 A malformed allowlist entry fails at construction, so a misconfigured allowlist fails deployment
 startup instead of misbehaving at send time. An origin entry is refused when it is unparseable,
 non-`https`, hostless, or carries a path, query, fragment or userinfo. A domain entry is refused
-when it carries any URI delimiter at all — a scheme, a port, a path, a query, a fragment or an
-`@` — or a `*`, a leading dot, an empty label, a trailing root dot, a single label such as `com`,
-an IP literal, or raw Unicode; spell an internationalised host in its A-label form. The refusal
-names the entry the way a rejection names
-an endpoint: an origin entry is rendered with its path and query stripped, since a pasted
-capability URL is exactly the mistake being reported, and a domain entry appears verbatim only
-when it is a plain host-shaped token.
+when it carries any URI delimiter at all — a scheme, a port, a path, a query, a fragment or an `@` —
+or a `*`, a leading dot, an empty label, a trailing root dot, a single label such as `com`, an IP
+literal, or raw Unicode; spell an internationalised host in its A-label form. The refusal names the
+entry the way a rejection names an endpoint: an origin entry is rendered with its path and query
+stripped, since a pasted capability URL is exactly the mistake being reported, and a domain entry
+appears verbatim only when it is a plain host-shaped token.
 
 `EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
 egress rules or custom DNS checks can be expressed directly — that seam is where a rule neither of

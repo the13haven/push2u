@@ -123,16 +123,22 @@ danger is that it removes the control and travels between profiles as one copied
 is data — every value it can hold is a restriction, and there is no value of it that turns the
 restriction off. The asymmetry above still argues, as it always does, that withholding a property is
 the cheap default, and what overrides it here is the pressure withholding puts on a Spring
-deployment serving Edge. A bean is exclusive with the properties, so reaching for one to express a
-single zone costs every ordinary origin its place in YAML too: what is left is a `@Bean` carrying
-the hostnames *and* the matching rule, or one of two bad answers the starter can otherwise give —
-`EndpointPolicies.unrestricted()`, which is unrestricted egress, or an origins-only allowlist, which
-leaves a major browser's users out. The second is the quieter failure. An Edge
-subscription is registered and then refused at every send for the rest of its life; the application
-sees an `EndpointRejectedException` per send and nothing else, since the core has no logger of its
-own. No startup fails, nothing is unsafe, and there is nothing in a review to notice — the feature
-simply does not work for those users. The property exists so that the safe answer is reachable by
-the route operators already use.
+deployment serving the two services that publish a zone rather than a host — Safari's and Edge's,
+between them most of the users a deployment has. A bean is exclusive with the properties, so
+reaching for one to express those two zones costs every ordinary origin its place in YAML too: what
+is left is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad answers the
+starter can otherwise give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an
+origins-only allowlist, which can express neither zone.
+
+That second answer is the quieter failure, and it is quiet in two different ways. Edge's endpoints
+sit on varying subdomains, so an origins-only allowlist refuses them now: the subscription is
+registered and then refused at every send for the rest of its life, and the application sees an
+`EndpointRejectedException` per send and nothing else, since the core has no logger of its own.
+Safari's sit on one host today, so naming that host works — until Apple uses the rest of the zone
+its own documentation reserves, and those subscriptions then fail the same way. Neither is unsafe
+and neither fails a startup, so there is nothing in a review to notice; the feature simply stops
+working for those users. The property exists so that the safe answer is reachable by the route
+operators already use.
 
 ## Health indicator
 

@@ -23,10 +23,12 @@ matches the path, so moving or renaming the file silently switches that off unle
 with it. `docs/PUSH-SERVICES.md` is the operator-facing list of the four browser push services and
 the allowlist entry each one needs, in both the Java and the YAML spelling — two origins, and two
 domains for Apple's and Microsoft's zones, which both vendors publish as the thing an application
-server should be allowed to reach. The library ships none of them as a default and the document is
-there to be copied out of, so its names are a snapshot of what the vendors publish rather than
-anything this repository verifies; it says so itself, names the two rows whose vendor link cannot
-carry that claim on its own, and those clauses are load-bearing rather than caveats.
+server should be allowed to reach. It also carries why no browser is missing from those four rows,
+and a prose note on the pre-VAPID GCM host a stored subscription may still name. The library ships
+none of them as a default and the document is there to be copied out of, so its names are a snapshot
+of what the vendors publish rather than anything this repository verifies; it says so itself, and
+names the two rows whose vendor page carries the host but not the last step to Web Push — those
+clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…017) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
