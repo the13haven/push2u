@@ -10,8 +10,9 @@ of exact matching: the service must ensure the channel URI uses the domain `noti
 must never push to a channel on any other domain, and, verbatim, "The subdomain of the channel URI
 is subject to change and should not be considered when validating the channel URI"
 (https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview).
-The subdomains are real and they vary — `wns2-ln2p.notify.windows.com`,
-`wns2-bl2p.notify.windows.com`, `db5.notify.windows.com`
+The subdomains are real and they vary: that same page's notification example posts to
+`cloud.notify.windows.com` and sends it as the `Host:` header, while a report of a failing Edge
+endpoint names `wns2-ln2p.notify.windows.com`
 (https://github.com/MicrosoftEdge/DevTools/issues/262).
 
 So for a deployment serving Edge the safe rule is not expressible, and the only reachable answer is
@@ -53,7 +54,10 @@ on the main path.
 - **Both sides of the comparison are normalized by the same code.** The endpoint's host comes from
   wherever `Origin.serialize` gets it — lowercased, IDNA A-label decoded to U-label — and never from
   a `URI.getHost()` call sitting beside it. Two normalizers mean two answers for one endpoint, and
-  they diverge precisely in the internationalised cases nobody exercises by hand.
+  they diverge precisely in the internationalised cases nobody exercises by hand. The two
+  endpoint-side refusals that guard that comparison today hold unchanged on the domain and union
+  paths: an endpoint carrying userinfo is rejected outright, before any comparison, and one with no
+  scheme or host is rejected as having no origin to compare at all.
 - **A domain rule matches only the scheme `https` and the default port**, an absent port or an
   explicit `443`. The scheme is anchored explicitly rather than inherited: `Origin.serialize` does
   not enforce a scheme, by its own documented contract — that is `Endpoints.requireSecure`'s job at
@@ -64,22 +68,29 @@ on the main path.
   SSRF oracle ADR-016 exists to close, relocated into an external zone. A deployment that genuinely
   needs `https://host.zone:8443` names it exactly with `allowedOrigins`, which is the right
   granularity for a port.
+- **`allowedOriginsAndDomains` refuses only when both collections are empty; either one alone may be
+  empty.** `allowedDomains` refuses an empty collection as `allowedOrigins` already does, but the
+  union entry point cannot: it has to serve the origins-only configuration that every `0.1.0`
+  deployment already has, and a refusal on either side alone would make it unusable for the case it
+  is meant to absorb. The asymmetry with `allowedOrigins(List.of())` is not an inconsistency — that
+  refusal is about an allowlist with no entries at all, which rejects every send and is far likelier
+  a wiring bug than a policy, while an empty list beside a non-empty one is a rule this deployment
+  does not use.
 - **A malformed domain entry fails at construction**, as a malformed origin entry already does, and
-  every message renders the entry through `Endpoints.redact`. Refused: an empty collection; an empty
-  entry; `:` (which catches both a port and a pasted `https://x`, an entry that would otherwise
-  parse with the host `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be
-  silently ignored); `@` (`notify.windows.com@evil.example` parses with the host `evil.example`, so
-  everything the operator wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an
-  empty label; a trailing root dot, which `java.net.URI` accepts as a host and which would leave the
-  rule unable to ever fire — a dead entry that looks configured; a single label (`com`,
-  `localhost`); an IP literal, since an address has no subdomains and an operator reads
-  `allowedDomains("10.0.0.0")` as a subnet; and raw Unicode. A closing check that the entry equals
-  the host the parser found, ignoring case, is the complete defence against the scheme concatenation
-  reinterpreting the entry — which is what lets the list above exist for the sake of its *messages*
-  rather than for completeness. Validation runs through the same `java.net.URI` the endpoint side
-  uses, never a hand-rolled hostname regex, so a configured entry can never be a shape an endpoint
-  could never have; a regex would be a second grammar of "a valid host" to keep in step with the
-  first.
+  every message renders the entry through `Endpoints.redact`. Refused: an empty entry; `:` (which
+  catches both a port and a pasted `https://x`, an entry that would otherwise parse with the host
+  `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently ignored); `@`
+  (`notify.windows.com@evil.example` parses with the host `evil.example`, so everything the operator
+  wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an empty label; a trailing
+  root dot, which `java.net.URI` accepts as a host and which would leave the rule unable to ever
+  fire — a dead entry that looks configured; a single label (`com`, `localhost`); an IP literal,
+  since an address has no subdomains and an operator reads `allowedDomains("10.0.0.0")` as a subnet;
+  and raw Unicode. A closing check that the entry equals the host the parser found, ignoring case,
+  is the complete defence against the scheme concatenation reinterpreting the entry — which is what
+  lets the list above exist for the sake of its *messages* rather than for completeness. Validation
+  runs through the same `java.net.URI` the endpoint side uses, never a hand-rolled hostname regex,
+  so a configured entry can never be a shape an endpoint could never have; a regex would be a second
+  grammar of "a valid host" to keep in step with the first.
 - **The library makes no public-suffix judgement.** There is no public-suffix list in the JDK,
   `HttpCookie.domainMatches`'s embedded-dot heuristic is wrong in both directions, a dependency is
   forbidden by ADR-002, and a bundled data file ages between releases while going on looking
@@ -94,13 +105,24 @@ on the main path.
   scheme", that is, exact host matching, which leaves the operator believing the rule is narrower
   than it is. It is therefore normative that the first Javadoc sentence, the one an IDE shows, leads
   with subdomains, and that the Spring property's documentation does the same.
-- **The observable behaviour of the origins-only path is frozen.** `allowedOrigins` shipped in
-  `0.1.0`: its message texts, its exception types, its refusal of an empty list ("requires at least
-  one origin") and its order of checks do not change because the implementation became shared. The
-  non-empty check therefore lives at the entry points rather than in the shared rule, and the
-  rejection message is chosen by what was configured — origins-only keeps today's text verbatim,
-  while domains-only and the union get their own. One merged message covering all three would be a
-  silent behavioural change for everyone already compiled against it.
+- **The behaviour of the origins-only path is frozen, and the freeze is scoped to behaviour.**
+  `allowedOrigins` shipped in `0.1.0`, so which entries it accepts and which it refuses, the
+  exception types it throws, and the order of its checks do not change because the implementation
+  became shared — that drift is what the freeze exists to prevent. The literal text of every message
+  is deliberately *not* frozen: a refusal gaining precision is not the drift being guarded against,
+  and freezing prose would forbid the one improvement named below. The non-empty check therefore
+  lives at the entry points rather than in the shared rule, and the rejection message is chosen by
+  what was configured, domains-only and the union each getting their own. One message merged across
+  all three configurations is ruled out for a reason of substance rather than of wording: the one
+  thing an operator needs from a rejection is which rule refused.
+- **One refusal changes, and it is named here rather than left to the implementation**: an entry
+  containing `*` earns its own construction check, refusing it with a message naming
+  `allowedDomains`. It has to be its own check rather than a repointing of the branch it currently
+  falls into, because that branch is not `*`-specific — a leading dot, an empty label and a raw
+  Unicode host all reach it too, since `java.net.URI` yields no host for any of them. The
+  raw-Unicode entry's present advice — spell the host in its A-label form — is correct, and
+  `allowedDomains` refuses raw Unicode as well, so repointing the branch would replace right advice
+  with wrong for every entry that is not a wildcard.
 - **Two same-typed `Collection<String>` parameters are acceptable here.** The convention is that
   several same-typed required values are made swap-proof by value types rather than by argument
   order. The protection here is different but real: the two grammars are disjoint — an origin entry
@@ -110,13 +132,14 @@ on the main path.
   Recorded because the next reader would otherwise see a convention broken and no reason given.
 - **Spring gains `push2u.allowed-domains` beside `push2u.allowed-origins`.** ADR-016's refusal of a
   property was about a *mode*: a flag that removes the control, whose danger is that it travels
-  between profiles as a copied line. A domain list is data — it cannot be set to a value that
-  disables the control — and it passes the asymmetry test that decided ADR-015 and ADR-016, since a
-  property can be added later without breaking anyone and cannot be removed after a release. The
-  stronger argument is what withholding it would do: a Spring deployment serving Edge would then
-  choose between a `@Bean` carrying a list of hostnames and `EndpointPolicies.unrestricted()`, and
-  it picks the second. The property is admitted precisely because it makes the safe answer reachable
-  by the route operators already use.
+  between profiles as a copied line. A domain list is data: it cannot be set to a value that
+  disables the control. The asymmetry that decided ADR-015 and ADR-016 — a property can be added
+  later without breaking anyone, and cannot be removed after a release — argues as it always did
+  that withholding is the cheap default, and it is not overridden lightly. What overrides it here is
+  what withholding would do: a Spring deployment serving Edge would then choose between a `@Bean`
+  carrying a list of hostnames and `EndpointPolicies.unrestricted()`, and it picks the second. The
+  property is admitted precisely because it makes the safe answer reachable by the route operators
+  already use.
 - **The starter's existing rules are restated over two properties.** "Expressed" means at least one
   of the two properties is non-empty. Both sources at once — expressed, plus a bean — still fails
   the context, naming which property is non-empty and naming the bean. Neither of them — both
@@ -128,7 +151,13 @@ on the main path.
   emptiness is a statement about the *pair*, and no single core factory can speak for both, so the
   starter owns a message naming both keys. Attribution of a malformed entry follows the
   `retryPolicy` precedent already in the starter — probe each key separately, discard the probe's
-  result, then build the union.
+  result, then build the union — with the adjustment that precedent itself demands: **the probe runs
+  only over the keys that are non-empty.** What makes that precedent work is filling the components
+  a probe is not testing with values acceptable regardless, and here the natural filler is the empty
+  collection, which is precisely what an entry point refuses. Copied literally, a domains-only
+  configuration would fail its origins probe with "requires at least one origin" and attribute the
+  failure to the key the operator deliberately left empty. An empty list has nothing to validate, so
+  there is nothing to attribute.
 
 Rejected alternatives:
 
@@ -156,8 +185,8 @@ Rejected alternatives:
   be legible in a diff. And `*` announces a pattern language that does not exist: `https://*`,
   `https://*.com` and `https://wns2-*.notify.windows.com` would each need their own refusal inside
   one validator now describing two grammars. What this decision does fix is the diagnostic: `*`
-  stays a construction failure, but its message names `allowedDomains` instead of today's baffling
-  "allowed origin has no host".
+  stays a construction failure, and gets the refusal named above instead of falling into a branch
+  that can only tell the operator their origin has no host.
 - **Shipping `notify.windows.com` as a default.** ADR-016 rejected the built-in allowlist, and for a
   *zone* the rejection holds a fortiori: it is the library asserting trust in a third party's DNS on
   the deployment's behalf, and it would silently widen every existing deployment on upgrade. What
