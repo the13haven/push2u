@@ -64,7 +64,12 @@ to rules of one kind and delegates.
   argument order, and that a value type earns its place by also carrying validation —
   `TransitKeyName` and `VaultToken` are the precedent, and a rule that validates its own entry at
   construction and cannot be mistaken for the other kind fits it exactly. Swap-proofness stops being
-  a property of the contents and becomes a property of the types.
+  a property of the contents and becomes a property of the types. Being a value, a rule is equal by
+  kind and normalized entry, so a list of rules collapses duplicates as the `0.1.0` origins path
+  already does through its set — value equality is not something that can be added after release
+  without changing what every consumer's collection of rules does. An entry is a validated host or
+  origin and never a capability URL, so nothing a rule carries is what the endpoint redaction exists
+  for.
 - **The hierarchy is closed, and closing it is what keeps this from being a seam.** `EndpointRule`
   is sealed, both permitted implementations are private to it, and the method by which a rule
   matches an endpoint is package-private, so nothing outside the library can add a rule kind or
@@ -109,6 +114,17 @@ to rules of one kind and delegates.
   Validation runs through the same `java.net.URI` the endpoint side uses, never a hand-rolled
   hostname regex, so a configured entry can never be a shape an endpoint could never have; a regex
   would be a second grammar of "a valid host" to keep in step with the first.
+- **A domain entry is then normalized, not merely validated** — put through the same serialization
+  the endpoint side is, so that case and internationalised form agree on both sides of the
+  comparison. An origin entry is already normalized rather than only checked, and a domain entry
+  that were only checked would accept two spellings and leave them permanently inert:
+  `NOTIFY.WINDOWS.COM`, which passes a case-insensitive check while every endpoint host arrives
+  lowercased, and the A-label spelling that the raw-Unicode refusal above directs the operator to,
+  which can never meet a host decoded to its U-label. Both are the dead entry that looks configured,
+  the failure the trailing-root-dot refusal exists to prevent, and one of them would be the form the
+  library itself recommends. Normalization runs after the closing equality check rather than in
+  place of it: that check is validation against the concatenation reinterpreting the entry, and
+  neither does the other's work.
 - **The library makes no public-suffix judgement.** There is no public-suffix list in the JDK,
   `HttpCookie.domainMatches`'s embedded-dot heuristic is wrong in both directions, a dependency is
   forbidden by ADR-002, and a bundled data file ages between releases while going on looking
@@ -131,13 +147,20 @@ to rules of one kind and delegates.
   on either side while its single-kind siblings refused one, and that exception would then have had
   to be documented, tested and remembered.
 - **The behaviour of the origins-only path is frozen, and the freeze is scoped to behaviour.**
-  `allowedOrigins` shipped in `0.1.0`, so which entries it accepts and which it refuses, the
-  exception types it throws, and the order of its checks do not change because it is now implemented
-  over `EndpointRule.origin`. The freeze is a promise about the convenience factory and not about
-  the rule's internals: whatever the rule throws, `allowedOrigins` presents what it presented in
-  `0.1.0`. The literal text of every message is deliberately *not* frozen — a refusal gaining
-  precision is not the drift being guarded against, and freezing prose would forbid the one
-  improvement named below.
+  `allowedOrigins` shipped in `0.1.0`, and nothing about which entries it accepts and which it
+  refuses, the exception types it throws, or the order in which an entry meets those checks may
+  drift *as a consequence of being reimplemented* over `EndpointRule.origin`. Drift is what the
+  freeze forbids; a check this decision adds deliberately — the one named in the next bullet — is
+  the single exception, and it is a change made on purpose rather than a side effect of moving the
+  code. The freeze is a promise about the convenience factory and not about the rule's internals:
+  whatever the rule throws, `allowedOrigins` presents what it presented in `0.1.0`. The literal text
+  of every message is deliberately *not* frozen — a refusal gaining precision is not the drift being
+  guarded against, and freezing prose would forbid that exception. One consequence is worth stating
+  rather than leaving to be discovered: the Spring path no longer runs through this factory at all,
+  since the attribution decision below has the starter build a rule per entry, so what an operator
+  sees for a malformed `push2u.allowed-origins` entry comes from the rule rather than from the
+  frozen factory. That is legal precisely because the text is not frozen and the exception type is
+  pinned by reference, but the freeze should not be read as covering the commonest consumer path.
 - **One refusal changes, and it is named here rather than left to the implementation**: an *origin*
   entry carrying a `*` where a host label belongs earns its own construction check on the origin
   rule, refusing it with a message naming the domain rule. (A `*` in a *domain* entry is refused by
@@ -162,21 +185,24 @@ to rules of one kind and delegates.
   property is admitted precisely because it makes the safe answer reachable by the route operators
   already use.
 - **The starter's existing rules are restated over two properties, and attribution becomes exact.**
-  "Expressed" means at least one of the two properties is non-empty. Both sources at once —
-  expressed, plus a bean — still fails the context, naming which property is non-empty and naming
-  the bean. Neither of them — both properties unset, no bean — still fails, now offering three ways
-  to fix it instead of two. The empty-value escape hatch keeps its shape, because it was always
-  per-property: an explicitly empty value means "this property is deliberately unused here", and a
-  service empties whichever key it inherited. One case changes character: every set property empty,
-  with no bean. Today the starter delegates that refusal to the core, which answers in its own
-  words; with two properties the emptiness is a statement about the *pair*, and no single core
-  factory can speak for both, so the starter owns a message naming both keys. Attribution of a
-  malformed entry then needs no machinery at all: the starter builds each rule itself, from one
-  entry of one named property, so at the moment the rule refuses it holds both the property name and
-  the entry's index. The shape considered first had to borrow the starter's `retryPolicy`
-  probe-and-discard precedent and then adjust it, because one call over two lists could not say
-  which list a bad entry came from; none of that survives, and it is the strongest single argument
-  for rules as values.
+  "Expressed" means at least one of the two properties is non-empty. **Two non-empty properties are
+  not a conflict: they are unioned into one allowlist**, which is the shape the WNS case needs —
+  three origin entries beside one domain entry. The exclusivity ADR-016 established holds between
+  the properties and a bean, never between the two properties, which are two halves of one statement
+  rather than two statements of the same control. Both sources at once — expressed, plus a bean —
+  still fails the context, naming which property is non-empty and naming the bean. Neither of them —
+  both properties unset, no bean — still fails, now offering three ways to fix it instead of two.
+  The empty-value escape hatch keeps its shape, because it was always per-property: an explicitly
+  empty value means "this property is deliberately unused here", and a service empties whichever key
+  it inherited. One case changes character: every set property empty, with no bean. Today the
+  starter delegates that refusal to the core, which answers in its own words; with two properties
+  the emptiness is a statement about the *pair*, and no single core factory can speak for both, so
+  the starter owns a message naming both keys. Attribution of a malformed entry then needs no
+  machinery at all: the starter builds each rule itself, from one entry of one named property, so at
+  the moment the rule refuses it holds both the property name and the entry's index. The shape
+  considered first had to borrow the starter's `retryPolicy` probe-and-discard precedent and then
+  adjust it, because one call over two lists could not say which list a bad entry came from; none of
+  that survives, and it is the strongest single argument for rules as values.
 - **The added `Push2uProperties` component changes that record's canonical constructor descriptor**,
   and with it its `equals`, `hashCode`, `toString` and record patterns. That is accepted rather than
   worked around: it is a `@ConfigurationProperties` record the framework binds from configuration,
