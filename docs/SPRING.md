@@ -123,9 +123,9 @@ danger is that it removes the control and travels between profiles as one copied
 is data — every value it can hold is a restriction, and there is no value of it that turns the
 restriction off. The asymmetry above still argues, as it always does, that withholding a property is
 the cheap default, and what overrides it here is the pressure withholding puts on a Spring
-deployment serving the two services that publish a zone rather than a host — Safari's and Edge's,
-between them most of the users a deployment has. A bean is exclusive with the properties, so
-reaching for one to express those two zones costs every ordinary origin its place in YAML too: what
+deployment serving the two services that publish a zone rather than a host — Safari's and Edge's, a
+major browser's users each. A bean is exclusive with the properties, so reaching for one to express
+those two zones costs every ordinary origin its place in YAML too: what
 is left is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad answers the
 starter can otherwise give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an
 origins-only allowlist, which can express neither zone.

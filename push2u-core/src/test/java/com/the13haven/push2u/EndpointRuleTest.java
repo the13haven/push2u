@@ -212,6 +212,27 @@ class EndpointRuleTest {
     }
 
     @Test
+    void domainRejectsAControlCharacterBeforeItLooksLikeAnAddressLiteral() {
+        // An ANSI escape sequence carries a '[', so without the control-character check running
+        // first the entry falls into the bracket check and the operator is told their hostname is an
+        // IP address literal — a cause that has nothing to do with what they pasted.
+        // Built rather than written as a literal: a raw escape byte in a source file is invisible.
+        String colourised = "zone.example" + (char) 0x1B + "[31mX";
+        assertThatThrownBy(() -> EndpointRule.domain(colourised))
+                .as("terminal formatting dragged in with a copied line, and the entry still withheld")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("control character")
+                .hasMessageNotContaining("IP address literal")
+                .hasMessageContaining("left out of this message")
+                .hasMessageNotContaining("zone.example");
+        assertThatThrownBy(() -> EndpointRule.domain("notify.windows.com\r"))
+                .as("a stray carriage return from a file written on Windows")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("control character")
+                .hasMessageNotContaining("notify.windows.com");
+    }
+
+    @Test
     void domainRejectsAnIpv6LiteralBeforeItsColonsAreSeen() {
         // The bracket check runs first on purpose: otherwise an address literal is refused for its
         // colons and the operator is told to remove a port that is not there.
