@@ -20,10 +20,11 @@ import java.net.URI;
  * attempt took — is a blind server-side request forgery oracle for internal host and port existence.
  * {@link Endpoints#requireSecure} deliberately checks only the RFC 8030 contract (absolute {@code https} URL with a
  * host); which hosts a deployment may talk to is deployment policy, and this interface is where that policy lives. Most
- * deployments want the origin allowlist in {@link EndpointPolicies#allowedOrigins}; a functional interface is kept as
- * the seam so corporate egress rules or custom DNS checks can be expressed too. A policy is a required argument of
- * every {@link PushSender} factory method: the library does not choose a deployment's allowlist, but it does refuse to
- * decide on the deployment's behalf that there is none — a deployment wanting none says so with
+ * deployments want the standard allowlist — {@link EndpointPolicies#allowedOrigins} where every push service is a fixed
+ * host, and {@link EndpointPolicies#allowedEndpoints} where one of them is a whole DNS zone instead; a functional
+ * interface is kept as the seam so corporate egress rules or custom DNS checks can be expressed too. A policy is a
+ * required argument of every {@link PushSender} factory method: the library does not choose a deployment's allowlist,
+ * but it does refuse to decide on the deployment's behalf that there is none — a deployment wanting none says so with
  * {@link EndpointPolicies#unrestricted()}. Note the shape of the seam: the policy is fixed when the sender is built and
  * {@link #validate} receives only the endpoint URI, no request or tenant context — a rule that varies by tenant
  * therefore means building one sender per tenant.
@@ -42,8 +43,8 @@ import java.net.URI;
  *
  * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
  * {@link PushSender#sendAsync} makes concurrent {@link #validate} calls the normal case; a policy keeping mutable state
- * — a resolution cache, a counter — has to guard it. The policy {@link EndpointPolicies#allowedOrigins} returns closes
- * over an immutable set and needs none.
+ * — a resolution cache, a counter — has to guard it. The policies {@link EndpointPolicies#allowedOrigins} and
+ * {@link EndpointPolicies#allowedEndpoints} return close over an immutable list of immutable rules and need none.
  */
 @FunctionalInterface
 public interface EndpointPolicy {
