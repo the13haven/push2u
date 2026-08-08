@@ -435,20 +435,24 @@ For almost every deployment the answer is an allowlist of the push services its 
 EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(
         EndpointRule.origin("https://fcm.googleapis.com"),                // Chrome and Chromium
         EndpointRule.origin("https://updates.push.services.mozilla.com"), // Firefox
-        EndpointRule.origin("https://web.push.apple.com"),                // Safari
+        EndpointRule.domain("push.apple.com"),                            // Safari, through APNs
         EndpointRule.domain("notify.windows.com"));                       // Edge, through WNS
 
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
 ```
 
-Three of the four services issue endpoints on one fixed host, so an origin entry says everything
-there is to say about them. Edge does not: it delivers through WNS, whose channel URIs sit on
-varying subdomains of `notify.windows.com`, and whose
-[own documentation](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)
-tells the application server not to consider the subdomain when validating a channel URI. That is
-what a domain entry is for, and why an entry carries its kind rather than taking it from the
-factory it was passed to. [`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four services and this
-same allowlist in the Spring YAML form as well.
+Two of the four services issue endpoints on one fixed host, so an origin entry says everything
+there is to say about them. The other two publish a zone, and publish it as the thing an
+application server should be allowed to reach:
+[Apple](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)
+tells a server whose network limits which URLs it may access to "allow access for
+`https://*.push.apple.com`", and
+[Microsoft](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)
+— Edge delivers through WNS — says the subdomain of a channel URI "is subject to change and should
+not be considered when validating the channel URI". That is what a domain entry is for, and why an
+entry carries its kind rather than taking it from the factory it was passed to.
+[`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four services and this same allowlist in the Spring
+YAML form as well, with what each vendor's page does and does not say.
 
 The policy runs before encryption, before the VAPID signature and before any I/O; a rejection
 throws `EndpointRejectedException` and costs none of them. An origin entry is exact and
@@ -456,7 +460,7 @@ fail-closed — subdomains of an allowed origin are not included. A domain entry
 boundary and over `https` on the default port only, so `notify.windows.com` admits
 `cloud.notify.windows.com` at any depth and refuses `evilnotify.windows.com`; it is worth exactly
 what the DNS of that zone is worth, and belongs only where the service operator documents that its
-hostnames vary within a zone. A malformed entry of either kind fails at construction, so the
+hostnames vary within a zone, as Apple and Microsoft both do. A malformed entry of either kind fails at construction, so the
 mistake surfaces at deployment.
 
 `EndpointPolicies.unrestricted()` reproduces exactly what you have today: any absolute `https`
@@ -540,7 +544,8 @@ signer in [`VAULT.md`](VAULT.md).
    RFC 8030 §5.4 shape.
 10. Pass an `EndpointPolicy` to every `PushSender.builder(…)` —
     `EndpointPolicies.allowedEndpoints(…)` naming the push services your users arrive from, with a
-    domain rule for Edge's WNS zone ([`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the list), or
+    domain rule for each service that publishes a zone rather than a host
+    ([`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the list), or
     `EndpointPolicies.unrestricted()` if this deployment deliberately restricts nothing.
 11. On Spring Boot, consider `push2u-spring-boot-starter` — it binds `push2u.*`, builds the
     `PushSender` bean and adds an Actuator health indicator that signs a probe and verifies it. See

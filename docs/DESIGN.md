@@ -26,7 +26,8 @@ behind it — with the context they were taken in and the alternatives rejected 
 decision in [`docs/adr/`](adr/README.md); they are cited here rather than restated. How to
 *use* the library belongs to the consumer-facing references instead: [`README.md`](../README.md) for
 the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations,
-[`VAPID.md`](VAPID.md) for generating the key pair, and the Javadoc for individual contracts.
+[`VAPID.md`](VAPID.md) for generating the key pair, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the
+browser push services an endpoint allowlist names, and the Javadoc for individual contracts.
 
 ## 2. Goals and non-goals
 
@@ -353,8 +354,7 @@ than of the strings a caller happens to pass. Two kinds exist: `EndpointRule.ori
 matched exactly, and `EndpointRule.domain`, a DNS zone. `EndpointPolicies.allowedEndpoints` takes
 a mixed list; `allowedOrigins` and `allowedDomains` are the single-kind convenience over it, each
 mapping its strings to rules of one kind and delegating. Rules are values, equal by kind and
-normalized entry, so a list of them collapses duplicates the way the origins path always did
-through its set.
+normalized entry, so a list of them collapses duplicates.
 
 **The hierarchy is closed, and that is what keeps it from being a seam.** `EndpointRule` is sealed,
 both implementations are private to it, and the method by which a rule matches an endpoint is
@@ -394,18 +394,20 @@ A single label is refused, being the one case unambiguously wrong with no data a
 stated rather than half-checked — a domain rule is worth what the DNS of that zone is worth, and
 over a shared hosting zone it admits every tenant.
 
-Malformed entries of either kind fail at construction, validated through the same `java.net.URI`
-the endpoint side uses rather than a hostname regex, which would be a second grammar of "a valid
-host" to keep in step with the first. A rejection throws `EndpointRejectedException` — extending
-`RuntimeException`, not `IllegalArgumentException`, because the argument is well-formed
-(configuration refuses it), and because web frameworks commonly map IAE to a 400 response that
-would echo the redacted-but-fingerprinted message to the caller who registered the subscription.
-Rejection messages never carry the capability path/query (`Endpoints.redact`). A rule entry is
-configuration rather than an endpoint and is rendered by what it may hold: an origin entry through
-the same redaction, since a pasted capability URL is one of the mistakes being reported, and a
+Malformed entries of either kind fail at construction with an `IllegalArgumentException`, validated
+through the same `java.net.URI` the endpoint side uses rather than a hostname regex, which would be
+a second grammar of "a valid host" to keep in step with the first. A rule entry is configuration
+rather than an endpoint, and the message renders it by what it may hold: an origin entry through
+`Endpoints.redact`, since a pasted capability URL is one of the mistakes being reported, and a
 domain entry verbatim only while it is a bounded ASCII host-shaped token free of URI delimiters,
 whitespace and control characters — otherwise omitted, with the caller left to say which entry it
 was.
+
+A rejected *endpoint*, by contrast, throws `EndpointRejectedException` — extending
+`RuntimeException`, not `IllegalArgumentException`, because the argument is well-formed
+(configuration refuses it), and because web frameworks commonly map IAE to a 400 response that
+would echo the redacted-but-fingerprinted message to the caller who registered the subscription.
+Rejection messages never carry the capability path/query (`Endpoints.redact`).
 
 A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and redirect
 behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redirect.NEVER`, so a
@@ -699,14 +701,14 @@ those points, and no black-box check can do better.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
-halves of one statement, unioned into a single allowlist, which is the shape a deployment serving
-Edge beside the three fixed-host services needs. The decision is expressed when at least one of
+halves of one statement, unioned into a single allowlist, which is the shape a deployment naming
+both fixed-host and zone-published services needs. The decision is expressed when at least one of
 them is non-empty, and exclusivity holds between the properties and the bean, never between the
 two properties: expressing it while also supplying a bean fails the context, naming whichever
 property is non-empty and naming the bean, rather than silently preferring one and leaving the
-other believed-active. The escape hatch is per property, as it always was — an explicitly *empty*
-value says the property is deliberately unused here, so a service can empty whichever key it
-inherited from shared configuration it cannot unset. Every set property empty with no bean is
+other believed-active. The escape hatch is per property — an explicitly *empty* value says the
+property is deliberately unused here, so a service can empty whichever key it inherited from shared
+configuration it cannot unset. Every set property empty with no bean is
 answered by the starter itself, naming both keys: the emptiness is then a statement about the pair,
 and no single core factory can speak for both. Expressing neither — both unset, no bean — fails the
 context as well, with a message naming the three ways to fix it: the sender the starter builds
@@ -720,9 +722,8 @@ bean" — the two cases the starter has to answer differently.
 A malformed entry is attributed exactly, by property name and index (`push2u.allowed-origins[2]`),
 and needs no machinery to be: the starter builds each rule itself from one entry of one named
 property, so at the moment the rule refuses, the property name and the index are both in hand. The
-consequence is that the commonest consumer path no longer runs through
-`EndpointPolicies.allowedOrigins` at all — what an operator sees for a bad entry comes from the
-rule.
+Spring path therefore does not run through `EndpointPolicies.allowedOrigins`: what an operator sees
+for a bad entry is the rule's own refusal, wearing the property name and the index.
 
 There is no property for the unrestricted mode — under Spring it is an application
 `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`, by the same reasoning ADR-015

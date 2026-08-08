@@ -305,16 +305,16 @@ push2u:
   allowed-origins:
     - "https://fcm.googleapis.com"
     - "https://updates.push.services.mozilla.com"
-    - "https://web.push.apple.com"
   allowed-domains:
+    - "push.apple.com"
     - "notify.windows.com"
 ```
 
 That is a complete configuration: everything else has a default. The allowlist is not optional,
 though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context with neither
 of the two properties set nor an `EndpointPolicy` bean fails to start with a message naming every
-way to fix it. The two properties are not alternatives: they are unioned into one allowlist, so a
-deployment serving Edge as well as the other three writes both. There is deliberately no property
+way to fix it. The two properties are not alternatives: they are unioned into one allowlist, and a
+deployment covering all four browser push services writes both. There is deliberately no property
 for the unrestricted mode: under Spring it is an application `@Bean EndpointPolicy` returning
 `EndpointPolicies.unrestricted()`, so that turning the control off is a code change someone reviews
 rather than a line copied between profiles. [`SPRING.md`](docs/SPRING.md) is the reference — every
@@ -377,7 +377,7 @@ arrive from:
 EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(
     EndpointRule.origin("https://fcm.googleapis.com"),                // Chrome and Chromium
     EndpointRule.origin("https://updates.push.services.mozilla.com"), // Firefox
-    EndpointRule.origin("https://web.push.apple.com"),                // Safari
+    EndpointRule.domain("push.apple.com"),                            // Safari, through APNs
     EndpointRule.domain("notify.windows.com"));                       // Edge, through WNS
 
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
@@ -386,14 +386,16 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 An allowlist entry is a value that carries its own kind, so the list says what each entry means
 rather than leaving the meaning to the factory it was passed to. An **origin** rule matches one
 origin exactly. A **domain** rule matches a whole DNS zone — the apex and every subdomain at any
-depth — which is what Microsoft Edge needs: Edge delivers through WNS, whose channel URIs sit on
-varying subdomains of `notify.windows.com` (`cloud.notify.windows.com`,
-`wns2-ln2p.notify.windows.com`), and Microsoft's own
-[WNS documentation](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)
-says that "The subdomain of the channel URI is subject to change and should not be considered when
-validating the channel URI". `allowedEndpoints` is therefore the ordinary cross-browser call, not
-an advanced one. [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) carries the four services and this
-same allowlist in both spellings, ready to copy.
+depth — which is what two of the four standard services ask for, in their own documentation and in
+the same role. Apple tells an application server to "allow access for `https://*.push.apple.com`"
+where its network limits which URLs the server can reach
+([Sending web push notifications in web apps and browsers](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)),
+and Microsoft — Edge delivers through WNS — says that "The subdomain of the channel URI is subject
+to change and should not be considered when validating the channel URI"
+([WNS overview](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)).
+`allowedEndpoints` is therefore the ordinary cross-browser call, not an advanced one.
+[`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) carries the four services and this same allowlist in
+both spellings, ready to copy, with what each vendor's page does and does not say.
 
 `EndpointPolicies.allowedOrigins(…)` and `EndpointPolicies.allowedDomains(…)` are the convenience
 over it for a list of one kind — they take plain strings and build the rules for you. The rule
@@ -434,14 +436,15 @@ The library makes **no public-suffix judgement** — there is none in the JDK, a
 a data file that ages between releases while looking authoritative. A domain rule is worth exactly
 what the DNS of that zone is worth, and over a shared hosting zone it permits every tenant of it.
 The rule of thumb is that a domain rule belongs only where the service operator *documents* that
-its hostnames vary within a zone, as Microsoft does for WNS; anything else is an origin rule.
+its hostnames vary within a zone, as Apple and Microsoft both do; anything else is an origin rule.
 
 A malformed allowlist entry fails at construction, so a misconfigured allowlist fails deployment
 startup instead of misbehaving at send time. An origin entry is refused when it is unparseable,
-non-`https`, hostless, or carries a path, query, fragment or userinfo; a domain entry when it
-carries any URI delimiter (a scheme, port, path or `@`), a `*`, a leading dot, an empty label, a
-trailing root dot, a single label such as `com`, an IP literal, or raw Unicode — spell an
-internationalised host in its A-label form. The refusal names the entry the way a rejection names
+non-`https`, hostless, or carries a path, query, fragment or userinfo. A domain entry is refused
+when it carries any URI delimiter at all — a scheme, a port, a path, a query, a fragment or an
+`@` — or a `*`, a leading dot, an empty label, a trailing root dot, a single label such as `com`,
+an IP literal, or raw Unicode; spell an internationalised host in its A-label form. The refusal
+names the entry the way a rejection names
 an endpoint: an origin entry is rendered with its path and query stripped, since a pasted
 capability URL is exactly the mistake being reported, and a domain entry appears verbatim only
 when it is a plain host-shaped token.

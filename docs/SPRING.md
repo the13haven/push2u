@@ -22,8 +22,8 @@ push2u:
   allowed-origins:                  # one of the two is required, unless an EndpointPolicy bean
     - "https://fcm.googleapis.com"  # supplies the allowlist instead
     - "https://updates.push.services.mozilla.com"
-    - "https://web.push.apple.com"
   allowed-domains:                  # a whole DNS zone per entry — see Endpoint policy below
+    - "push.apple.com"
     - "notify.windows.com"
   retry:
     max-attempts: 3
@@ -68,16 +68,16 @@ The starter takes that decision from one of two **sources**, and exactly one of 
 - **The allowlist properties**, `push2u.allowed-origins` and `push2u.allowed-domains`. An origin
   entry is one origin, matched exactly; a domain entry is a whole DNS zone, the apex and every
   subdomain at any depth, over `https` on the default port only.
-  [`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four browser push services in this form —
-  three origins and, for Edge through WNS, one domain.
+  [`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four browser push services in this form — two
+  origins, and two domains for the two services that publish a zone rather than a host.
 - **An application `EndpointPolicy` bean**, which the autoconfigured sender picks up. This is the
   route for anything the properties cannot express — a corporate egress rule, a custom check, or
   `EndpointPolicies.unrestricted()`.
 
 **The two properties are not two sources.** They are two halves of one statement, and a context
 setting both gets one allowlist holding all of their entries — which is exactly the shape a
-deployment serving Edge beside Chrome, Firefox and Safari needs. The decision is *expressed* when
-at least one of them is non-empty.
+deployment naming the browser push services needs, since some of them publish a host and some a
+zone. The decision is *expressed* when at least one of them is non-empty.
 
 Expressing it **and** supplying a bean fails the context, naming whichever property is non-empty
 and naming the bean — they express the same security control, and silently preferring one would
@@ -124,10 +124,10 @@ is data — every value it can hold is a restriction, and there is no value of i
 restriction off. The asymmetry above still argues, as it always does, that withholding a property is
 the cheap default, and what overrides it here is the pressure withholding puts on a Spring
 deployment serving Edge. A bean is exclusive with the properties, so reaching for one to express a
-single zone costs the three ordinary origins their place in YAML too: what is left is a `@Bean`
-carrying the hostnames *and* the matching rule, or one of two bad answers the starter can otherwise
-give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of the three
-fixed origins, which leaves a major browser's users out. The second is the quieter failure. An Edge
+single zone costs every ordinary origin its place in YAML too: what is left is a `@Bean` carrying
+the hostnames *and* the matching rule, or one of two bad answers the starter can otherwise give —
+`EndpointPolicies.unrestricted()`, which is unrestricted egress, or an origins-only allowlist, which
+leaves a major browser's users out. The second is the quieter failure. An Edge
 subscription is registered and then refused at every send for the rest of its life; the application
 sees an `EndpointRejectedException` per send and nothing else, since the core has no logger of its
 own. No startup fails, nothing is unsafe, and there is nothing in a review to notice — the feature
