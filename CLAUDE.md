@@ -20,7 +20,16 @@ one with a moving part: its `jshell` block sits between the `vapid-keygen:begin`
 so the anchors, the fenced block and the heredoc wrapper are load-bearing and
 `.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
 matches the path, so moving or renaming the file silently switches that off unless the pattern moves
-with it. `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
+with it. `docs/PUSH-SERVICES.md` is the operator-facing list of the four browser push services and
+the allowlist entry each one needs, in both the Java and the YAML spelling — two origins, and two
+domains for Apple's and Microsoft's zones, which both vendors publish as the thing an application
+server should be allowed to reach. It also carries why no browser is missing from those four rows,
+and a prose note on the pre-VAPID GCM host a stored subscription may still name. The library ships
+none of them as a default and the document is there to be copied out of, so its names are a snapshot
+of what the vendors publish rather than anything this repository verifies; it says so itself, and
+names the two rows whose vendor page carries the host but not the last step to Web Push — those
+clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
+`docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…017) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
@@ -139,11 +148,17 @@ Three SPIs, and only three (ADR-005):
   identity). Implementations: `LocalEcVapidSigner`, `VaultTransitVapidSigner`.
 - `PushHttpClient` — push transport. Response bodies are never read (untrusted capability URLs).
 - `EndpointPolicy` — deployment egress policy (SSRF control). A required argument of both
-  `PushSender.builder` overloads, so no sender exists without one (ADR-016);
-  `EndpointPolicies.allowedOrigins` is the standard implementation and
-  `EndpointPolicies.unrestricted()` the named opt-out. Under Spring it comes from
-  `push2u.allowed-origins` or an `EndpointPolicy` bean — neither present fails the context, and
-  there is deliberately no property for the unrestricted mode.
+  `PushSender.builder` overloads, so no sender exists without one (ADR-016). The standard
+  implementation is an allowlist of `EndpointRule` values (ADR-017): `allowedEndpoints` takes a
+  mixed list and is the primary cross-browser call, `allowedOrigins`/`allowedDomains` are the
+  single-kind convenience over it, and `EndpointPolicies.unrestricted()` is the named opt-out.
+  `EndpointRule` is sealed, its two implementations private and its match package-private — a
+  closed enumeration of kinds, not a fourth SPI. An origin rule matches one origin exactly; a
+  domain rule covers the apex and every subdomain at a label boundary, `https` and the default
+  port only. Under Spring the allowlist comes from `push2u.allowed-origins` and
+  `push2u.allowed-domains`, which are unioned rather than exclusive, or from an `EndpointPolicy`
+  bean; the exclusivity is between the properties and the bean, neither present fails the context,
+  and there is deliberately no property for the unrestricted mode.
 
 The encryptor, HKDF and origin serialization are deliberately concrete — an alternative
 implementation would only add a silent wrong-ciphertext failure mode (ADR-003).

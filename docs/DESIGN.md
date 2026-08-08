@@ -26,7 +26,8 @@ behind it — with the context they were taken in and the alternatives rejected 
 decision in [`docs/adr/`](adr/README.md); they are cited here rather than restated. How to
 *use* the library belongs to the consumer-facing references instead: [`README.md`](../README.md) for
 the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations,
-[`VAPID.md`](VAPID.md) for generating the key pair, and the Javadoc for individual contracts.
+[`VAPID.md`](VAPID.md) for generating the key pair, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the
+browser push services an endpoint allowlist names, and the Javadoc for individual contracts.
 
 ## 2. Goals and non-goals
 
@@ -344,15 +345,69 @@ unset builder step appeared in none of them. Requiring the argument also removes
 mode instead of adding one — `build()` cannot refuse over a missing required value, since the
 compiler refuses first.
 
-`EndpointPolicies.allowedOrigins` is the standard implementation: an origin allowlist compared on
-the same RFC 6454 §6.1 serialization the `aud` claim uses, so `Origin.serialize` normalizes both
-sides and case, default ports and IDNA form can never disagree between the two. Malformed
-allowlist entries fail at construction; endpoint-side userinfo is rejected outright. A rejection
-throws `EndpointRejectedException` — extending `RuntimeException`, not `IllegalArgumentException`,
-because the argument is well-formed (configuration refuses it), and because web frameworks
-commonly map IAE to a 400 response that would echo the redacted-but-fingerprinted message to the
-caller who registered the subscription. Rejection messages never carry the capability path/query
-(`Endpoints.redact`).
+The standard implementation is an allowlist of `EndpointRule` values
+([ADR-017](adr/0017-domain-rule-in-the-endpoint-allowlist.md)). A rule is a value that carries its
+own kind, so the entries of one list say what each of them means instead of taking their meaning
+from the factory they were passed to — the same reason `TransitKeyName` and `VaultToken` are types
+rather than two `String` parameters, and it makes swap-proofness a property of the types rather
+than of the strings a caller happens to pass. Two kinds exist: `EndpointRule.origin`, one origin
+matched exactly, and `EndpointRule.domain`, a DNS zone. `EndpointPolicies.allowedEndpoints` takes
+a mixed list; `allowedOrigins` and `allowedDomains` are the single-kind convenience over it, each
+mapping its strings to rules of one kind and delegating. Rules are values, equal by kind and
+normalized entry, so a list of them collapses duplicates.
+
+**The hierarchy is closed, and that is what keeps it from being a seam.** `EndpointRule` is sealed,
+both implementations are private to it, and the method by which a rule matches an endpoint is
+package-private, so no rule kind can be added or implemented from outside. It is an enumeration of
+the kinds the library knows how to match, not an extension point — ADR-005's bar for a seam is
+untouched and no SPI is added. `EndpointPolicy` remains the seam it already was, and a deployment
+whose rule is neither kind still writes a lambda.
+
+**The endpoint is parsed and normalized once, and every rule sees only that value.** Both kinds
+compare on the same RFC 6454 §6.1 serialization the `aud` claim uses, so `Origin.serialize`
+normalizes both sides and case, default ports and IDNA form can never disagree between them; a
+second normalizer would mean two answers for one endpoint, diverging precisely in the
+internationalised cases nobody exercises by hand. A domain entry is put through that same
+serialization rather than merely checked, since an entry validated but not normalized would accept
+spellings — `NOTIFY.WINDOWS.COM`, or an A-label facing a U-label host — that can never meet a host,
+and a permanently inert entry looks configured. The two endpoint-side refusals hold for every rule
+kind: userinfo is rejected outright before any comparison, and an endpoint with no scheme or host
+has no origin to compare at all.
+
+**A domain rule covers the apex and every subdomain at any depth, matched at a label boundary** —
+`host.equals(domain) || host.endsWith("." + domain)`. The leading dot belongs to the suffix and not
+to the string searched; without it `evilnotify.windows.com` matches `notify.windows.com`, which is
+the whole vulnerability class and the bug every consumer writing this rule by hand reaches
+independently. It matches only the scheme `https` and the default port, absent or an explicit
+`443`. The scheme is anchored explicitly rather than inherited, because the origin serialization
+enforces no scheme by its own contract — that is `Endpoints.requireSecure`'s job at the
+`Subscription` boundary — while an origin rule is covered for free by comparing the whole
+serialization. The port is a decision: a domain names which *hosts* are trusted, a port which
+*service on a host* is, and a rule spanning every port of a zone re-creates the blind SSRF oracle
+this control exists to close, relocated into an external zone. A non-default port is named exactly,
+with an origin rule.
+
+The library makes no public-suffix judgement: there is none in the JDK,
+`HttpCookie.domainMatches`'s embedded-dot heuristic is wrong in both directions, a dependency is
+ruled out by ADR-002, and bundled data ages between releases while going on looking authoritative.
+A single label is refused, being the one case unambiguously wrong with no data at all; the rest is
+stated rather than half-checked — a domain rule is worth what the DNS of that zone is worth, and
+over a shared hosting zone it admits every tenant.
+
+Malformed entries of either kind fail at construction with an `IllegalArgumentException`, validated
+through the same `java.net.URI` the endpoint side uses rather than a hostname regex, which would be
+a second grammar of "a valid host" to keep in step with the first. A rule entry is configuration
+rather than an endpoint, and the message renders it by what it may hold: an origin entry through
+`Endpoints.redact`, since a pasted capability URL is one of the mistakes being reported, and a
+domain entry verbatim only while it is a bounded ASCII host-shaped token free of URI delimiters,
+whitespace and control characters — otherwise omitted, with the caller left to say which entry it
+was.
+
+A rejected *endpoint*, by contrast, throws `EndpointRejectedException` — extending
+`RuntimeException`, not `IllegalArgumentException`, because the argument is well-formed
+(configuration refuses it), and because web frameworks commonly map IAE to a 400 response that
+would echo the redacted-but-fingerprinted message to the caller who registered the subscription.
+Rejection messages never carry the capability path/query (`Endpoints.redact`).
 
 A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and redirect
 behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redirect.NEVER`, so a
@@ -644,18 +699,42 @@ baseline plus one per probe — rather than leaving the invariant to a comment; 
 invariant rather than deciding it, since a constraint biting only above some threshold would pass
 those points, and no black-box check can do better.
 
-`push2u.allowed-origins` and an application `EndpointPolicy` bean express the same security
-control, so configuring both fails the context (naming the property and the bean) rather than
-silently preferring one and leaving the other believed-active. The one exception is an explicitly
-*empty* property beside a bean — the escape hatch for a service inheriting the property from
-shared configuration it cannot unset — while an empty property on its own still fails, so the
-control cannot be disabled by accident. Configuring **neither** fails the context as well, with a
-message naming both ways to fix it: the sender the starter builds needs a policy like any other,
-and the decision has to come from the deployment. There is no property for the unrestricted mode —
-under Spring it is an application `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`,
-by the same reasoning ADR-015 applied to the Vault address: a YAML flag reaches production by
-copying a dev profile, a code change passes a review, and a property can be added later but not
-removed after a release.
+The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
+bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
+halves of one statement, unioned into a single allowlist, which is the shape a deployment naming
+both fixed-host and zone-published services needs. The decision is expressed when at least one of
+them is non-empty, and exclusivity holds between the properties and the bean, never between the
+two properties: expressing it while also supplying a bean fails the context, naming whichever
+property is non-empty and naming the bean, rather than silently preferring one and leaving the
+other believed-active. The escape hatch is per property — an explicitly *empty* value says the
+property is deliberately unused here, so a service can empty whichever key it inherited from shared
+configuration it cannot unset. Every set property empty with no bean is
+answered by the starter itself, naming both keys: the emptiness is then a statement about the pair,
+and no single core factory can speak for both. Expressing neither — both unset, no bean — fails the
+context as well, with a message naming the three ways to fix it: the sender the starter builds
+needs a policy like any other, and the decision has to come from the deployment.
+
+Both components are nullable and neither carries a `@DefaultValue`, so an unset key stays
+distinguishable from an explicitly empty one; every rule above rests on that difference, and a
+default value would collapse "this deployment has not decided" into "this deployment cedes to a
+bean" — the two cases the starter has to answer differently.
+
+A malformed entry is attributed exactly, by property name and index (`push2u.allowed-origins[2]`),
+and needs no machinery to be: the starter builds each rule itself from one entry of one named
+property, so at the moment the rule refuses, the property name and the index are both in hand. The
+Spring path therefore does not run through `EndpointPolicies.allowedOrigins`: what an operator sees
+for a bad entry is the rule's own refusal, wearing the property name and the index.
+
+There is no property for the unrestricted mode — under Spring it is an application
+`@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`, by the same reasoning ADR-015
+applied to the Vault address: a YAML flag reaches production by copying a dev profile, a code change
+passes a review, and a property can be added later but not removed after a release. The second
+allowlist property is not an exception to that reasoning but an application of it: what is withheld
+is a *mode*, a flag that removes the control and travels between profiles as a copied line, while a
+list of domains is data that has no value that disables anything. What it costs to withhold decided
+it — with a bean exclusive against the properties, a deployment needing one zone would have to move
+its ordinary origins into code as well, and the answers left inside YAML are unrestricted egress or
+an allowlist that silently excludes a browser.
 
 The health indicator is registered when a `VapidSigner` bean exists, and asks about nothing else:
 the signer is the only part of a send that can stop working while the application runs — it
