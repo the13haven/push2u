@@ -15,15 +15,16 @@ The subdomains are real and they vary: that same page's notification example pos
 endpoint names `wns2-ln2p.notify.windows.com`
 (https://github.com/MicrosoftEdge/DevTools/issues/262).
 
-So for a deployment serving Edge the safe rule is not expressible through anything the library
-ships to state it with: not `allowedOrigins`, whose match is exact per origin, and not the Spring
-property that binds to it. The seam is not the gap. An application-supplied `EndpointPolicy` does
-express the WNS rule, and ADR-005 admitted that seam precisely so a deployment's own egress rule has
-somewhere to live — this is a question of what the built-in answers cover, not of a missing
+So for a deployment serving Edge the safe rule is not expressible through the library's built-in
+factories or its Spring properties: not `allowedOrigins`, whose match is exact per origin, and not
+the property that binds to it. The seam is not the gap. An application-supplied `EndpointPolicy`
+does express the WNS rule, and ADR-005 admitted that seam precisely so a deployment's own egress
+rule has somewhere to live — this is a question of what the built-in answers cover, not of a missing
 capability. What reaching for the seam costs is the point: the deployment re-implements, per
 consumer, the URI and origin handling the library already performs correctly and does not expose —
-the RFC 6454 serialization, the IDNA form, the default-port drop and the userinfo refusal are all
-package-private — and it independently re-derives the label boundary that separates
+the RFC 6454 serialization, the IDNA form and the default-port drop sit in a package-private class,
+and the userinfo refusal inside a private method of a public one, so no consumer can call any of the
+four — and it independently re-derives the label boundary that separates
 `notify.windows.com` from `evilnotify.windows.com`, which is the bug this decision names below and
 the kind no operator finds by testing the configuration they meant to write. Enumerating the
 datacentre subdomains is not a workaround either, but exactly the failure mode ADR-016 named when it
@@ -42,7 +43,7 @@ argument of both factory methods, the library still ships no allowlist of its ow
 derived by resolving the endpoint, `unrestricted()` keeps its name as the single opt-out, and the
 Spring starter still fails to start when no decision is expressed. What widens is the answer space —
 one more rule a deployment can state, so that stating the correct one stays inside the library's own
-vocabulary instead of being a lambda each deployment writes and gets right on its own.
+vocabulary instead of being a lambda each deployment writes and has to get right on its own.
 
 The decision: an allowlist entry becomes a value that carries its own kind, and the standard
 allowlist is a list of those values rather than a list of strings whose meaning depends on which
@@ -198,12 +199,15 @@ to rules of one kind and delegates.
   property, so one extra rule costs the three ordinary origins their place in YAML too; what is left
   is a `@Bean` carrying the hostnames *and* the matching rule, or one of two bad built-in outcomes
   — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of the three
-  fixed origins, which silently excludes a major browser's users. The third is a real outcome and a
-  different failure: an Edge subscription is registered, then permanently rejected at every send
-  with a WARN. Nothing about it is unsafe and no startup fails — the feature simply does not work
-  for those users, which is the kind of failure that survives review by being invisible. The
-  property is admitted precisely because it makes the safe answer reachable by the route operators
-  already use.
+  fixed origins, which leaves a major browser's users out. The second of those is not hypothetical:
+  it is what the report behind this decision describes having done, over `unrestricted()` and
+  knowingly. It is also a different failure from the first. An Edge subscription is registered and
+  then rejected at every send for the rest of its life; what the application sees is an
+  `EndpointRejectedException` per send, which that report's deployment logs as a warning — the core
+  has no logger of its own to say anything, by the zero-dependency constraint. Nothing about it is
+  unsafe and no startup fails; the feature simply does not work for those users, and the exclusion
+  is invisible to review, which is how it survives one. The property is admitted precisely because
+  it makes the safe answer reachable by the route operators already use.
 - **The starter's existing rules are restated over two properties, and attribution becomes exact.**
   "Expressed" means at least one of the two properties is non-empty. **Two non-empty properties are
   not a conflict: they are unioned into one allowlist**, which is the shape the WNS case needs —
@@ -236,18 +240,32 @@ to rules of one kind and delegates.
   two properties it stops being an implementation detail of one binding and becomes the premise the
   semantics above are stated in.
 - **The constructor `Push2uProperties` shipped with is preserved.** Adding a component widens the
-  record's canonical constructor, and a changed descriptor on an already-published constructor is a
-  `NoSuchMethodError` for anything compiled against `0.1.0` — the same incompatibility this decision
-  refuses to pay for the provenance-restricted `anyOf` below, where it is the whole reason that
-  alternative cannot be built. Accepting it here while refusing it there would leave a later reader
-  unable to tell which of the two is the rule, and this document cannot be amended once its decision
-  is implemented. So the shipped constructor stays, the wider canonical constructor is what Spring
-  binds through, and because the record then has more than one constructor the binding target is
-  named rather than inferred — `@ConstructorBinding` on the canonical one. That ambiguity is why
-  this is a decision and not an implementation detail: with a single constructor the framework needs
-  no annotation, so adding a second silently changes what "the constructor" means. What does change,
-  unavoidably for any added component, is `equals`, `hashCode`, `toString` and the arity a record
-  pattern spells — none of which is a linkage failure for code already compiled.
+  record's canonical constructor, and the line taken here is that a published descriptor in a
+  published artifact is not changed — not because a caller is known to exist, but because whether
+  one exists is not something this project can find out, and a `NoSuchMethodError` for everyone
+  compiled against `0.1.0` is what a wrong guess costs. That this particular record has no plausible
+  hand-caller is probably true and is deliberately not the criterion: "probably nobody" is precisely
+  the judgement a line like this exists to remove. The provenance-restricted `anyOf` rejected below
+  is refused on the same descriptor grounds, and the two are not symmetric in consequence —
+  `allowedOrigins` is the primary factory every consumer calls — so the symmetry is support for the
+  line rather than the reason for it; what it does settle is that a document which cannot be amended
+  once implemented must not hold both answers with nothing to tell a later reader which one is the
+  rule. So the shipped constructor stays, delegating to the wider one with `null` for the new
+  component — never an empty list, which the bullet above gives the distinct meaning "deliberately
+  cedes to a bean", something no caller of the old constructor asked for. The wider canonical
+  constructor is what Spring binds through, and because the record then has more than one
+  constructor the binding target is named rather than inferred, `@ConstructorBinding` on the
+  canonical one. That ambiguity is why this is a decision and not an implementation detail: with a
+  single constructor the framework needs no annotation, so adding a second silently changes what
+  "the constructor" means. The standing cost is named rather than left to be discovered. `Vapid`,
+  `Retry` and `Health` are published records on the same footing, so each acquires a
+  preserved-constructor overload the first time it gains a property, as does this record on every
+  further one. That accumulation is bounded and not open-ended: the obligation is scoped to the
+  major line these constructors shipped in, and the overloads are dropped at the major version that
+  is free to drop descriptors anyway. An unbounded version of the promise is the one that would
+  eventually be broken quietly rather than deliberately. What changes regardless, for any added
+  component, is `equals`, `hashCode`, `toString` and the arity a record pattern spells — none of
+  which is a linkage failure for code already compiled.
 
 Rejected alternatives:
 
