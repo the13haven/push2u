@@ -1,6 +1,6 @@
 # ADR-017 — A domain rule in the endpoint allowlist
 
-**Status:** Proposed
+**Status:** Accepted
 
 ADR-016 made the egress decision mandatory and left exactly two answers behind it:
 `EndpointPolicies.allowedOrigins(...)`, whose rule is exact per origin — a subdomain of an allowed
@@ -29,14 +29,27 @@ four — and it independently re-derives the label boundary that separates
 the kind no operator finds by testing the configuration they meant to write. Enumerating the
 datacentre subdomains is not a workaround either, but exactly the failure mode ADR-016 named when it
 rejected a built-in browser allowlist: an allowlist that is mostly right, that goes stale as WNS
-adds a datacentre, and that fails silently when it does. The other three services are single fixed
-hosts, so WNS is the only one affected today — but the same shape returns for any self-hosted or
-intra-organisation push service fronted by more than one host, which ADR-016 lists as a legitimate
-deployment. ADR-016 set out to stop unrestricted egress from being what a deployment gets by not
-deciding; here it is what a deployment can reach for *after* deciding correctly, because the correct
-rule has no spelling among the answers the library ships and the spelling it does have is forty
-lines of security-critical normalization the deployment has to get right on its own. That is a
-failure of correctness-by-default over a control every consumer would otherwise re-derive.
+adds a datacentre, and that fails silently when it does. Nor is WNS alone in this. Apple publishes
+the same instruction for the same purpose: under *Prepare your server to send push notifications*,
+its web push documentation reads, verbatim, "If your network infrastructure limits which URLs your
+server can access, allow access for `https://*.push.apple.com`"
+(https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers).
+That sentence is addressed to an egress allowlist, which is a different role from the channel-URI
+validation quoted above. Microsoft publishes an egress instruction of its own, on a page this
+decision has not cited so far: its firewall allowlist guidance gives
+`<CloudServiceDNS><DNS FQDN="*.notify.windows.com"/></CloudServiceDNS>`, and its own *Terms and
+notations* table defines that element, verbatim, as "These are the Fully-Qualified Domain Name
+(FQDN) filters for the WNS servers your cloud service will talk to send notifications to WNS"
+(https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config).
+So each of the two vendors publishes an egress instruction addressed to the sending server, and what
+each of those instructions names is a zone. Two of the four standard services therefore publish a
+zone rather than a host, and the same shape returns again for any self-hosted or intra-organisation
+push service fronted by more than one host, which ADR-016 lists as a legitimate deployment. ADR-016
+set out to stop unrestricted egress from being what a deployment gets by not deciding; here it is
+what a deployment can reach for *after* deciding correctly, because the correct rule has no spelling
+among the answers the library ships and the spelling it does have is forty lines of
+security-critical normalization the deployment has to get right on its own. That is a failure of
+correctness-by-default over a control every consumer would otherwise re-derive.
 
 This does not supersede ADR-016, and every decision in it stands: the policy remains a required
 argument of both factory methods, the library still ships no allowlist of its own, no policy is
@@ -62,8 +75,9 @@ public static EndpointPolicy allowedDomains(String... domains);
 public static EndpointPolicy allowedDomains(Collection<String> domains);
 ```
 
-`allowedEndpoints` is the primary cross-browser call: for anyone serving Edge, a list holding three
-origin rules and one domain rule *is* the ordinary configuration, not an edge case. The two string
+`allowedEndpoints` is the primary cross-browser call: for anyone serving the browsers whose services
+publish a zone, a list holding origin rules beside domain rules *is* the ordinary configuration, not
+an edge case. The two string
 factories are convenience over it — `allowedOrigins` keeps the signatures it shipped with and is
 neither changed nor deprecated, `allowedDomains` is its new counterpart — and each maps its entries
 to rules of one kind and delegates.
@@ -113,21 +127,49 @@ to rules of one kind and delegates.
   re-creates the blind SSRF oracle ADR-016 exists to close, relocated into an external zone. A
   deployment that genuinely needs `https://host.zone:8443` names it exactly with an origin rule,
   which is the right granularity for a port.
-- **A malformed domain entry fails at construction**, as a malformed origin entry already does, and
-  every message renders the entry through `Endpoints.redact`. Refused: an empty entry; `:` (which
-  catches both a port and a pasted `https://x`, an entry that would otherwise parse with the host
-  `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently ignored); `@`
-  (`notify.windows.com@evil.example` parses with the host `evil.example`, so everything the operator
-  wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an empty label; a trailing
-  root dot, which `java.net.URI` accepts as a host and which would leave the rule unable to ever
-  fire — a dead entry that looks configured; a single label (`com`, `localhost`); an IP literal,
-  since an address has no subdomains and an operator reads `EndpointRule.domain("10.0.0.0")` as a
-  subnet; and raw Unicode. A closing check that the entry equals the host the parser found, ignoring
-  case, is the complete defence against the scheme concatenation reinterpreting the entry — which is
-  what lets the list above exist for the sake of its *messages* rather than for completeness.
-  Validation runs through the same `java.net.URI` the endpoint side uses, never a hand-rolled
-  hostname regex, so a configured entry can never be a shape an endpoint could never have; a regex
-  would be a second grammar of "a valid host" to keep in step with the first.
+- **A malformed domain entry fails at construction**, as a malformed origin entry already does.
+  Refused: an empty entry; a control character, which a line copied out of a terminal or read from a
+  Windows text file carries and which no hostname can hold — checked ahead of every delimiter below,
+  since an ANSI escape sequence carries a `[` and would otherwise be refused as an address literal;
+  `:` (which catches both a port and a pasted `https://x`, an entry that would otherwise parse with
+  the host `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently
+  ignored); `@` (`notify.windows.com@evil.example` parses with the host `evil.example`, so
+  everything the operator wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an
+  empty label; a trailing root dot, which `java.net.URI` accepts as a host and which would leave the
+  rule unable to ever fire — a dead entry that looks configured; a single label (`com`,
+  `localhost`); an IP literal, since an address has no subdomains and an operator reads
+  `EndpointRule.domain("10.0.0.0")` as a subnet; and raw Unicode. A closing check that the entry
+  equals the host the parser found, ignoring case, is the complete defence against the scheme
+  concatenation reinterpreting the entry — which is what lets the list above exist for the sake of
+  its *messages* rather than for completeness. Validation runs through the same `java.net.URI` the
+  endpoint side uses, never a hand-rolled hostname regex, so a configured entry can never be a shape
+  an endpoint could never have; a regex would be a second grammar of "a valid host" to keep in step
+  with the first.
+- **A rejection renders the value it names according to that value's sensitivity class, and the
+  classes are not the same.** Every rejection that renders a subscription endpoint uses
+  `Endpoints.redact`, unchanged and for the reason it always had. A rule entry is configuration
+  rather than a subscription endpoint and follows type-specific diagnostic rendering. An origin entry
+  is rendered through `Endpoints.redact`, because at the moment of refusal it is precisely *not*
+  validated and the likeliest malformed entry is a pasted capability URL. A domain entry is rendered
+  verbatim only when it is a bounded ASCII host-shaped token without URI delimiters, whitespace, or
+  control characters; otherwise its raw value is omitted and the message carries only the cause.
+  Spring diagnostics identify the corresponding property and collection index. Rendering a domain
+  entry through `Endpoints.redact` too was the shape considered first, and it is unusable rather than
+  merely imperfect: `redact` was built for capability URLs and answers a bare domain by taking its
+  opaque branch, printing `<opaque endpoint>#` and sixteen hex characters and nothing else, so the
+  operator sees not one character of what they wrote — from a refusal whose entire job is to point at
+  their typo. Printing the entry unconditionally is the opposite failure and is unsafe for the same
+  reason the refusals above exist: the domain field is exactly where a pasted endpoint lands, and
+  what arrives there may carry a capability path or query, credentials, or control characters that
+  must not enter a log line. So the value earns its way into the message instead of being assumed
+  safe, and the predicate that decides is deliberately weaker than and different from the validation
+  — it asks only whether these characters are safe to quote, never whether they form a valid host, so
+  it can never become the second hostname grammar the bullet above refuses. Rejected:
+  `Endpoints.redact("https://" + entry)`, which invents a scheme the operator never wrote, renders a
+  configuration value as though it were an endpoint, and freezes an incidental `java.net.URI`
+  behaviour into a diagnostic; printing the entry always, which is unsafe for the pasted-endpoint
+  case; and a fingerprint always, which is diagnostically empty for exactly the domain-shaped
+  mistakes — a stray dot, a wrong case, an A-label — that this feature expects to receive.
 - **A domain entry is then normalized, not merely validated** — put through the same serialization
   the endpoint side is, so that case and internationalised form agree on both sides of the
   comparison. An origin entry is already normalized rather than only checked, and a domain entry
@@ -196,10 +238,10 @@ to rules of one kind and delegates.
   that withholding is the cheap default, and it is not overridden lightly. What overrides it here is
   the pressure withholding puts on a Spring deployment serving Edge, which is a claim about the
   choice on offer rather than a prediction of which branch is taken. A bean is exclusive with the
-  property, so one extra rule costs the three ordinary origins their place in YAML too; what is left
-  is a `@Bean` carrying the hostnames *and* the matching rule, or one of two bad built-in outcomes
-  — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of the three
-  fixed origins, which leaves a major browser's users out. The second of those is not hypothetical:
+  property, so two extra rules cost the two ordinary origins their place in YAML too; what is left
+  is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad built-in outcomes
+  — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an allowlist of fixed
+  origins only, which leaves a major browser's users out. The second of those is not hypothetical:
   it is what the report behind this decision describes having done, over `unrestricted()` and
   knowingly. It is also a different failure from the first. An Edge subscription is registered and
   then rejected at every send for the rest of its life; what the application sees is an
@@ -211,7 +253,7 @@ to rules of one kind and delegates.
 - **The starter's existing rules are restated over two properties, and attribution becomes exact.**
   "Expressed" means at least one of the two properties is non-empty. **Two non-empty properties are
   not a conflict: they are unioned into one allowlist**, which is the shape the WNS case needs —
-  three origin entries beside one domain entry. The exclusivity ADR-016 established holds between
+  two origin entries beside two domain entries. The exclusivity ADR-016 established holds between
   the properties and a bean, never between the two properties, which are two halves of one statement
   rather than two statements of the same control. Both sources at once — expressed, plus a bean —
   still fails the context, naming which property is non-empty and naming the bean. Neither of them —
@@ -324,8 +366,8 @@ Rejected alternatives:
   `Predicate<String>` factory adds nothing over the `EndpointPolicy` lambda ADR-005 already
   provides, only surface.
 - **Letting a domain rule match any port or any scheme**, which is a port and protocol oracle over
-  an unbounded set of hosts; and **expressing all four push services as domains**, which widens
-  three single-host services to three zones for no gain.
+  an unbounded set of hosts; and **expressing all four push services as domains**, which widens the
+  services whose operators do name one exact host into zones for no gain.
 
 This rules out a public combinator over `EndpointPolicy`, whether on `EndpointPolicies` or on the
 interface; a rule kind contributed from outside the library; a domain rule matching a scheme other

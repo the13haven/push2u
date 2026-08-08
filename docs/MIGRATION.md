@@ -432,18 +432,36 @@ works as a blind SSRF oracle for internal host and port existence.
 For almost every deployment the answer is an allowlist of the push services its users arrive from:
 
 ```java
-EndpointPolicy pushServices = EndpointPolicies.allowedOrigins(
-        "https://fcm.googleapis.com",                 // Chrome
-        "https://updates.push.services.mozilla.com",  // Firefox
-        "https://web.push.apple.com");                // Safari
+EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(
+        EndpointRule.origin("https://fcm.googleapis.com"),                // Chrome and Chromium
+        EndpointRule.origin("https://updates.push.services.mozilla.com"), // Firefox
+        EndpointRule.domain("push.apple.com"),                            // Safari, through APNs
+        EndpointRule.domain("notify.windows.com"));                       // Edge, through WNS
 
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
 ```
 
+Two of the four services issue endpoints on one fixed host, so an origin entry says everything
+there is to say about them. The other two publish a zone, and publish it as what a sending server
+should be allowed to reach:
+[Apple](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
+tells a server in control of its push endpoints to "allow URLs from `*.push.apple.com`", and
+[Microsoft](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config)
+gives `*.notify.windows.com` as the FQDN a cloud service sending to WNS — where Edge's endpoints
+live — must be allowed to reach. That is what a domain entry is for, and why an entry carries its
+kind rather than taking it from the factory it was passed to.
+[`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four services and this same allowlist in the Spring
+YAML form as well, with what each vendor's page does and does not say and why no browser is missing
+from it.
+
 The policy runs before encryption, before the VAPID signature and before any I/O; a rejection
-throws `EndpointRejectedException` and costs none of them. Matching is exact and fail-closed —
-subdomains are not included, and a malformed allowlist entry fails at construction so the mistake
-surfaces at deployment.
+throws `EndpointRejectedException` and costs none of them. An origin entry is exact and
+fail-closed — subdomains of an allowed origin are not included. A domain entry matches at a label
+boundary and over `https` on the default port only, so `notify.windows.com` admits
+`cloud.notify.windows.com` at any depth and refuses `evilnotify.windows.com`; it is worth exactly
+what the DNS of that zone is worth, and belongs only where the service operator publishes the zone
+rather than the host, as Apple and Microsoft each do. A malformed entry of either kind fails at
+construction, so the mistake surfaces at deployment.
 
 `EndpointPolicies.unrestricted()` reproduces exactly what you have today: any absolute `https`
 endpoint is sent to, loopback and private-range addresses included. It is a reasonable first move
@@ -524,9 +542,11 @@ signer in [`VAULT.md`](VAULT.md).
 8. Check that every endpoint you send to — test fixtures included — is `https`.
 9. Check payload sizes against the 3993-byte plaintext default, and topics against the
    RFC 8030 §5.4 shape.
-10. Pass an `EndpointPolicy` to every `PushSender.builder(…)` — `EndpointPolicies.allowedOrigins(…)`
-    naming the push services your users arrive from, or `EndpointPolicies.unrestricted()` if this
-    deployment deliberately restricts nothing.
+10. Pass an `EndpointPolicy` to every `PushSender.builder(…)` —
+    `EndpointPolicies.allowedEndpoints(…)` naming the push services your users arrive from, with a
+    domain rule for each service that publishes a zone rather than a host
+    ([`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the list), or
+    `EndpointPolicies.unrestricted()` if this deployment deliberately restricts nothing.
 11. On Spring Boot, consider `push2u-spring-boot-starter` — it binds `push2u.*`, builds the
     `PushSender` bean and adds an Actuator health indicator that signs a probe and verifies it. See
     [`SPRING.md`](SPRING.md).

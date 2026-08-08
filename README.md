@@ -120,9 +120,9 @@ example the [Vault Transit signer](#vault-transit-signer)), pass the signer inst
 The third parameter is the [endpoint policy](#endpoint-policy-ssrf-hardening), and it is required
 for the same reason the contact is: a subscription's endpoint decides where the send goes, and a
 sender built without a rule would POST wherever that endpoint points. The library does not choose
-the rule for you — `EndpointPolicies.allowedOrigins(…)` names the push services your users arrive
-from, and `EndpointPolicies.unrestricted()` says, in your own source, that this deployment applies
-no restriction.
+the rule for you — `EndpointPolicies.allowedEndpoints(…)` takes the allowlist naming the push
+services your users arrive from, and `EndpointPolicies.unrestricted()` says, in your own source,
+that this deployment applies no restriction.
 
 A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
 and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
@@ -305,18 +305,21 @@ push2u:
   allowed-origins:
     - "https://fcm.googleapis.com"
     - "https://updates.push.services.mozilla.com"
-    - "https://web.push.apple.com"
+  allowed-domains:
+    - "push.apple.com"
+    - "notify.windows.com"
 ```
 
-That is a complete configuration: everything else has a default. `allowed-origins` is not
-optional, though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context
-with neither it nor an `EndpointPolicy` bean fails to start with a message naming both ways to
-fix it. There is deliberately no property for the unrestricted mode: under Spring it is an
-application `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`, so that turning
-the control off is a code change someone reviews rather than a line copied between profiles.
-[`SPRING.md`](docs/SPRING.md) is the reference — every `push2u.*` property and what a rejected
-value does to startup, the `allowed-origins` property beside an `EndpointPolicy` bean, and the
-health indicator with its cache.
+That is a complete configuration: everything else has a default. The allowlist is not optional,
+though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context with neither
+of the two properties set nor an `EndpointPolicy` bean fails to start with a message naming every
+way to fix it. The two properties are not alternatives: they are unioned into one allowlist, and a
+deployment covering all four browser push services writes both. There is deliberately no property
+for the unrestricted mode: under Spring it is an application `@Bean EndpointPolicy` returning
+`EndpointPolicies.unrestricted()`, so that turning the control off is a code change someone reviews
+rather than a line copied between profiles. [`SPRING.md`](docs/SPRING.md) is the reference — every
+`push2u.*` property and what a rejected value does to startup, the two allowlist properties beside
+an `EndpointPolicy` bean, and the health indicator with its cache.
 
 ## Vault Transit signer
 
@@ -367,17 +370,37 @@ existence.
 Which endpoints a sender may POST to is therefore a decision the deployment has to make, and
 `PushSender` takes it as the third parameter of its factory method rather than as an optional
 builder step — there is no way to obtain a sender without naming a policy. For almost every
-deployment that policy is an origin allowlist naming the browser push services its users can
-actually arrive from:
+deployment that policy is an allowlist naming the browser push services its users can actually
+arrive from:
 
 ```java
-EndpointPolicy pushServices = EndpointPolicies.allowedOrigins(
-    "https://fcm.googleapis.com",                // Chrome
-    "https://updates.push.services.mozilla.com", // Firefox
-    "https://web.push.apple.com");               // Safari
+EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(
+    EndpointRule.origin("https://fcm.googleapis.com"),                // Chrome and Chromium
+    EndpointRule.origin("https://updates.push.services.mozilla.com"), // Firefox
+    EndpointRule.domain("push.apple.com"),                            // Safari, through APNs
+    EndpointRule.domain("notify.windows.com"));                       // Edge, through WNS
 
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
 ```
+
+An allowlist entry is a value that carries its own kind, so the list says what each entry means
+rather than leaving the meaning to the factory it was passed to. An **origin** rule matches one
+origin exactly. A **domain** rule matches a whole DNS zone — the apex and every subdomain at any
+depth — which is what two of the four standard services ask for, each in its own documentation.
+Apple tells a server in control of its push endpoints to "allow URLs from `*.push.apple.com`"
+([Web Push for Web Apps on iOS and iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)),
+and Microsoft gives `*.notify.windows.com` as the FQDN a cloud service sending to WNS — which is
+where Edge's endpoints live — must be allowed to reach, "because these will not change"
+([Firewall allowlist configuration](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config)).
+`allowedEndpoints` is therefore the ordinary cross-browser call, not an advanced one.
+[`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) carries the four services and this same allowlist in
+both spellings, ready to copy, with what each vendor's page does and does not say and why no
+browser is missing from it.
+
+`EndpointPolicies.allowedOrigins(…)` and `EndpointPolicies.allowedDomains(…)` are the convenience
+over it for a list of one kind — they take plain strings and build the rules for you. The rule
+kinds are closed: `EndpointRule` is sealed and holds exactly these two, because they are what the
+library knows how to match, not a place to add a third from outside.
 
 The policy runs on every send — `sendAsync` included, it goes through the same pipeline —
 before encryption, before the VAPID signature (a remote Vault/KMS call under an external
@@ -389,20 +412,48 @@ flag or remove it" apart from a retryable transport failure (`PushDeliveryExcept
 message never contains the endpoint's path or query, because a push endpoint is a capability
 URL.
 
-Origins compare after RFC 6454 normalization on both sides — lowercase scheme and host, IDNA
-A-labels decoded, the default `:443` dropped — so `https://PUSH.Example:443` in the
-configuration matches an endpoint on `https://push.example`. Matching is exact and fail-closed:
-subdomains of an allowed origin are not allowed, a host with a trailing dot (`push.example.`) is
-a different origin from `push.example` and is rejected, and an endpoint carrying userinfo
+The endpoint is normalized once, and every rule compares against that one value — RFC 6454
+normalization on both sides, so lowercase scheme and host, IDNA A-labels decoded and the default
+`:443` dropped, and `https://PUSH.Example:443` in the configuration matches an endpoint on
+`https://push.example`. Whatever the rule, an endpoint carrying userinfo
 (`https://allowed.example@evil.example/…`) is rejected outright — no push service issues such
 endpoints, and rejecting the shape also protects custom transports that re-parse the URL string
-differently. A malformed allowlist entry (unparseable, non-`https`, hostless, or carrying a
-path/query/fragment/userinfo) fails at construction, so a misconfigured allowlist fails
-deployment startup instead of misbehaving at send time.
+differently.
+
+**An origin rule is exact and fail-closed**: subdomains of an allowed origin are not allowed, and
+a host with a trailing dot (`push.example.`) is a different origin from `push.example` and is
+rejected.
+
+**A domain rule matches at a label boundary**, so `notify.windows.com` admits
+`cloud.notify.windows.com` and any depth below it, and refuses `evilnotify.windows.com` — the dot
+belongs to the boundary, which is the whole of the difference. It matches only the scheme `https`
+and the default port, absent or an explicit `443`: a domain is a statement about which *names* are
+trusted, while a port is a statement about which service on a host is, and a rule spanning every
+port of a zone would be an SSRF oracle again, relocated. A deployment that needs
+`https://push.internal.example:8443` names it exactly with an origin rule.
+
+The library makes **no public-suffix judgement** — there is none in the JDK, and it will not carry
+a data file that ages between releases while looking authoritative. A domain rule is worth exactly
+what the DNS of that zone is worth, and over a shared hosting zone it permits every tenant of it.
+The rule of thumb is that a domain rule belongs only where the service operator *publishes the
+zone* rather than the host — by documenting that its hostnames vary within it, or by naming the
+zone as what your server should be allowed to reach. Anything else is an origin rule.
+
+A malformed allowlist entry fails at construction, so a misconfigured allowlist fails deployment
+startup instead of misbehaving at send time. An origin entry is refused when it is unparseable,
+non-`https`, hostless, or carries a path, query, fragment or userinfo. A domain entry is refused
+when it carries a control character — a line copied out of a terminal, or a carriage return from a
+file written on Windows — or any URI delimiter at all, a scheme, a port, a path, a query, a fragment
+or an `@`, or a `*`, a leading dot, an empty label, a trailing root dot, a single label such as
+`com`, an IP literal, or raw Unicode; spell an internationalised host in its A-label form. The
+refusal names the entry the way a rejection names an endpoint: an origin entry is rendered with its
+path and query stripped, since a pasted capability URL is exactly the mistake being reported, and a
+domain entry appears verbatim only when it is a plain host-shaped token.
 
 `EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
-egress rules or custom DNS checks can be expressed directly. The policy is fixed when the sender
-is built and receives only the URI — a rule that varies by tenant means one sender per tenant.
+egress rules or custom DNS checks can be expressed directly — that seam is where a rule neither of
+the two kinds can express belongs. The policy is fixed when the sender is built and receives only
+the URI — a rule that varies by tenant means one sender per tenant.
 
 **Sending anywhere is still possible, and has a name.** `EndpointPolicies.unrestricted()` accepts
 every endpoint `Subscription` accepts — loopback, private-range and cloud-metadata addresses
