@@ -30,7 +30,7 @@ of what the vendors publish rather than anything this repository verifies; it sa
 names the two rows whose vendor page carries the host but not the last step to Web Push — those
 clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…017) with
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…018) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
 the other library's API and dependency set as verified facts, so anything added there must be
