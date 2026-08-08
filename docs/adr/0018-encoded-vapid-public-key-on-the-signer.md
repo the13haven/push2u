@@ -82,15 +82,19 @@ default String publicKeyBase64Url();
   The full on-curve check stays where it is, at the boundaries where a key *enters* the library:
   `VapidKeys`' constructor, the Vault signer's, and `Subscription` for the `p256dh`. That is a
   statement about which boundary this is, not about cost — the send path runs the full check on the
-  subscription key every time, so an encoder could afford one. An encoder is simply not a boundary a
-  key enters through: it publishes a value the library was already given, and a key that reaches it
-  has passed the entry check or has no entry point in the library at all.
+  subscription key every time, so an encoder could afford one. The claim that decides it is narrower
+  and exact: **the publication path is as strict as delivery, and no stricter.** What the send path
+  applies to the *VAPID* key is the structural check alone; the full curve check it runs per send is
+  on the subscription's `p256dh`. So a signer whose key the encoder accepts is a signer whose key
+  the next send accepts, which is the only agreement that matters — an encoder refusing what
+  delivery would carry is a second, later opinion about a key the library was already given.
 - **The two entry points fail with different exception types, and each reuses the check that already
   belongs to it.** The static's argument is the caller's own byte array, so a malformed one is an
   ordinary argument failure: `IllegalArgumentException`, from
   `P256PublicKeys.requireUncompressedPoint`, which is already public, already exported and already
-  the library's answer for a caller-supplied key of the wrong shape. The `default` method's value is the *signer's* output, which the SPI holds
-  to a different standard: a signer returning the wrong shape raises `PushCryptoException` naming
+  the library's answer for a caller-supplied key of the wrong shape. The `default` method's value is
+  the *signer's* output, which the SPI holds to a different standard: a signer returning the wrong
+  shape raises `PushCryptoException` naming
   what it returned, and the message the send path produces for it names the `SubjectPublicKeyInfo`
   case specifically, which is the realistic mistake in exactly this call. So the `default` method
   applies **the send path's own check**, not the static's — that check becomes package-private and
@@ -135,11 +139,16 @@ default String publicKeyBase64Url();
   is an equality against `VapidKeys.encodePublicKey(signer.publicKey())` rather than a round trip
   back through a decoder: one comparison pins the alphabet, the padding and the canonical final
   character at once, and it leaves the kit no decoder of its own to choose — decoding and comparing
-  admits a standard-alphabet override whenever its characters happen to avoid `+` and `/`. The kit
-  compares against the library's published encoder here rather than deriving the value from the JDK,
-  because "must not disagree with the library" is precisely the claim; its JDK-only rule is about
-  verifying the cryptography, and this assertion verifies none. It can only fail for a signer that
-  overrode the method, which is precisely the case it exists for.
+  admits a standard-alphabet override whenever its characters happen to avoid `+` and `/`. That
+  makes the kit call `VapidKeys` for the first time, and its class Javadoc — which promises
+  verification through the JDK and the public `VapidSigner` surface alone, self-contained and with
+  no push2u-internal dependency — is amended to say so rather than left standing as a sentence the
+  new assertion falsifies in published Javadoc. Nothing the promise was protecting is given up:
+  `VapidKeys` is published API of a module the kit already depends on, nothing package-private is
+  reached, and the platform portability the surrounding sentences are about belongs to the signature
+  verification, which is untouched. The comparison has to be against the library's own encoder,
+  because "must not disagree with the library" is the whole claim. It can only fail for a signer
+  that overrode the method, which is precisely the case it exists for.
 - **`README.md` and `docs/VAULT.md` are part of the change, not a follow-up.** This report is a
   discoverability complaint before it is an API complaint: the three details cost the reporter time
   because nothing said them where they were looking, and a method nobody finds closes the mechanism
