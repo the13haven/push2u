@@ -143,6 +143,17 @@ class EndpointRuleTest {
     }
 
     @Test
+    void originSendsAPercentEncodedWildcardToTheDomainRuleToo() {
+        // The host position is read off the DECODED authority, so "%2A" is diagnosed as the
+        // wildcard it is rather than as a host the parser could not read. Both spellings are
+        // refused either way — this only decides which refusal the author is handed — but the
+        // decoded one is the better diagnosis, and it is a choice rather than an accident.
+        assertThatThrownBy(() -> EndpointRule.origin("https://%2A.notify.windows.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("EndpointRule.domain");
+    }
+
+    @Test
     void originSurvivesAnAuthorityLessUri() {
         // "https:*" parses with getAuthority() == null; reading the authority without a null guard
         // would turn a malformed entry into a NullPointerException.

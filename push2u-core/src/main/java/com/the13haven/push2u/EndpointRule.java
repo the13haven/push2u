@@ -312,6 +312,15 @@ public abstract sealed class EndpointRule {
      * origin, which is the right thing to tell whoever wrote them.
      */
     private static boolean hasWildcardInHostPosition(URI uri) {
+        // getAuthority() rather than getRawAuthority(): the decoded form, so a percent-encoded
+        // wildcard ("https://%2A.zone.example") reaches this branch too. Deliberate, and it widens
+        // nothing — every entry that gets here has already failed to yield a host and is refused
+        // whichever branch it takes, so all that changes is which refusal its author is handed, and
+        // "express a zone with a domain rule" diagnoses that entry better than "your origin has no
+        // host". Decoding can in principle also move where the strips below cut, when an escaped
+        // '@' or ':' appears beside a wildcard; that too only selects a message between two
+        // refusals, which is why the decoded form is chosen for the common case rather than the
+        // contrived one.
         String authority = uri.getAuthority();
         if (authority == null) {
             // "https:*" parses with no authority at all.

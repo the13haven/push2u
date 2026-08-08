@@ -20,10 +20,10 @@ import java.util.Set;
  *
  * <p>The allowlist is the rule nearly every deployment actually wants: the set of browser push services an
  * application's users can arrive from is small and known (FCM, Mozilla autopush, WNS, APNs web push), so "only these"
- * closes the attacker-supplied endpoint hole with configuration a reviewer can read. Most of those services are a
- * single fixed host, which is what {@link EndpointRule#origin} names; a service whose operator documents that its
- * hostnames vary within one DNS zone — WNS is the case in point — is named with {@link EndpointRule#domain} instead.
- * {@link #allowedEndpoints} takes both kinds in one list, and that mixed list is the ordinary cross-browser
+ * closes the attacker-supplied endpoint hole with configuration a reviewer can read. A service whose operator names one
+ * exact host is named back with {@link EndpointRule#origin}; a service whose operator documents that its hostnames vary
+ * within one DNS zone — and more than one of the standard four does — is named with {@link EndpointRule#domain}
+ * instead. {@link #allowedEndpoints} takes both kinds in one list, and that mixed list is the ordinary cross-browser
  * configuration rather than an edge case. {@link #allowedOrigins} and {@link #allowedDomains} are the single-kind
  * conveniences over it.
  *
@@ -63,9 +63,11 @@ public final class EndpointPolicies {
      * <p><b>When it is the right choice.</b> When subscriptions never arrive from untrusted clients: they are entered
      * by operators, imported from a system inside the trust boundary, or fixed in configuration. Also where egress is
      * already pinned somewhere the library cannot see — an egress proxy or firewall that decides what this process may
-     * connect to — since a second allowlist there would only be a copy that drifts. In every other case use
-     * {@link #allowedOrigins(Collection)}: the push services an application's subscriptions come from are few and
-     * known, and naming them costs one configuration line.
+     * connect to — since a second allowlist there would only be a copy that drifts. In every other case name the
+     * services instead: {@link #allowedOrigins(Collection)} where each one is a fixed host,
+     * {@link #allowedEndpoints(Collection)} where one of them publishes a whole DNS zone whose hostnames vary — which
+     * some of them do, and which is the case that most often sends a deployment here by mistake. The push services an
+     * application's subscriptions come from are few and known, and naming them costs one configuration line.
      *
      * @return a policy that rejects nothing
      */
@@ -87,8 +89,8 @@ public final class EndpointPolicies {
 
     /**
      * A policy allowing exactly the given rules: a send is permitted only if at least one rule matches the endpoint.
-     * This is the primary cross-browser call — a few {@link EndpointRule#origin} entries for the single-host services
-     * beside one {@link EndpointRule#domain} entry for a service whose hostnames vary within a zone.
+     * This is the primary cross-browser call — {@link EndpointRule#origin} entries for the services named by an exact
+     * host, beside a {@link EndpointRule#domain} entry for each service whose hostnames vary within a zone.
      *
      * <p>Each rule validated and normalized its own entry when it was built, so a malformed allowlist has already
      * failed by the time this method is reached. Rules are values: two rules of the same kind with the same normalized
@@ -124,10 +126,11 @@ public final class EndpointPolicies {
     }
 
     /**
-     * A policy allowing exactly the given domains; see {@link #allowedDomains(Collection)}.
+     * A policy allowing each of the given domains <em>and every subdomain of it, at any depth</em>; see
+     * {@link #allowedDomains(Collection)}.
      *
      * @param domains the allowed domains, e.g. {@code "notify.windows.com"}
-     * @return a policy that rejects any endpoint outside those domains
+     * @return a policy admitting each listed domain and every host beneath it, and rejecting every other endpoint
      * @throws IllegalArgumentException if no domain is given, or any entry is not a well-formed multi-label hostname
      */
     public static EndpointPolicy allowedDomains(String... domains) {
@@ -147,7 +150,7 @@ public final class EndpointPolicies {
      * {@link #allowedEndpoints(Collection)} instead.
      *
      * @param domains the allowed domains, e.g. {@code "notify.windows.com"}
-     * @return a policy that rejects any endpoint outside those domains
+     * @return a policy admitting each listed domain and every host beneath it, and rejecting every other endpoint
      * @throws IllegalArgumentException if no domain is given, or any entry is not a well-formed multi-label hostname
      */
     public static EndpointPolicy allowedDomains(Collection<String> domains) {

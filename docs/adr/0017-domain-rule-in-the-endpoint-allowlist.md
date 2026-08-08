@@ -29,10 +29,16 @@ four — and it independently re-derives the label boundary that separates
 the kind no operator finds by testing the configuration they meant to write. Enumerating the
 datacentre subdomains is not a workaround either, but exactly the failure mode ADR-016 named when it
 rejected a built-in browser allowlist: an allowlist that is mostly right, that goes stale as WNS
-adds a datacentre, and that fails silently when it does. The other three services are single fixed
-hosts, so WNS is the only one affected today — but the same shape returns for any self-hosted or
-intra-organisation push service fronted by more than one host, which ADR-016 lists as a legitimate
-deployment. ADR-016 set out to stop unrestricted egress from being what a deployment gets by not
+adds a datacentre, and that fails silently when it does. Nor is WNS alone in this. Apple publishes
+the same instruction for the same purpose: under *Prepare your server to send push notifications*,
+its web push documentation reads, verbatim, "If your network infrastructure limits which URLs your
+server can access, allow access for `https://*.push.apple.com`"
+(https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers).
+That sentence is addressed to an egress allowlist, in the same role Microsoft's is, and what it
+names is a zone. Two of the four standard services therefore publish a zone rather than a host, and
+the same shape returns again for any self-hosted or intra-organisation push service fronted by more
+than one host, which ADR-016 lists as a legitimate deployment. ADR-016 set out to stop unrestricted
+egress from being what a deployment gets by not
 deciding; here it is what a deployment can reach for *after* deciding correctly, because the correct
 rule has no spelling among the answers the library ships and the spelling it does have is forty
 lines of security-critical normalization the deployment has to get right on its own. That is a
@@ -62,8 +68,9 @@ public static EndpointPolicy allowedDomains(String... domains);
 public static EndpointPolicy allowedDomains(Collection<String> domains);
 ```
 
-`allowedEndpoints` is the primary cross-browser call: for anyone serving Edge, a list holding three
-origin rules and one domain rule *is* the ordinary configuration, not an edge case. The two string
+`allowedEndpoints` is the primary cross-browser call: for anyone serving the browsers whose services
+publish a zone, a list holding origin rules beside domain rules *is* the ordinary configuration, not
+an edge case. The two string
 factories are convenience over it — `allowedOrigins` keeps the signatures it shipped with and is
 neither changed nor deprecated, `allowedDomains` is its new counterpart — and each maps its entries
 to rules of one kind and delegates.
@@ -349,8 +356,8 @@ Rejected alternatives:
   `Predicate<String>` factory adds nothing over the `EndpointPolicy` lambda ADR-005 already
   provides, only surface.
 - **Letting a domain rule match any port or any scheme**, which is a port and protocol oracle over
-  an unbounded set of hosts; and **expressing all four push services as domains**, which widens
-  three single-host services to three zones for no gain.
+  an unbounded set of hosts; and **expressing all four push services as domains**, which widens the
+  services whose operators do name one exact host into zones for no gain.
 
 This rules out a public combinator over `EndpointPolicy`, whether on `EndpointPolicies` or on the
 interface; a rule kind contributed from outside the library; a domain rule matching a scheme other

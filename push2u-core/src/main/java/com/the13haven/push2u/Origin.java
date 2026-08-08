@@ -18,14 +18,18 @@ import java.util.regex.Pattern;
  * normalization — it preserves the scheme/host case and an explicit default port verbatim — so a push service comparing
  * {@code aud} against its canonical origin would reject an otherwise valid JWT.
  *
- * <p><b>Security note:</b> {@link #serialize} is also load-bearing for {@link EndpointPolicies#allowedOrigins}, which
- * compares the allowlist and the endpoint on this method's output. Two properties of the serialization are relied on
- * and pinned in {@code OriginTest}: userinfo never reaches the output (the comparison must see the real host, not an
- * {@code allowed.example@evil.example} impersonation — switching to {@code getAuthority()} would break this), and the
- * {@code unicodeHost} error fallback stays fail-closed for the allowlist (it returns a plain lowercased host, which at
- * worst fails to match and rejects the send — it can never fabricate a host that matches an entry the endpoint's real
- * host would not). An {@code aud}-motivated edit here must keep both, or {@code EndpointPolicies} needs its own
- * normalizer first.
+ * <p><b>Security note:</b> {@link #parts} is also load-bearing for the standard endpoint allowlist, which reads it for
+ * every rule and never re-derives a host of its own. Two dependents, and they read different components: an origin rule
+ * compares the whole {@link Parts#serialized()} string, while a domain rule compares {@link Parts#host()} at a label
+ * boundary and tests {@link Parts#scheme()} and {@link Parts#port()} itself. Two properties of the normalization are
+ * relied on by both and pinned in {@code OriginTest}. Userinfo never reaches the output — the comparison must see the
+ * real host, not an {@code allowed.example@evil.example} impersonation, and switching to {@code getAuthority()} would
+ * break this for either rule kind. And the {@code unicodeHost} error fallback stays fail-closed: it returns a plain
+ * lowercased host, so a divergence between the two sides can at worst fail to match and reject the send, and can never
+ * fabricate a host that matches an entry the endpoint's real host would not — which holds for the suffix comparison as
+ * it does for the exact one, since a lowercased A-label neither ends with a decoded U-label suffix nor equals it. An
+ * {@code aud}-motivated edit here must keep both, or the allowlist needs its own normalizer first — and a second
+ * normalizer is precisely what having one {@code parts} call per send exists to prevent.
  *
  * <p><b>Label boundaries survive this normalization</b>, which is what lets a suffix rule such as
  * {@link EndpointRule#domain} compare the endpoint's host at a DNS label boundary on the output of {@link #parts}
@@ -107,7 +111,11 @@ final class Origin {
      * Whether the host is an address literal rather than a registered name — a bracketed IPv6 form, or an IPv4
      * dotted-quad. Shared so that everything asking this question asks it of the same pattern.
      *
-     * @param host the host, already lowercased
+     * <p>Case-insensitive by construction, since both shapes it recognises are made of characters that have no case.
+     * The caller may pass a raw host or a lowercased one; a configured allowlist entry arrives here before any
+     * normalization has happened to it.
+     *
+     * @param host the host or configured entry to classify, in any case
      * @return {@code true} if the host is an address literal
      */
     static boolean isAddressLiteral(String host) {

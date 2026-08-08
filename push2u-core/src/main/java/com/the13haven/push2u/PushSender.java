@@ -94,8 +94,10 @@ public final class PushSender {
      *     endpoint inside a {@link Subscription} is attacker-influenced wherever subscriptions arrive from clients and
      *     a sender with no policy will POST anywhere that endpoint names — an outcome nobody should reach by omitting a
      *     step. The library still does not pick the rule: {@link EndpointPolicies#allowedOrigins} names the push
-     *     services this deployment expects, and {@link EndpointPolicies#unrestricted()} states that no restriction is
-     *     wanted, with the consequences on its own documentation
+     *     services this deployment expects where each is a fixed host, {@link EndpointPolicies#allowedEndpoints} does
+     *     the same where one of them publishes a whole DNS zone whose hostnames vary, and
+     *     {@link EndpointPolicies#unrestricted()} states that no restriction is wanted, with the consequences on its
+     *     own documentation
      * @return a new builder
      * @throws IllegalArgumentException if {@code contact} is blank
      */

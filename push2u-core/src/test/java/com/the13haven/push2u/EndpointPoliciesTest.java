@@ -289,8 +289,8 @@ class EndpointPoliciesTest {
 
     @Test
     void aMixedAllowlistMatchesEachKindWithoutWideningTheOther() {
-        // The ordinary cross-browser configuration: the three fixed-host services as origin rules,
-        // and the one service whose hostnames vary within a zone as a domain rule.
+        // The ordinary cross-browser configuration: services named by an exact host as origin
+        // rules, and a service whose operator publishes a whole zone as a domain rule.
         EndpointPolicy policy = EndpointPolicies.allowedEndpoints(
                 EndpointRule.origin("https://fcm.googleapis.com"),
                 EndpointRule.origin("https://updates.push.services.mozilla.com"),
