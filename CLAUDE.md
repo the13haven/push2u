@@ -21,7 +21,7 @@ so the anchors, the fenced block and the heredoc wrapper are load-bearing and
 `.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
 matches the path, so moving or renaming the file silently switches that off unless the pattern moves
 with it. `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…016) with
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…017) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
 the other library's API and dependency set as verified facts, so anything added there must be
