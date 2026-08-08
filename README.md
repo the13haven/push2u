@@ -445,10 +445,10 @@ non-`https`, hostless, or carries a path, query, fragment or userinfo. A domain 
 when it carries a control character — a line copied out of a terminal, or a carriage return from a
 file written on Windows — or any URI delimiter at all, a scheme, a port, a path, a query, a fragment
 or an `@`, or a `*`, a leading dot, an empty label, a trailing root dot, a single label such as
-`com`, an IP literal, or raw Unicode; spell an internationalised host in its A-label form. The refusal names the
-entry the way a rejection names an endpoint: an origin entry is rendered with its path and query
-stripped, since a pasted capability URL is exactly the mistake being reported, and a domain entry
-appears verbatim only when it is a plain host-shaped token.
+`com`, an IP literal, or raw Unicode; spell an internationalised host in its A-label form. The
+refusal names the entry the way a rejection names an endpoint: an origin entry is rendered with its
+path and query stripped, since a pasted capability URL is exactly the mistake being reported, and a
+domain entry appears verbatim only when it is a plain host-shaped token.
 
 `EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
 egress rules or custom DNS checks can be expressed directly — that seam is where a rule neither of

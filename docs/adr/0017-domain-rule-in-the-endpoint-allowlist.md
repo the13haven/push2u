@@ -37,20 +37,19 @@ server can access, allow access for `https://*.push.apple.com`"
 That sentence is addressed to an egress allowlist, which is a different role from the channel-URI
 validation quoted above. Microsoft publishes an egress instruction of its own, on a page this
 decision has not cited so far: its firewall allowlist guidance gives
-`<CloudServiceDNS><DNS FQDN="*.notify.windows.com"/></CloudServiceDNS>` and defines that element, in
-its own *Terms and notations* table, as "the FQDN filters for the WNS servers your cloud service
-will talk to send notifications to WNS"
+`<CloudServiceDNS><DNS FQDN="*.notify.windows.com"/></CloudServiceDNS>`, and its own *Terms and
+notations* table defines that element, verbatim, as "These are the Fully-Qualified Domain Name
+(FQDN) filters for the WNS servers your cloud service will talk to send notifications to WNS"
 (https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config).
 So each of the two vendors publishes an egress instruction addressed to the sending server, and what
 each of those instructions names is a zone. Two of the four standard services therefore publish a
-zone rather than a host, and
-the same shape returns again for any self-hosted or intra-organisation push service fronted by more
-than one host, which ADR-016 lists as a legitimate deployment. ADR-016 set out to stop unrestricted
-egress from being what a deployment gets by not
-deciding; here it is what a deployment can reach for *after* deciding correctly, because the correct
-rule has no spelling among the answers the library ships and the spelling it does have is forty
-lines of security-critical normalization the deployment has to get right on its own. That is a
-failure of correctness-by-default over a control every consumer would otherwise re-derive.
+zone rather than a host, and the same shape returns again for any self-hosted or intra-organisation
+push service fronted by more than one host, which ADR-016 lists as a legitimate deployment. ADR-016
+set out to stop unrestricted egress from being what a deployment gets by not deciding; here it is
+what a deployment can reach for *after* deciding correctly, because the correct rule has no spelling
+among the answers the library ships and the spelling it does have is forty lines of
+security-critical normalization the deployment has to get right on its own. That is a failure of
+correctness-by-default over a control every consumer would otherwise re-derive.
 
 This does not supersede ADR-016, and every decision in it stands: the policy remains a required
 argument of both factory methods, the library still ships no allowlist of its own, no policy is
@@ -132,20 +131,20 @@ to rules of one kind and delegates.
   Refused: an empty entry; a control character, which a line copied out of a terminal or read from a
   Windows text file carries and which no hostname can hold — checked ahead of every delimiter below,
   since an ANSI escape sequence carries a `[` and would otherwise be refused as an address literal;
-  `:` (which
-  catches both a port and a pasted `https://x`, an entry that would otherwise parse with the host
-  `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently ignored); `@`
-  (`notify.windows.com@evil.example` parses with the host `evil.example`, so everything the operator
-  wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an empty label; a trailing
-  root dot, which `java.net.URI` accepts as a host and which would leave the rule unable to ever
-  fire — a dead entry that looks configured; a single label (`com`, `localhost`); an IP literal,
-  since an address has no subdomains and an operator reads `EndpointRule.domain("10.0.0.0")` as a
-  subnet; and raw Unicode. A closing check that the entry equals the host the parser found, ignoring
-  case, is the complete defence against the scheme concatenation reinterpreting the entry — which is
-  what lets the list above exist for the sake of its *messages* rather than for completeness.
-  Validation runs through the same `java.net.URI` the endpoint side uses, never a hand-rolled
-  hostname regex, so a configured entry can never be a shape an endpoint could never have; a regex
-  would be a second grammar of "a valid host" to keep in step with the first.
+  `:` (which catches both a port and a pasted `https://x`, an entry that would otherwise parse with
+  the host `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently
+  ignored); `@` (`notify.windows.com@evil.example` parses with the host `evil.example`, so
+  everything the operator wrote is discarded); `*` (the CSP and cookie habit); a leading dot or an
+  empty label; a trailing root dot, which `java.net.URI` accepts as a host and which would leave the
+  rule unable to ever fire — a dead entry that looks configured; a single label (`com`,
+  `localhost`); an IP literal, since an address has no subdomains and an operator reads
+  `EndpointRule.domain("10.0.0.0")` as a subnet; and raw Unicode. A closing check that the entry
+  equals the host the parser found, ignoring case, is the complete defence against the scheme
+  concatenation reinterpreting the entry — which is what lets the list above exist for the sake of
+  its *messages* rather than for completeness. Validation runs through the same `java.net.URI` the
+  endpoint side uses, never a hand-rolled hostname regex, so a configured entry can never be a shape
+  an endpoint could never have; a regex would be a second grammar of "a valid host" to keep in step
+  with the first.
 - **A rejection renders the value it names according to that value's sensitivity class, and the
   classes are not the same.** Every rejection that renders a subscription endpoint uses
   `Endpoints.redact`, unchanged and for the reason it always had. A rule entry is configuration

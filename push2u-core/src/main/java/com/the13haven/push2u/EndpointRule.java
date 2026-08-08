@@ -32,15 +32,16 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Instances are immutable and safe to share across threads.
  */
-// GodClass: the entry validation stays in this class deliberately. Every check below is the
-// library's single statement of what a valid allowlist entry is, made through the same URI parser
-// the endpoint side is normalized with; extracting it into a class of its own would create a second
-// statement of the same thing, to be kept in step with the first by hand. That is the split this
-// design exists to avoid, and because these checks are a security control, drift between two copies
-// of them would be silent rather than loud. The metric fires for a structural reason and not a
-// design one: a closed enumeration of rule kinds is two static factories plus the refusals behind
-// them, sharing constants rather than fields, so cohesion measured by field sharing scores zero
-// however the code is arranged.
+// GodClass: the entry validation stays in this class deliberately. The extraction the metric invites
+// is a partial one — the shape and label checks move to a class of their own while the parse, the
+// no-host branch and the closing read-back equality check stay here, because those three are what
+// the factory does with the parser's answer. That split leaves "what a valid allowlist entry is"
+// stated in two files, to be kept in step by hand; and because these checks are a security control,
+// drift between the halves would be silent rather than loud. Moving the whole body out instead only
+// renames the problem, since the class it lands in is this one under another name. The metric itself
+// fires for a structural reason rather than a design one: a closed enumeration of rule kinds is two
+// static factories plus the refusals behind them, sharing constants and holding no instance fields,
+// so cohesion measured by field sharing scores zero however the code is arranged.
 @SuppressWarnings("PMD.GodClass")
 public abstract sealed class EndpointRule {
 
@@ -193,10 +194,10 @@ public abstract sealed class EndpointRule {
      *
      * <p>The entry is a bare hostname of at least two labels, compared and stored in the same normalized form the
      * endpoint's host arrives in — lowercased, with IDNA A-labels decoded — so {@code domain("NOTIFY.WINDOWS.COM")} and
-     * {@code domain("xn--bcher-kva.example")} are live entries rather than dead ones. Refused: an empty entry; a scheme
-     * or port; a path, query or fragment; userinfo; a wildcard; a control character; a leading dot or an empty label; a
-     * trailing root dot; a single label; an IP address literal; and raw Unicode, which must be given in its
-     * A-label/Punycode form instead.
+     * {@code domain("xn--bcher-kva.example")} are live entries rather than dead ones. Refused, in the order the checks
+     * run: an empty entry; a control character; a scheme or port; a path, query or fragment; userinfo; a wildcard; a
+     * leading dot or an empty label; a trailing root dot; a single label; an IP address literal; and raw Unicode, which
+     * must be given in its A-label/Punycode form instead.
      *
      * <p>The library makes no public-suffix judgement, having no authoritative data to make one with: a domain rule
      * over a shared hosting zone permits every tenant of that zone.
