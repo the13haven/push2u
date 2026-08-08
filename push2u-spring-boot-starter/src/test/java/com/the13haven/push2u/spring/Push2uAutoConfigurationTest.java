@@ -509,19 +509,122 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void malformedAllowedOriginFailsTheContextNamingTheProperty() {
-        // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
-        // property name, not misbehave at send time.
+    void allowedDomainsPropertyEnforcesThePolicyOnTheWiredSender() {
+        // The property whose whole point is that it is wider than an origin: a subdomain of the
+        // configured zone is delivered to...
         keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .withPropertyValues("push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    PushResult result = sender.send(
+                            subscription("https://wns2-ln2p.notify.windows.com/w/?token=abc"),
+                            PushMessage.builder(new byte[1]).build());
+                    assertThat(result.isDelivered())
+                            .as("a domain rule admits every subdomain at any depth, which is why it exists")
+                            .isTrue();
+                });
+        // ...while a host that merely ends with the configured text, with no label boundary in
+        // front of it, is not. That single missing dot is the vulnerability class this feature
+        // exists to keep out of every consumer's hand-written policy, so it is pinned through the
+        // starter as well as in core.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    assertThatThrownBy(() -> sender.send(
+                                    subscription("https://evilnotify.windows.com/w/?token=abc"),
+                                    PushMessage.builder(new byte[1]).build()))
+                            .isInstanceOf(EndpointRejectedException.class);
+                });
+    }
+
+    @Test
+    void allowedDomainsAloneIsEnoughOfADecision() {
+        // Origins unset entirely: a deployment serving only a zone-published service configures
+        // one key and nothing else, and the context must start rather than demand the sibling.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-domains=notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    assertThat(context.getBean(Push2uProperties.class).allowedOrigins())
+                            .as("the sibling property really was unset")
+                            .isNull();
+                });
+    }
+
+    @Test
+    void bothAllowlistPropertiesAreUnionedIntoOneAllowlist() {
+        // The two properties are halves of one statement, not rival settings: three exact origins
+        // beside one zone is the ordinary cross-browser configuration. Each kind must match through
+        // the wired sender — a union built from only one of the lists would still pass a test that
+        // exercised that list alone.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://fcm.googleapis.com,https://updates.push.services.mozilla.com,"
+                                + "https://push.example.test",
+                        "push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    for (String endpoint : new String[] {
+                        "https://fcm.googleapis.com/fcm/send/abc",
+                        "https://updates.push.services.mozilla.com/wpush/v2/abc",
+                        "https://push.example.test/send/abc",
+                        "https://wns2-ln2p.notify.windows.com/w/?token=abc"
+                    }) {
+                        assertThat(sender.send(
+                                                subscription(endpoint),
+                                                PushMessage.builder(new byte[1]).build())
+                                        .isDelivered())
+                                .as(endpoint)
+                                .isTrue();
+                    }
+                    assertThatThrownBy(() -> sender.send(
+                                    subscription("https://other.example/send/abc"),
+                                    PushMessage.builder(new byte[1]).build()))
+                            .as("the union is still an allowlist")
+                            .isInstanceOf(EndpointRejectedException.class);
+                });
+    }
+
+    @Test
+    void malformedAllowedOriginFailsTheContextNamingThePropertyAndTheEntry() {
+        // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
+        // property name, not misbehave at send time. The index comes with it — the starter builds
+        // one rule per entry, so it knows which entry of which list refused, and an operator with a
+        // dozen origins configured does not have to find the bad one by inspection.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test,http://push.example")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(firstOfTypeContaining(
                                     context.getStartupFailure(),
                                     IllegalArgumentException.class,
-                                    "push2u.allowed-origins:"))
-                            .hasMessageContaining("push2u.allowed-origins:")
+                                    "push2u.allowed-origins[1]:"))
+                            .hasMessageContaining("push2u.allowed-origins[1]:")
                             .hasMessageContaining("must be https");
+                });
+    }
+
+    @Test
+    void malformedAllowedDomainFailsTheContextNamingThePropertyAndTheEntry() {
+        // The domain field is exactly where a pasted endpoint URL lands, so its refusal is the one
+        // most worth attributing precisely — and it must name push2u.allowed-domains, not the
+        // sibling property whose entries were all fine.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-domains=notify.windows.com,https://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-domains[1]:"))
+                            .hasMessageContaining("push2u.allowed-domains[1]:")
+                            .hasMessageContaining("bare hostname");
                 });
     }
 
@@ -559,6 +662,81 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void theIndexIsCountedWithinItsOwnPropertyWhenBothAreConfigured() {
+        // The case the per-property index was designed for, and the one a single test populating
+        // one list can never fail on: with both lists populated, an index counted across the pair —
+        // or a property name captured once for whichever list ran first — still points somewhere,
+        // just not at the entry the operator has to fix. Asserted in both directions, since a shared
+        // counter is only visibly wrong for the list that is processed second.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://fcm.googleapis.com,https://push.example.test,"
+                                + "https://updates.push.services.mozilla.com",
+                        "push2u.allowed-domains=good.example,bad..example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-domains[1]:"))
+                            .as("the index is this property's own, not a position in the concatenated pair")
+                            .hasMessageNotContaining("push2u.allowed-origins")
+                            .hasMessageContaining("empty label");
+                });
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://fcm.googleapis.com,http://push.example",
+                        "push2u.allowed-domains=good.example,notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-origins[1]:"))
+                            .hasMessageNotContaining("push2u.allowed-domains")
+                            .hasMessageContaining("must be https");
+                });
+    }
+
+    @Test
+    void allowedDomainsPropertyPlusPolicyBeanFailsTheContextNamingBoth() {
+        // The exclusivity is between the properties and a bean, and it holds for the new property
+        // exactly as for the old one — including naming WHICH property is non-empty, which with two
+        // of them is the difference between a fix and a search.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-domains"))
+                            .hasMessageContaining("EndpointPolicy bean")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void bothAllowlistPropertiesPlusPolicyBeanNameBothPropertiesAndTheBean() {
+        // The plural branch of the same refusal. Naming which property collided is the whole point
+        // of that branch, and with both non-empty the answer is "both" — an operator told about one
+        // of them would empty it, restart, and meet the refusal again over the other.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues(
+                        "push2u.allowed-origins=https://push.example.test", "push2u.allowed-domains=notify.windows.com")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                            .hasMessageContaining("push2u.allowed-domains")
+                            .hasMessageContaining("EndpointPolicy bean")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
     void emptyAllowedOriginsBesideAPolicyBeanCedesToTheBean() {
         // The escape hatch for inherited configuration: a service getting push2u.allowed-origins
         // from a shared application.yml it does not own cannot unset the property, so explicitly
@@ -580,37 +758,103 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void emptyAllowedOriginsAloneStillFailsTheContext() {
-        // The guard on the escape hatch: emptying the property only cedes to a bean. With no bean
-        // it stays an error, so the SSRF control cannot be silently disabled by an empty value.
-        // It also fails on its own ground — "at least one origin", the allowlist factory's
-        // rejection — rather than as the no-decision case below: emptying the property is a
-        // statement about the property, and the operator is told what is wrong with the value they
-        // actually wrote.
+    void bothAllowlistPropertiesEmptyBesideAPolicyBeanCedeToTheBean() {
+        // The escape hatch is per property, so a service that inherits both keys empties both and
+        // still gets its bean rather than a startup failure.
         keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-origins=")
+                .withPropertyValues("push2u.allowed-origins=", "push2u.allowed-domains=")
+                .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
                 .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(),
-                                    IllegalArgumentException.class,
-                                    "push2u.allowed-origins:"))
-                            .hasMessageContaining("at least one origin");
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    assertThatThrownBy(() -> sender.send(
+                                    subscription(),
+                                    PushMessage.builder(new byte[1]).build()))
+                            .as("the bean's policy is in force, not no-policy")
+                            .isInstanceOf(EndpointRejectedException.class)
+                            .hasMessageContaining("application policy");
                 });
     }
 
     @Test
-    void neitherAllowedOriginsNorAPolicyBeanFailsTheContextNamingBothWaysToFixIt() {
+    void everyConfiguredAllowlistEmptyWithNoBeanFailsWithTheStartersOwnMessage() {
+        // The guard on the escape hatch: emptying a property only cedes to a bean. With no bean it
+        // stays an error, so the SSRF control cannot be silently disabled by an empty value.
+        //
+        // The message is the STARTER's and names both keys, rather than being delegated to whichever
+        // core factory happens to run: with two properties the emptiness is a fact about the pair,
+        // and "allowedOrigins requires at least one origin" would describe half the configuration
+        // while the operator's mistake may be in the other half. IllegalStateException for the same
+        // reason as the neither-case beside it — this is a statement about the state of the
+        // configuration, not about a bad value in it.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=", "push2u.allowed-domains=")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                            .hasMessageContaining("push2u.allowed-domains")
+                            .as("the emptiness case, not the never-decided one beside it")
+                            .hasMessageContaining("has an entry")
+                            .hasMessageContaining("cede");
+                });
+    }
+
+    @Test
+    void oneEmptyAllowlistPropertyAloneStillFailsTheContext() {
+        // Emptying one key while never setting the other is the same statement as emptying both:
+        // nothing is expressed and there is no bean to cede to. It must not fall through to the
+        // unset case, whose message says the properties are "not set" — which would be untrue of
+        // the one the operator did write.
+        keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-domains=")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-domains"))
+                            .hasMessageContaining("has an entry");
+                });
+    }
+
+    @Test
+    void neitherPropertyNorAPolicyBeanFailsTheContextNamingThreeWaysToFixIt() {
         // The decision has to be expressed: a sender wired with no endpoint policy would POST
         // wherever a subscription's endpoint points, and a subscription registered by a client is
-        // attacker-influenced. The failure has to be actionable in both directions, so it names the
-        // property and the bean — including the deliberate opt-out, which exists only as a bean.
+        // attacker-influenced. The failure has to be actionable in every direction, so it names all
+        // three ways to answer — both properties and the bean, including the deliberate opt-out,
+        // which exists only as a bean.
         keyedRunnerWithoutEndpointPolicy().run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
                             context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                    .as("the never-decided case, not the emptiness one beside it")
+                    .hasMessageContaining("nor push2u.allowed-domains is set")
+                    .as("all three ways to decide")
                     .hasMessageContaining("EndpointPolicy bean")
                     .hasMessageContaining("EndpointPolicies.unrestricted()");
+        });
+    }
+
+    @Test
+    void anUnsetAllowlistPropertyBindsAsNullAndAnEmptyOneAsAnEmptyList() {
+        // The premise every rule above rests on, and the reason neither component carries a
+        // @DefaultValue: a default would make an absent key arrive as an empty list, collapsing
+        // "this deployment has not decided" into "this deployment deliberately cedes to a bean" —
+        // two states the starter has to answer differently, and which no other test can tell apart
+        // once the binding stops distinguishing them.
+        keyedRunner().run(context -> {
+            Push2uProperties bound = context.getBean(Push2uProperties.class);
+            assertThat(bound.allowedOrigins()).containsExactly("https://push.example.test");
+            assertThat(bound.allowedDomains())
+                    .as("an absent key binds as null, never as an empty list")
+                    .isNull();
+        });
+        keyedRunner().withPropertyValues("push2u.allowed-domains=").run(context -> {
+            Push2uProperties bound = context.getBean(Push2uProperties.class);
+            assertThat(bound.allowedDomains())
+                    .as("an explicitly empty value binds as an empty list, which is the escape hatch")
+                    .isNotNull()
+                    .isEmpty();
         });
     }
 
