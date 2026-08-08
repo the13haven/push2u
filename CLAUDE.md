@@ -54,7 +54,8 @@ Those documents point at README's Installation section instead. The exception is
 version on purpose, and a frozen coordinate there is correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
-approves a merge into `main`. It loads automatically alongside this file.
+approves a merge into `main` and how work that started from a tracker issue references it. It loads
+automatically alongside this file.
 
 Two skills hold the procedures that do not belong in this file:
 `.claude/skills/push2u-implement/SKILL.md` for how recurring multi-file changes are made here, and
