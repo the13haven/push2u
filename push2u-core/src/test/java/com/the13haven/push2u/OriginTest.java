@@ -137,4 +137,62 @@ class OriginTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageNotContaining("subscriber-token");
     }
+
+    @Test
+    void serializeIsExactlyThePartsSerialization() {
+        // serialize() is a projection of parts(): the allowlist reads the components while the aud
+        // claim reads the string, and one endpoint must never get two answers. Every case pinned
+        // above is replayed here, so a change that moved one and not the other fails.
+        for (String endpoint : new String[] {
+            "HTTPS://PUSH.Example/subscriber-token",
+            "https://push.example:443/subscriber-token",
+            "http://push.example:80/subscriber-token",
+            "https://push.example:8443/subscriber-token",
+            "https://push.example:80/subscriber-token",
+            "https://xn--e1afmkfd.xn--80akhbyknj4f/subscriber-token",
+            "https://XN--E1AFMKFD.XN--80AKHBYKNJ4F:443/subscriber-token",
+            "https://[::1]:8443/subscriber-token",
+            "https://127.0.0.1:8443/subscriber-token",
+            "https://example.com./subscriber-token",
+            "https://user:pass@push.example/subscriber-token",
+            "https://fcm.googleapis.com@evil.example/subscriber-token"
+        }) {
+            URI uri = URI.create(endpoint);
+            assertThat(Origin.parts(uri).serialized()).as("%s", endpoint).isEqualTo(Origin.serialize(uri));
+        }
+    }
+
+    @Test
+    void partsExposeTheSchemeHostAndRawPort() {
+        // The port is the URI's own: absent stays -1 rather than being replaced by the scheme's
+        // default, and an explicit 443 stays 443 even though the serialization drops it. A rule
+        // testing the port itself needs the raw value, not the serialization's per-scheme drop.
+        Origin.Parts noPort = Origin.parts(URI.create("HTTPS://PUSH.Example/subscriber-token"));
+        assertThat(noPort.scheme()).isEqualTo("https");
+        assertThat(noPort.host()).isEqualTo("push.example");
+        assertThat(noPort.port()).isEqualTo(-1);
+        assertThat(noPort.serialized()).isEqualTo("https://push.example");
+
+        Origin.Parts defaultPort = Origin.parts(URI.create("https://push.example:443/subscriber-token"));
+        assertThat(defaultPort.port()).isEqualTo(443);
+        assertThat(defaultPort.serialized()).isEqualTo("https://push.example");
+
+        Origin.Parts otherPort = Origin.parts(URI.create("https://push.example:8443/subscriber-token"));
+        assertThat(otherPort.port()).isEqualTo(8443);
+        assertThat(otherPort.serialized()).isEqualTo("https://push.example:8443");
+    }
+
+    @Test
+    void normalizationNeverMovesALabelBoundary() {
+        // Load-bearing for suffix matching: decoding an A-label can only insert code points at or
+        // above U+0080, so a U-label can never gain a '.'. The label count therefore survives
+        // normalization and a boundary in the input is a boundary in the output.
+        Origin.Parts parts = Origin.parts(URI.create("https://UPPER.xn--BCHER-KVA.example/subscriber-token"));
+
+        assertThat(parts.host()).isEqualTo("upper.bücher.example");
+        assertThat(parts.host().split("\\.", -1)).hasSize(3);
+        assertThat(parts.host().chars().filter(c -> c == '.').count())
+                .as("no dot is created or destroyed by decoding")
+                .isEqualTo(2);
+    }
 }
