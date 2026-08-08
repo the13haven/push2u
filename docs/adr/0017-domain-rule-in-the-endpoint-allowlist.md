@@ -1,6 +1,6 @@
 # ADR-017 — A domain rule in the endpoint allowlist
 
-**Status:** Proposed
+**Status:** Accepted
 
 ADR-016 made the egress decision mandatory and left exactly two answers behind it:
 `EndpointPolicies.allowedOrigins(...)`, whose rule is exact per origin — a subdomain of an allowed
@@ -113,8 +113,8 @@ to rules of one kind and delegates.
   re-creates the blind SSRF oracle ADR-016 exists to close, relocated into an external zone. A
   deployment that genuinely needs `https://host.zone:8443` names it exactly with an origin rule,
   which is the right granularity for a port.
-- **A malformed domain entry fails at construction**, as a malformed origin entry already does, and
-  every message renders the entry through `Endpoints.redact`. Refused: an empty entry; `:` (which
+- **A malformed domain entry fails at construction**, as a malformed origin entry already does.
+  Refused: an empty entry; `:` (which
   catches both a port and a pasted `https://x`, an entry that would otherwise parse with the host
   `https`); `/`, `?` or `#` (a pasted capability URL, whose path would be silently ignored); `@`
   (`notify.windows.com@evil.example` parses with the host `evil.example`, so everything the operator
@@ -128,6 +128,31 @@ to rules of one kind and delegates.
   Validation runs through the same `java.net.URI` the endpoint side uses, never a hand-rolled
   hostname regex, so a configured entry can never be a shape an endpoint could never have; a regex
   would be a second grammar of "a valid host" to keep in step with the first.
+- **A rejection renders the value it names according to that value's sensitivity class, and the
+  classes are not the same.** Every rejection that renders a subscription endpoint uses
+  `Endpoints.redact`, unchanged and for the reason it always had. A rule entry is configuration
+  rather than a subscription endpoint and follows type-specific diagnostic rendering. An origin entry
+  is rendered through `Endpoints.redact`, because at the moment of refusal it is precisely *not*
+  validated and the likeliest malformed entry is a pasted capability URL. A domain entry is rendered
+  verbatim only when it is a bounded ASCII host-shaped token without URI delimiters, whitespace, or
+  control characters; otherwise its raw value is omitted and the message carries only the cause.
+  Spring diagnostics identify the corresponding property and collection index. Rendering a domain
+  entry through `Endpoints.redact` too was the shape considered first, and it is unusable rather than
+  merely imperfect: `redact` was built for capability URLs and answers a bare domain by taking its
+  opaque branch, printing `<opaque endpoint>#` and sixteen hex characters and nothing else, so the
+  operator sees not one character of what they wrote — from a refusal whose entire job is to point at
+  their typo. Printing the entry unconditionally is the opposite failure and is unsafe for the same
+  reason the refusals above exist: the domain field is exactly where a pasted endpoint lands, and
+  what arrives there may carry a capability path or query, credentials, or control characters that
+  must not enter a log line. So the value earns its way into the message instead of being assumed
+  safe, and the predicate that decides is deliberately weaker than and different from the validation
+  — it asks only whether these characters are safe to quote, never whether they form a valid host, so
+  it can never become the second hostname grammar the bullet above refuses. Rejected:
+  `Endpoints.redact("https://" + entry)`, which invents a scheme the operator never wrote, renders a
+  configuration value as though it were an endpoint, and freezes an incidental `java.net.URI`
+  behaviour into a diagnostic; printing the entry always, which is unsafe for the pasted-endpoint
+  case; and a fingerprint always, which is diagnostically empty for exactly the domain-shaped
+  mistakes — a stray dot, a wrong case, an A-label — that this feature expects to receive.
 - **A domain entry is then normalized, not merely validated** — put through the same serialization
   the endpoint side is, so that case and internationalised form agree on both sides of the
   comparison. An origin entry is already normalized rather than only checked, and a domain entry
