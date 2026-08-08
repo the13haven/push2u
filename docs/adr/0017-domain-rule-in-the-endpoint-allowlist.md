@@ -239,33 +239,23 @@ to rules of one kind and delegates.
   is the shape the single `0.1.0` component already has; it is recorded as a decision because with
   two properties it stops being an implementation detail of one binding and becomes the premise the
   semantics above are stated in.
-- **The constructor `Push2uProperties` shipped with is preserved.** Adding a component widens the
-  record's canonical constructor, and the line taken here is that a published descriptor in a
-  published artifact is not changed — not because a caller is known to exist, but because whether
-  one exists is not something this project can find out, and a `NoSuchMethodError` for everyone
-  compiled against `0.1.0` is what a wrong guess costs. That this particular record has no plausible
-  hand-caller is probably true and is deliberately not the criterion: "probably nobody" is precisely
-  the judgement a line like this exists to remove. The provenance-restricted `anyOf` rejected below
-  is refused on the same descriptor grounds, and the two are not symmetric in consequence —
-  `allowedOrigins` is the primary factory every consumer calls — so the symmetry is support for the
-  line rather than the reason for it; what it does settle is that a document which cannot be amended
-  once implemented must not hold both answers with nothing to tell a later reader which one is the
-  rule. So the shipped constructor stays, delegating to the wider one with `null` for the new
-  component — never an empty list, which the bullet above gives the distinct meaning "deliberately
-  cedes to a bean", something no caller of the old constructor asked for. The wider canonical
-  constructor is what Spring binds through, and because the record then has more than one
-  constructor the binding target is named rather than inferred, `@ConstructorBinding` on the
-  canonical one. That ambiguity is why this is a decision and not an implementation detail: with a
-  single constructor the framework needs no annotation, so adding a second silently changes what
-  "the constructor" means. The standing cost is named rather than left to be discovered. `Vapid`,
-  `Retry` and `Health` are published records on the same footing, so each acquires a
-  preserved-constructor overload the first time it gains a property, as does this record on every
-  further one. That accumulation is bounded and not open-ended: the obligation is scoped to the
-  major line these constructors shipped in, and the overloads are dropped at the major version that
-  is free to drop descriptors anyway. An unbounded version of the promise is the one that would
-  eventually be broken quietly rather than deliberately. What changes regardless, for any added
-  component, is `equals`, `hashCode`, `toString` and the arity a record pattern spells — none of
-  which is a linkage failure for code already compiled.
+- **The added `Push2uProperties` component changes that record's canonical constructor descriptor**,
+  and with it `equals`, `hashCode`, `toString` and the arity a record pattern spells. That is
+  accepted rather than worked around, and on a published promise rather than a guess about who calls
+  it: the release note for `0.1.0`, the version these constructors shipped in, says that a few names
+  and constructor shapes are worth revisiting once real integrations exist, and that `0.x` is where
+  that revision is honest rather than breaking. Anyone holding that API was told this shape could
+  still move, so accepting the change keeps that promise, while preserving the constructor would
+  withdraw it in a document no consumer reads. The asymmetry with the provenance-restricted `anyOf`
+  rejected below is stated here rather than left to be reconciled, since this document cannot be
+  amended once its decision is implemented: compatibility is not being weighed differently in the
+  two places, what differs is who holds the thing and what was published about it.
+  `EndpointPolicies.allowedOrigins` is the primary documented factory essentially every consumer
+  calls, and changing its return type breaks every one of them — for a gain that bullet rejects on
+  its own grounds regardless. This record's canonical constructor is a binding target the framework
+  invokes, and a constructor shape is precisely what the release note put on notice. Of everything
+  that moves, only the descriptor is a linkage failure for already-compiled code: `equals`,
+  `hashCode` and `toString` go on working, and a record pattern recompiles at the new arity.
 
 Rejected alternatives:
 
