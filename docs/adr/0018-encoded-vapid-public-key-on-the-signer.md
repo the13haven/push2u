@@ -20,7 +20,7 @@ Where the string exists, by mode:
 |---|---|
 | Local keys (`push2u.vapid.public-key`) | in configuration — the operator typed it |
 | Vault, explicit key (`push2u.signer.vault.public-key` set) | in configuration |
-| Vault, fetched key (that property unset — the mode the README recommends) | **only as runtime bytes** |
+| Vault, fetched key (that property unset — the mode the Vault guide calls the recommended one) | **only as runtime bytes** |
 | Any future signer with remote key custody | **only as runtime bytes** |
 
 There is no fifth row: `LocalEcVapidSigner` takes a ready `VapidKeys`, and the core has no runtime
@@ -69,29 +69,38 @@ default String publicKeyBase64Url();
   fact of being findable on the type the consumer holds. With the static alone, the composition of
   "ask the signer" and "encode correctly" stays the consumer's to assemble, which is the assembly
   the report is about.
-- **It is a `default` method and never a new abstract one.** `VapidSigner` shipped in `0.1.0`; an
-  abstract addition is a compile error for every implementation outside this repository and an
-  `AbstractMethodError` for every one already compiled. ADR-010's premise is that implementing this
-  SPI stays cheap, and a `default` adds nothing for an implementor to write.
+- **It is a `default` method and never a new abstract one.** ADR-010's premise is that implementing
+  this SPI stays cheap — a custodian that can sign and name its key should not have to learn an
+  encoding to satisfy the interface — and a `default` adds nothing for an implementor to write. The
+  compatibility facts point the same way and are not what decides it: `VapidSigner` shipped in
+  `0.1.0`, so an abstract addition is a compile error for every implementation outside this
+  repository and an `AbstractMethodError` for every one already compiled. That is a cost worth
+  paying for something, and this is not it; `0.x` is the declared window for revising shapes, so the
+  argument rests on ADR-010 rather than on compatibility being absolute.
 - **The encoder validates structurally and does not touch the curve.** 65 bytes opening with the
-  `0x04` tag catches the realistic mistake — an SPKI blob, a compressed point, a truncated paste —
-  and that check is not invented here: `P256PublicKeys.requireUncompressedPoint` is already public,
-  already exported and already the library's spelling of it, so the encoder delegates rather than
-  growing a second grammar for the same claim. The full on-curve check stays where it is, at the
-  boundaries where a key *enters* the library — `VapidKeys`' constructor and the Vault signer's —
-  because that is where refusing it is early rather than late, and an encoder doing curve arithmetic
-  would do more per call than the send path does per send.
-- **The two entry points fail with different exception types, deliberately.** The static's argument
-  is the caller's own byte array, so a malformed one is an ordinary argument failure:
-  `IllegalArgumentException`, the type `P256PublicKeys` already throws for exactly this input. The
-  `default` method's value is the *signer's* output, and the SPI's own rule is that a signer
-  returning the wrong shape raises `PushCryptoException` naming what it returned — which is what the
-  next send would do with the same bytes. A consumer meeting a broken signer through its
-  `/public-key` endpoint should meet the same diagnosis it will meet through delivery, so the
-  `default` method presents the signer-shaped failure rather than the argument-shaped one. A
-  `PushCryptoException` raised by `publicKey()` itself — a remote custodian that is unreachable or
-  refuses to publish the key — propagates untouched; it is already the right type and the right
-  message.
+  `0x04` tag catches the realistic mistake — an SPKI blob, a compressed point, a truncated paste.
+  The full on-curve check stays where it is, at the boundaries where a key *enters* the library:
+  `VapidKeys`' constructor, the Vault signer's, and `Subscription` for the `p256dh`. That is a
+  statement about which boundary this is, not about cost — the send path runs the full check on the
+  subscription key every time, so an encoder could afford one. An encoder is simply not a boundary a
+  key enters through: it publishes a value the library was already given, and a key that reaches it
+  has passed the entry check or has no entry point in the library at all.
+- **The two entry points fail with different exception types, and each reuses the check that already
+  belongs to it.** The static's argument is the caller's own byte array, so a malformed one is an
+  ordinary argument failure: `IllegalArgumentException`, from
+  `P256PublicKeys.requireUncompressedPoint`, which is already public, already exported and already
+  the library's answer for a caller-supplied key of the wrong shape. The `default` method's value is the *signer's* output, which the SPI holds
+  to a different standard: a signer returning the wrong shape raises `PushCryptoException` naming
+  what it returned, and the message the send path produces for it names the `SubjectPublicKeyInfo`
+  case specifically, which is the realistic mistake in exactly this call. So the `default` method
+  applies **the send path's own check**, not the static's — that check becomes package-private and
+  shared instead of staying private to the JWT builder — and a consumer meeting a broken signer
+  through its `/public-key` endpoint gets the same type *and* the same wording delivery would give
+  them. This is a decision about where the second structural check lives rather than a new one being
+  introduced: `main` already carries both spellings, and what changes is that the send path's stops
+  having a single caller. A `PushCryptoException` raised by `publicKey()` itself — a remote
+  custodian that is unreachable or refuses to publish the key — propagates untouched; it is already
+  the right type and the right message.
 - **The name says the encoding, not the caller.** `publicKeyBase64Url()` sits beside `publicKey()`
   as a second representation of one value. `applicationServerKey()` was the alternative and is
   rejected: the same string is the VAPID `k` parameter and the value in the JWT, and naming a member
@@ -107,21 +116,39 @@ default String publicKeyBase64Url();
   scalar gets no encoder: handing the secret back as a string is the one direction this library does
   not provide, and a pair-level `toBase64()` would have to either include it or explain its absence.
   Only the public half is published, because only the public half is meant to be.
-- **The Javadoc is half the value.** The first sentence of both members says that this is what goes
-  into `applicationServerKey`, and the prose names the URL-safe alphabet without padding
-  (RFC 4648 §5) and the fact that the bytes are the raw X9.62 point rather than an SPKI encoding.
-  Published sources may not point at a Markdown file or an ADR, so the three details are stated in
-  the text itself — which is what the report asked for in the first place.
+- **The Javadoc is half the value, and it carries the override contract as well as the recipe.** The
+  first sentence of both members says that this is what goes into `applicationServerKey`, and the
+  prose names the URL-safe alphabet without padding (RFC 4648 §5) and the fact that the bytes are
+  the raw X9.62 point rather than an SPKI encoding. `VapidSigner`'s own Javadoc additionally states
+  what an override owes: exactly the unpadded URL-safe base64 of what `publicKey()` returns, and
+  `PushCryptoException` as its only failure. The kit below enforces that, but an implementor outside
+  this repository may never extend the kit, and the interface is the only normative text they read.
+  Published sources may not point at a Markdown file or an ADR, so all of it is stated in the text
+  itself — which is what the report asked for in the first place.
 - **`push2u-testkit`'s `VapidSignerContractTest` gains one assertion**, and shipping without it is
   not an option. A `default` method cannot be `final`, so `publicKeyBase64Url()` is overridable —
   legitimately so, for a custodian whose API hands out the key already encoded — and the one
   behaviour it must never have is disagreeing with `publicKey()`. A signer that drifts publishes an
   `applicationServerKey` that does not match the key it signs with: exactly the failure the fetched
   mode's atomic (version, public key) read exists to prevent, reintroduced one method along, and
-  invisible until a push service rejects the JWT for every subscription taken since. The kit
-  therefore checks that the encoded form decodes back to `publicKey()` byte for byte and carries no
-  padding. It can only fail for a signer that overrode the method, which is precisely the case it
-  exists for.
+  invisible until a push service rejects the JWT for every subscription taken since. The assertion
+  is an equality against `VapidKeys.encodePublicKey(signer.publicKey())` rather than a round trip
+  back through a decoder: one comparison pins the alphabet, the padding and the canonical final
+  character at once, and it leaves the kit no decoder of its own to choose — decoding and comparing
+  admits a standard-alphabet override whenever its characters happen to avoid `+` and `/`. The kit
+  compares against the library's published encoder here rather than deriving the value from the JDK,
+  because "must not disagree with the library" is precisely the claim; its JDK-only rule is about
+  verifying the cryptography, and this assertion verifies none. It can only fail for a signer that
+  overrode the method, which is precisely the case it exists for.
+- **`README.md` and `docs/VAULT.md` are part of the change, not a follow-up.** This report is a
+  discoverability complaint before it is an API complaint: the three details cost the reporter time
+  because nothing said them where they were looking, and a method nobody finds closes the mechanism
+  while leaving the report standing. README's VAPID section states that the public half is what the
+  browser needs as `applicationServerKey` and then stops; that sentence is where the two new members
+  belong, for the local mode as much as any other. `docs/VAULT.md`'s fetched-key section is the
+  second place, because that is the mode with no configured string to serve and the one the report
+  came from. Shipping the members without both is not a smaller version of this decision — it is the
+  half that does not answer the issue.
 - **`docs/VAPID.md` keeps hand-rolling the encoder**, and this is recorded because it looks like a
   cleanup somebody will attempt once the method exists. That block runs in a bare `jshell` with no
   push2u on the classpath, for someone who has not wired the library up yet, and the test suite
@@ -140,8 +167,9 @@ Rejected alternatives:
   it leaves the SPI silent about the one value every consumer of it has to publish: no failure
   contract for a signer's own bytes, no sentence on the type the consumer holds saying what the
   value is for, and a two-type composition where the need is one call.
-- **An abstract `publicKeyBase64Url()` on `VapidSigner`**, above: a breaking change to a published
-  SPI, for a value every implementation can already derive.
+- **An abstract `publicKeyBase64Url()` on `VapidSigner`**, above: work handed to every implementor
+  for a value the interface can derive itself, and a break of every implementation compiled against
+  `0.1.0` on top of it.
 - **An instance `VapidKeys.publicKeyBase64Url()`.** A third spelling of one value, for the mode that
   is least short of it — a local-keys deployment holds a signer like every other, and the static
   covers the case where it holds only the pair.
