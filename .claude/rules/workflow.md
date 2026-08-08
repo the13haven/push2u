@@ -52,7 +52,8 @@ which costs the reporter the single hop that leads them from the issue to the re
 shipped in. Several issues take one keyword each. Work that advances an issue without finishing it
 says `Refs #N` instead — a plain mention, carrying the traceability without the close.
 
-**It goes on the pull request into `main` and on no other**, and the reason is sharper than tidiness:
+**The closing keyword goes on the pull request into `main` and on no other**, and the reason is
+sharper than tidiness:
 a closing keyword is interpreted only when the pull request targets the default branch. On a pull
 request into a feature branch it is ignored outright — no link is created, and merging does nothing
 to the issue — so a subtask pull request carrying one is not noise but a silent no-op that reads

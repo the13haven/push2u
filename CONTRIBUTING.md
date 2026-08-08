@@ -273,7 +273,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 rather than only in a commit message: a closing keyword in a commit does close the issue, but the
 pull request is then not listed as a linked one, and the person who filed the issue loses the link
 that would have carried them from it to the release your fix shipped in. If your change advances an
-issue without finishing it, write `Refs #N` instead, which links without closing. Do not name the
+issue without finishing it, write `Refs #N` instead — a plain mention in the issue's timeline, which
+carries the trail without closing anything or claiming to. Do not name the
 release your change will appear in — that version is decided when the tag is cut, and the release
 notes are generated then from the pull request labels below.
 
