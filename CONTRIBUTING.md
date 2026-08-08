@@ -272,9 +272,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 **If your change closes an issue, write `Closes #N` in the pull request description.** Put it there
 rather than only in a commit message: a closing keyword in a commit does close the issue, but the
 pull request is then not listed as a linked one, and the person who filed the issue loses the link
-that would have carried them from it to the release your fix shipped in. Please do not name that
-release yourself — the version is decided when the tag is cut, and the notes are generated from
-these labels at that moment.
+that would have carried them from it to the release your fix shipped in. If your change advances an
+issue without finishing it, write `Refs #N` instead, which links without closing. Do not name the
+release your change will appear in — that version is decided when the tag is cut, and the release
+notes are generated then from the pull request labels below.
 
 **Label your pull request.** The release notes are generated from PR labels
 (`.github/release.yml`), so an unlabeled PR lands in "Other Changes" instead of the section it

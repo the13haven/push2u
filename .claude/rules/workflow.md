@@ -49,12 +49,16 @@ places carry the reference, and both are written while the work is still open.
 **The pull request into `main` says `Closes #N` in its description.** Not only in a commit message:
 a closing keyword in a commit closes the issue but leaves the pull request unlisted as a linked one,
 which costs the reporter the single hop that leads them from the issue to the release the fix
-shipped in. GitHub closes a linked issue only when the pull request merges into the default branch,
-so this belongs on the pull request into `main` and on no other — a subtask pull request into a
-feature branch would close nothing and only add a second linked pull request to the issue. The
-reference can be added afterwards by editing a merged pull request's description, and the link does
-appear; doing it up front is what makes the close automatic and keeps anyone from closing the issue
-by hand and inventing a mechanism for it.
+shipped in. Several issues take one keyword each. Work that advances an issue without finishing it
+says `Refs #N` instead — a plain mention, carrying the traceability without the close.
+
+**It goes on the pull request into `main` and on no other**, and the reason is sharper than tidiness:
+a closing keyword is interpreted only when the pull request targets the default branch. On a pull
+request into a feature branch it is ignored outright — no link is created, and merging does nothing
+to the issue — so a subtask pull request carrying one is not noise but a silent no-op that reads
+exactly like a job done. The reference can be added afterwards by editing a merged pull request's
+description and the link does appear; doing it up front is what makes the close automatic and keeps
+anyone from closing the issue by hand and inventing a mechanism for it.
 
 **An ADR that comes out of an issue names it, and names it while the ADR is `Proposed`.** Once its
 decision is implemented the ADR is immutable, so a reference added later cannot be added at all. A
