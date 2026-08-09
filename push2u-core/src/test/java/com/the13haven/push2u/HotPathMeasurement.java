@@ -7,8 +7,8 @@ package com.the13haven.push2u;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
 import java.security.GeneralSecurityException;
+import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.Signature;
@@ -44,8 +44,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  * median. The resolution it claims is an order of magnitude, which is the resolution the questions it answers need —
  * whether a step is worth optimising at all, and whether one provider is in a different class from another. Every step
  * is driven for a fixed wall-clock budget after a warm-up of the same shape, repeated, and reported as the median of
- * those repetitions; results are summed into a sink that is printed, so no step can be optimised away as
- * dead code.
+ * those repetitions; results are summed into a sink that is printed, so no step can be optimised away as dead code.
  */
 @EnabledIfSystemProperty(
         named = "push2u.measure",
