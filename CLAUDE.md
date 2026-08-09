@@ -32,6 +32,14 @@ clauses are load-bearing rather than caveats, and a citation swapped for a weake
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…018) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
+`docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
+the environment the numbers were taken on — a snapshot someone took, not an output the build
+maintains, and README links consumers to it from the `cryptoProvider` section because the provider
+choice turns out to be a throughput decision too. **The measurement suites are deliberately not in
+this tree**: they live on the long-running `perf/hot-path-measurements` branch, because wiring a
+measurement into `check` reports a shared runner's noise as a regression, and because a harness has
+not earned a place in the build configuration of two published modules. A number in that document
+that no longer holds is deleted rather than left to age.
 `docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
 the other library's API and dependency set as verified facts, so anything added there must be
 checked against the published artifact. `docs/RELEASING.md` covers the release procedure,
