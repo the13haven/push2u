@@ -48,7 +48,7 @@ class VaultHotPathMeasurement {
 
     private static final Duration WARMUP = Duration.ofMillis(300);
     private static final Duration MEASURE = Duration.ofMillis(400);
-    private static final int REPEATS = 3;
+    private static final int REPEATS = 5;
 
     private static VaultContainer<?> vault;
 
@@ -148,8 +148,13 @@ class VaultHotPathMeasurement {
         long start = System.nanoTime();
         long elapsed;
         do {
-            sink += step.getAsLong();
-            operations++;
+            // Batched for the same reason the core suite batches: one System.nanoTime() per
+            // iteration is ~12 ns on this platform, which is most of what a field clone costs and
+            // would be reported as if it were the step.
+            for (int i = 0; i < 16; i++) {
+                sink += step.getAsLong();
+            }
+            operations += 16;
             elapsed = System.nanoTime() - start;
         } while (elapsed < budgetNanos);
         return new long[] {operations, elapsed};
@@ -165,7 +170,22 @@ class VaultHotPathMeasurement {
             out.append(
                     String.format("%-52s %14s %14s%n", result.name(), format(result.median()), format(result.best())));
         }
-        out.append(System.lineSeparator()).append("sink=").append(sink).append(System.lineSeparator());
+        out.append(System.lineSeparator())
+                .append("JVM: ")
+                .append(System.getProperty("java.vm.name"))
+                .append(' ')
+                .append(System.getProperty("java.version"))
+                .append(" · ")
+                .append(System.getProperty("os.name"))
+                .append(' ')
+                .append(System.getProperty("os.arch"))
+                .append(" · ")
+                .append(Runtime.getRuntime().availableProcessors())
+                .append(" CPU")
+                .append(System.lineSeparator())
+                .append("sink=")
+                .append(sink)
+                .append(System.lineSeparator());
         System.out.println(out);
     }
 

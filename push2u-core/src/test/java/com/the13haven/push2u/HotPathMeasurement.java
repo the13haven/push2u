@@ -8,11 +8,13 @@ package com.the13haven.push2u;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
+import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.Signature;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECPublicKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -35,14 +37,14 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  * <p><b>Opt-in.</b> It spends wall clock on purpose and asserts nothing, so it never runs in CI:
  *
  * <pre>{@code
- * ./gradlew :push2u-core:test --tests "*HotPathMeasurement" -Dpush2u.measure=true
+ * ./gradlew :push2u-core:test --tests "*HotPathMeasurement" -Dpush2u.measure=true --rerun
  * }</pre>
  *
  * <p>Not a JMH benchmark: no forks, no dead-code elimination analysis beyond the sink below, no statistics past a
  * median. The resolution it claims is an order of magnitude, which is the resolution the questions it answers need —
  * whether a step is worth optimising at all, and whether one provider is in a different class from another. Every step
- * is driven for a fixed wall-clock budget after a warm-up of the same shape, repeated, and reported as the median and
- * the best of those repetitions; results are summed into a sink that is printed, so no step can be optimised away as
+ * is driven for a fixed wall-clock budget after a warm-up of the same shape, repeated, and reported as the median of
+ * those repetitions; results are summed into a sink that is printed, so no step can be optimised away as
  * dead code.
  */
 @EnabledIfSystemProperty(
@@ -156,12 +158,41 @@ class HotPathMeasurement {
                 label,
                 measure(() -> sink(EcKeys.generateP256(jca).getPublic().getEncoded().length)));
         record(table, "ECDH", label, measure(() -> sink(EcKeys.ecdh(ephemeralPrivate, uaKey, jca).length)));
+        // Two explanations for the ECDH cost, kept in the suite rather than left as terminal
+        // folklore: that an imported point takes a slower path than one straight from the
+        // generator, and that the parameters AlgorithmParameters produced differ in some way that
+        // matters from the generator's own.
+        KeyPair nativePair = EcKeys.generateP256(jca);
+        ECPublicKey nativePublic = (ECPublicKey) nativePair.getPublic();
+        record(
+                table,
+                "ECDH with a generator-produced peer key",
+                label,
+                measure(() -> sink(EcKeys.ecdh(ephemeralPrivate, nativePublic, jca).length)));
+        ECPublicKey reimported;
+        try {
+            reimported = (ECPublicKey)
+                    jca.ecKeyFactory().generatePublic(new ECPublicKeySpec(uaKey.getW(), nativePublic.getParams()));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("re-importing the peer key failed", e);
+        }
+        record(
+                table,
+                "ECDH with the generator's own parameters",
+                label,
+                measure(() -> sink(EcKeys.ecdh(ephemeralPrivate, reimported, jca).length)));
+        // The info values are the send path's own: a 144-byte key info (prefix plus both public
+        // keys) and the two fixed content-encoding strings. Expanding over a short info instead
+        // costs one HMAC block less and understates the step.
+        byte[] keyInfo = new byte[14 + 65 + 65];
+        byte[] cekInfo = "Content-Encoding: aes128gcm\0".getBytes(StandardCharsets.US_ASCII);
+        byte[] nonceInfo = "Content-Encoding: nonce\0".getBytes(StandardCharsets.US_ASCII);
         record(table, "HKDF: 2 extract + 3 expand", label, measure(() -> {
             byte[] prkKey = hkdf.extract(authSecret, ecdhSecret);
-            byte[] ikm = hkdf.expand(prkKey, authSecret, 32);
+            byte[] ikm = hkdf.expand(prkKey, keyInfo, 32);
             byte[] prk = hkdf.extract(salt, ikm);
-            byte[] cek = hkdf.expand(prk, authSecret, 16);
-            byte[] nonce = hkdf.expand(prk, authSecret, 12);
+            byte[] cek = hkdf.expand(prk, cekInfo, 16);
+            byte[] nonce = hkdf.expand(prk, nonceInfo, 12);
             return sink(cek.length + nonce.length);
         }));
         record(
@@ -267,14 +298,14 @@ class HotPathMeasurement {
         out.append(System.lineSeparator())
                 .append("=== push2u: per-message hot path, medians ===")
                 .append(System.lineSeparator());
-        out.append(String.format("%-46s", "step"));
+        out.append(String.format("%-52s", "step"));
         for (Named provider : providers) {
             out.append(String.format("%22s", provider.label()));
         }
         out.append(System.lineSeparator());
 
         for (Map.Entry<String, Map<String, Double>> row : table.entrySet()) {
-            out.append(String.format("%-46s", row.getKey()));
+            out.append(String.format("%-52s", row.getKey()));
             Map<String, Double> byProvider = row.getValue();
             for (Named provider : providers) {
                 Double value = byProvider.containsKey("*") ? byProvider.get("*") : byProvider.get(provider.label());
