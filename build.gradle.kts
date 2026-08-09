@@ -185,6 +185,14 @@ subprojects {
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
 
+        // The measurement suites (docs/PERFORMANCE.md) are opt-in: they spend wall clock on
+        // purpose and assert nothing, so CI must never run them. They are gated on this property
+        // rather than on a JUnit tag because a tag has to be excluded everywhere it could run,
+        // while a disabled-by-default condition is off unless someone asks for it. A -D on the
+        // Gradle command line reaches Gradle's own JVM and not the forked test JVM, so it is
+        // forwarded here explicitly.
+        systemProperty("push2u.measure", providers.systemProperty("push2u.measure").getOrElse("false"))
+
         // Ryuk bind-mounts the Docker socket into its own container. Docker clients on macOS
         // reach Colima through a host path such as ~/.colima/default/docker.sock, but that path
         // does not exist inside the Colima VM. Docker 29 rejects that mount, so Testcontainers

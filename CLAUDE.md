@@ -32,6 +32,11 @@ clauses are load-bearing rather than caveats, and a citation swapped for a weake
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…018) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
+`docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
+the environment the numbers were taken on — it is a snapshot to be re-recorded rather than a gate,
+and the two suites behind it (`HotPathMeasurement` in `push2u-core` and `push2u-signer-vault`) are
+gated on `-Dpush2u.measure=true` so CI never runs them; the property is forwarded to the test JVM
+from the root build, since a `-D` on the Gradle command line does not reach a forked JVM by itself.
 `docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
 the other library's API and dependency set as verified facts, so anything added there must be
 checked against the published artifact. `docs/RELEASING.md` covers the release procedure,

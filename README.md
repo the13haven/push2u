@@ -547,6 +547,10 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
     .build();
 ```
 
+The choice is not only about policy: the elliptic-curve work is almost all of what a send costs
+locally, and providers differ on it by a factor that is worth measuring on your own hardware —
+[`PERFORMANCE.md`](docs/PERFORMANCE.md) records one such comparison and the suite that produced it.
+
 The provider must support EC key generation/import, ECDH, HMAC-SHA-256, AES-GCM, and an ES256
 signature form when `LocalEcVapidSigner` is used. The library prefers
 `SHA256withECDSAinP1363Format`; if the selected provider exposes only DER-output

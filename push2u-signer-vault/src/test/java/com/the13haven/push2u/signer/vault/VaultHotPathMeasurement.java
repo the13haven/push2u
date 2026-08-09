@@ -16,6 +16,7 @@ import java.util.function.LongSupplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.testcontainers.vault.VaultContainer;
 
 import com.the13haven.push2u.EndpointPolicies;
@@ -35,6 +36,10 @@ import com.the13haven.push2u.VapidSigner;
  * <p>Sequential on purpose: the question is what one message pays on the critical path, not what throughput a pool of
  * threads can reach.
  */
+@EnabledIfSystemProperty(
+        named = "push2u.measure",
+        matches = "true",
+        disabledReason = "measurement suite, not a test — run with -Dpush2u.measure=true")
 class VaultHotPathMeasurement {
 
     private static final String ROOT_TOKEN = "push2u-test-root";
@@ -54,7 +59,8 @@ class VaultHotPathMeasurement {
     static void startVault() {
         vault = new VaultContainer<>("hashicorp/vault:1.18")
                 .withVaultToken(ROOT_TOKEN)
-                .withInitCommand("secrets enable " + MOUNT, "write " + MOUNT + "/keys/" + KEY_NAME + " type=ecdsa-p256");
+                .withInitCommand(
+                        "secrets enable " + MOUNT, "write " + MOUNT + "/keys/" + KEY_NAME + " type=ecdsa-p256");
         vault.start();
     }
 
@@ -80,18 +86,20 @@ class VaultHotPathMeasurement {
         EndpointPolicy policy = EndpointPolicies.allowedEndpoints(EndpointRule.origin("https://fcm.googleapis.com"));
         Subscription subscription =
                 Subscription.fromBase64(endpoint.toString(), generateUaPublicKey(), "BTBZMqHH6r4Tts7J_aSIgg");
-        PushMessage message = PushMessage.builder("hot path".getBytes(StandardCharsets.UTF_8))
-                .build();
+        PushMessage message =
+                PushMessage.builder("hot path".getBytes(StandardCharsets.UTF_8)).build();
         PushSender sender = PushSender.builder(signer, "mailto:push@example.com", policy)
                 .httpClient((uri, headers, body) -> new PushResponse(201, Map.of()))
                 .build();
 
         List<Result> results = new ArrayList<>();
-        results.add(measure("VaultTransitVapidSigner.publicKey() — копия поля", () -> sink(signer.publicKey().length)));
-        results.add(measure("VaultTransitVapidSigner.sign() — раундтрип в Transit", () -> sink(
-                signer.sign(signingInput).length)));
-        results.add(measure("PushSender.send с Vault, без сети до push-сервиса", () -> sink(
-                sender.send(subscription, message).statusCode())));
+        results.add(
+                measure("VaultTransitVapidSigner.publicKey() — field clone", () -> sink(signer.publicKey().length)));
+        results.add(measure(
+                "VaultTransitVapidSigner.sign() — Transit round trip", () -> sink(signer.sign(signingInput).length)));
+        results.add(measure(
+                "PushSender.send with Vault, no push-service network",
+                () -> sink(sender.send(subscription, message).statusCode())));
 
         report(results);
     }
@@ -105,8 +113,9 @@ class VaultHotPathMeasurement {
         try {
             java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("EC");
             generator.initialize(new java.security.spec.ECGenParameterSpec("secp256r1"));
-            java.security.spec.ECPoint point =
-                    ((java.security.interfaces.ECPublicKey) generator.generateKeyPair().getPublic()).getW();
+            java.security.spec.ECPoint point = ((java.security.interfaces.ECPublicKey)
+                            generator.generateKeyPair().getPublic())
+                    .getW();
             byte[] uncompressed = new byte[65];
             uncompressed[0] = 0x04;
             writeCoordinate(point.getAffineX(), uncompressed, 1);
@@ -149,12 +158,12 @@ class VaultHotPathMeasurement {
     private void report(List<Result> results) {
         StringBuilder out = new StringBuilder(512);
         out.append(System.lineSeparator())
-                .append("=== push2u: горячий путь через Vault Transit (контейнер на этой же машине) ===")
+                .append("=== push2u: Vault Transit hot path (container on this machine) ===")
                 .append(System.lineSeparator())
-                .append(String.format("%-52s %14s %14s%n", "шаг", "медиана", "лучшее"));
+                .append(String.format("%-52s %14s %14s%n", "step", "median", "best"));
         for (Result result : results) {
-            out.append(String.format(
-                    "%-52s %14s %14s%n", result.name(), format(result.median()), format(result.best())));
+            out.append(
+                    String.format("%-52s %14s %14s%n", result.name(), format(result.median()), format(result.best())));
         }
         out.append(System.lineSeparator()).append("sink=").append(sink).append(System.lineSeparator());
         System.out.println(out);
@@ -165,9 +174,9 @@ class VaultHotPathMeasurement {
             return String.format("%.0f ns", nanos);
         }
         if (nanos < 1_000_000) {
-            return String.format("%.1f мкс", nanos / 1_000);
+            return String.format("%.1f us", nanos / 1_000);
         }
-        return String.format("%.2f мс", nanos / 1_000_000);
+        return String.format("%.2f ms", nanos / 1_000_000);
     }
 
     private record Result(String name, double median, double best) {}
