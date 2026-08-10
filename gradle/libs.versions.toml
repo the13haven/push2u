@@ -18,7 +18,7 @@ springBoot = "4.1.0"
 # provider push2u-core's `test` source set declares directly. No module-level constraint applies it
 # any more; a constraint on a published module travels into its metadata. Jackson is not pinned —
 # Spring Boot's managed jackson-2-bom governs it (2.21.4).
-bouncycastle = "1.85"
+bouncycastle = "1.85.2"
 # BC-FIPS — test-only provider for the ES256 provider matrix (registers only DER-format ECDSA,
 # exercising the DER fallback). Isolated in push2u-core's fipsTest source set: bc-fips and stock
 # bcprov ship incompatible org.bouncycastle.crypto classes and can never share a classpath.
