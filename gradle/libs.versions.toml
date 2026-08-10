@@ -12,13 +12,14 @@ testcontainers = "2.0.5"
 # web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
 springBoot = "4.1.0"
 
-# BouncyCastle 1.85, patching the relevant BC CVEs. This one key serves two unrelated things: the
-# buildscript pin that raises JGit's 1.81/1.82 request on the build's own classpath (read
-# textually, `startsWith("bouncycastle = ")` — see build.gradle.kts), and the version of the test
-# provider push2u-core's `test` source set declares directly. No module-level constraint applies it
-# any more; a constraint on a published module travels into its metadata. Jackson is not pinned —
-# Spring Boot's managed jackson-2-bom governs it (2.21.4).
-bouncycastle = "1.85"
+# BouncyCastle — the stock provider push2u-core's `test` source set declares for the raw r||s ES256
+# path, and nothing else. It used to serve a second, unrelated purpose: build.gradle.kts read this
+# line textually to pin four BC artefacts on the buildscript classpath. That pin is gone (JGit now
+# manages them at a clean version itself), and with it the reason this key had to name a version
+# that exists for all four — which is what broke the build when a provider-only patch release came
+# through. No module-level constraint applies it either; a constraint on a published module travels
+# into its metadata. Jackson is not pinned — Spring Boot's managed jackson-2-bom governs it (2.21.4).
+bouncycastle = "1.85.2"
 # BC-FIPS — test-only provider for the ES256 provider matrix (registers only DER-format ECDSA,
 # exercising the DER fallback). Isolated in push2u-core's fipsTest source set: bc-fips and stock
 # bcprov ship incompatible org.bouncycastle.crypto classes and can never share a classpath.
@@ -81,9 +82,9 @@ jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations
 
 
 # The stock provider, test-only: push2u-core's `test` source set declares it for the raw r||s ES256
-# path. Nothing else in the build uses it, and no constraint applies it anywhere. (bcpkix has no
-# alias: the buildscript pin spells its coordinate out literally, since `libs` accessors do not
-# exist inside buildscript {}.)
+# path. Nothing else in the build uses it, and no constraint applies it anywhere — which is why
+# bcprov is the only BouncyCastle artefact with an alias here: the other three were never a
+# dependency of this build, only of the buildscript pin that no longer exists.
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # BC-FIPS test provider (separate artifact line from bcprov, hence its own version).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }

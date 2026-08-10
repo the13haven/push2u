@@ -6,53 +6,23 @@ import pl.allegro.tech.build.axion.release.domain.preRelease
 // Shared configuration for every push2u module. It lives at the standalone build root rather than
 // being duplicated per module.
 
-// BouncyCastle on the BUILDSCRIPT classpath — the plugins that build this library, not the library.
+// No BouncyCastle pin on the BUILDSCRIPT classpath any more, and no buildscript block at all.
 //
-// axion-release reads the version from git tags through JGit, and JGit's optional
-// org.eclipse.jgit.gpg.bc module (signed-tag support) depends on BouncyCastle 1.81, whose range
-// dependencies then resolve bcprov to 1.82. That combination carries five open advisories, one of
-// them critical (GHSA-574f-3g2m-x479, GOST 28147 CTR keystream reuse — not a code path this build
-// takes, but the version is the version). axion-release 1.21.2 is the current release and still
-// ships that JGit, so there is no upgrade to wait for.
+// There used to be one. axion-release reads the version from git tags through JGit, and JGit's
+// optional org.eclipse.jgit.gpg.bc module (signed-tag support) used to request BouncyCastle 1.81
+// through range dependencies that resolved bcprov to 1.82 — five advisories, one of them critical
+// (GHSA-574f-3g2m-x479, GOST 28147 CTR keystream reuse; not a code path this build takes, but the
+// version is the version). Four constraints raised the four BC artefacts to a clean release.
 //
-// CONSTRAINTS rather than resolutionStrategy.force (the convention in CONTRIBUTING.md): force also
-// records the originally requested version in the submitted dependency graph, and Dependabot alerts
-// on that phantom node even though only the resolved version is ever used. This classpath is
-// submitted, so the difference is the six alerts that prompted the pin in the first place.
+// axion-release 1.21.3 carries JGit 7.7.1, which manages all four at a flat 1.84 with no ranges,
+// and declares bcprov 1.84 itself on top of that. Every one of those five advisories is patched in
+// 1.84, so the constraints had nothing left to raise and were removed rather than left to look
+// load-bearing. The repositories block went with them: plugins arrive through
+// settings.gradle.kts pluginManagement, and nothing here fetches an artefact of its own any more.
 //
-// The repositories block is required — plugins arrive through settings.gradle.kts pluginManagement,
-// so the buildscript itself declares none, and raising a version means fetching an artifact.
-//
-// The version is read from the catalog rather than repeated here: `libs` accessors do not exist yet
-// inside buildscript {}, which is evaluated before the plugins block. A missing key fails the build
-// at configuration time rather than silently dropping the pin.
-buildscript {
-    val bouncycastle = file("gradle/libs.versions.toml").readLines()
-        .first { it.startsWith("bouncycastle = ") }
-        .substringAfter('"')
-        .substringBefore('"')
-
-    repositories {
-        gradlePluginPortal()
-        mavenCentral()
-    }
-
-    dependencies {
-        constraints {
-            classpath("org.bouncycastle:bcpg-jdk18on:$bouncycastle") {
-                because("GHSA-cj8j-37rh-8475")
-            }
-            classpath("org.bouncycastle:bcprov-jdk18on:$bouncycastle") {
-                because("GHSA-574f-3g2m-x479, GHSA-p93r-85wp-75v3, GHSA-c3fc-8qff-9hwx")
-            }
-            classpath("org.bouncycastle:bcpkix-jdk18on:$bouncycastle") {
-                because("GHSA-wg6q-6289-32hp")
-            }
-            // No advisory of its own; pinned so the four BouncyCastle artefacts stay version-aligned.
-            classpath("org.bouncycastle:bcutil-jdk18on:$bouncycastle")
-        }
-    }
-}
+// If a future advisory hits what JGit requests, the pin comes back in this shape — constraints
+// rather than resolutionStrategy.force, per CONTRIBUTING.md, because force records the originally
+// requested version in the submitted dependency graph and Dependabot alerts on that phantom node.
 
 plugins {
     // Convention plugins from the build-logic included build; applied to the modules below.
@@ -226,9 +196,9 @@ subprojects {
 // push2u-quality.gradle.kts does for the Checkstyle classpath), or the buildscript. Each pin names
 // its advisory — the convention in CONTRIBUTING.md.
 //
-// The buildscript pin above is exactly that and stays: JGit (inside axion-release) really does
-// request 1.81/1.82, the pin really does raise it to 1.85, and it is the build's own classpath, so
-// no artefact's metadata sees it.
+// The buildscript carried exactly such a pin until JGit stopped requesting a vulnerable
+// BouncyCastle; the comment at the top of this file records what it was for and what it would take
+// to need it again.
 //
 // Jackson is not pinned: Spring Boot's managed jackson-2-bom governs it on the starter classpaths.
 
