@@ -83,8 +83,9 @@ jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations
 
 # The stock provider, test-only: push2u-core's `test` source set declares it for the raw r||s ES256
 # path. Nothing else in the build uses it, and no constraint applies it anywhere — which is why
-# bcprov is the only BouncyCastle artefact with an alias here: the other three were never a
-# dependency of this build, only of the buildscript pin that no longer exists.
+# bcprov is the only BouncyCastle artefact with an alias here. The other three reach the buildscript
+# classpath as JGit's transitives, but nothing in this build ever declared them: only the buildscript
+# pin named them, and that pin no longer exists.
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # BC-FIPS test provider (separate artifact line from bcprov, hence its own version).
 bouncycastle-bcfips = { group = "org.bouncycastle", name = "bc-fips", version.ref = "bouncycastleFips" }

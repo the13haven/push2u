@@ -15,9 +15,9 @@ import pl.allegro.tech.build.axion.release.domain.preRelease
 // version is the version). Four constraints raised the four BC artefacts to a clean release.
 //
 // axion-release 1.21.3 carries JGit 7.7.1, which manages all four at a flat 1.84 with no ranges,
-// and declares bcprov 1.84 itself on top of that. Every one of those five advisories is patched in
-// 1.84, so the constraints had nothing left to raise and were removed rather than left to look
-// load-bearing. The repositories block went with them: plugins arrive through
+// and axion itself declares bcprov 1.84 directly on top of that. Every one of those five advisories
+// is patched in 1.84, so the constraints had nothing left to raise and were removed rather than
+// left to look load-bearing. The repositories block went with them: plugins arrive through
 // settings.gradle.kts pluginManagement, and nothing here fetches an artefact of its own any more.
 //
 // If a future advisory hits what JGit requests, the pin comes back in this shape — constraints
