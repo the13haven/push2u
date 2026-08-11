@@ -149,6 +149,28 @@ comes from either or both of `push2u.allowed-origins` and `push2u.allowed-domain
 are unioned into one allowlist, or equally from an application `EndpointPolicy` bean instead of the
 properties; [`SPRING.md`](SPRING.md#endpoint-policy) has every route.
 
+### Serving the public key to your frontend
+
+In this mode the public key exists nowhere but in Vault and in the signer that read it. There is
+deliberately no `public-key` property to echo back — the Transit key is the single source of truth,
+which is what keeps the advertised key from drifting away from the signing key. So ask the signer:
+
+```java
+String applicationServerKey = signer.publicKeyBase64Url();
+```
+
+`VapidSigner.publicKeyBase64Url()` is a `default` method on the SPI, so it is available on this
+signer and on every other. It returns the unpadded URL-safe base64 of the key this signer will
+actually sign with — the same string the `Authorization` header carries as its `k` parameter, and
+the value the browser needs as the `applicationServerKey` option of `pushManager.subscribe(...)`.
+Because it is derived from the signer's own key rather than from configuration, it stays correct in
+this mode by construction. See
+[`README.md` → Publishing the public key to the browser](../README.md#publishing-the-public-key-to-the-browser)
+for the encoding details and for the pair-level `VapidKeys.encodePublicKey(...)`.
+
+Serving it over HTTP is the application's own route: push2u adds no bean and no endpoint for it, so
+the path, the authentication and the caching stay yours to decide.
+
 ## Explicit public key
 
 Set `public-key` when the token must be sign-only. Also set `key-version` to the Transit version

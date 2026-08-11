@@ -182,6 +182,29 @@ With the Spring Boot starter, as `push2u.vapid.public-key` and `push2u.vapid.pri
 public key is also what the browser needs as `applicationServerKey`; the private key never leaves
 the application server.
 
+### Publishing the public key to the browser
+
+The frontend needs that key as a string, and push2u produces it rather than leaving you to spell it:
+
+```java
+String applicationServerKey = VapidKeys.encodePublicKey(keys.publicKey()); // from a pair you hold
+String sameValue = signer.publicKeyBase64Url();                            // from any VapidSigner
+```
+
+`VapidSigner.publicKeyBase64Url()` is a `default` method, so every signer has it — including one
+whose key lives in a remote custodian and never appears in configuration at all, which is the
+[Vault Transit signer](#vault-transit-signer)'s recommended mode. Asking the signer is also the only
+way to be sure the key you advertise is the key the next send will be signed with.
+
+Both produce unpadded base64url in the URL-safe alphabet (`-` and `_`, never `+`, `/` or `=`) over
+the raw 65-byte X9.62 point — not a `SubjectPublicKeyInfo`, which is what `ECPublicKey.getEncoded()`
+returns and what the browser cannot read. Each of those three is the sort of mistake that surfaces
+as an `InvalidAccessError` from `pushManager.subscribe(...)`, in a browser console far from the code
+that produced the string. `VapidKeys.encodePublicKey` additionally refuses bytes that are not a
+point on P-256 with an `IllegalArgumentException`, since they may have come from anywhere;
+`publicKeyBase64Url()` applies exactly the check a send applies to the same value, and raises the
+same `PushCryptoException` with the same wording when a signer returns the wrong shape.
+
 Holding the private key in a secret store you would rather not hand to the application at all is
 what the [Vault Transit signer](#vault-transit-signer) is for: the key stays in Vault, and push2u
 sends signing requests instead of loading a scalar. **If that is where you are heading, do not

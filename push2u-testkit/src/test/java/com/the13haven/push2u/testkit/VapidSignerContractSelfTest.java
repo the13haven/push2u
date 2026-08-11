@@ -18,6 +18,7 @@ import java.security.Signature;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.util.Arrays;
+import java.util.Base64;
 
 import org.junit.jupiter.api.Test;
 
@@ -60,6 +61,8 @@ final class VapidSignerContractSelfTest {
 
         assertThatCode(contract::publicKeyIsA65ByteUncompressedPoint).doesNotThrowAnyException();
         assertThatCode(contract::publicKeyIsAPointOnTheP256Curve).doesNotThrowAnyException();
+        assertThatCode(contract::publicKeyBase64UrlIsTheEncodingOfTheAdvertisedPublicKey)
+                .doesNotThrowAnyException();
         assertThatCode(contract::publicKeyIsAFreshCopyOnEveryCall).doesNotThrowAnyException();
         assertThatCode(contract::signHandsOutAFreshArrayOnEveryCall).doesNotThrowAnyException();
         assertThatCode(contract::signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey)
@@ -205,6 +208,38 @@ final class VapidSignerContractSelfTest {
                 .isInstanceOf(AssertionError.class);
     }
 
+    /**
+     * The check exists for an override, so the override is what has to fail it. This one encodes the right key in the
+     * standard alphabet with padding — a plausible mistake rather than a contrived one, and the reason the contract
+     * compares strings instead of decoding both sides: a decoder would accept these characters and report agreement.
+     */
+    @Test
+    void anOverrideEncodingTheKeyDifferentlyFailsTheEncodingCheck() throws Exception {
+        Contract contract = new Contract(
+                new StandardAlphabetEncodingSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)));
+
+        assertThatCode(contract::publicKeyIsA65ByteUncompressedPoint)
+                .as("the key itself is beyond reproach — only its published spelling is wrong")
+                .doesNotThrowAnyException();
+        assertThatThrownBy(contract::publicKeyBase64UrlIsTheEncodingOfTheAdvertisedPublicKey)
+                .as("the browser cannot read a standard-alphabet, padded applicationServerKey")
+                .isInstanceOf(AssertionError.class);
+    }
+
+    /**
+     * An override publishing a different key altogether: the drift the check is really about, since a signer whose
+     * advertised key is not the one it signs with invalidates every subscription taken against it.
+     */
+    @Test
+    void anOverridePublishingAnotherKeyFailsTheEncodingCheck() throws Exception {
+        Contract contract = new Contract(
+                new ForeignKeySigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE), keyPair()));
+
+        assertThatThrownBy(contract::publicKeyBase64UrlIsTheEncodingOfTheAdvertisedPublicKey)
+                .as("advertising one key while signing with another is invisible until a push service rejects the JWT")
+                .isInstanceOf(AssertionError.class);
+    }
+
     private static KeyPair keyPair() throws GeneralSecurityException {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
         generator.initialize(new ECGenParameterSpec("secp256r1"));
@@ -325,6 +360,58 @@ final class VapidSignerContractSelfTest {
         @Override
         public byte[] publicKey() {
             return delegate.publicKey();
+        }
+    }
+
+    /** Overrides the published spelling with the standard base64 alphabet and padding, over the correct key. */
+    private static final class StandardAlphabetEncodingSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+
+        StandardAlphabetEncodingSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+
+        @Override
+        public String publicKeyBase64Url() {
+            return Base64.getEncoder().encodeToString(delegate.publicKey());
+        }
+    }
+
+    /** Signs with one key and publishes another — the drift that only a comparison of the two answers can catch. */
+    private static final class ForeignKeySigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final VapidSigner other;
+
+        ForeignKeySigner(VapidSigner delegate, KeyPair otherKeyPair) {
+            this.delegate = delegate;
+            this.other = new JdkP256Signer(otherKeyPair, Encoding.RAW, PointDamage.NONE);
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+
+        @Override
+        public String publicKeyBase64Url() {
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(other.publicKey());
         }
     }
 

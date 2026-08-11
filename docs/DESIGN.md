@@ -264,6 +264,7 @@ relate to the provider-parameter check the send pipeline still performs.
 ```java
 byte[] sign(byte[] signingInput);
 byte[] publicKey();
+default String publicKeyBase64Url();
 ```
 
 This SPI represents key custody ([ADR-010](adr/0010-pluggable-vapid-key-custody.md)). The
@@ -296,6 +297,36 @@ the next call is compared) while still handing the same object to two callers, a
 probe would also zero a non-conforming signer's key, failing the shape and signature checks for a
 reason that has nothing to do with what they test. The per-send shape check above cannot see
 aliasing at all.
+
+`publicKeyBase64Url()` publishes the same key as the string a browser takes as its
+`applicationServerKey` — unpadded base64url over the raw point
+([ADR-018](adr/0018-encoded-vapid-public-key-on-the-signer.md)). It is a `default` method, never an
+abstract one: a custodian that can sign and name its key should not have to learn an encoding to
+implement this SPI, and the interface can derive the value itself. It is the SPI's half of the
+feature because for a remote custodian this is the only place the string exists at all — nothing
+configured it — and because the value is *this signer's* key, which only a member of the SPI can
+promise. `VapidKeys.encodePublicKey(byte[])` is the other half, for a caller that holds the pair.
+
+The two apply different checks, at the positions they occupy. The static's argument is a caller's
+own byte array, so it is a boundary: it runs `P256PublicKeys.requireOnCurve` — what `VapidKeys`'
+constructor already applies to this very value — and refuses with `IllegalArgumentException`, since
+a `VapidKeys` static accepting what a `VapidKeys` refuses would hold one value to two standards and
+the browser rejects an off-curve `applicationServerKey` anyway. The `default` method's value is the
+signer's own output, so it runs the send path's structural check instead — the same one, shared out
+of `Vapid` rather than duplicated — and raises the send path's `PushCryptoException` with the send
+path's wording. The publication path is as strict as the send it precedes and no stricter: a key
+this method publishes is a key the next send carries, and a consumer meeting a broken signer
+through their own key-publishing endpoint reads what delivery would have told them. A `null` from
+`publicKey()` stays a `NullPointerException` in both, being a broken type contract rather than a
+failed cryptographic operation.
+
+The conformance kit pins the one behaviour an override must never have — disagreement with
+`publicKey()` — by comparing the signer's string against `VapidKeys.encodePublicKey(publicKey())`.
+An equality rather than a round trip through a decoder: one comparison pins the alphabet, the
+padding and the canonical final character at once, where decoding both sides would accept a
+standard-alphabet override whenever its characters happened to avoid `+` and `/`. Whether a starter
+should *serve* the value — as a bean or an endpoint — is deliberately left open; the decision makes
+it reachable in one call from the type every consumer already holds.
 
 ### PushHttpClient
 
