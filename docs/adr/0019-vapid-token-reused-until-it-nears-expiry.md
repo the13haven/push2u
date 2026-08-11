@@ -240,16 +240,24 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   then extends the entry's life by `min(Δ, P)`, which is the very failure being closed, reintroduced
   through the ordering rather than through the span. Read the monotonic value first and the same pause
   moves the monotonic bound P *earlier*, so it can only shorten an entry's life and cost a signature.
-  The general form of that, which is what the lookup path needs, is: **the monotonic elapsed time an
-  entry is judged on is always measured so as to over-estimate.** At mint that means the anchor is
+  The general form of that, which is what the lookup path needs, is: **of the two ways to order the
+  readings, the one that over-estimates monotonic elapsed time is taken.** That is a statement about
+  sampling order and nothing more — it removes the pause between two readings as a source of
+  under-estimation, and leaves the monotonic clock's own rate error, which can still under-estimate
+  true elapsed time and is what the residual below is made of. At mint that means the anchor is
   taken as early as possible — before the wall reading. At lookup it means the opposite order for the
   same reason: the current monotonic value is taken *last*, as late as possible, because a stale one
   is permissive on exactly the bound that governs alone once a backwards step has pushed the wall
   bound out. Under that rule no upper bound on any gap is needed anywhere in this decision: the pauses
   are made to displace in the safe direction rather than made small.
-  A backwards wall step then cannot extend an entry's life at all, because the bound that governs is
-  measured on a clock that does not step and dated before the one that does. There is nothing to
-  detect and no threshold to choose: the failure is not diagnosed, it is made unable to matter.
+  A backwards wall step then cannot extend an entry's life past its monotonic bound, because that
+  bound is measured on a clock that does not step and dated before the one that does. What it can
+  still move is the distance between that bound and the wall deadline the entry would have had: the
+  monotonic clock has its own rate error, so the residual extension is bounded by that error over the
+  span — drift-sized, quantified two bullets down, and absorbed whenever `jwtRenewBefore` exceeds it.
+  A step of any size buys nothing beyond it. There is nothing to detect and no threshold to choose:
+  the failure is not eliminated by diagnosis but reduced to the rate error of a clock that does not
+  step.
 - **Three rules that detect the step instead were rejected, the third of them after being written
   into this document.** *Comparing an entry's mint instant against `now`* catches only entries minted
   after the reading the clock stepped back to: a token minted at 12:00 survives a step from 12:10 to
@@ -413,8 +421,11 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   life when the wall clock is frozen short of its own bound and the seam is driven past the span, and
   that a backwards wall step cannot push the effective life past that same span, and that a pause
   between an entry's two mint readings cannot lengthen its effective life under a later backwards
-  step — the assertion the wrong reading order fails and every `P ≈ 0` test passes; that a monotonic
-  reading from a later timeline discards the entry; that renewal happens on the second `exp` names and
+  step — the assertion the wrong reading order fails and every `P ≈ 0` test passes; that the same
+  holds for the other half of the order, a pause between the two readings of a *lookup* against an
+  already-stepped-back wall clock, where taking the monotonic value first serves an entry past its
+  bound and taking it last does not; that a monotonic reading from a later timeline discards the
+  entry; that renewal happens on the second `exp` names and
   not a fraction of a second later; that a signer whose advertised key changes between two sends gets
   a new token rather than the old one under a new `k`, and that a signer answering a different key
   from every `publicKey()` call still files each entry under the key its own header carries; that a
@@ -536,7 +547,8 @@ This rules out a VAPID token cache behind an SPI while the case for one is unmad
 level in front of the in-process one; an unbounded or unevictable cache; a proportional safety
 margin; a second spelling of "sign every time" through a zero margin or a zero cache size; a
 signature taken while the cache's lock is held; an entry whose life a backwards wall-clock step can
-extend, or a cache that judges staleness against an expiry finer than the second the wire carries;
+extend past its monotonic bound, or a cache that judges staleness against an expiry finer than the
+second the wire carries;
 a cache invalidated by an authentication status; an entry filed under a key read separately from the
 one its header carries; a signature and a public key delivered by one SPI call; a token whose life is
 bounded by the signing key's or whose `aud` names more than one origin; a `byte[]` cache key; and any
