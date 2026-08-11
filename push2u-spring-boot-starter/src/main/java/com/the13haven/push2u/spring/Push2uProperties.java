@@ -18,6 +18,18 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param vapid the VAPID identity (keys + subject); always present, its fields may be unset
  * @param jwtExpiry how far ahead the VAPID JWT {@code exp} is set; {@code null} keeps the {@code PushSender} default
  *     (12h). Rejected at startup if not strictly positive or more than 24h (RFC 8292 §2)
+ * @param jwtRenewBefore how long before a reused token's {@code exp} a fresh one is signed; {@code null} keeps the
+ *     {@code PushSender} default (5m). Rejected at startup if negative. It is deliberately not validated against
+ *     {@code push2u.jwt-expiry}: a margin at or above the token's whole life is legal and simply means every send signs
+ *     afresh. {@code 0s} is legal too and is <em>not</em> an off switch — zero margin is the most reuse, holding a
+ *     token to its last second; {@code push2u.jwt-reuse} is the switch
+ * @param jwtReuse whether a signed VAPID token is reused for later sends to the same push-service origin until it nears
+ *     expiry; {@code null} keeps the {@code PushSender} default ({@code true}). {@code false} is the declared off
+ *     switch, restoring a fresh signature per message
+ * @param jwtCacheSize how many signed tokens the sender holds at once, evicting the least recently used; {@code null}
+ *     keeps the {@code PushSender} default (64). Rejected at startup if below 1 — the bound is what makes the cache
+ *     safe to hold rather than a tuning knob, and it is never a second way to spell {@code push2u.jwt-reuse: false}.
+ *     Overflow costs a signature per send, never a delivery
  * @param defaultTtl the push {@code TTL} used when a message sets none; {@code null} keeps the {@code PushSender}
  *     default (24h). Rejected at startup if negative
  * @param recordSize the {@code aes128gcm} record size (RFC 8188 {@code rs}); {@code null} keeps the {@code PushSender}
@@ -56,6 +68,14 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record Push2uProperties(
         @DefaultValue Vapid vapid,
         @Nullable Duration jwtExpiry,
+        @Nullable Duration jwtRenewBefore,
+        // Boolean, not boolean: a primitive would need a @DefaultValue to bind, which would restate
+        // the PushSender default here and let the two drift. null means the key was left unset, so
+        // the sender's own default stands — the same "one place for the default" rule the nullable
+        // siblings above and below follow. It also keeps `false`, the deliberate off switch, a value
+        // the operator wrote rather than one the binder supplied.
+        @Nullable Boolean jwtReuse,
+        @Nullable Integer jwtCacheSize,
         @Nullable Duration defaultTtl,
         @Nullable Integer recordSize,
         @Nullable Integer maxEncryptedBodyBytes,
