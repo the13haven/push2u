@@ -139,7 +139,8 @@ PushSender.send(subscription, message)
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
     ├─ Encrypt one RFC 8188 record with AES-128-GCM
-    ├─ Build and sign the VAPID JWT
+    ├─ Look the endpoint's origin up in the sender's VAPID token cache (unless reuse is off)
+    ├─ On a miss, build and sign a VAPID JWT and publish it to the cache
     ├─ POST the encrypted body through PushHttpClient
     ├─ Retry 429 and 5xx responses according to RetryPolicy
     └─ Return PushResult
@@ -157,7 +158,11 @@ Status interpretation:
 | Cryptographic failure | `PushCryptoException` |
 | Endpoint policy rejection | `EndpointRejectedException` |
 
-The encrypted body and VAPID token are reused across retries of the same send operation.
+The encrypted body and VAPID token are reused across retries of the same send operation, and the
+token's reuse extends past that send: one signed `Authorization` value serves every send to a
+push-service origin until it nears expiry
+([ADR-019](adr/0019-vapid-token-reused-until-it-nears-expiry.md)). The body's reuse remains
+confined to one send, since it is encrypted to one subscriber under one ephemeral key pair.
 
 The endpoint policy runs after the size preconditions and before everything else — encryption, the
 VAPID signature (a remote Vault/KMS call under an external signer) and the POST — so a rejected
@@ -170,6 +175,49 @@ The VAPID `aud` claim is the endpoint's origin in the Unicode serialization of R
 RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to their Unicode form,
 and the port omitted when it equals the scheme's default. `java.net.URI` performs none of that
 normalization, so the library serializes the origin itself (`Origin.serialize`).
+
+That origin is also what makes the token cacheable: of the three claims, it is the only one a send
+supplies. `sub` is a final field of the sender, and `exp` is computed at each mint from another
+final field, the expiry offset — so `exp` does differ between tokens, and what a cached entry
+relies on is not that it is fixed but that it names a window the entry is retired ahead of. A
+`PushSender` therefore holds one bounded map of signed `Authorization` values, keyed by the audience
+together with the base64url public key the `VapidSigner` currently advertises, so an entry is only
+ever served to the signer in the identity it currently publishes and a key that moved misses rather
+than serving a header naming a key the signer has abandoned. The key is that base64url string
+rather than the raw bytes, since `publicKey()` returns a fresh array per call by contract and an
+array key would compile and never hit. The lookup runs after the endpoint policy — the policy is
+still unconditional and still ahead of everything, so a rejected endpoint reaches no cache — and
+`jwtReuse(false)` bypasses the cache entirely, signing per send as the library did
+before. Under the default the signature is therefore not taken on every send but on every miss,
+which is where every new value still enters and where `VapidSigner`'s two output checks still run.
+
+An entry's life is bounded by two clocks and ends at whichever bound is reached first: the sender's
+`Clock` arriving within `jwtRenewBefore` of the effective expiry, or a `System.nanoTime()` reading
+having run for that same span since the entry was minted. The wall bound alone would let a
+backwards step — an NTP correction, a snapshot restore — leave every entry over-estimating its own
+remaining life, presenting a token RFC 8292 §4.2 makes invalid; the monotonic bound does not step.
+The two readings are sampled in whichever order over-estimates elapsed monotonic time, the anchor
+first at mint and the current reading last at lookup, so an arbitrary pause between two statements
+can only shorten an entry's life. Staleness is judged against `Instant.ofEpochSecond(exp)`, the
+value that went on the wire, because RFC 7519 §4.1.4 invalidates a token from the second `exp`
+names. What the pair leaves is the two clocks' relative drift over an entry's life, seconds at the
+tens of parts per million a raw counter shows and invisible against a five-minute margin. The
+monotonic reading has a package-private seam beside the existing `Clock` and `Sleeper` ones,
+without which that bound is untestable at any span worth modelling.
+
+The map is an access-ordered LRU bounded at `jwtCacheSize`, and the bound is a safety property
+rather than a tuning one: audiences are the origins of endpoints inside subscriptions, which an
+`EndpointPolicy` built from domain rules bounds only by a DNS zone, so an unbounded map would be a
+memory-exhaustion path from data ADR-016 already treats as untrusted. Overflow evicts and degrades
+to signing per send — never to a refusal, since a bound the deployment chose must not become a
+delivery failure. Two further rules are not obvious from the code's shape. A `401` or `403` never
+evicts the entry that produced it: RFC 8292 §4.2 lists a subscription created under a different
+application server key among the causes of an invalid `vapid` authentication, so the status is not
+a statement about the token, and evicting on it would let one such subscription cold-start the
+origin every healthy send shares. And no signature is taken while the cache's monitor is held —
+look up, release, sign, publish — because a signature may be a Vault round trip, and holding a lock
+across it would rebuild the very stall the cache removes. Two threads missing on one audience
+concurrently is a benign race: each signs its own valid token, one is published.
 
 The two size preconditions are evaluated first, before any cryptography or network I/O, and are
 reported independently because they constrain different things:
@@ -237,6 +285,15 @@ Everything else on the builder is optional, and each value is validated where it
 than at send time: the constraint is known at configuration time, so a bad value fails a
 deployment's startup instead of its first delivery.
 
+A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
+sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
+is the VAPID token cache Section 4 describes: a value the sender itself minted, reconstructible by
+signing again, belonging to no application decision, so losing it costs one signature and never a
+delivery. That is the single clause of [ADR-004](adr/0004-stateless-library.md) which
+[ADR-019](adr/0019-vapid-token-reused-until-it-nears-expiry.md) supersedes — the library still
+stores no subscriptions and keeps no per-send state, and the sharing the original clause existed to
+justify is unchanged.
+
 Three seams in the core are public, and only three
 ([ADR-005](adr/0005-public-spis-in-the-core.md)).
 
@@ -276,7 +333,9 @@ construction by signing and verifying a fixed probe. A mismatched pair therefore
 first delivery attempt.
 
 The contract requires a raw 64-byte P-256 `r || s` ES256 signature (RFC 7518 §3.4) and a 65-byte
-uncompressed P-256 public point (RFC 8292 §3.2), and **both are checked on every send** — a
+uncompressed P-256 public point (RFC 8292 §3.2), and **both are checked wherever a new value enters
+a send** — which under the default token reuse is every send that signs rather than literally every
+send, since a reused header was checked when it was minted and `sign` is not called for it again. A
 violation raises `PushCryptoException` naming what came back. The check exists because neither
 half fails visibly on its own: a signature or key of the wrong shape still yields a syntactically
 valid `Authorization` header, so without it the mistake reaches the caller as an opaque 401/403
@@ -295,8 +354,27 @@ object — rather than by mutating and looking for consequences. That choice is 
 signer refilling one shared buffer per call survives a mutation probe (the refill undoes it before
 the next call is compared) while still handing the same object to two callers, and a mutation
 probe would also zero a non-conforming signer's key, failing the shape and signature checks for a
-reason that has nothing to do with what they test. The per-send shape check above cannot see
-aliasing at all.
+reason that has nothing to do with what they test. The shape check above cannot see aliasing at
+all, on the sends that run it or on the ones that serve a cached token.
+
+**The advertised key is also stable for a signer's lifetime**, which the interface states and the
+library cannot check. VAPID's public key is the application server's published identity: a
+subscription is bound to the `applicationServerKey` it was created with, and RFC 8292 §4.2 entitles
+a push service to refuse a JWT whose key is not that one. A signer that swaps its advertised key
+under a live sender has therefore already broken every restricted subscription taken out before the
+swap, whatever the library does with the two return values — rotation is a re-subscription event
+producing a *new* signer, which is what the Vault signer already documents of itself. The clause is
+a statement of what the protocol requires rather than a new demand, and it is unfalsifiable from
+outside for the same reason thread-safety is: two equal answers say nothing about the next one. The
+conformance kit pins the two checkable moments — consecutive calls answering the same key, and one
+signature verifying against the key advertised beside it — and neither reaches the lifetime the
+clause is about. The token cache is what made the silence worth ending: it keys entries on the
+advertised key, so a key that has moved builds a different cache key and the lookup simply misses,
+which is why the next send signs under the identity the signer now publishes rather than serving
+the old header. Nothing detects the move and nothing evicts on it — the entry filed under the
+abandoned key stays until the bound reaches it, and would serve again if the key moved back inside
+its window. A key that moves *within* one header is a self-contradiction only the contract rules
+out.
 
 `publicKeyBase64Url()` publishes the same key as the string a browser takes as its
 `applicationServerKey` — unpadded base64url over the raw point

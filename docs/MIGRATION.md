@@ -118,10 +118,11 @@ PushSender sender = PushSender.builder(
 
 The key source, the contact and the endpoint policy are required, so they are parameters of the
 factory method rather than builder steps — `build()` has no missing value left to refuse.
-Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `recordSize`,
-`maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and lives on the builder. A
-`PushSender` is immutable and thread-safe once built; build it once and share it, as you would a
-`PushService`.
+Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`,
+`jwtRenewBefore`, `jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`,
+`cryptoProvider`) is optional and lives on the builder. A `PushSender` is thread-safe once built,
+with final configuration and one internal cache of the VAPID tokens it has signed; build it once
+and share it, as you would a `PushService`.
 
 The third parameter has no counterpart in `web-push`, and it is the one that will stop a
 mechanical port: see [`EndpointPolicy` — a decision you now have to
@@ -493,15 +494,18 @@ public interface VapidSigner {
 }
 ```
 
-The contract is narrow, and push2u checks both halves of it on every send *before* the POST goes
-out: a signature that is not 64 bytes is refused with a `PushCryptoException` that names DER when
-the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is refused
-the same way. So a *wrongly encoded* signer fails loudly at the first send rather than collecting
-opaque `401`/`403` answers. What those checks cannot see is a signer whose output is well-formed
-but wrong — one signing with a key that does not match the public point it advertises, the
-mistake `builderWithSuppliedPublicKey` invites. That one still collects `401`/`403`, and it is why
-the conformance kit verifies the signature against the advertised key rather than only measuring
-it. Extend the kit in your own test suite instead:
+The contract is narrow, and push2u checks both halves of it *before* the POST goes out, on every
+send that signs: a signature that is not 64 bytes is refused with a `PushCryptoException` that names
+DER when the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is
+refused the same way. So a *wrongly encoded* signer fails loudly at the first send rather than
+collecting opaque `401`/`403` answers. (Signed VAPID tokens are reused per push-service origin
+until they near expiry, so a send served from that cache calls neither `sign` nor the checks — the
+first send to an origin is the one that runs them, and it is the one a broken signer fails at.)
+What those checks cannot see is a signer whose output is well-formed but wrong — one signing with a
+key that does not match the public point it advertises, the mistake `builderWithSuppliedPublicKey`
+invites. That one still collects `401`/`403`, and it is why the conformance kit verifies the
+signature against the advertised key rather than only measuring it. Extend the kit in your own test
+suite instead:
 
 ```kotlin
 dependencies {
