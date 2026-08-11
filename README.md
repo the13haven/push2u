@@ -699,9 +699,10 @@ class MySignerContractTest extends VapidSignerContractTest {
 }
 ```
 
-Five checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
+Six checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
 coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
-by the JCA without complaint), `publicKey()` and `sign()` each hand out a fresh array rather than
+by the JCA without complaint), `publicKeyBase64Url()` is exactly the unpadded URL-safe base64 of
+those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than
 one the signer keeps — two successive calls must not return the same object — and a signature is
 the raw 64-byte `r || s` that verifies against that key. Verification uses the JDK alone and runs
 on a FIPS-only JVM: the kit prefers

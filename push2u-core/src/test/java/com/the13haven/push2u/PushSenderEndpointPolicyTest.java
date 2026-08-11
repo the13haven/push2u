@@ -137,7 +137,8 @@ class PushSenderEndpointPolicyTest {
     void aPolicyThrowingItsOwnDefectDoesNotCorruptTheSender() {
         // A policy bug (here: an IllegalStateException on the first call only) must propagate as
         // itself — not be dressed up as a rejection — and must leave the sender fully usable: the
-        // sender holds no mutable state, so the next send runs the whole pipeline normally.
+        // policy runs ahead of the token cache, the sender's only mutable state, so a policy that
+        // throws has touched nothing and the next send runs the whole pipeline normally.
         AtomicInteger calls = new AtomicInteger();
         EndpointPolicy flaky = endpoint -> {
             if (calls.incrementAndGet() == 1) {

@@ -871,10 +871,11 @@ The automated suite covers:
 - RFC 8292 VAPID structure and signature verification;
 - the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
   non-default ports, address literals, userinfo (`OriginTest`);
-- signer contract tests, and the kit checking itself — each of its five checks run once against a
+- signer contract tests, and the kit checking itself — each of its six checks run once against a
   conforming signer and once against one that breaks exactly what that check is about: a DER
   signature, a compressed or off-curve point, a shared internal key array, a shared buffer
-  refilled per call, or a reused signature buffer — plus the kit's DER-fallback verification and
+  refilled per call, a reused signature buffer, an override encoding the advertised key some other
+  way, or one publishing a different key altogether — plus the kit's DER-fallback verification and
   its minimal-DER re-encoding, exercised directly because no CI platform lacks the P1363 signature
   name (`VapidSignerContractSelfTest`);
 - the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);

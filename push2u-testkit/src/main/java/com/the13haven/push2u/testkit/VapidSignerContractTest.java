@@ -142,9 +142,11 @@ public abstract class VapidSignerContractTest {
      * That second half carries a contract obligation of its own: {@link VapidSigner} requires the advertised key to be
      * stable for the signer's lifetime — the key is the application server's published identity, and a subscription is
      * bound to the {@code applicationServerKey} it was created under — and pinning one signature against the key
-     * advertised in the same breath is the only enforcement that sentence gets. It is a moment's agreement, not the
-     * lifetime's: a signer whose key drifts between test time and production, or hours into a run, passes here and is
-     * bound by the contract sentence alone, because stability across a lifetime cannot be checked from outside.
+     * advertised in the same breath is one of the two moments that sentence can be enforced at, the other being two
+     * consecutive calls answering the same key, which {@link #publicKeyIsAFreshCopyOnEveryCall} carries. It is a
+     * moment's agreement, not the lifetime's: a signer whose key drifts between test time and production, or hours into
+     * a run, passes both and is bound by the contract sentence alone, because stability across a lifetime cannot be
+     * checked from outside.
      */
     // UnitTestContainsTooManyAsserts: the signature's length and its verification are one claim —
     // raw r||s that verifies — and asserting the length first is what turns a DER signature into

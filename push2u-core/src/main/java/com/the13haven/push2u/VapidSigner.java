@@ -40,7 +40,8 @@ package com.the13haven.push2u;
  * Rotation is a re-subscription event that produces a <em>new</em> signer, never a new answer from an existing one; the
  * shipped Vault signer says the same of itself. Like thread-safety, this cannot be checked from outside — the library
  * sees only what each call returns, and two equal answers say nothing about the next one — so it is stated as contract,
- * and the conformance kit pins only its checkable projection: consecutive calls answering the same key.
+ * and the conformance kit pins only its two checkable moments: consecutive calls answering the same key, and one
+ * signature verifying against the key advertised beside it.
  */
 public interface VapidSigner {
 
