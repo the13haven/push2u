@@ -38,9 +38,36 @@ final class Vapid {
 
     /** The full {@code Authorization} header value for the "vapid" scheme. */
     static String authorizationHeader(VapidSigner signer, String audience, String subject, Instant expiry) {
+        return signedAuthorizationHeader(signer, audience, subject, expiry).headerValue();
+    }
+
+    /**
+     * The full {@code Authorization} header value together with the base64url public key its own {@code k} parameter
+     * carries — from one {@link VapidSigner#publicKey()} read, so the two cannot name different keys even against a
+     * signer whose answers vary call to call. The caller that files signed headers under their key needs exactly that:
+     * a key read separately from the header's could drift from the value actually on the wire, and the header would
+     * then be stored under an identity it does not carry.
+     */
+    static SignedHeader signedAuthorizationHeader(VapidSigner signer, String audience, String subject, Instant expiry) {
         Objects.requireNonNull(signer, "signer");
         String jwt = jwt(signer, audience, subject, expiry);
-        return "vapid t=" + jwt + ", k=" + Base64Url.encode(requireUncompressedPoint(signer.publicKey()));
+        String publicKeyBase64Url = Base64Url.encode(requireUncompressedPoint(signer.publicKey()));
+        return new SignedHeader("vapid t=" + jwt + ", k=" + publicKeyBase64Url, publicKeyBase64Url);
+    }
+
+    /**
+     * A signed {@code Authorization} header value paired with the base64url public key that appears as its {@code k}
+     * parameter — both produced by {@link #signedAuthorizationHeader} from a single {@code publicKey()} read.
+     *
+     * @param headerValue the complete {@code vapid t=..., k=...} header value
+     * @param publicKeyBase64Url the base64url encoding of the public key bytes the header's {@code k} carries
+     */
+    record SignedHeader(String headerValue, String publicKeyBase64Url) {
+        /** The header value is a bearer credential; only the public half is printable. */
+        @Override
+        public String toString() {
+            return "SignedHeader[headerValue=<redacted>, publicKeyBase64Url=" + publicKeyBase64Url + "]";
+        }
     }
 
     /** The signed compact JWT: {@code base64url(header).base64url(claims).base64url(signature)}. */
