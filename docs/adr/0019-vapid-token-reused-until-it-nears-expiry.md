@@ -28,7 +28,8 @@ from the hot path rather than making it faster.
 
 Nothing else in the per-message budget is worth touching, which is why this ticket is the whole of
 it: the three elliptic-curve operations are 98.6 % of a local send, all validation and decoding
-together is 1.7 µs, and `VapidSigner.publicKey()` is 7 ns — a field clone, not a network call.
+together is 1.7 µs, and `publicKey()` on the Vault signer — the one that could plausibly have been a
+round trip — is 7 ns, a field clone.
 
 **Decision.** The sender holds a bounded, per-instance cache of signed `Authorization` header
 values, keyed by the audience together with the signer's advertised public key, and reuses an entry
@@ -81,10 +82,14 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   `docs/adr/README.md` does not yet carry a form for, is added to its procedure section as part of
   implementing this.
 - **The key is the audience *and* the signer's advertised public key, and what it detects is a change
-  in the *advertised* key.** The header carries both `t` (the JWT) and `k` (the key it was signed
-  under), and they must agree or every push service returns 401 for every send. Keying on the
-  audience alone would keep a token signed by an old key travelling beside a new `k` value until the
-  process restarted, so the key closes that. What it cannot close is the reverse: a signer whose
+  in the *advertised* key.** What is cached is the whole header, `t` and `k` minted together in one
+  call, so the two can never disagree with each other inside one entry whatever the key is — that is
+  a property of the stored value, and it is worth saying because the hazard is the neighbouring one.
+  A header identifies the key it was signed under, and keying on the audience alone would keep
+  serving one that names a key the signer has stopped advertising, until the process restarted. A
+  subscription taken out against the new key refuses it, and there is nothing in the failure pointing
+  at a cache. So what the composite key buys is that an entry is only ever served to the signer that
+  minted it, in the identity it currently publishes. What it cannot close is the reverse: a signer whose
   advertised key stays constant while the *signing* key moves under it. That configuration exists and
   is shipped — the Vault signer's supplied-key mode sends no `key_version` unless
   `keyVersion(int)` was set, so Vault signs with whatever version is latest, and its own
@@ -108,9 +113,10 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   compiles, never equals a previous one and produces a cache that silently never hits — a defect only
   a benchmark reveals. The string is the base64url encoding of what `publicKey()` returned, which is
   exactly the value the `k` parameter of the header carries, and deliberately not
-  `publicKeyBase64Url()`: that method is a `default` an implementation may override, and keying on an
-  override while the header is built from `publicKey()` would reintroduce the drift between `t` and
-  `k` this key exists to catch.
+  `publicKeyBase64Url()`: that method is a `default` an implementation may override, and a key taken
+  from an override while the header is built from `publicKey()` would track a value the wire does
+  not carry — an entry could then be served under an identity it was not minted with, which is the
+  one thing this key component exists to prevent.
 - **The safety margin is an absolute duration, not a fraction of `jwtExpiry`.** Both things it
   protects against are absolute. The push service checks `exp` against its own clock, so what has to
   be covered is clock skew, which is minutes whatever the token's lifetime is; and a send that picks
@@ -173,9 +179,11 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   depth, which is the whole reason ADR-017 added it for the two services that publish a zone rather
   than a host, and no name resolution narrows it. So an unbounded map keyed by the audience is a
   memory-exhaustion path reachable from data the library already treats as untrusted under
-  `EndpointPolicies.unrestricted()` and under any policy carrying a domain rule — which is the
-  cross-browser configuration `docs/PUSH-SERVICES.md` exists to hand out. The bound is therefore not
-  a tuning knob but the reason the cache is safe to hold at all. Eviction is least-recently-used, and
+  `EndpointPolicies.unrestricted()`, under any policy carrying a domain rule — which is the
+  cross-browser configuration `docs/PUSH-SERVICES.md` exists to hand out — and under any
+  `EndpointPolicy` a deployment wrote itself, which the SPI exists to allow and this library cannot
+  see inside. The bound is therefore not a tuning knob but the reason the cache is safe to hold at
+  all. Eviction is least-recently-used, and
   overflow degrades to signing per send — today's behaviour, never a refusal, because a policy this
   deployment chose must not become a delivery failure. The same party can reach that degradation on
   purpose, by supplying subscriptions on enough distinct hostnames of an allowed zone to evict the
@@ -224,8 +232,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   re-signed for every message" and that "a cache would remove it from the path rather than speed it
   up", and both sentences describe the code this decision changes. A figure there that no longer
   holds is deleted rather than left to age, which is that document's own rule. The two sentences are
-  in `main`
-  sources, which ship as a `sources.jar` and are read by consumers with no clone of this repository:
+  in `main` sources, which ship as a `sources.jar` and are read by consumers with no clone of this
+  repository:
   `PushSender`'s class Javadoc says the sender "holds configuration only and derives everything a
   send needs inside the call", which is the same claim ADR-004 makes and stops being true here; and
   `VapidSigner`'s says both of its outputs "are checked on every send", which stops being true on a
@@ -283,7 +291,10 @@ Rejected alternatives:
   per twelve hours; the core owns no thread today except the lazily created executor `sendAsync`
   documents, and this would be the first that starts itself.
 - **Evicting the entry that produced a 401 or 403**, above: the status is not a statement about the
-  token, and reading it as one is reachable on purpose from a single subscription.
+  token, and reading it as one is reachable on purpose from a single subscription. The softer form —
+  suspending reuse for an origin after several authentication failures rather than on the first —
+  buys nothing, because the failures that would trip it are unbounded and free to produce: the same
+  subscription answers every send.
 - **Bounding a token's life by the signing key's.** There is nothing to bound it against and nothing
   it would protect: the push service verifies the signature against the `k` the header carries and
   has no notion of our key's lifetime, so a token signed by a Transit version that is later trimmed
@@ -291,8 +302,9 @@ Rejected alternatives:
   it holds a key pair. What a dying key actually breaks is *renewal*, not the token in hand, and
   there reuse helps rather than hurts: the sender keeps delivering on the last token while the
   custodian is repaired. A key whose public half genuinely changes is not a token-lifetime question
-  either — every browser subscription is pinned to the application server key at `subscribe()` time,
-  so that event is a re-subscription of the whole client population.
+  either — a subscription taken out with an `applicationServerKey` is bound to it, and RFC 8292 §4.2
+  says an application server replacing its signing key has to request new subscriptions, so that
+  event is a re-subscription of the restricted part of the client population.
 - **One token for several origins**, using a JSON array for `aud`. RFC 8292 §2 says the claim "MUST
   include the Unicode serialization of the origin … of the push resource URL", and RFC 7519 allows
   `aud` to be an array, so a token naming every origin a deployment sends to is a defensible reading
@@ -309,8 +321,8 @@ margin; a second spelling of "sign every time" through a zero margin or a zero c
 signature taken while the cache's lock is held; a cached entry surviving a backwards clock step; a
 cache invalidated by an authentication status; a token whose life is bounded by the signing key's or
 whose `aud` names more than one origin; a `byte[]` cache key; and any claim in this repository's
-documents about a named push service accepting a reused token. ADR-002 is untouched — the cache is a map and a
-string, and the core gains no dependency. ADR-005 is untouched and not superseded: the three SPIs
+documents about a named push service accepting a reused token. ADR-002 is untouched — the cache is a
+map and a string, and the core gains no dependency. ADR-005 is untouched and not superseded: the three SPIs
 stay three. ADR-016 and ADR-017 are untouched; the policy still runs on every send, ahead of
 everything, and the cache is consulted after it. ADR-004 is superseded in the single clause named
 above and in nothing else.
