@@ -198,15 +198,17 @@ way to be sure the key you advertise is the key the next send will be signed wit
 
 Both produce unpadded base64url in the URL-safe alphabet (`-` and `_`, never `+`, `/` or `=`) over
 the raw 65-byte X9.62 point — not a `SubjectPublicKeyInfo`, which is what `ECPublicKey.getEncoded()`
-returns and what the browser cannot read. Those are three different mistakes, and
-`pushManager.subscribe(...)` tells two of them apart: a string in the standard alphabet fails
-base64url decoding and rejects with an `InvalidCharacterError`, while a `SubjectPublicKeyInfo`
-decodes perfectly well and is then refused for not describing a valid point on P-256, with an
-`InvalidAccessError` — steps 10.2 and 10.3 of
-[`subscribe()`](https://www.w3.org/TR/push-api/#subscribe-method). The padding is the protocol's
-requirement rather than the browser's: RFC 8292 §3.2 spells the `k` parameter as JOSE base64url,
-which carries no `=`. Either browser rejection lands in a console far from the code that produced
-the string.
+returns and what the browser cannot read. All three are contract rather than taste, and the same
+contract on both sides: `pushManager.subscribe(...)` reads a string `applicationServerKey` as
+[RFC 7515 §2](https://datatracker.ietf.org/doc/html/rfc7515#section-2) base64url — the URL-safe
+alphabet with every trailing `=` omitted — and RFC 8292 §3.2 spells the `k` parameter the same way.
+So the standard alphabet and the padding each break the browser's contract and the header's alike.
+
+What differs is how the browser reports them. A string it will not decode rejects with an
+`InvalidCharacterError`, while a `SubjectPublicKeyInfo` decodes perfectly well and is then refused
+for not describing a valid point on P-256, with an `InvalidAccessError` — steps 10.2 and 10.3 of
+[`subscribe()`](https://www.w3.org/TR/push-api/#subscribe-method). Either lands in a console far
+from the code that produced the string.
 
 `VapidKeys.encodePublicKey` additionally refuses bytes that are not a
 point on P-256 with an `IllegalArgumentException`, since they may have come from anywhere;

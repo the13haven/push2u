@@ -17,10 +17,12 @@ import org.junit.jupiter.api.Test;
  * {@link VapidKeys#encodePublicKey}, the direction {@link VapidKeys#fromBase64} does not have: the 65-byte X9.62 point
  * as the string a browser takes as its {@code applicationServerKey}. Three details decide whether the browser accepts
  * it — the URL-safe alphabet of RFC 4648 §5, the absence of padding, and the bytes being the raw point rather than a
- * SubjectPublicKeyInfo — and each is pinned below, because none of them is decided here. Two are decided at
- * {@code subscribe(...)}, and differently: the standard alphabet breaks its base64url decoding
- * ({@code InvalidCharacterError}), while a SubjectPublicKeyInfo decodes and then fails its P-256 point check
- * ({@code InvalidAccessError}). The padding is decided on the wire, RFC 8292 §3.2 spelling {@code k} as JOSE base64url.
+ * SubjectPublicKeyInfo — and each is pinned below, because none of them is decided here. The first two are RFC 7515 §2
+ * base64url, which is both what {@code subscribe(...)} reads a string {@code applicationServerKey} as and what RFC 8292
+ * §3.2 spells {@code k} as, so a padded or standard-alphabet string breaks the browser and the header alike. The
+ * browser reports the two kinds of mistake differently: a string it will not decode gets an
+ * {@code InvalidCharacterError}, whereas a SubjectPublicKeyInfo decodes and then fails the P-256 point check with an
+ * {@code InvalidAccessError} (steps 10.2 and 10.3 of {@code subscribe()}).
  *
  * <p>The vector is RFC 8292 §2.4's own application-server key, so the expected string is published rather than whatever
  * this encoder currently produces.

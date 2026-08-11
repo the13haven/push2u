@@ -71,13 +71,16 @@ public interface VapidSigner {
      * raw 65-byte X9.62 uncompressed point of <a href="https://datatracker.ietf.org/doc/html/rfc8292#section-3.2">RFC
      * 8292 §3.2</a>, which is what {@link #publicKey()} already returns — not a {@code SubjectPublicKeyInfo}, the
      * 91-byte wrapper {@code java.security.interfaces.ECPublicKey.getEncoded()} produces and the browser cannot read.
-     * Two of those three fail at {@code subscribe(...)} and they fail differently: the standard alphabet breaks the
-     * base64url decoding, which rejects with an {@code InvalidCharacterError}, while a {@code SubjectPublicKeyInfo}
-     * decodes cleanly and is then refused for not describing a valid point on P-256, with an {@code InvalidAccessError}
-     * (steps 10.2 and 10.3 of <a href="https://www.w3.org/TR/push-api/#subscribe-method">the Push API's
-     * {@code subscribe()}</a>) — both in a browser console far from the code that made the string. The padding is the
-     * protocol's own requirement: RFC 8292 §3.2 spells the {@code k} parameter as JOSE base64url, which carries no
-     * {@code '='}.
+     * All three are contract rather than taste, and the same contract on both sides: {@code subscribe(...)} reads a
+     * string {@code applicationServerKey} as the base64url of <a
+     * href="https://datatracker.ietf.org/doc/html/rfc7515#section-2">RFC 7515 §2</a> — that alphabet with every
+     * trailing {@code '='} omitted — and RFC 8292 §3.2 spells the {@code k} parameter the same way, so the standard
+     * alphabet and the padding each break the browser's contract and the header's alike. What differs is how the
+     * browser reports them: a string it will not decode rejects with an {@code InvalidCharacterError}, while a
+     * {@code SubjectPublicKeyInfo} decodes cleanly and is then refused for not describing a valid point on P-256, with
+     * an {@code InvalidAccessError} (steps 10.2 and 10.3 of <a
+     * href="https://www.w3.org/TR/push-api/#subscribe-method">the Push API's {@code subscribe()}</a>) — either in a
+     * browser console far from the code that made the string.
      *
      * <p>This is the value an application publishes to its frontend, and for a signer whose key lives in a remote
      * custodian it is the only place the string exists at all: nothing configured it, the signer read it from the
