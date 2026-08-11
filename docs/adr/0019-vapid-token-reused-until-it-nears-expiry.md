@@ -213,7 +213,11 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   expired for the whole of the step, and a large enough step also puts `exp` more than 24 hours from
   the request, which RFC 8292 §4.2 makes a rejection ground of its own. **So an entry records both
   readings — `clock.instant()` and `System.nanoTime()` — and is discarded when the wall clock has
-  advanced measurably less than the monotonic one since it was minted.** Two rules that suggest
+  advanced measurably less than the monotonic one since it was minted.** The wall half of that pair
+  is the very reading `exp` was computed from, and the monotonic half is taken beside it; saying only
+  that an entry "records both" would allow a pair straddling the signature, whose duration is bounded
+  by the transport's timeout rather than by the 0.9–1.3 ms a Vault signature usually costs, and a
+  skew of seconds inside the pair would bias the comparison away from discarding. Two rules that suggest
   themselves first are recorded as rejected, because both look sufficient and are not.
   *Comparing an entry's mint instant against `now`* catches only entries minted after the reading the
   clock stepped back to: a token minted at 12:00 survives a step from 12:10 to 12:05 while its
@@ -225,14 +229,32 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   single-threaded test never sees it. It is also blind to a step that falls entirely inside an idle
   window, since no reading straddles it. The monotonic comparison has neither problem: both readings
   in a pair are taken by one thread at one moment, so cross-thread ordering never enters, and
-  `nanoTime` keeps advancing while the sender is idle. It needs a small tolerance — the two readings
-  in a pair are not taken atomically — and the shortfall that matters is one large enough to eat into
-  `jwtRenewBefore`, so anything under a second is left to the margin rather than acted on. The
-  mint-vs-publish race goes the same way: a thread that read the clock before a step and publishes its
-  entry after one is not a special case, because the entry it publishes carries its own pair and is
-  judged on the pair, not on what the sender believed while it was signing. What no rule here can
-  catch is a clock that is simply wrong and stays wrong: that is skew, and the margin is what covers
-  it.
+  `nanoTime` keeps advancing while the sender is idle. The mint-vs-publish race goes the same way: a
+  thread that read the clock before a step and publishes its entry after one is not a special case,
+  because the entry it publishes carries its own pair and is judged on the pair, not on what the
+  sender believed while it was signing.
+  **The tolerance is sized to what makes the two readings disagree, and to nothing else.** They are
+  taken one after the other rather than atomically, and a thread can be descheduled between them, so
+  the comparison carries noise on the order of a scheduling delay — milliseconds at worst, not
+  seconds. Sizing the tolerance to the *margin* instead would be the tempting move and is wrong for
+  the reason the wire-`exp` rule above exists: `jwtRenewBefore(Duration.ZERO)` is permitted, and at
+  that setting a tolerance of a second would let an ordinary NTP correction — the step threshold is
+  128 ms, so a few hundred milliseconds is a routine event, not an exotic one — pass unnoticed and
+  the sender present a token past the `exp` the push service enforces. With the tolerance at
+  milliseconds the residual is milliseconds, and it is stated rather than claimed away: at a zero
+  margin this rule is exact to within the tolerance, and no smaller value is achievable while the two
+  clocks are read separately. The error direction of a false positive is one extra signature, which
+  is also what a wall clock being slewed rather than stepped eventually produces — a few tens of
+  parts per million against `nanoTime` crosses a millisecond within minutes — so an entry may be
+  re-minted once during a long life on a busily disciplined clock. That is the cost of the rule and it
+  is small; the opposite error, a step passing unnoticed, is the one that reaches the push service.
+  **A monotonic reading that has gone backwards is itself a discard signal.** The JDK fixes
+  `nanoTime`'s origin only within one instance of a virtual machine, and a checkpoint/restore or a
+  live migration onto a host whose counter is behind can leave an entry holding a reading from a
+  later timeline than the current one. Then the shortfall is negative, "advanced less" is false and
+  the entry would be kept with exactly the overstated life this bullet opens by describing — so a
+  negative interval, impossible under the JDK's own contract, discards. What no rule here can catch is
+  a clock that is simply wrong and stays wrong: that is skew, and the margin is what covers it.
 - **Staleness is judged against the `exp` that went on the wire.** The claim is serialised as
   `getEpochSecond()`, so the value the push service enforces is the whole second, up to just under a
   second earlier than the `Instant` the sender computed; RFC 7519 §4.1.4 requires the current time to
@@ -324,7 +346,7 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   pipeline, and `docs/PERFORMANCE.md`, the one a reader would not think of, whose Vault section says
   the JWT "is rebuilt and re-signed for every message" and that "a cache would remove it from the
   path rather than speed it up"; a figure there that no longer holds is deleted rather than left to
-  age, which is that document's own rule. Three more carry the partial-supersession form named above:
+  age, which is that document's own rule. Five more carry the partial-supersession form named above:
   `docs/adr/0004-stateless-library.md` takes its status line, and `docs/adr/README.md` takes both the
   index cell and the procedure — alongside `CLAUDE.md`, `CONTRIBUTING.md` and the review skill's ADR
   reference, which today state the full form as the only one and would otherwise describe a procedure
@@ -346,11 +368,21 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   must file the entry under the same key would have to read it a second time — which is the thing the
   single-read rule forbids. The method therefore takes or returns that value instead of hiding it.
   It is package-private, so no published API moves.
+- **The monotonic reading gets a package-private seam, for the same reason `clock` and `sleeper`
+  have one.** Without it the clock rule is not testable: the discriminating quantity is that the wall
+  clock advanced *less* than the monotonic one, so a test that steps a pinned `Clock` forward while
+  real monotonic time advances by a millisecond of test runtime demonstrates the opposite of the case
+  it means to. Only two ways exist to express the 12:00 / 12:10 / 12:05 case — a real sleep longer
+  than the tolerance, which is slow and silently worthless the moment an implementer picks a larger
+  one, or a seam. It is the seam, beside the two this class already carries, and it is package-private
+  like both of them: no published API moves, and the production path is the real `System.nanoTime()`.
 - **What the implementation has to demonstrate, named here so it is a checklist rather than a
   judgement call at review time.** Every rule above that a test can pin, has one: that concurrent
   misses on one audience produce valid tokens and no signature runs while the cache's lock is held;
   that the bound holds and eviction is least-recently-used, with overflow degrading to signing rather
-  than failing; that a backwards clock reading discards the cache, including the 12:00/12:10/12:05
+  than failing; that a backwards clock step beyond the tolerance discards the entry it affects, that
+  a monotonic reading from a later timeline discards too, and that a wall clock stepping *forward*
+  discards nothing — including the 12:00/12:10/12:05
   case a mint-instant check would miss; that an entry is renewed on the second `exp` names and not a
   fraction of a second later; that a signer whose advertised key changes between two sends gets a new
   token rather than the old one under a new `k`, and that a signer answering a different key from
@@ -361,8 +393,13 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   cache; that the header reaches neither the health indicator's details nor any message on the send
   path's exceptions — the observable surfaces, rather than a universal negative over a module that
   has no logger and no `toString` to begin with; and that the three properties bind, with the failure
-  messages naming the YAML spelling rather than the builder's camelCase. `push2u-testkit` is
-  untouched: none of this is a signer's obligation.
+  messages naming the YAML spelling rather than the builder's camelCase. **`push2u-testkit` gains one
+  case**, and only one: the stability sentence added to `VapidSigner` is a signer's obligation, so
+  saying the kit is untouched would be leaving a new contract clause with no conformance case at all.
+  Stability over a lifetime is not checkable, as the sentence itself says — but its cheap half is,
+  and the kit already calls `publicKey()` twice for its array-identity check, so asserting that the
+  two calls agree in content costs nothing and catches the signer that re-reads a moving source. What
+  the case cannot catch is stated in the kit's own words rather than implied.
 
 **What this decision does not settle.** A shared token store — one signed token used by every node
 of a fleet, through Redis or anything else — is deliberately not built, and not because the idea is
@@ -384,7 +421,10 @@ shorter-lived than its tokens — serverless invocations, or pods that live minu
 autoscaling — where the in-process cache never gets a second send to serve and the fleet's signature
 count stops being small. Whoever opens it inherits the rest of the contract too: the value is a
 bearer credential, so putting it in a shared store extends that store's blast radius to the sender's
-VAPID identity, and a store that cannot be reached must cause a signature rather than a failed send.
+VAPID identity; a store that cannot be reached must cause a signature rather than a failed send; and
+the monotonic half of an entry's pair does not travel — the JDK fixes that origin within one virtual
+machine, so a reading taken by another node means nothing here and a shared entry has to be judged on
+its wall-clock half alone, or re-timed on arrival.
 
 Rejected alternatives:
 
@@ -451,8 +491,8 @@ Rejected alternatives:
 This rules out a VAPID token cache behind an SPI while the case for one is unmade; a shared cache
 level in front of the in-process one; an unbounded or unevictable cache; a proportional safety
 margin; a second spelling of "sign every time" through a zero margin or a zero cache size; a
-signature taken while the cache's lock is held; a cache surviving a backwards clock reading, or one
-that judges staleness against an expiry finer than the second the wire carries; a cache invalidated
+signature taken while the cache's lock is held; an entry surviving a backwards clock step beyond the
+tolerance, or a cache that judges staleness against an expiry finer than the second the wire carries; a cache invalidated
 by an authentication status; an entry filed under a key read separately from the one its header
 carries; a signature and a public key delivered by one SPI call; a token whose life is bounded by the
 signing key's or whose `aud` names more than one origin; a `byte[]` cache key; and any claim in this
