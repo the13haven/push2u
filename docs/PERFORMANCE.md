@@ -13,17 +13,22 @@ different class from another", not enough to defend a five-percent difference.
 
 - **The library's own cost per message is well under a millisecond**, and almost all of it is
   elliptic-curve arithmetic that the Web Push protocol requires: an ECDH against the subscriber's
-  key, an ES256 signature, and an ephemeral key pair. Parsing, validation, key decoding, HKDF and
-  AES-GCM together are a rounding error.
-- **The expensive steps are CPU-bound and independent per subscription**, so a fan-out scales with
-  cores. `sendAsync` with an executor is what uses them; nothing in the per-message path benefits
-  from being made cleverer.
+  key and an ephemeral key pair per message, plus an ES256 signature — which is now *per token*
+  rather than per message, since a signed VAPID token is reused for every send to a push-service
+  origin until it nears expiry. Parsing, validation, key decoding, HKDF and AES-GCM together are a
+  rounding error.
+- **The expensive steps left per message are CPU-bound and independent per subscription**, so a
+  fan-out scales with cores. `sendAsync` with an executor is what uses them; what remains on that
+  path is the protocol's own arithmetic, which does not benefit from being made cleverer.
 - **The JCE provider is a throughput decision, not only a policy one.** Between the two measured
   here the whole local send differs by a factor of two, and it is worth confirming on your own
   hardware before assuming either way.
-- **A remote signer moves the dominant cost off the CPU and onto the network.** With Vault Transit,
-  one signature per message costs more than everything else the library does, so the sender's
-  throughput becomes a property of the round trip to Vault rather than of its own cryptography.
+- **A remote signer's round trip is the dominant cost of the send that pays it**, and only that
+  send pays it. With Vault Transit one signature costs more than everything else the library does
+  put together — but token reuse takes it off the per-message path: it falls on the first send to
+  an origin within a token's life, and on none of the sends that follow. With reuse switched off
+  (`jwtReuse(false)`) the sender's throughput is again a property of the round trip to Vault rather
+  than of its own cryptography.
 - **None of this includes the POST to the push service**, which is not measured here and is normally
   the largest single term in wall-clock per message.
 
@@ -73,6 +78,13 @@ passed. The message payload is 41 bytes — the last three rows grow with it, th
 | Encrypt one record whole | 606.5 µs | 290.2 µs |
 | **`PushSender.send`, stub transport** | **726.6 µs** | **372.8 µs** |
 
+**The two signature rows and the `send` row were recorded when every send signed its own VAPID
+token.** The sender now reuses one signed token per push-service origin until it nears expiry, so
+those rows are the cost of a send that *signs* — under the default, the first send to an origin
+within a token's life, or every send with `jwtReuse(false)`. What a send serving a cached token
+costs has not been measured, and it is not obtained by subtracting the signature row from the
+`send` row: this suite measures wholes and parts, never differences between them.
+
 The first three rows touch no provider and are measured once; they are repeated across the columns
 so each column reads as a complete budget. They are printed to two significant figures on purpose:
 everything above ~90 µs reproduces between runs within a few percent, while the sub-microsecond rows
@@ -100,7 +112,9 @@ real deployment. Run to run they move by 10–20 %, more than the local figures 
 | `PushSender.send`, Vault signer, stub transport | 2.2–2.5 ms |
 
 The `send` row is more than the signature plus the local remainder, and the gap is not attributed:
-the suite measures the whole and the parts, not the difference between them.
+the suite measures the whole and the parts, not the difference between them. It is likewise a send
+that signs, and under the default token reuse that is the first send to an origin rather than the
+typical one — the Transit round trip is not on the path of the sends that follow it.
 
 ## What the numbers say
 
@@ -111,9 +125,11 @@ BouncyCastle: a quarter of a percent of the local send, and three quarters of on
 re-validates the subscription key on every send rather than trusting that it came through
 `Subscription`'s constructor, and that safety property costs nothing measurable.
 
-**Three elliptic-curve operations are the local cost.** ECDH, the ES256 signature and the ephemeral
-key pair are 716.6 µs of the 726.6 µs `send` on the JDK provider — 98.6 %. Everything else in the
-library, including all the parsing, encoding, HKDF and AES-GCM, is the remaining 1.4 %.
+**Three elliptic-curve operations are the local cost of a send that signs.** ECDH, the ES256
+signature and the ephemeral key pair are 716.6 µs of the 726.6 µs `send` on the JDK provider —
+98.6 %. Everything else in the library, including all the parsing, encoding, HKDF and AES-GCM, is
+the remaining 1.4 %. A send serving a cached token drops the signature and keeps the other two, and
+the resulting figure is not recorded here because it was never measured.
 
 **ECDH is the single most expensive step, and how expensive depends on the provider.** On SunEC it
 is 5.6× the cost of generating a key pair, though both are one scalar multiplication; on
@@ -134,25 +150,29 @@ keeps the library safe to share between threads — costs nothing worth reclaimi
 figure as a floor rather than a reading: the object it creates never escapes the measurement, so a
 JIT is free to elide part of the work, and only the order of magnitude is being claimed.
 
-**BouncyCastle roughly halves the local send** — 373 µs against 727 µs — winning on ECDH, on
-signing and on key generation, and losing on HKDF (4.5× slower, 8.9 µs against 2.0 µs) and on
-decoding (2× slower, 1.2 µs of difference). Both losses are noise at this scale. For a deployment
-whose fan-out is large enough for the sender's CPU to matter, passing a `BouncyCastleProvider` to
-`cryptoProvider(...)` is worth measuring on its own hardware; the core takes no dependency either
-way, since the provider is supplied by the application.
+**BouncyCastle roughly halves the local send** — 373 µs against 727 µs, both of them a send that
+signs — winning on ECDH, on signing and on key generation, and losing on HKDF (4.5× slower, 8.9 µs
+against 2.0 µs) and on decoding (2× slower, 1.2 µs of difference). Both losses are noise at this
+scale. For a deployment whose fan-out is large enough for the sender's CPU to matter, passing a
+`BouncyCastleProvider` to `cryptoProvider(...)` is worth measuring on its own hardware; the core
+takes no dependency either way, since the provider is supplied by the application.
 
 **Through Vault, one signature costs more than everything else put together.** 0.9–1.3 ms against
-the ~0.6 ms the rest of the send spends locally, and that is the lower bound described above. The
-JWT is rebuilt and re-signed for every message even though the token depends only on the push
-service's origin, the contact and an expiry that defaults to 12 hours — so a fan-out to 100 000
-subscriptions spends one and a half to two minutes of sequential waiting on Vault for a value that changes
-twice a day. `publicKey()`, by contrast, is a field clone at 7 ns — near the floor of what this
-harness can resolve at all: the fetched mode reads Vault once at startup and never again.
+the ~0.6 ms the rest of the send spends locally, and that is the lower bound described above. What
+has changed since these numbers were taken is how often a send pays it. Nothing in the token is
+per-message — it depends only on the push service's origin, the contact and an expiry that defaults
+to 12 hours — so the sender signs one per origin and reuses it until it nears expiry, and a large
+fan-out now waits on Vault a handful of times rather than once per subscription. The figure that
+used to stand here for the sequential Vault wait of a 100 000-subscription fan-out has been deleted
+rather than restated: it measured a path the library no longer takes, and what the new one costs
+has not been measured. `publicKey()`, by contrast, is a field clone at 7 ns — near the floor of
+what this harness can resolve at all: the fetched mode reads Vault once at startup and never again.
 
 **Parallelism, not micro-optimisation, is what scales a fan-out.** The expensive steps are CPU-bound
 and independent per subscription, so `sendAsync` with an executor is the lever that uses the other
-cores; the Vault signature is not CPU-bound at all, and a cache would remove it from the path rather
-than speed it up.
+cores; the Vault signature is not CPU-bound at all, and the token cache removed it from the
+per-message path rather than speeding it up — which is what a cache can do for a cost that is a
+round trip.
 
 ## Keeping this document honest
 
@@ -160,6 +180,10 @@ Re-record when the send path changes, when the JDK baseline moves, or when a pro
 replace the whole table rather than editing a cell, because the environment line belongs to the
 numbers. Keep the previous table only if the comparison is the point; otherwise a stale row that
 looks current is worse than no row.
+
+**Both tables predate VAPID token reuse** and are marked where that matters rather than adjusted by
+arithmetic. The next re-recording is the one that answers what a send serving a cached token costs;
+until it happens, this document says a send that signs and does not pretend to know the other.
 
 A table here is a snapshot someone took, not an output the build maintains. If it stops being
 re-recorded it should be deleted rather than left to age quietly: a stale measurement is read with

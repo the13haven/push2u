@@ -243,6 +243,58 @@ once at startup — the allowlist itself is in [Endpoint policy](#endpoint-polic
 EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
 ```
 
+### VAPID token reuse
+
+**One signed token serves every message to a push service, not one per message.** Nothing in a
+VAPID token is per-message: RFC 8292 §2 gives it three claims — the push service's *origin*, your
+contact, and the expiry `jwtExpiry(Duration)` puts 12 hours out by default. So `PushSender` signs
+one token per origin and reuses it for every later send to that origin, until it comes within
+`jwtRenewBefore(Duration)` of the expiry — five minutes by default — and signs a fresh one. RFC
+8292 §5 encourages this outright, because reuse also lets a push service cache the result of
+verifying the signature. A fan-out to 100 000 subscriptions therefore pays for a handful of
+signatures rather than 100 000 — a useful saving on a local key pair, and a decisive one with the
+[Vault Transit signer](#vault-transit-signer), where every signature is a network round trip and
+Vault's availability would otherwise gate every push.
+
+The tokens sit in a per-sender cache bounded at `jwtCacheSize(int)` entries — 64 by default,
+evicting the least recently used. That bound is not a tuning knob but the reason the cache is safe
+to hold: the origins a sender meets come from the endpoints inside the subscriptions it is handed,
+which are as trustworthy as wherever those subscriptions arrive from. A full cache costs a
+signature per send, never a delivery.
+
+```java
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
+    .jwtRenewBefore(Duration.ofMinutes(15))  // a longer margin for slow sends or loose clocks
+    .jwtCacheSize(128)
+    .build();
+```
+
+The margin is an absolute duration rather than a fraction of `jwtExpiry`, because both things it
+covers are absolute: clock skew against the push service, which checks `exp` against its own clock,
+and a send that picked a token up just before the boundary and must still present a valid one at
+its last retry — with `Retry-After` honoured up to the retry policy's ceiling, that is minutes
+rather than seconds. Raise it if your retry policy or HTTP timeouts allow a longer send. A negative
+value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the token is held to its
+last second, with the skew consequences of saying so — and a value at or above `jwtExpiry` means
+the margin has swallowed the token's whole life, so every send signs afresh.
+
+**`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
+this library always did:
+
+```java
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
+    .jwtReuse(false)
+    .build();
+```
+
+Three situations call for it. A push service that refuses a token it has seen before would answer
+`401` or `403` on every send to that origin after the first, with a signature that verifies — this
+is the remedy, and it needs no new release of anything. A deployment that treats process memory as
+reachable may not want a bearer credential resident for the life of a token, where signing per
+message keeps one there for the length of one send (`jwtRenewBefore` shortens that residency
+without removing it). And it makes a signer whose signing key rotates under an unchanged advertised
+key fail at once rather than up to `jwtExpiry` later.
+
 ### Asynchronous sending
 
 `sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The blocking send
