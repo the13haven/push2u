@@ -78,12 +78,13 @@ passed. The message payload is 41 bytes — the last three rows grow with it, th
 | Encrypt one record whole | 606.5 µs | 290.2 µs |
 | **`PushSender.send`, stub transport** | **726.6 µs** | **372.8 µs** |
 
-**The two signature rows and the `send` row were recorded when every send signed its own VAPID
-token.** The sender now reuses one signed token per push-service origin until it nears expiry, so
-those rows are the cost of a send that *signs* — under the default, the first send to an origin
-within a token's life, or every send with `jwtReuse(false)`. What a send serving a cached token
-costs has not been measured, and it is not obtained by subtracting the signature row from the
-`send` row: this suite measures wholes and parts, never differences between them.
+**The rows that build or sign a token — the JWT row, the two signature rows and the `send` row —
+were recorded when every send signed its own.** The sender now reuses one signed token per
+push-service origin until it nears expiry, so those rows are the cost of a send that *signs*: under
+the default, the first send to an origin within a token's life, or every send with
+`jwtReuse(false)`. What a send serving a cached token costs has not been measured, and it is not
+obtained by subtracting the signature row from the `send` row: this suite measures wholes and
+parts, never differences between them.
 
 The first three rows touch no provider and are measured once; they are repeated across the columns
 so each column reads as a complete budget. They are printed to two significant figures on purpose:
@@ -162,11 +163,9 @@ the ~0.6 ms the rest of the send spends locally, and that is the lower bound des
 has changed since these numbers were taken is how often a send pays it. Nothing in the token is
 per-message — it depends only on the push service's origin, the contact and an expiry that defaults
 to 12 hours — so the sender signs one per origin and reuses it until it nears expiry, and a large
-fan-out now waits on Vault a handful of times rather than once per subscription. The figure that
-used to stand here for the sequential Vault wait of a 100 000-subscription fan-out has been deleted
-rather than restated: it measured a path the library no longer takes, and what the new one costs
-has not been measured. `publicKey()`, by contrast, is a field clone at 7 ns — near the floor of
-what this harness can resolve at all: the fetched mode reads Vault once at startup and never again.
+fan-out now waits on Vault a handful of times rather than once per subscription. `publicKey()`, by
+contrast, is a field clone at 7 ns — near the floor of what this harness can resolve at all: the
+fetched mode reads Vault once at startup and never again.
 
 **Parallelism, not micro-optimisation, is what scales a fan-out.** The expensive steps are CPU-bound
 and independent per subscription, so `sendAsync` with an executor is the lever that uses the other

@@ -245,8 +245,8 @@ EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googl
 
 ### VAPID token reuse
 
-**One signed token serves every message to a push service, not one per message.** Nothing in a
-VAPID token is per-message: RFC 8292 §2 gives it three claims — the push service's *origin*, your
+**One signed token serves every message to a push-service origin, not one per message.** Nothing in
+a VAPID token is per-message: RFC 8292 §2 gives it three claims — the push service's *origin*, your
 contact, and the expiry `jwtExpiry(Duration)` puts 12 hours out by default. So `PushSender` signs
 one token per origin and reuses it for every later send to that origin, until it comes within
 `jwtRenewBefore(Duration)` of the expiry — five minutes by default — and signs a fresh one. RFC
@@ -276,7 +276,9 @@ its last retry — with `Retry-After` honoured up to the retry policy's ceiling,
 rather than seconds. Raise it if your retry policy or HTTP timeouts allow a longer send. A negative
 value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the token is held to its
 last second, with the skew consequences of saying so — and a value at or above `jwtExpiry` means
-the margin has swallowed the token's whole life, so every send signs afresh.
+the margin has swallowed the token's whole life, so every send signs afresh. `jwtCacheSize(0)` is
+rejected rather than read as "cache nothing": the bound is not a second spelling of the switch
+below, and the two mean different things.
 
 **`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
 this library always did:
@@ -290,10 +292,14 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 Three situations call for it. A push service that refuses a token it has seen before would answer
 `401` or `403` on every send to that origin after the first, with a signature that verifies — this
 is the remedy, and it needs no new release of anything. A deployment that treats process memory as
-reachable may not want a bearer credential resident for the life of a token, where signing per
-message keeps one there for the length of one send (`jwtRenewBefore` shortens that residency
-without removing it). And it makes a signer whose signing key rotates under an unchanged advertised
-key fail at once rather than up to `jwtExpiry` later.
+reachable may not want a bearer credential resident at all: nothing sweeps the cache, so an entry
+leaves it only when a later send to that origin finds it stale and replaces it, or when the bound
+evicts it — an origin that goes quiet keeps its header, and the token inside stays usable until its
+own `exp`, which `jwtRenewBefore` does not move. Lowering the margin therefore shortens residency
+only where sends to that origin keep arriving; `jwtReuse(false)` is what puts a token in the
+process for the length of one send and no longer, which is what this library did before. And it
+makes a signer whose signing key rotates under an unchanged advertised key fail at once rather than
+up to `jwtExpiry` later.
 
 ### Asynchronous sending
 
@@ -648,18 +654,30 @@ An external `VapidSigner` controls its own signing provider.
 A public key that does not correspond to the configured private scalar is therefore rejected at
 startup instead of producing repeated `401`/`403` responses at send time.
 
-Whatever the signer, its two outputs are checked on every send: the signature must be the raw
-64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point (RFC 8292 §3.2).
-A violation raises `PushCryptoException` saying what was returned — otherwise it would surface as
-an opaque `401`/`403` on every send, with nothing pointing at the signer. If your implementation
-signs through JCA, note that `SHA256withECDSA` produces DER: ask for
-`SHA256withECDSAinP1363Format` or convert before returning, and the rejection message will say so
-if you forget.
+Whatever the signer, its two outputs are checked wherever a new one enters a send: the signature
+must be the raw 64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point
+(RFC 8292 §3.2). Under the default token reuse that is every send that signs — a reused
+`Authorization` value was checked when it was signed, and `sign` is not called for it again — so a
+misencoded signer is still caught the first time it is asked, on the send that asks. A violation
+raises `PushCryptoException` saying what was returned; otherwise it would surface as an opaque
+`401`/`403`, with nothing pointing at the signer. If your implementation signs through JCA, note
+that `SHA256withECDSA` produces DER: ask for `SHA256withECDSAinP1363Format` or convert before
+returning, and the rejection message will say so if you forget.
+
+**The key a signer advertises must stay the same for that signer's lifetime.** VAPID's public key
+is your application server's published identity: a browser subscription is bound to the
+`applicationServerKey` it was created with, and RFC 8292 §4.2 lets a push service refuse a JWT
+whose key is not the one that subscription was created under. So a signer that starts answering
+`publicKey()` differently has already broken every restricted subscription taken out before the
+change — rotation is a re-subscription event that produces a *new* signer, not a new answer from
+the existing one. The library cannot check this from outside, since two equal answers say nothing
+about the next one, and states it as contract instead.
 
 ## Conformance kit for a custom signer
 
-The check above is what your signer meets on every send; `push2u-testkit` is how it finds out in
-its own test suite instead. It is a test-scoped artifact holding one abstract JUnit Jupiter class:
+The checks above are what your signer meets on the sends that reach it; `push2u-testkit` is how it
+finds out in its own test suite instead. It is a test-scoped artifact holding one abstract JUnit
+Jupiter class:
 
 ```kotlin
 dependencies {

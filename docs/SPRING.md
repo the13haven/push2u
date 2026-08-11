@@ -16,9 +16,9 @@ push2u:
     private-key: "${VAPID_PRIVATE_KEY}"
     subject: "mailto:ops@example.com"
   jwt-expiry: 12h
-  jwt-renew-before: 5m              # defaults, shown for reference
-  jwt-reuse: true                   # defaults, shown for reference
-  jwt-cache-size: 64                # defaults, shown for reference
+  jwt-renew-before: 5m
+  jwt-reuse: true
+  jwt-cache-size: 64
   default-ttl: 24h
   record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
