@@ -220,7 +220,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   operator setting the clock leaves every cached entry over-estimating its own remaining life by the
   size of the step. Today that event is harmless, because each send mints a fresh `exp` from the same
   wrong clock; under reuse the sender would keep presenting a token the push service considers
-  expired — RFC 8292 §4.2's first invalidity ground — for the whole of the step. **So a minted entry
+  expired for the whole of the step, which RFC 8292 §4.2 makes a ground of invalidity in those
+  words. **So a minted entry
   records the wall reading `exp` was computed from and a `System.nanoTime()` reading taken beside it,
   and it is renewed when either bound is reached: the wall clock arriving at the effective `exp` less
   `jwtRenewBefore`, or the monotonic reading having run for that same span — `exp` minus the wall
@@ -262,9 +263,10 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   the monotonic bound governs alone, and it has no guaranteed rate against *true* time either — the
   same absence of a common rate the third rejected rule died of, pointing the other way. On an
   undisciplined counter running fifty parts per million slow, that bound is reached a couple of
-  seconds of true time late on a twelve-hour entry. With any margin at all this is absorbed; at
-  `jwtRenewBefore(Duration.ZERO)` it is presented past `exp`, and that is what the setting means — no
-  margin is no margin, and a drift-sized residual is what choosing it buys.
+  seconds of true time late on a twelve-hour entry. A margin larger than that drift absorbs it, which
+  the default of five minutes is by four orders of magnitude; a margin smaller than it does not, and
+  at `jwtRenewBefore(Duration.ZERO)` the token is presented past `exp`. That is what the setting
+  means — no margin is no margin, and a drift-sized residual is what choosing it buys.
   A monotonic reading from a *later timeline* is the one case the pair cannot absorb — a
   checkpoint/restore or a live migration onto a host whose counter is behind. The JDK forbids it: the
   same origin serves every invocation within one virtual-machine instance, and a restore is that same
@@ -396,10 +398,12 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   not a fraction of a second later; that a signer whose advertised key changes between two sends gets
   a new token rather than the old one under a new `k`, and that a signer answering a different key
   from every `publicKey()` call still files each entry under the key its own header carries; that a
-  401 or a 403 leaves the entry in place; and that the cached header reaches neither the health
-  indicator's details nor any message on the send path's exceptions — the observable surfaces, rather
-  than a universal negative over a module with no logger and no `toString` to begin with. The rest of
-  what this decision fixes is ordinary and needs no list here: the bound and its eviction, the
+  401 or a 403 leaves the entry in place; that a full cache signs rather than refusing, since the
+  bound is reachable on purpose by the party who supplies the subscriptions and a policy this
+  deployment chose must not become a delivery failure; and that the cached header reaches neither the
+  health indicator's details nor any message on the send path's exceptions — the observable surfaces,
+  rather than a universal negative over a module with no logger and no `toString` to begin with. The
+  rest of what this decision fixes is ordinary and needs no list here: which entry eviction picks, the
   degenerate settings of each knob, the property bindings, one cache per sender.
   **`push2u-testkit` needs no new case**, which is worth stating because the stability sentence added
   to `VapidSigner` is a new signer obligation and a new obligation with no conformance case would be a
