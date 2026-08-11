@@ -34,10 +34,15 @@ breaks ADR-002.
 bringing it up to date with the code, appending an amendment — is a finding, whatever the edit
 improves. What it should have done instead:
 
-- a decision that *moves*: a new file with the next free number, stating the new decision and what it
-  replaces, plus one edit to the old file — its status line becomes
+- a decision that *moves entirely*: a new file with the next free number, stating the new decision
+  and what it replaces, plus one edit to the old file — its status line becomes
   `**Status:** Superseded by [ADR-NNN](NNNN-slug.md)`. The superseded file is never deleted; its
   number is cited from other ADRs, from `docs/DESIGN.md` and from the code review procedure;
+- a decision that *moves only in part*: the same one-line edit, in a narrower form beside the full
+  one rather than replacing it — `**Status:** Accepted; one clause superseded by
+  [ADR-NNN](NNNN-slug.md)`. *Which* clause is superseded belongs in the new ADR, not in this one's
+  status line — naming it here would smuggle the new decision's reasoning into a file that may not
+  carry it. ADR-004's status line, pointing at ADR-019, is the case to check this against;
 - a description of how things now *work*: that belongs in `docs/DESIGN.md`, the document meant to
   be rewritten as the code moves. An ADR describing the present tense goes stale and may not be
   edited to catch up, which is precisely why the split exists;

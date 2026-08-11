@@ -227,8 +227,10 @@ public member deserve to be permanent, since it ships to Maven Central and canno
 If the change settles something the ADRs do not cover, or replaces a decision one of them records,
 write a **new** file in `docs/adr/` and add its row to `docs/adr/README.md`. Do not edit an ADR
 whose decision is implemented — a superseded one keeps its body and gets `Superseded by ADR-NNN` on
-its status line, and `docs/adr/README.md` carries the procedure. `docs/DESIGN.md` is the document
-that tracks the code; the ADRs are the record of what was decided and when.
+its status line, or, when only one clause moves, the narrower `Accepted; one clause superseded by
+ADR-NNN` beside the full form — and `docs/adr/README.md` carries the procedure for both.
+`docs/DESIGN.md` is the document that tracks the code; the ADRs are the record of what was decided
+and when.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

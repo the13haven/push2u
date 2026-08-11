@@ -1,6 +1,6 @@
 # ADR-019 — The VAPID token is reused until it nears expiry
 
-**Status:** Proposed
+**Status:** Accepted
 
 `PushSender.send` builds and signs a VAPID JWT for every single message. Nothing about that token is
 per-message: RFC 8292 §2 gives it three claims — `aud`, which is the *origin* of the push service
