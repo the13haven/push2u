@@ -118,10 +118,11 @@ PushSender sender = PushSender.builder(
 
 The key source, the contact and the endpoint policy are required, so they are parameters of the
 factory method rather than builder steps — `build()` has no missing value left to refuse.
-Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `recordSize`,
-`maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and lives on the builder. A
-`PushSender` is immutable and thread-safe once built; build it once and share it, as you would a
-`PushService`.
+Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`,
+`jwtRenewBefore`, `jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`,
+`cryptoProvider`) is optional and lives on the builder. A `PushSender` is thread-safe once built,
+with final configuration and one internal cache of the VAPID tokens it has signed; build it once
+and share it, as you would a `PushService`.
 
 The third parameter has no counterpart in `web-push`, and it is the one that will stop a
 mechanical port: see [`EndpointPolicy` — a decision you now have to

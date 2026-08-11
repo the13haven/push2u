@@ -26,9 +26,10 @@ different class from another", not enough to defend a five-percent difference.
 - **A remote signer's round trip is the dominant cost of the send that pays it**, and only that
   send pays it. With Vault Transit one signature costs more than everything else the library does
   put together — but token reuse takes it off the per-message path: it falls on the first send to
-  an origin within a token's life, and on none of the sends that follow. With reuse switched off
-  (`jwtReuse(false)`) the sender's throughput is again a property of the round trip to Vault rather
-  than of its own cryptography.
+  an origin within a token's life, and on none of the sends that follow unless the deployment meets
+  more origins than the cache is sized for, where eviction returns the evicted ones to a signature
+  per send. With reuse switched off (`jwtReuse(false)`) the sender's throughput is again a property
+  of the round trip to Vault rather than of its own cryptography.
 - **None of this includes the POST to the push service**, which is not measured here and is normally
   the largest single term in wall-clock per message.
 

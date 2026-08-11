@@ -176,18 +176,18 @@ RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to the
 and the port omitted when it equals the scheme's default. `java.net.URI` performs none of that
 normalization, so the library serializes the origin itself (`Origin.serialize`).
 
-That origin is also what makes the token cacheable: it is the only claim a send contributes. The
-`sub` claim is a final field of the sender, and `exp` is minted per token from another one, the
-expiry offset — so `exp` does vary between tokens, and what a cached entry relies on is not that it
-is fixed but that it names a window the entry is retired ahead of. A `PushSender` therefore holds
-one bounded map of signed `Authorization` values, keyed by the audience together with the base64url
-public key the `VapidSigner` currently advertises, so an entry is only ever served to the signer in
-the identity it currently publishes and a key that moved misses rather than serving a header naming
-a key the signer has abandoned. The key is that
-base64url string rather than the raw bytes, since `publicKey()` returns a fresh array per call by
-contract and an array key would compile and never hit. The lookup runs after the endpoint policy —
-the policy is still unconditional and still ahead of everything, so a rejected endpoint reaches no
-cache — and `jwtReuse(false)` bypasses the cache entirely, signing per send as the library did
+That origin is also what makes the token cacheable: of the three claims, it is the only one a send
+supplies. `sub` is a final field of the sender, and `exp` is computed at each mint from another
+final field, the expiry offset — so `exp` does differ between tokens, and what a cached entry
+relies on is not that it is fixed but that it names a window the entry is retired ahead of. A
+`PushSender` therefore holds one bounded map of signed `Authorization` values, keyed by the audience
+together with the base64url public key the `VapidSigner` currently advertises, so an entry is only
+ever served to the signer in the identity it currently publishes and a key that moved misses rather
+than serving a header naming a key the signer has abandoned. The key is that base64url string
+rather than the raw bytes, since `publicKey()` returns a fresh array per call by contract and an
+array key would compile and never hit. The lookup runs after the endpoint policy — the policy is
+still unconditional and still ahead of everything, so a rejected endpoint reaches no cache — and
+`jwtReuse(false)` bypasses the cache entirely, signing per send as the library did
 before. Under the default the signature is therefore not taken on every send but on every miss,
 which is where every new value still enters and where `VapidSigner`'s two output checks still run.
 
@@ -366,10 +366,15 @@ swap, whatever the library does with the two return values — rotation is a re-
 producing a *new* signer, which is what the Vault signer already documents of itself. The clause is
 a statement of what the protocol requires rather than a new demand, and it is unfalsifiable from
 outside for the same reason thread-safety is: two equal answers say nothing about the next one. The
-conformance kit pins its checkable projection only, that consecutive calls answer the same key. The
-token cache is what made the silence worth ending — it keys entries on the advertised key, so an
-advertised key that moves between sends is detected and replaced rather than served, while one that
-moves *within* one header is a self-contradiction only the contract rules out.
+conformance kit pins the two checkable moments — consecutive calls answering the same key, and one
+signature verifying against the key advertised beside it — and neither reaches the lifetime the
+clause is about. The token cache is what made the silence worth ending: it keys entries on the
+advertised key, so a key that has moved builds a different cache key and the lookup simply misses,
+which is why the next send signs under the identity the signer now publishes rather than serving
+the old header. Nothing detects the move and nothing evicts on it — the entry filed under the
+abandoned key stays until the bound reaches it, and would serve again if the key moved back inside
+its window. A key that moves *within* one header is a self-contradiction only the contract rules
+out.
 
 `publicKeyBase64Url()` publishes the same key as the string a browser takes as its
 `applicationServerKey` — unpadded base64url over the raw point

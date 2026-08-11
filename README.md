@@ -124,9 +124,11 @@ the rule for you — `EndpointPolicies.allowedEndpoints(…)` takes the allowlis
 services your users arrive from, and `EndpointPolicies.unrestricted()` says, in your own source,
 that this deployment applies no restriction.
 
-A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
-and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
-has to be thread-safe for the same reason; the ones shipped here are.
+A `PushSender` is thread-safe and keeps no per-send state, so build one at startup and share that
+instance across every thread that sends. Its configuration is final; the one thing it holds beyond
+it is the cache of signed VAPID tokens described under [VAPID token reuse](#vapid-token-reuse),
+which is safe to share for the same reason. A custom `PushHttpClient` or `VapidSigner` has to be
+thread-safe too; the ones shipped here are.
 
 The three message headers are optional. Without `ttl`, the message goes out with the sender's
 default of **24 hours** — how long the push service may hold it for a client that is offline;
@@ -295,9 +297,11 @@ is the remedy, and it needs no new release of anything. A deployment that treats
 reachable may not want a bearer credential resident at all: nothing sweeps the cache, so an entry
 leaves it only when a later send to that origin finds it stale and replaces it, or when the bound
 evicts it — an origin that goes quiet keeps its header, and the token inside stays usable until its
-own `exp`, which `jwtRenewBefore` does not move. Lowering the margin therefore shortens residency
-only where sends to that origin keep arriving; `jwtReuse(false)` is what puts a token in the
-process for the length of one send and no longer, which is what this library did before. And it
+own `exp`, which `jwtRenewBefore` does not move. *Raising* the margin retires an entry sooner and
+lowering it holds one longer — the margin is subtracted from the life an entry is served for — but
+either way the change is noticed only by a later send to that origin, so a bigger margin shortens
+residency only where traffic keeps arriving to notice. `jwtReuse(false)` is what puts a token in
+the process for the length of one send and no longer, which is what this library did before. And it
 makes a signer whose signing key rotates under an unchanged advertised key fail at once rather than
 up to `jwtExpiry` later.
 
@@ -675,9 +679,9 @@ about the next one, and states it as contract instead.
 
 ## Conformance kit for a custom signer
 
-The checks above are what your signer meets on the sends that reach it; `push2u-testkit` is how it
-finds out in its own test suite instead. It is a test-scoped artifact holding one abstract JUnit
-Jupiter class:
+The two shape checks above are what your signer meets on the sends that reach it; `push2u-testkit`
+is how it finds out in its own test suite instead. It is a test-scoped artifact holding one
+abstract JUnit Jupiter class:
 
 ```kotlin
 dependencies {
@@ -742,7 +746,7 @@ Four things this library will not do, whatever it is configured with:
 
 - Content coding other than `aes128gcm`, or more than one RFC 8188 record per message.
 - A VAPID JWT valid for longer than 24 hours (RFC 8292 §2).
-- Anything with the subscription after the send: the library is stateless, and persisting or
+- Anything with the subscription after the send: the library stores none, and persisting or
   deleting one belongs to the application.
 - A body over the configured limits — see [Payload size limits](#payload-size-limits) for the two
   that are raisable and how they interact.
