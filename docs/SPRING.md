@@ -65,10 +65,16 @@ origin and reuses it for every later message to that origin until it is within `
 of expiry, holding at most `jwt-cache-size` of them and evicting the least recently used.
 `jwt-reuse: false` restores a fresh signature per message.
 [`README.md` → VAPID token reuse](../README.md#vapid-token-reuse) says what each of the three is
-for and when a deployment reaches for it. Neither `jwt-renew-before` nor `jwt-cache-size` is
-validated against `jwt-expiry` or against the other: a margin at or above `jwt-expiry` is not an
-error but simply means every send signs afresh, and a cache bound is never a second way to spell
-`jwt-reuse: false`, which is why below 1 is refused rather than read as "cache nothing".
+for and when a deployment reaches for it. All three are builder values, and the starter builds the
+`PushSender` once when the context starts, so a change to any of them — `jwt-reuse: false` included
+— reaches sending only on the next start: a redeploy, or whatever restart a configuration refresh
+amounts to in your deployment. Plan the switch as one, since the situations it answers are the ones
+met while the application is running.
+
+Neither `jwt-renew-before` nor `jwt-cache-size` is validated against `jwt-expiry` or against the
+other: a margin at or above `jwt-expiry` is not an error but simply means every send signs afresh,
+and a cache bound is never a second way to spell `jwt-reuse: false`, which is why below 1 is
+refused rather than read as "cache nothing".
 
 ## Endpoint policy
 
