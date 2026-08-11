@@ -189,6 +189,33 @@ class PushSenderJwtReuseTest {
                 .isEqualTo(1);
     }
 
+    /**
+     * The cache's key must be the base64url of the raw {@code publicKey()} bytes — the value the header's {@code k}
+     * actually carries — and never {@code publicKeyBase64Url()}, which is a {@code default} an implementation may
+     * override. This signer overrides it to a string that names no key at all: if any part of the cache path reached
+     * for the override, the lookup key could never match what the mint filed (the header is built from the raw bytes),
+     * and every send would miss and sign — a defect only a benchmark would ever surface. A hit is the proof the
+     * override is never consulted.
+     */
+    @Test
+    void theCacheKeyComesFromThePublicKeyBytesNotFromTheOverridableEncoding() {
+        VapidSigner overriding = new DriftedEncodingSigner(signer);
+        PushSender sender = PushSender.builder(overriding, "mailto:ops@example.com", EndpointPolicies.unrestricted())
+                .httpClient(client)
+                .build();
+
+        sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+
+        assertThat(signer.signCount())
+                .as("the second send hits: lookup and filing both encode publicKey()'s bytes, so the drifted"
+                        + " publicKeyBase64Url() override can never split them apart")
+                .isEqualTo(1);
+        assertThat(client.authorizations().getFirst())
+                .as("the header's k likewise carries the raw bytes' encoding, not the override's answer")
+                .endsWith(", k=" + VapidKeys.encodePublicKey(overriding.publicKey()));
+    }
+
     @Test
     void a401DoesNotEvictTheEntry() {
         authenticationStatusDoesNotEvict(401);
@@ -368,6 +395,34 @@ class PushSenderJwtReuseTest {
         @Override
         public byte[] publicKey() {
             return advertised.clone();
+        }
+    }
+
+    /**
+     * Advertises a steady key from {@code publicKey()} while overriding the {@code default publicKeyBase64Url()} with a
+     * string that is not the encoding of anything — the override an implementation may legitimately ship (for a
+     * custodian handing the key out pre-encoded) taken to the adversarial extreme the cache must never consult.
+     */
+    private static final class DriftedEncodingSigner implements VapidSigner {
+        private final VapidSigner delegate;
+
+        DriftedEncodingSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+
+        @Override
+        public String publicKeyBase64Url() {
+            return "not-the-encoding-of-any-key";
         }
     }
 

@@ -100,6 +100,37 @@ class PushSenderJwtRenewalTest {
                 .isEqualTo(2);
     }
 
+    /**
+     * The wall bound governing <em>alone</em>: after a forward wall step — a forward NTP step, or equivalently a
+     * monotonic clock lagging behind true time — the wall clock reaches the effective {@code exp} while the monotonic
+     * elapsed time is still hours short of the span, and the wall comparison is the only thing left to end the entry.
+     * At {@code jwtRenewBefore(ZERO)} the deadline is the wire's {@code exp} itself, so this is also the test that pins
+     * the comparison's strictness (RFC 7519 §4.1.4: current time strictly before {@code exp}) and its truncation on the
+     * wall side: served at one nanosecond before the second {@code exp} names, renewed exactly on it — 300 ms before
+     * the un-truncated instant — with the monotonic bound nowhere near. Every other renewal case here trips the
+     * monotonic bound at the same instant or earlier, so this is the one test a lost or loosened wall check fails.
+     */
+    @Test
+    void aForwardWallStepEndsAnEntryOnTheWallBoundAlone() {
+        PushSender sender = sender(Duration.ZERO);
+        time.advance(Duration.ofMillis(300));
+        sender.send(subscription(), message()); // exp = BASE + 12h + 0.3s, on the wire as BASE + 12h
+        assertThat(signer.signCount()).isEqualTo(1);
+
+        time.advance(Duration.ofSeconds(1)); // monotonic elapsed: 1s, hours short of the span
+        time.stepWallForward(EXPIRY.minusMillis(300).minusSeconds(1).minusNanos(1)); // wall: effective exp − 1ns
+        sender.send(subscription(), message());
+        assertThat(signer.signCount())
+                .as("strictly before the second exp names the entry still serves, however far the wall jumped")
+                .isEqualTo(1);
+
+        time.advance(Duration.ofNanos(1)); // wall: exactly the second exp names; monotonic elapsed: ~1s
+        sender.send(subscription(), message());
+        assertThat(signer.signCount())
+                .as("the wall bound alone ends the entry on the wire's second — the monotonic span has hours left")
+                .isEqualTo(2);
+    }
+
     /** A backwards wall step of any size buys the entry nothing: the monotonic bound still ends it at the span. */
     @Test
     void aBackwardsWallStepCannotPushTheEffectiveLifePastTheSpan() {
@@ -284,6 +315,10 @@ class PushSenderJwtRenewalTest {
 
         void stepWallBack(Duration step) {
             wallOffsetNanos -= step.toNanos();
+        }
+
+        void stepWallForward(Duration step) {
+            wallOffsetNanos += step.toNanos();
         }
 
         void stepMonotonicForward(Duration step) {

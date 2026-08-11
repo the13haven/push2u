@@ -36,11 +36,11 @@ package com.the13haven.push2u;
  * published identity: a browser subscription is bound to the {@code applicationServerKey} it was created with, and RFC
  * 8292 §4.2 entitles a push service to refuse a JWT whose key is not the one the subscription was created under. A
  * signer that swaps its advertised key under a live sender has therefore already broken every restricted subscription
- * taken out before the swap — whatever the library does with this method's two return values. Rotation is a
- * re-subscription event that produces a <em>new</em> signer, never a new answer from an existing one; the shipped Vault
- * signer says the same of itself. Like thread-safety, this cannot be checked from outside — the library sees only what
- * each call returns, and two equal answers say nothing about the next one — so it is stated as contract, and the
- * conformance kit pins only its checkable projection: consecutive calls answering the same key.
+ * taken out before the swap — whatever the library does with the values {@link #sign} and {@link #publicKey} return.
+ * Rotation is a re-subscription event that produces a <em>new</em> signer, never a new answer from an existing one; the
+ * shipped Vault signer says the same of itself. Like thread-safety, this cannot be checked from outside — the library
+ * sees only what each call returns, and two equal answers say nothing about the next one — so it is stated as contract,
+ * and the conformance kit pins only its checkable projection: consecutive calls answering the same key.
  */
 public interface VapidSigner {
 
