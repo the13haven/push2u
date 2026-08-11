@@ -113,12 +113,12 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   `Accepted; one clause superseded by [019](0019-vapid-token-reused-until-it-nears-expiry.md)`. Which
   clause it is stays in ADR-019 rather than in ADR-004's status line, because naming it there would
   put this decision's reasoning into a document that may not carry it. The procedure section gains
-  the general shape of both, beside the full-supersession form it already has — and so do the four
-  other places that today state the full form as the only one: `CLAUDE.md`, `CONTRIBUTING.md`,
+  the general shape of both, beside the full-supersession form it already has — and so does every
+  other place that today states the full form as the only one: `CLAUDE.md`, `CONTRIBUTING.md`,
   `docs/adr/README.md` itself, and the review skill in both halves, its `SKILL.md` and its ADR
-  reference, where an ADR edited other than by that one status line is a finding on sight. Nothing else in ADR-004 is
-  touched, and the edit happens when this ADR becomes `Accepted`, not before: until then there is no
-  decision to supersede.
+  reference, where an ADR edited other than by that one status line is a finding on sight. Nothing
+  else in ADR-004 is touched, and the edit happens when this ADR becomes `Accepted`, not before:
+  until then there is no decision to supersede.
 - **The key is the audience *and* the signer's advertised public key, and what it detects is a change
   in the *advertised* key.** What is cached is the whole header as one indivisible value, so the cache
   never combines one entry's `t` with another's `k` — that is a property of the stored value, and it
@@ -170,7 +170,10 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   says in its own Javadoc. So the missing sentence is a statement of what the protocol already
   requires, and it goes where an implementor reads it. It is not checkable in general — no more than
   thread-safety is, and it is stated for the same reason.
-- **One `publicKey()` read per minted entry feeds both the header's `k` and the entry's key.** Under
+- **One `publicKey()` read per minted entry feeds both the header's `k` and the entry's key**, which
+  `Vapid.authorizationHeader` has to stop hiding the value to allow — it reads the key inside itself
+  and returns only a `String` today, so a caller that must file the entry under the same key would
+  have to read it twice. The method is package-private, so no published API moves. Under
   the sentence above the two cannot disagree anyway; the single read is what makes that independent of
   the contract being honoured, so a signer that violates it still cannot produce an entry filed under
   an identity its own header does not carry. The residue is named rather than papered over, and it is
@@ -217,14 +220,19 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   operator setting the clock leaves every cached entry over-estimating its own remaining life by the
   size of the step. Today that event is harmless, because each send mints a fresh `exp` from the same
   wrong clock; under reuse the sender would keep presenting a token the push service considers
-  expired for the whole of the step, and a large enough step also puts `exp` more than 24 hours from
-  the request, which RFC 8292 §4.2 makes a rejection ground of its own. **So a minted entry records
-  the wall reading `exp` was computed from and a `System.nanoTime()` reading taken beside it, and it
-  is renewed when either the wall clock has reached its expiry less the margin or the monotonic
-  reading has run for the span that expiry allowed.** A backwards wall step cannot extend an entry's
-  life past the second bound, because that bound is measured on a clock that does not step. There is
-  nothing to detect and no threshold to choose: the failure is not diagnosed, it is made unable to
-  matter.
+  expired — RFC 8292 §4.2's first invalidity ground — for the whole of the step. **So a minted entry
+  records the wall reading `exp` was computed from and a `System.nanoTime()` reading taken beside it,
+  and it is renewed when either bound is reached: the wall clock arriving at the effective `exp` less
+  `jwtRenewBefore`, or the monotonic reading having run for that same span — `exp` minus the wall
+  reading it was computed from, minus `jwtRenewBefore`, and not one second more.** The span is spelled
+  out because the two candidate readings differ by exactly the margin, and the wrong one gives the
+  step back what this rule exists to take from it: with the monotonic bound set to the whole of
+  `jwtExpiry`, a backwards step of Δ extends an entry's life by `min(Δ, jwtRenewBefore)` and the token
+  is presented right up to `exp`, with nothing left for the retry window or the skew the margin is
+  there to cover. With the two spans equal, the effective life is that span for every Δ. A backwards
+  wall step then cannot extend an entry's life at all, because the bound that governs is measured on a
+  clock that does not step. There is nothing to detect and no threshold to choose: the failure is not
+  diagnosed, it is made unable to matter.
 - **Three rules that detect the step instead were rejected, the third of them after being written
   into this document.** *Comparing an entry's mint instant against `now`* catches only entries minted
   after the reading the clock stepped back to: a token minted at 12:00 survives a step from 12:10 to
@@ -248,13 +256,20 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   of a common rate means the two bounds disagree by whatever the clocks drift apart over an entry's
   life — seconds over twelve hours at the tens of parts per million a raw counter typically shows,
   and nothing at all where `nanoTime` carries the same discipline as the wall clock, as on Linux.
-  Whichever bound is shorter wins, so the error is always in the direction of renewing early, and its
-  size is invisible against a five-minute margin. At `jwtRenewBefore(Duration.ZERO)` it is what that
-  setting means: no margin is no margin, and a drift-sized residual is what choosing it buys.
+  While both bounds are honest the shorter one wins, so the error is in the direction of renewing
+  early and its size is invisible against a five-minute margin. The direction is not unconditional,
+  and saying so matters at exactly one setting: once a backwards step has pushed the wall bound out,
+  the monotonic bound governs alone, and it has no guaranteed rate against *true* time either — the
+  same absence of a common rate the third rejected rule died of, pointing the other way. On an
+  undisciplined counter running fifty parts per million slow, that bound is reached a couple of
+  seconds of true time late on a twelve-hour entry. With any margin at all this is absorbed; at
+  `jwtRenewBefore(Duration.ZERO)` it is presented past `exp`, and that is what the setting means — no
+  margin is no margin, and a drift-sized residual is what choosing it buys.
   A monotonic reading from a *later timeline* is the one case the pair cannot absorb — a
-  checkpoint/restore or a live migration onto a host whose counter is behind, which the JDK's
-  per-virtual-machine origin permits — so a negative elapsed interval, impossible under that
-  contract, discards the entry outright.
+  checkpoint/restore or a live migration onto a host whose counter is behind. The JDK forbids it: the
+  same origin serves every invocation within one virtual-machine instance, and a restore is that same
+  instance. So a negative elapsed interval cannot arise from a conforming platform, and discarding on
+  it costs a comparison against a case that must never happen.
 - **Staleness is judged against the `exp` that went on the wire.** The claim is serialised as
   `getEpochSecond()`, so the value the push service enforces is the whole second, up to just under a
   second earlier than the `Instant` the sender computed; RFC 7519 §4.1.4 requires the current time to
@@ -346,7 +361,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   pipeline, and `docs/PERFORMANCE.md`, the one a reader would not think of, whose Vault section says
   the JWT "is rebuilt and re-signed for every message" and that "a cache would remove it from the
   path rather than speed it up"; a figure there that no longer holds is deleted rather than left to
-  age, which is that document's own rule. Five more carry the partial-supersession form named above:
+  age, which is that document's own rule. The partial-supersession form named above lands in several
+  more:
   `docs/adr/0004-stateless-library.md` takes its status line, and `docs/adr/README.md` takes both the
   index cell and the procedure — alongside `CLAUDE.md`, `CONTRIBUTING.md` and both halves of the
   review skill, `SKILL.md` and its ADR reference, which today state the full form as the only one and
@@ -363,11 +379,6 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   also gains the stability sentence above, beside the thread-safety one it already carries and in the
   same voice: what an implementor must guarantee, why the library cannot check it, and what breaks
   when it is not true.
-- **`Vapid.authorizationHeader` changes shape**, and it is named because the guarantee above depends
-  on it. It reads `signer.publicKey()` inside itself and hands back only a `String`, so a caller that
-  must file the entry under the same key would have to read it a second time — which is the thing the
-  single-read rule forbids. The method therefore takes or returns that value instead of hiding it.
-  It is package-private, so no published API moves.
 - **The monotonic reading gets a package-private seam, for the same reason `clock` and `sleeper`
   have one.** Without it the second bound is untestable: a test can pin the `Clock` and step it
   anywhere, but the monotonic side would still be the real elapsed millisecond of the test's own
@@ -376,34 +387,31 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   twelve-hour token is not an alternative. It is the seam, beside the two this class already carries,
   and it is package-private like both of them: no published API moves, and the production path is the
   real `System.nanoTime()`.
-- **What the implementation has to demonstrate, named here so it is a checklist rather than a
-  judgement call at review time.** Every rule above that a test can pin, has one: that concurrent
-  misses on one audience produce valid tokens and no signature runs while the cache's lock is held;
-  that the bound holds and eviction is least-recently-used, with overflow degrading to signing rather
-  than failing; that a wall clock stepped backwards cannot extend an entry's life past its monotonic
-  bound, in the 12:00 / 12:10 / 12:05 shape and in the shape where the step lands wholly inside an
-  idle window; that a monotonic reading from a later timeline discards the entry; that a wall clock
-  stepping *forward* shortens an entry's life rather than lengthening it; that an entry is renewed on
-  the second `exp` names and not a fraction of a second later; that a signer whose advertised key changes between two sends gets a new
-  token rather than the old one under a new `k`, and that a signer answering a different key from
-  every `publicKey()` call still files each entry under the key its own header carries; that a 401 or
-  a 403 leaves the entry in place; that `jwtReuse(false)` and a `jwtRenewBefore` at or above
-  `jwtExpiry` both mint per send and neither is an error, while a negative margin and a
-  `jwtCacheSize` below one fail at the builder step that set them; that two senders do not share a
-  cache; that the header reaches neither the health indicator's details nor any message on the send
-  path's exceptions — the observable surfaces, rather than a universal negative over a module that
-  has no logger and no `toString` to begin with; and that the three properties bind, with the failure
-  messages naming the YAML spelling rather than the builder's camelCase. **`push2u-testkit` needs no
-  new case**, which is worth stating because the stability sentence added to `VapidSigner` is a new
-  signer obligation and a new obligation with no conformance case would be a hole. It already has one:
-  `publicKeyIsAFreshCopyOnEveryCall` calls `publicKey()` twice and asserts both that the arrays are
-  distinct and that they still describe the same key, which is exactly the checkable half of
-  stability, and `signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey` already pins a signature
-  against the key advertised beside it. What changes is the prose: those assertions were written for
-  the buffer-sharing hazard, and the second reason they now carry — the contract sentence they are the
-  only enforcement of — belongs in their Javadoc, where the kit tells an implementor what it is
-  holding them to. Stability across a *lifetime* stays uncheckable from outside, as the sentence
-  itself says, and the kit says so too rather than implying a coverage it does not have.
+- **What the implementation has to demonstrate**, kept to the rules whose only written record would
+  otherwise be this document: that no signature runs while whatever guards the cache is held, and that
+  concurrent misses on one audience produce valid tokens; that the monotonic bound ends an entry's
+  life when the wall clock is frozen short of its own bound and the seam is driven past the span, and
+  that a backwards wall step cannot push the effective life past that same span; that a monotonic
+  reading from a later timeline discards the entry; that renewal happens on the second `exp` names and
+  not a fraction of a second later; that a signer whose advertised key changes between two sends gets
+  a new token rather than the old one under a new `k`, and that a signer answering a different key
+  from every `publicKey()` call still files each entry under the key its own header carries; that a
+  401 or a 403 leaves the entry in place; and that the cached header reaches neither the health
+  indicator's details nor any message on the send path's exceptions — the observable surfaces, rather
+  than a universal negative over a module with no logger and no `toString` to begin with. The rest of
+  what this decision fixes is ordinary and needs no list here: the bound and its eviction, the
+  degenerate settings of each knob, the property bindings, one cache per sender.
+  **`push2u-testkit` needs no new case**, which is worth stating because the stability sentence added
+  to `VapidSigner` is a new signer obligation and a new obligation with no conformance case would be a
+  hole. It already has one: `publicKeyIsAFreshCopyOnEveryCall` calls `publicKey()` twice and asserts
+  both that the arrays are distinct and that they still describe the same key, which is exactly the
+  checkable half of stability, and `signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey` already
+  pins a signature against the key advertised beside it. What changes is the prose: those assertions
+  were written for the buffer-sharing hazard, and the second reason they now carry — the contract
+  sentence they are the only enforcement of — belongs in their Javadoc, where the kit tells an
+  implementor what it is holding them to. Stability across a *lifetime* stays uncheckable from
+  outside, as the sentence itself says, and the kit says so too rather than implying a coverage it
+  does not have.
 
 **What this decision does not settle.** A shared token store — one signed token used by every node
 of a fleet, through Redis or anything else — is deliberately not built, and not because the idea is
