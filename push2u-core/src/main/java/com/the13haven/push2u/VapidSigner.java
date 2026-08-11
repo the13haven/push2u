@@ -59,4 +59,60 @@ public interface VapidSigner {
      *     unreachable, timed out or refused to publish it
      */
     byte[] publicKey();
+
+    /**
+     * This signer's public key as the string a browser takes as the {@code applicationServerKey} option of
+     * {@code pushManager.subscribe(...)} — the encoding of {@link #publicKey()}, and the same value this library puts
+     * in the {@code k} parameter of every {@code Authorization} header it signs.
+     *
+     * <p>The encoding is base64 in the URL-safe alphabet of <a
+     * href="https://datatracker.ietf.org/doc/html/rfc4648#section-5">RFC 4648 §5</a> — {@code '-'} and {@code '_'}
+     * rather than {@code '+'} and {@code '/'} — and without padding, so no trailing {@code '='}. What is encoded is the
+     * raw 65-byte X9.62 uncompressed point of <a href="https://datatracker.ietf.org/doc/html/rfc8292#section-3.2">RFC
+     * 8292 §3.2</a>, which is what {@link #publicKey()} already returns — not a {@code SubjectPublicKeyInfo}, the
+     * 91-byte wrapper {@code java.security.interfaces.ECPublicKey.getEncoded()} produces and the browser cannot read.
+     * All three are contract rather than taste, and the same contract on both sides: {@code subscribe(...)} reads a
+     * string {@code applicationServerKey} as the base64url of <a
+     * href="https://datatracker.ietf.org/doc/html/rfc7515#section-2">RFC 7515 §2</a> — that alphabet with every
+     * trailing {@code '='} omitted — and RFC 8292 §3.2 spells the {@code k} parameter the same way, so the standard
+     * alphabet and the padding each break the browser's contract and the header's alike. What differs is how the
+     * browser reports them: a string it will not decode rejects with an {@code InvalidCharacterError}, while a
+     * {@code SubjectPublicKeyInfo} decodes cleanly and is then refused for not describing a valid point on P-256, with
+     * an {@code InvalidAccessError} (steps 10.2 and 10.3 of <a
+     * href="https://www.w3.org/TR/push-api/#subscribe-method">the Push API's {@code subscribe()}</a>) — either in a
+     * browser console far from the code that made the string.
+     *
+     * <p>This is the value an application publishes to its frontend, and for a signer whose key lives in a remote
+     * custodian it is the only place the string exists at all: nothing configured it, the signer read it from the
+     * custodian, and asking the signer is the one way to be sure the advertised key is the key the next send will
+     * carry.
+     *
+     * <p><b>What an override owes.</b> The default implementation is correct for every signer and exists so that
+     * implementing this interface stays a matter of signing and naming a key. Overriding it is nevertheless legitimate
+     * — a custodian whose API hands the key out already encoded need not decode it only to encode it again — and an
+     * override must return <em>exactly</em> the unpadded URL-safe base64 of what {@link #publicKey()} returns, byte for
+     * byte and character for character. A signer whose two answers drift publishes an {@code applicationServerKey} that
+     * does not match the key it signs with, and every subscription taken against the published one is unusable from the
+     * moment it is created, with nothing but a push service's rejection of the JWT to say so. The conformance kit
+     * checks the two against each other; an implementation that does not run it is bound by this sentence alone. An
+     * override signals a failure with {@link PushCryptoException}, the type {@link #publicKey()} already uses, so that
+     * one signer does not answer for one value in two exception types.
+     *
+     * <p>That is what an override may throw, not a promise that nothing else leaves this method. A signer returning
+     * {@code null} from {@link #publicKey()} gets a {@link NullPointerException}: the method is declared to return
+     * bytes, so {@code null} is a broken type contract rather than a failed cryptographic operation, and it is reported
+     * as the same defect a send reports it as.
+     *
+     * @return this signer's public key as unpadded URL-safe base64
+     * @throws PushCryptoException if the key cannot be produced, exactly as {@link #publicKey()} raises it, or if what
+     *     it returned is not the 65-byte uncompressed point the contract requires — the same check, the same type and
+     *     the same wording a send applies to the same value, so this method's verdict on the key's <em>shape</em> is
+     *     the send path's verdict on it: no key is published here that a send would refuse for its shape, and none is
+     *     refused here that a send would carry. That agreement is about the key and nothing else — the signature, the
+     *     endpoint policy and the transport are a send's own business, and a send can still fail on any of them
+     * @throws NullPointerException if {@link #publicKey()} returns {@code null}
+     */
+    default String publicKeyBase64Url() {
+        return Base64Url.encode(Vapid.requireUncompressedPoint(publicKey()));
+    }
 }

@@ -15,6 +15,11 @@ import java.util.Objects;
  * <p>The JWT JSON is handwritten: the claims are tiny ({@code aud}/{@code exp}/{@code sub}) and fixed-shape, so a JSON
  * library would be dead weight. The header is the constant {@code {"typ":"JWT","alg":"ES256"}}. The ES256 signature is
  * delegated to a {@link VapidSigner}.
+ *
+ * <p>This class also owns the two shape checks applied to what a {@link VapidSigner} returns, because this is where
+ * those values go on the wire. The public key's check has a second caller — {@link VapidSigner#publicKeyBase64Url()},
+ * which publishes the same value to a browser — so it is shared rather than private: publishing a key and sending with
+ * it must accept exactly the same set and say the same thing when they refuse.
  */
 final class Vapid {
 
@@ -76,8 +81,17 @@ final class Vapid {
      * Check the other half of the {@link VapidSigner} contract, for the same reason: the key travels as the {@code k}
      * parameter, and a malformed one is rejected by the push service exactly like a bad signature — while the signature
      * itself verifies, which makes it the harder of the two to trace back.
+     *
+     * <p>Shared with {@link VapidSigner#publicKeyBase64Url()}, which hands the same value to a browser instead of to a
+     * push service. One implementation and one wording is the point: a consumer meeting a broken signer through their
+     * own key-publishing endpoint reads what the next send would have told them, and the publication path can never
+     * refuse a key delivery would have carried.
+     *
+     * <p>A {@code null} is a {@link NullPointerException} rather than a {@link PushCryptoException}: the method is
+     * declared to return bytes and never {@code null}, so a signer answering {@code null} has broken the type contract
+     * rather than failed at a cryptographic operation.
      */
-    private static byte[] requireUncompressedPoint(byte[] publicKey) {
+    static byte[] requireUncompressedPoint(byte[] publicKey) {
         Objects.requireNonNull(publicKey, "publicKey");
         if (publicKey.length != UNCOMPRESSED_P256_POINT_LENGTH) {
             String wrapped = publicKey.length > 0 && publicKey[0] == DER_SEQUENCE_TAG

@@ -26,21 +26,25 @@ import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
 
 /**
  * The conformance contract every {@link VapidSigner} must satisfy: the advertised public key is a 65-byte uncompressed
- * point that actually lies on NIST P-256 and arrives as a fresh copy on every call, and signing produces a raw {@code r
- * || s} ES256 signature (64 bytes) that verifies against it. Each implementation extends this and supplies a configured
- * signer via {@link #signer()} — the local signer's unit test and every remote signer's integration test.
+ * point that actually lies on NIST P-256 and arrives as a fresh copy on every call, its published base64url spelling is
+ * the encoding of those same bytes, and signing produces a raw {@code r || s} ES256 signature (64 bytes) that verifies
+ * against it. Each implementation extends this and supplies a configured signer via {@link #signer()} — the local
+ * signer's unit test and every remote signer's integration test.
  *
- * <p>Verification uses only the JDK and the public {@link VapidSigner} surface, so the contract is self-contained and
- * carries no push2u-internal dependency. It also runs wherever the library itself runs: signature verification prefers
- * the provider's native {@code SHA256withECDSAinP1363Format} and, on a JVM whose providers register only the DER form
- * {@code SHA256withECDSA} (a FIPS-only platform — BouncyCastle FIPS registers no raw-format name), re-encodes the raw
- * signature to minimal DER and verifies through that name instead, the same resolution the library makes for its own
- * signing. A kit that failed with {@code NoSuchAlgorithmException} there would condemn a perfectly conforming signer
- * for a platform reason.
+ * <p>Verification uses the JDK and the public {@link VapidSigner} surface, and beyond them one published call —
+ * {@link VapidKeys#encodePublicKey} — which the encoding check below compares against because "must agree with the
+ * library's own encoder" is the whole of what that check claims. Nothing package-private or otherwise internal is
+ * reached, and the module carrying that call is one the kit already depends on. The rest of the contract is
+ * self-contained. It also runs wherever the library itself runs: signature verification prefers the provider's native
+ * {@code SHA256withECDSAinP1363Format} and, on a JVM whose providers register only the DER form {@code SHA256withECDSA}
+ * (a FIPS-only platform — BouncyCastle FIPS registers no raw-format name), re-encodes the raw signature to minimal DER
+ * and verifies through that name instead, the same resolution the library makes for its own signing. A kit that failed
+ * with {@code NoSuchAlgorithmException} there would condemn a perfectly conforming signer for a platform reason.
  *
  * <p>Put {@code com.the13haven:push2u-testkit} on the test classpath and extend this class:
  *
@@ -108,6 +112,29 @@ public abstract class VapidSignerContractTest {
         assertThat(left)
                 .as("the advertised point satisfies the P-256 curve equation (y² = x³ + ax + b mod p)")
                 .isEqualTo(right);
+    }
+
+    /**
+     * {@link VapidSigner#publicKeyBase64Url()} is a {@code default} method, so it cannot be {@code final} and an
+     * implementation may override it — legitimately, for a custodian that hands the key out already encoded. The one
+     * behaviour it must never have is disagreeing with {@link VapidSigner#publicKey()}: a signer whose two answers
+     * drift publishes an {@code applicationServerKey} that does not match the key it signs with, and every subscription
+     * taken against the published one is unusable from the moment it is created — invisible until a push service starts
+     * rejecting the JWT.
+     *
+     * <p>An equality against the library's encoder rather than a round trip back through a decoder: one comparison pins
+     * the URL-safe alphabet, the absent padding and the canonical final character at once, and it leaves this kit no
+     * decoder of its own to pick. Decoding and comparing bytes would admit a standard-alphabet override whenever its
+     * characters happened to avoid {@code '+'} and {@code '/'}.
+     */
+    @Test
+    void publicKeyBase64UrlIsTheEncodingOfTheAdvertisedPublicKey() {
+        VapidSigner signer = signer();
+
+        assertThat(signer.publicKeyBase64Url())
+                .as("the published base64url must be the encoding of publicKey(), or the advertised key and the "
+                        + "signing key have drifted apart")
+                .isEqualTo(VapidKeys.encodePublicKey(signer.publicKey()));
     }
 
     // UnitTestContainsTooManyAsserts: the signature's length and its verification are one claim —
