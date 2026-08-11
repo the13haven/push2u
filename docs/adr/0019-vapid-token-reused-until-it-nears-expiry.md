@@ -221,19 +221,30 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   size of the step. Today that event is harmless, because each send mints a fresh `exp` from the same
   wrong clock; under reuse the sender would keep presenting a token the push service considers
   expired for the whole of the step, which RFC 8292 §4.2 makes a ground of invalidity in those
-  words. **So a minted entry
-  records the wall reading `exp` was computed from and a `System.nanoTime()` reading taken beside it,
-  and it is renewed when either bound is reached: the wall clock arriving at the effective `exp` less
-  `jwtRenewBefore`, or the monotonic reading having run for that same span — `exp` minus the wall
-  reading it was computed from, minus `jwtRenewBefore`, and not one second more.** The span is spelled
-  out because the two candidate readings differ by exactly the margin, and the wrong one gives the
-  step back what this rule exists to take from it: with the monotonic bound set to the whole of
-  `jwtExpiry`, a backwards step of Δ extends an entry's life by `min(Δ, jwtRenewBefore)` and the token
-  is presented right up to `exp`, with nothing left for the retry window or the skew the margin is
-  there to cover. With the two spans equal, the effective life is that span for every Δ. A backwards
-  wall step then cannot extend an entry's life at all, because the bound that governs is measured on a
-  clock that does not step. There is nothing to detect and no threshold to choose: the failure is not
-  diagnosed, it is made unable to matter.
+  words. **So a minted entry records a `System.nanoTime()` reading and then the wall reading `exp` is
+  computed from — in that order — and it is renewed when either bound is reached: the wall clock
+  arriving at the effective `exp` less `jwtRenewBefore`, or the monotonic reading having run for that
+  same span, `exp` minus the wall reading it was computed from, minus `jwtRenewBefore`, and not one
+  second more.**
+  Two details in that sentence are load-bearing, and each of them is the difference between the rule
+  working and the rule reading as though it worked.
+  *The span* is spelled out because the two candidate readings differ by exactly the margin, and the
+  wrong one gives the step back what this rule exists to take from it: with the monotonic bound set to
+  the whole of `jwtExpiry`, a backwards step of Δ extends an entry's life by `min(Δ, jwtRenewBefore)`
+  and the token is presented right up to `exp`, with nothing left for the retry window or the skew the
+  margin is there to cover. With the two spans equal, the effective life is that span for every Δ.
+  *The order* is fixed for the same kind of reason. The two readings are not taken at one instant —
+  nothing in Java bounds the gap between two statements — so whichever is taken first dates the pair,
+  and a pause of P between them displaces one bound relative to the other by P. Read the wall clock
+  first and the monotonic bound lands P *later* than the wall bound: a subsequent backwards step of Δ
+  then extends the entry's life by `min(Δ, P)`, which is the very failure being closed, reintroduced
+  through the ordering rather than through the span. Read the monotonic value first and the same pause
+  moves the monotonic bound P *earlier*, so it can only shorten an entry's life and cost a signature.
+  That is why no upper bound on the gap is needed anywhere in this decision: the safe order makes the
+  gap's size irrelevant instead of tolerable.
+  A backwards wall step then cannot extend an entry's life at all, because the bound that governs is
+  measured on a clock that does not step and dated before the one that does. There is nothing to
+  detect and no threshold to choose: the failure is not diagnosed, it is made unable to matter.
 - **Three rules that detect the step instead were rejected, the third of them after being written
   into this document.** *Comparing an entry's mint instant against `now`* catches only entries minted
   after the reading the clock stepped back to: a token minted at 12:00 survives a step from 12:10 to
@@ -252,7 +263,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   clock ahead and the entry is kept — while the rule would have promised that any step beyond its
   tolerance is caught. The tolerance was unfixable on its own terms as well: the gap between the two
   readings has no upper bound in Java, where a safepoint, a collection or a suspended virtual machine
-  can fall between two statements. The bound-both-ways rule needs none of it.
+  can fall between two statements. The bound-both-ways rule needs none of it — it disarms that gap by
+  the order it reads in rather than by bounding it.
 - **What the two bounds leave is drift, and it is stated rather than claimed away.** The same absence
   of a common rate means the two bounds disagree by whatever the clocks drift apart over an entry's
   life — seconds over twelve hours at the tens of parts per million a raw counter typically shows,
@@ -264,7 +276,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   same absence of a common rate the third rejected rule died of, pointing the other way. On an
   undisciplined counter running fifty parts per million slow, that bound is reached a couple of
   seconds of true time late on a twelve-hour entry. A margin larger than that drift absorbs it, which
-  the default of five minutes is by four orders of magnitude; a margin smaller than it does not, and
+  the default of five minutes is by a factor of well over a hundred; a margin smaller than it does
+  not, and
   at `jwtRenewBefore(Duration.ZERO)` the token is presented past `exp`. That is what the setting
   means — no margin is no margin, and a drift-sized residual is what choosing it buys.
   A monotonic reading from a *later timeline* is the one case the pair cannot absorb — a
