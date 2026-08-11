@@ -138,17 +138,29 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   from an override while the header is built from `publicKey()` would track a value the wire does
   not carry — an entry could then be served under an identity it was not minted with, which is the
   one thing this key component exists to prevent.
-- **One `publicKey()` read per minted entry feeds both the header's `k` and the entry's key**, and
-  the guarantee is worded to what that can actually deliver. Nothing here is atomic across the SPI:
-  `sign` and `publicKey` are two calls, and a signer that re-reads a rotating key can change between
-  them — which is true of the code today, before any cache, and this decision neither repairs nor
-  worsens it. What the single read does close is the race the cache would otherwise add: the value
-  that goes into the entry's key is the same object graph that produced the `k` beside it, so an
-  entry can never be *filed* under an identity its own header does not carry. The lookup on a later
-  send is a second, fresh read, and a rotation between that read and the mint that follows it costs
-  a miss and a new entry, which is the harmless direction. So the guarantee is: an entry is served
-  only when the signer's currently advertised key matches the one it was filed under, and a key that
-  moves is detected on the next send rather than at the instant it moves.
+- **The advertised key is stable for a signer's lifetime, and `VapidSigner` says so as part of
+  implementing this.** The interface today fixes the shapes, the freshness of the returned arrays and
+  thread-safety, and says nothing about whether `publicKey()` may answer differently twice. That
+  silence is what makes the question look like an atomicity problem, and it is not one: VAPID's
+  public key is the application server's published identity, a browser subscription is bound to the
+  `applicationServerKey` it was created with, and RFC 8292 §4.2 refuses a JWT whose key is not the one
+  the subscription was created under. A signer that swaps its advertised key under a live sender has
+  therefore already broken every restricted subscription taken out before the swap — with or without
+  a cache, and whatever the library does with the two return values. Rotation is a re-subscription
+  event that produces a new signer, which is exactly what `VaultTransitVapidSigner` does today and
+  says in its own Javadoc. So the missing sentence is a statement of what the protocol already
+  requires, and it goes where an implementor reads it. It is not checkable in general — no more than
+  thread-safety is, and it is stated for the same reason.
+- **One `publicKey()` read per minted entry feeds both the header's `k` and the entry's key.** Under
+  the sentence above the two cannot disagree anyway; the single read is what makes that independent of
+  the contract being honoured, so a signer that violates it still cannot produce an entry filed under
+  an identity its own header does not carry. The residue is named rather than papered over: `sign` and
+  `publicKey` remain two calls, so a violating signer can still sign under one key and advertise
+  another within one header — which is true of the code today, before any cache, and this decision
+  neither repairs nor worsens it. Against such a signer the cache degrades to detection: the lookup on
+  a later send is a fresh read, a key that moved no longer matches what the entry was filed under, and
+  the entry is replaced. So the guarantee is exact for a signer that meets the contract, and
+  self-correcting on the next send for one that does not.
 - **The safety margin is an absolute duration, not a fraction of `jwtExpiry`.** Both things it
   protects against are absolute. The push service checks `exp` against its own clock, so what has to
   be covered is clock skew, which is minutes whatever the token's lifetime is; and a send that picks
@@ -288,7 +300,9 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   send needs inside the call", which is the same claim ADR-004 makes and stops being true here; and
   `VapidSigner`'s says both of its outputs "are checked on every send", which stops being true on a
   cache hit, where `sign` is not called at all — the check still runs on every miss, which is every
-  path where a new value enters.
+  path where a new value enters. `VapidSigner` also gains the stability sentence above, beside the
+  thread-safety one it already carries and in the same voice: what an implementor must guarantee, why
+  the library cannot check it, and what breaks when it is not true.
 - **What the implementation has to demonstrate, named here so it is a checklist rather than a
   judgement call at review time.** Every rule above that a test can pin, has one: that concurrent
   misses on one audience produce valid tokens and no signature runs while the cache's lock is held;
@@ -374,6 +388,15 @@ Rejected alternatives:
   no vendor behaviour; the set of origins is discovered from the subscriptions the application hands
   us rather than known in advance, so the token could not be minted until it was already needed; and
   the saving over a per-origin token is a handful of signatures per twelve hours.
+- **Changing `VapidSigner` so that one call returns the signature and the key together**, which is
+  what "make it atomic" means in practice. It is rejected on three counts. It would not deliver
+  atomicity — an implementation returns whatever it likes, so what would actually ship is a contract
+  sentence, and a contract sentence is available without touching a signature. It would be an abstract
+  change to a published SPI: a compile error for every implementation outside this repository and an
+  `AbstractMethodError` for every one already compiled, which `0.x` permits but does not make free,
+  and ADR-010's premise is that implementing this seam stays cheap. And it would answer the wrong
+  question: a signer whose advertised key moves mid-flight has already invalidated the subscriptions
+  taken out under the old one, so the pair being consistent within one header rescues nothing.
 - **A fourth SPI for the token store**, now: above, under what this does not settle.
 
 This rules out a VAPID token cache behind an SPI while the case for one is unmade; a shared cache
@@ -382,9 +405,9 @@ margin; a second spelling of "sign every time" through a zero margin or a zero c
 signature taken while the cache's lock is held; a cache surviving a backwards clock reading, or one
 that judges staleness against an expiry finer than the second the wire carries; a cache invalidated
 by an authentication status; an entry filed under a key read separately from the one its header
-carries; a token whose life is bounded by the signing key's or whose `aud` names more than one
-origin; a `byte[]` cache key; and any claim in this repository's documents about a named push service
-accepting a reused token. ADR-002 is untouched — the cache is a
+carries; a signature and a public key delivered by one SPI call; a token whose life is bounded by the
+signing key's or whose `aud` names more than one origin; a `byte[]` cache key; and any claim in this
+repository's documents about a named push service accepting a reused token. ADR-002 is untouched — the cache is a
 map and a string, and the core gains no dependency. ADR-005 is untouched and not superseded: the three SPIs
 stay three. ADR-016 and ADR-017 are untouched; the policy still runs on every send, ahead of
 everything, and the cache is consulted after it. ADR-004 is superseded in the single clause named
