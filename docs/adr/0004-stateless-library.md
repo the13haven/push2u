@@ -1,6 +1,6 @@
 # ADR-004 — Stateless library
 
-**Status:** Accepted
+**Status:** Accepted; one clause superseded by [ADR-019](0019-vapid-token-reused-until-it-nears-expiry.md)
 
 Subscriptions belong to the application: it decides where they are stored, how they are keyed to
 users, and when they are removed. A library that also stored them would have to know about a

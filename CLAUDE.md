@@ -49,9 +49,12 @@ vulnerability policy.
 **An ADR is immutable once its decision is implemented.** It is not reworded, not brought up to date
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
 and the superseded one keeps its number, title and body while its status line becomes
-`Superseded by ADR-NNN` — the only edit its body ever takes. The description of how things currently
-work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
-`docs/adr/README.md` carries the procedure.
+`Superseded by ADR-NNN` — the only edit its body ever takes. A decision that moves only in part
+takes the same one-line edit in a narrower form, `Accepted; one clause superseded by ADR-NNN`,
+beside the full form rather than in place of it — ADR-004's status line, superseded in part by
+ADR-019, is the worked example. The description of how things currently work belongs in
+`docs/DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md` carries
+the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same

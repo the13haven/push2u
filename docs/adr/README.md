@@ -10,7 +10,7 @@ is [`DESIGN.md`](../DESIGN.md); how to use the library is [`README.md`](../../RE
 | [001](0001-java-21-baseline.md) | Java 21 baseline | Accepted | API or bytecode requiring a newer runtime |
 | [002](0002-zero-dependency-core.md) | Zero-dependency core | Accepted | Any runtime implementation dependency in `push2u-core`; JSpecify (annotations only) is the single exception |
 | [003](0003-concrete-hkdf-implementation.md) | Concrete HKDF implementation | Accepted | HKDF, the encryptor or the origin serialization as an extension point |
-| [004](0004-stateless-library.md) | Stateless library | Accepted | Subscription storage, deletion or lifecycle inside the library |
+| [004](0004-stateless-library.md) | Stateless library | Accepted; one clause superseded by [019](0019-vapid-token-reused-until-it-nears-expiry.md) | Subscription storage, deletion or lifecycle inside the library |
 | [005](0005-public-spis-in-the-core.md) | Public SPIs in the core | Accepted | A seam without an articulable difference the library cannot decide for the deployment; one transport seam serving both trust domains |
 | [006](0006-aes128gcm-only.md) | `aes128gcm` only | Accepted | Legacy `aesgcm` support; a content-coding switch |
 | [007](0007-expired-subscription-is-a-result.md) | Expired subscription is a result | Accepted | `404`/`410` as exception-driven control flow |
@@ -25,7 +25,7 @@ is [`DESIGN.md`](../DESIGN.md); how to use the library is [`README.md`](../../RE
 | [016](0016-endpoint-policy-is-a-required-decision.md) | The endpoint policy is a required decision | Accepted | A `PushSender` without an egress decision; an allowlist shipped by the library; a policy derived by resolving the endpoint; a configuration-only path to unrestricted egress under Spring |
 | [017](0017-domain-rule-in-the-endpoint-allowlist.md) | A domain rule in the endpoint allowlist | Accepted | A public `EndpointPolicy` combinator; a rule kind contributed from outside the library; a domain rule matching a non-`https` scheme or a non-default port; a wildcard syntax inside an origin entry; a public-suffix judgement made by the library; a push service's zone shipped as a default |
 | [018](0018-encoded-vapid-public-key-on-the-signer.md) | The encoded VAPID public key is part of the signer contract | Accepted | An abstract addition to `VapidSigner`; a general-purpose base64url codec published from the core; an encoder for the private scalar; a padded or configurable encoding; an on-curve check inside the `default` method, and a merely structural one inside the static |
-| [019](0019-vapid-token-reused-until-it-nears-expiry.md) | The VAPID token is reused until it nears expiry | Proposed | A token cache behind an SPI; a shared cache level in front of the in-process one; an unbounded or unevictable cache; a proportional safety margin; a second spelling of "sign every time"; a signature taken under the cache's lock; an entry whose life a backwards wall-clock step can extend past its monotonic bound, or staleness judged finer than the second the wire carries; a cache invalidated by an authentication status; an entry filed under a key read separately from the one its header carries; a signature and a public key delivered by one SPI call; a token bounded by the signing key's life or naming more than one origin in `aud`; a `byte[]` cache key; a claim about a named push service accepting a reused token |
+| [019](0019-vapid-token-reused-until-it-nears-expiry.md) | The VAPID token is reused until it nears expiry | Accepted | A token cache behind an SPI; a shared cache level in front of the in-process one; an unbounded or unevictable cache; a proportional safety margin; a second spelling of "sign every time"; a signature taken under the cache's lock; an entry whose life a backwards wall-clock step can extend past its monotonic bound, or staleness judged finer than the second the wire carries; a cache invalidated by an authentication status; an entry filed under a key read separately from the one its header carries; a signature and a public key delivered by one SPI call; a token bounded by the signing key's life or naming more than one origin in `aud`; a `byte[]` cache key; a claim about a named push service accepting a reused token |
 
 ## An ADR is immutable once implemented
 
@@ -33,9 +33,9 @@ The record of what was decided, and when, is the whole artefact. So an ADR whose
 implemented is not edited again — not to reword it, not to bring it up to date with the code, and
 not to append an amendment.
 
-**A decision that moves gets a new ADR**, with the next free number, stating the new decision and
-what it replaces. The superseded one keeps its number, its title and its body, and its status line
-becomes:
+**A decision that moves entirely gets a new ADR**, with the next free number, stating the new
+decision and what it replaces. The superseded one keeps its number, its title and its body, and its
+status line becomes:
 
 ```markdown
 **Status:** Superseded by [ADR-NNN](NNNN-the-new-decision.md)
@@ -44,6 +44,21 @@ becomes:
 That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is
 referenced from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered
 decision that vanishes leaves those references dangling.
+
+**A decision that moves only in part — one clause superseded while the rest of the ADR still
+stands — takes the same one-line edit, in a form beside the full one rather than in place of it:**
+
+```markdown
+**Status:** Accepted; one clause superseded by [ADR-NNN](NNNN-the-new-decision.md)
+```
+
+and the index's status cell follows, in the index's own link spelling:
+`Accepted; one clause superseded by [NNN](NNNN-the-new-decision.md)`. That line is likewise the
+only edit the superseded ADR's body ever takes — *which* clause it is stays out of it and lives in
+the superseding ADR instead, because naming it in the old file's status line would put the new
+decision's reasoning into a document that may not carry it. ADR-004 and ADR-019 are the worked
+example: ADR-019 supersedes one sentence of ADR-004 and says which one; ADR-004's status line says
+only that a clause was superseded and by what.
 
 Before the decision is implemented, an ADR is still a draft and can be revised freely — the status
 line says so (`Proposed`).
