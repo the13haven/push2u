@@ -12,12 +12,15 @@ package com.the13haven.push2u;
  * {@link LocalEcVapidSigner} holds the private key in memory; a Vault Transit / KMS / HSM implementation keeps it off
  * the JVM heap entirely — a genuinely different security posture, the articulable reason this is an SPI.
  *
- * <p><b>Both outputs are checked on every send</b>, and a violation raises {@link PushCryptoException} naming what was
- * returned. Neither is checkable by the implementation's own tests in the way that matters: a signature or key of the
- * wrong shape still produces a syntactically valid {@code Authorization} header, so the failure would otherwise reach
- * the caller as an opaque 401/403 from the push service — on every send, with nothing in it pointing at the signer. The
- * shapes are not this library's invention: RFC 7518 §3.4 fixes the ES256 signature at the raw {@code r || s} pair, and
- * RFC 8292 §3.2 fixes the key at the X9.62 uncompressed point.
+ * <p><b>Both outputs are checked wherever a new value enters a send</b> — on every signature taken, which under the
+ * default token reuse ({@link PushSender.Builder#jwtReuse(boolean)}) is every cache miss rather than literally every
+ * send: a reused {@code Authorization} value was checked when it was signed, and {@link #sign} is not called again for
+ * it. A violation raises {@link PushCryptoException} naming what was returned. Neither output is checkable by the
+ * implementation's own tests in the way that matters: a signature or key of the wrong shape still produces a
+ * syntactically valid {@code Authorization} header, so the failure would otherwise reach the caller as an opaque
+ * 401/403 from the push service — on every send, with nothing in it pointing at the signer. The shapes are not this
+ * library's invention: RFC 7518 §3.4 fixes the ES256 signature at the raw {@code r || s} pair, and RFC 8292 §3.2 fixes
+ * the key at the X9.62 uncompressed point.
  *
  * <p>The likely mistake is DER. JCA's {@code SHA256withECDSA} returns a DER-encoded signature, and an implementation
  * that forwards its provider's output unconverted looks correct until a push service rejects it. Ask the provider for
@@ -28,6 +31,16 @@ package com.the13haven.push2u;
  * {@link PushSender#sendAsync} makes concurrent calls the normal case. This is not checkable by the conformance kit,
  * and the natural mistake is silent: {@code java.security.Signature} is not thread-safe, so one held in a field
  * corrupts signatures under concurrency instead of failing. Obtain per-call instances, or confine them to a thread.
+ *
+ * <p><b>The advertised public key is stable for a signer's lifetime.</b> VAPID's public key is the application server's
+ * published identity: a browser subscription is bound to the {@code applicationServerKey} it was created with, and RFC
+ * 8292 §4.2 entitles a push service to refuse a JWT whose key is not the one the subscription was created under. A
+ * signer that swaps its advertised key under a live sender has therefore already broken every restricted subscription
+ * taken out before the swap — whatever the library does with this method's two return values. Rotation is a
+ * re-subscription event that produces a <em>new</em> signer, never a new answer from an existing one; the shipped Vault
+ * signer says the same of itself. Like thread-safety, this cannot be checked from outside — the library sees only what
+ * each call returns, and two equal answers say nothing about the next one — so it is stated as contract, and the
+ * conformance kit pins only its checkable projection: consecutive calls answering the same key.
  */
 public interface VapidSigner {
 
