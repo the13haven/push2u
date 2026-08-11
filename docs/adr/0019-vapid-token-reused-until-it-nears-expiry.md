@@ -11,14 +11,15 @@ distinct tokens: one per push-service origin. Reported as
 https://github.com/the13haven/push2u/issues/102.
 
 What that costs was measured, and the two modes are not the same problem. With
-`LocalEcVapidSigner` the ES256 signature is 118 µs of a 726.6 µs send — 16 %, real but not on its
-own a reason to put state into a stateless sender. With `VaultTransitVapidSigner` it is an HTTP
-round trip on the critical path of every push, 1.07 ms at the median against a Vault that was a
-dev-mode container on the same machine over plain HTTP — no network, no TLS, and the measurement
-says of itself that this is a lower bound. Even so it is more than everything else the library does
-per message put together, and the same fan-out spends 107 seconds of sequential waiting on Vault for
-one token that would have been valid for the whole twelve hours. That mode is the one the
-documentation recommends.
+`LocalEcVapidSigner` the ES256 signature is 115.6 µs of a 726.6 µs send on the JDK provider — 16 %,
+and 80.2 µs of 372.8 µs under BouncyCastle, which is 22 % of a faster send. Real, but not on its own
+a reason to put state into a stateless sender. With `VaultTransitVapidSigner` it is an HTTP round
+trip on the critical path of every push, 0.9–1.3 ms against a Vault that was a dev-mode container on
+the same machine over plain HTTP — no network, no TLS, and the measurement says of itself that this
+is a lower bound. Even so it is more than everything else the library does per message put together,
+and the same fan-out spends one and a half to two minutes of sequential waiting on Vault for one
+token that would have been valid for the whole twelve hours. That mode is the one the documentation
+recommends.
 
 Speed is the smaller half of it. Today Vault's availability, its latency and the rate limits of its
 Transit mount gate *every* push: a Vault blip is a delivery outage for a workload that has no reason
@@ -51,10 +52,14 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   is a narrow validity period. This decision does not touch that period — `exp` is set exactly as
   before, by `jwtExpiry`, whose bounds are unchanged — so the window in which a stolen token is
   usable is the same one the library already had. What changes is only how many tokens exist inside
-  it. No claim about any push service's behaviour is made anywhere in this change:
-  `docs/PUSH-SERVICES.md` takes a fact only with a first-party citation behind it, and none of the
-  four vendors documents what it does with a token it has seen before. The specification is the
-  ground here, and it is affirmative rather than silent.
+  it, and how long one of them stays resident in this process, which the bearer-credential bullet
+  below states rather than leaves to be inferred. No claim about any push service's behaviour is made
+  anywhere in this change: `docs/PUSH-SERVICES.md` takes a fact only with a first-party citation
+  behind it, and none of the four vendors documents what it does with a token it has seen before. The
+  specification is the ground here, and it is affirmative rather than silent — but it is still a
+  specification rather than four deployed implementations, so the shape of its being wrong is worth
+  recording: 401 or 403 on every send to an origin after the first, with a signature that verifies,
+  and `jwtReuse(false)` as the remedy that needs no new release.
 - **The cache is internal to `PushSender`, and the three SPIs stay three.** ADR-005 admits a seam
   when the deployment knows something the library cannot decide for it, and an in-process cache of
   a value the sender itself minted is not such a thing: it is correct for every deployment, needs no
@@ -88,19 +93,24 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   presents a v2 signature beside a v1 `k` and is refused immediately, whereas a cached v1 token keeps
   verifying until it is renewed, and the refusal arrives up to `jwtExpiry` afterwards with nothing
   connecting it to the cause. That is a diagnosability cost of this decision, not a new failure —
-  the deployment was already misconfigured — and it is recorded rather than left to be discovered.
-  The eviction rule below is what keeps it from being permanent. The Vault signer's fetched mode is
+  the deployment was already misconfigured, and the signer's own documentation says that form is only
+  safe if the Transit key is never rotated — and it is recorded rather than left to be discovered.
+  Once the entry is renewed the deployment fails the way it does today, continuously; `jwtReuse(false)`
+  is what collapses the delay to zero while it is being diagnosed. The Vault signer's fetched mode is
   unaffected: it captures a version and its public key from one atomic metadata read and pins that
   version on every sign, precisely so the two cannot drift.
 - **The `sub` claim and `jwtExpiry` are deliberately not in the key**: both are final fields of the
   sender, so one cache belongs to one contact and one expiry by construction. A change that ever made
   either per-send would have to revisit this key, and that is stated here so it is a decision rather
   than a discovery.
-- **The key holds the public key as the base64url string, not as `byte[]`.** `VapidSigner.publicKey()`
-  is contractually obliged to hand back a fresh array the caller owns, so an array used as a map key
+- **The key holds the public key as a string, not as `byte[]`.** `VapidSigner.publicKey()` is
+  contractually obliged to hand back a fresh array the caller owns, so an array used as a map key
   compiles, never equals a previous one and produces a cache that silently never hits — a defect only
-  a benchmark reveals. `publicKeyBase64Url()` exists for exactly this value and is the string the
-  header already carries.
+  a benchmark reveals. The string is the base64url encoding of what `publicKey()` returned, which is
+  exactly the value the `k` parameter of the header carries, and deliberately not
+  `publicKeyBase64Url()`: that method is a `default` an implementation may override, and keying on an
+  override while the header is built from `publicKey()` would reintroduce the drift between `t` and
+  `k` this key exists to catch.
 - **The safety margin is an absolute duration, not a fraction of `jwtExpiry`.** Both things it
   protects against are absolute. The push service checks `exp` against its own clock, so what has to
   be covered is clock skew, which is minutes whatever the token's lifetime is; and a send that picks
@@ -135,25 +145,37 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   rule that closes both is one comparison: an entry records the instant it was minted, and an entry
   whose mint instant is after `clock.instant()` is dropped and re-signed. It costs nothing on the
   normal path and needs no second time source.
-- **A 401 or 403 evicts the entry that produced it.** A rejected token is the one response that says
-  the cached value is no longer worth holding, and eviction is what makes two of this document's
-  named risks self-healing rather than sticky for a whole reuse window: a push service that turns out
-  not to accept a reused token, and an advertised key that drifted from the signing key. The bound
-  that makes it safe is that eviction never triggers a re-signature *inside* the send: 401 and 403
-  are not retryable statuses, the send returns `FAILED` as it does today, and the next send to that
-  origin signs. So the worst case under a permanently rejecting endpoint is one signature per send —
-  exactly today's behaviour — and no loop exists for an attacker-supplied endpoint that always
-  refuses to drive harder than that. The status is already control flow here (2xx, 404/410, 429, 5xx
-  all steer the pipeline); no response body is read, and none needs to be.
+- **A 401 or 403 does not evict the entry that produced it**, and this is the one place the obvious
+  rule is the wrong one. It looks like a rejected token is the response that says the cached value is
+  no longer worth holding, which would make a rejection self-healing instead of sticky for the rest
+  of the reuse window. RFC 8292 §4.2 says otherwise: it enumerates what makes `vapid` authentication
+  invalid, and the last entry is "the public key used to sign the JWT doesn't match the one that was
+  included in the creation of the push message subscription" — a property of the *subscription*, not
+  of the token, answered with the same 403. So the status does not distinguish "this token is stale"
+  from "this subscription was taken out under a different application server key", and treating it as
+  the former hands an attacker a cheap, permanent reversal of this whole decision: one subscription
+  created at a legitimate push service under a different `applicationServerKey`, submitted like any
+  other, rejects on every send and evicts the entry every legitimate send to that origin shares. It
+  needs no domain rule to work — the origin is the push service's own, so a strict `allowedOrigins`
+  policy admits it — which makes it cheaper than the LRU displacement recorded below. The same thing
+  happens with nobody attacking: §4.2 requires an application server that replaces its signing key to
+  obtain new subscriptions, so a population mixing old and new subscriptions is the *expected* state
+  of a VAPID key rotation, and every send to a legacy one would cold-start the origin its healthy
+  siblings share. The cache therefore ignores authentication statuses, and the remedies for a
+  genuinely stale entry are the ones already named: renewal at `jwtRenewBefore`, `jwtReuse(false)`,
+  or a restart.
 - **The cache is bounded, with eviction, and the bound is configurable.** The audience of a send is
   the origin of the endpoint inside a `Subscription`, and that set is chosen by whoever supplies
   subscriptions — attacker-influenced wherever they arrive from clients, which is the premise ADR-016
-  works from. An allowlist does not bound it: an `EndpointRule.domain` covers every subdomain of the
-  named zone at any depth, which is the whole reason ADR-017 added that rule for the two services
-  that publish a zone rather than a host. So an unbounded map keyed by the audience is a
-  memory-exhaustion path reachable from data the library already treats as untrusted, in *every*
-  policy mode rather than only under `EndpointPolicies.unrestricted()`. The bound is therefore not a
-  tuning knob but the reason the cache is safe to hold at all. Eviction is least-recently-used, and
+  works from. An origin rule bounds that set exactly — it is string equality against one
+  serialization, so a policy built only from origin rules admits as many audiences as it lists and no
+  more. A domain rule does not: `EndpointRule.domain` covers every subdomain of the named zone at any
+  depth, which is the whole reason ADR-017 added it for the two services that publish a zone rather
+  than a host, and no name resolution narrows it. So an unbounded map keyed by the audience is a
+  memory-exhaustion path reachable from data the library already treats as untrusted under
+  `EndpointPolicies.unrestricted()` and under any policy carrying a domain rule — which is the
+  cross-browser configuration `docs/PUSH-SERVICES.md` exists to hand out. The bound is therefore not
+  a tuning knob but the reason the cache is safe to hold at all. Eviction is least-recently-used, and
   overflow degrades to signing per send — today's behaviour, never a refusal, because a policy this
   deployment chose must not become a delivery failure. The same party can reach that degradation on
   purpose, by supplying subscriptions on enough distinct hostnames of an allowed zone to evict the
@@ -161,7 +183,11 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   the bound is configurable and why this is recorded as a deliberate reversal of the improvement
   rather than an accident of overflow. The default of 64 is well above the four browser push services
   while leaving room for the two whose hostnames vary; how many distinct hostnames either of them
-  actually issues is not asserted here, because no vendor documents it.
+  actually issues is not asserted here, because no vendor documents it. That unknown carries a limit
+  worth stating plainly: this decision helps a push service in proportion to how few origins it
+  spreads its endpoints over, and a service that issued a hostname per subscription would defeat it
+  outright — every audience distinct, every send a miss, the cost exactly today's. Nothing suggests
+  one does; nothing published rules it out either.
 - **Concurrency: a benign race, and no lock is held across a signature.** `PushSender` is shared
   across threads and `sendAsync` makes concurrent sends the normal case, so two threads missing on
   the same audience at once is expected. They produce two different but independently valid tokens,
@@ -174,16 +200,31 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   signature happens outside it. Both the atomic-compute idiom (`computeIfAbsent` and friends, which
   run the mapping function under the map's own lock) and a synchronized region spanning the
   signature are excluded by it.
-- **The cached value is a bearer credential** — it authenticates this application server to the push
-  service for the remainder of the token's life — so it never appears in a `toString`, a log line, an
-  exception message or a health field, in the same way the Vault token does not.
+- **The cached value is a bearer credential, and holding it is the one thing this decision spends.**
+  It authenticates this application server to the push service for the remainder of the token's life,
+  so it never appears in a `toString`, a log line, an exception message or a health field, in the same
+  way the Vault token does not. Beyond diagnostics there is a residency cost worth naming, because
+  RFC 8292 §5 names it: a narrow validity period "limits the potential value of a stolen token to an
+  attacker and can increase the difficulty of stealing a token", and it is the second half this
+  changes. Today a token exists in the process for the length of one send; under reuse one lives in a
+  map for up to twelve hours, so a heap dump, a core dump, a profiler snapshot or an attached
+  debugger yields a usable credential where before it would have had to arrive during a send. The
+  same section asks for reuse anyway, and the exposure is bounded by `exp`, which this decision does
+  not move — but a deployment that treats process memory as reachable has `jwtRenewBefore` and
+  `jwtReuse(false)` to shorten or remove the residency, and it should be told that rather than left
+  to work it out.
 - **Reuse within a send already exists**, which is why this is an extension rather than a new idea:
   the encrypted body and the VAPID token are held across the retries of one send today. What changes
   is the span over which one token is presented, not whether it is presented more than once.
-- **Three documents and two published sentences are part of implementing this**, not a follow-up.
+- **Four documents and two published sentences are part of implementing this**, not a follow-up.
   `README.md` and `docs/SPRING.md` for the knobs — two of the three are ones an operator reaches for
   only after something surprised them, so the sentence that says a token is reused has to exist
-  before the surprise does — and `docs/DESIGN.md` for the pipeline. The two sentences are in `main`
+  before the surprise does — and `docs/DESIGN.md` for the pipeline. `docs/PERFORMANCE.md` is the
+  fourth and the one a reader would not think of: its Vault section says the JWT "is rebuilt and
+  re-signed for every message" and that "a cache would remove it from the path rather than speed it
+  up", and both sentences describe the code this decision changes. A figure there that no longer
+  holds is deleted rather than left to age, which is that document's own rule. The two sentences are
+  in `main`
   sources, which ship as a `sources.jar` and are read by consumers with no clone of this repository:
   `PushSender`'s class Javadoc says the sender "holds configuration only and derives everything a
   send needs inside the call", which is the same claim ADR-004 makes and stops being true here; and
@@ -199,7 +240,12 @@ of four, and seventy-six Vault calls per twelve hours is not a cost anyone is pa
 latency: a Redis round trip is the same order of magnitude as the Vault signature it would replace
 — hundreds of microseconds to a millisecond, dominated by the network either way — so a shared store
 consulted per send trades one network dependency in the hot path for another and answers neither
-half of this ticket. Any later version of it therefore inherits one constraint: **a shared level sits
+half of this ticket. One argument in its favour is weighed rather than omitted: RFC 8292 §5 values
+reuse partly because it lets the push service cache the result of verifying a signature, and a fleet
+of N nodes presents N distinct tokens per origin where a shared one would present a single token, so
+N cache entries form on their side instead of one. That is a real difference and a small one — N is
+the number of nodes, not of messages, against the one-token-per-message the service is handed today.
+Any later version of a shared store therefore inherits one constraint: **a shared level sits
 behind the in-process cache, never in front of it**, which reduces it to something consulted about
 once per node per token lifetime. What would reopen the question is a deployment whose processes are
 shorter-lived than its tokens — serverless invocations, or pods that live minutes under aggressive
@@ -236,18 +282,34 @@ Rejected alternatives:
   something that runs when nobody called it, for a saving of one signature on one send per audience
   per twelve hours; the core owns no thread today except the lazily created executor `sendAsync`
   documents, and this would be the first that starts itself.
-- **Not evicting on 401/403**, leaving the entry in place and `jwtReuse(false)` as the only remedy.
-  It is the simpler rule and it was rejected: it converts a transient or newly-appearing rejection
-  into a delivery outage lasting the rest of the reuse window, and the failure it makes permanent is
-  precisely the one this document flags as its own biggest assumption.
+- **Evicting the entry that produced a 401 or 403**, above: the status is not a statement about the
+  token, and reading it as one is reachable on purpose from a single subscription.
+- **Bounding a token's life by the signing key's.** There is nothing to bound it against and nothing
+  it would protect: the push service verifies the signature against the `k` the header carries and
+  has no notion of our key's lifetime, so a token signed by a Transit version that is later trimmed
+  keeps verifying until its `exp` like any other. `LocalEcVapidSigner` has no expiry concept at all —
+  it holds a key pair. What a dying key actually breaks is *renewal*, not the token in hand, and
+  there reuse helps rather than hurts: the sender keeps delivering on the last token while the
+  custodian is repaired. A key whose public half genuinely changes is not a token-lifetime question
+  either — every browser subscription is pinned to the application server key at `subscribe()` time,
+  so that event is a re-subscription of the whole client population.
+- **One token for several origins**, using a JSON array for `aud`. RFC 8292 §2 says the claim "MUST
+  include the Unicode serialization of the origin … of the push resource URL", and RFC 7519 allows
+  `aud` to be an array, so a token naming every origin a deployment sends to is a defensible reading
+  of the text. It is rejected on three counts, in order of weight: whether a push service accepts an
+  array is a fact about four implementations and not about the specification, and this change asserts
+  no vendor behaviour; the set of origins is discovered from the subscriptions the application hands
+  us rather than known in advance, so the token could not be minted until it was already needed; and
+  the saving over a per-origin token is a handful of signatures per twelve hours.
 - **A fourth SPI for the token store**, now: above, under what this does not settle.
 
 This rules out a VAPID token cache behind an SPI while the case for one is unmade; a shared cache
 level in front of the in-process one; an unbounded or unevictable cache; a proportional safety
 margin; a second spelling of "sign every time" through a zero margin or a zero cache size; a
-signature taken while the cache's lock is held; a cached entry surviving a backwards clock step or
-an authentication rejection; a `byte[]` cache key; and any claim in this repository's documents about
-a named push service accepting a reused token. ADR-002 is untouched — the cache is a map and a
+signature taken while the cache's lock is held; a cached entry surviving a backwards clock step; a
+cache invalidated by an authentication status; a token whose life is bounded by the signing key's or
+whose `aud` names more than one origin; a `byte[]` cache key; and any claim in this repository's
+documents about a named push service accepting a reused token. ADR-002 is untouched — the cache is a map and a
 string, and the core gains no dependency. ADR-005 is untouched and not superseded: the three SPIs
 stay three. ADR-016 and ADR-017 are untouched; the policy still runs on every send, ahead of
 everything, and the cache is consulted after it. ADR-004 is superseded in the single clause named
