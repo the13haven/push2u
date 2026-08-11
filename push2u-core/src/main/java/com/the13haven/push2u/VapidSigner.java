@@ -71,8 +71,13 @@ public interface VapidSigner {
      * raw 65-byte X9.62 uncompressed point of <a href="https://datatracker.ietf.org/doc/html/rfc8292#section-3.2">RFC
      * 8292 §3.2</a>, which is what {@link #publicKey()} already returns — not a {@code SubjectPublicKeyInfo}, the
      * 91-byte wrapper {@code java.security.interfaces.ECPublicKey.getEncoded()} produces and the browser cannot read.
-     * Each of those three details fails at {@code subscribe(...)}, in a browser console far from the code that made the
-     * string.
+     * Two of those three fail at {@code subscribe(...)} and they fail differently: the standard alphabet breaks the
+     * base64url decoding, which rejects with an {@code InvalidCharacterError}, while a {@code SubjectPublicKeyInfo}
+     * decodes cleanly and is then refused for not describing a valid point on P-256, with an {@code InvalidAccessError}
+     * (steps 10.2 and 10.3 of <a href="https://www.w3.org/TR/push-api/#subscribe-method">the Push API's
+     * {@code subscribe()}</a>) — both in a browser console far from the code that made the string. The padding is the
+     * protocol's own requirement: RFC 8292 §3.2 spells the {@code k} parameter as JOSE base64url, which carries no
+     * {@code '='}.
      *
      * <p>This is the value an application publishes to its frontend, and for a signer whose key lives in a remote
      * custodian it is the only place the string exists at all: nothing configured it, the signer read it from the
@@ -98,8 +103,10 @@ public interface VapidSigner {
      * @return this signer's public key as unpadded URL-safe base64
      * @throws PushCryptoException if the key cannot be produced, exactly as {@link #publicKey()} raises it, or if what
      *     it returned is not the 65-byte uncompressed point the contract requires — the same check, the same type and
-     *     the same wording a send applies to the same value, so publishing a key can never succeed where sending with
-     *     it would fail, nor fail where it would succeed
+     *     the same wording a send applies to the same value, so this method's verdict on the key's <em>shape</em> is
+     *     the send path's verdict on it: no key is published here that a send would refuse for its shape, and none is
+     *     refused here that a send would carry. That agreement is about the key and nothing else — the signature, the
+     *     endpoint policy and the transport are a send's own business, and a send can still fail on any of them
      * @throws NullPointerException if {@link #publicKey()} returns {@code null}
      */
     default String publicKeyBase64Url() {

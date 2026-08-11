@@ -100,8 +100,12 @@ public final class VapidKeys {
      * would add. And the bytes are already the raw 65-byte X9.62 uncompressed point that <a
      * href="https://datatracker.ietf.org/doc/html/rfc8292#section-3.2">RFC 8292 §3.2</a> defines — not a
      * {@code SubjectPublicKeyInfo}, which is what {@code java.security.interfaces.ECPublicKey.getEncoded()} returns (91
-     * bytes for P-256) and which the browser has no way to read. Each of the three fails at {@code subscribe(...)}, far
-     * from the code that produced the string.
+     * bytes for P-256) and which the browser has no way to read. Two of the three fail at {@code subscribe(...)}, and
+     * not in the same way: the standard alphabet breaks the base64url decoding, rejected with an
+     * {@code InvalidCharacterError}, whereas a {@code SubjectPublicKeyInfo} decodes cleanly and is then refused for not
+     * describing a valid point on P-256, with an {@code InvalidAccessError} (steps 10.2 and 10.3 of <a
+     * href="https://www.w3.org/TR/push-api/#subscribe-method">the Push API's {@code subscribe()}</a>) — both far from
+     * the code that produced the string.
      *
      * <p>To publish the key a {@link VapidSigner} holds — a Vault, KMS or HSM signer that reads it from the custodian
      * and never sees it as configuration — call {@link VapidSigner#publicKeyBase64Url()} instead, which is this

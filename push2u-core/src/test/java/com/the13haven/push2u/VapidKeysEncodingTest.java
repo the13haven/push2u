@@ -17,7 +17,10 @@ import org.junit.jupiter.api.Test;
  * {@link VapidKeys#encodePublicKey}, the direction {@link VapidKeys#fromBase64} does not have: the 65-byte X9.62 point
  * as the string a browser takes as its {@code applicationServerKey}. Three details decide whether the browser accepts
  * it — the URL-safe alphabet of RFC 4648 §5, the absence of padding, and the bytes being the raw point rather than a
- * SubjectPublicKeyInfo — and each is pinned below, because each fails at {@code subscribe(...)} rather than here.
+ * SubjectPublicKeyInfo — and each is pinned below, because none of them is decided here. Two are decided at
+ * {@code subscribe(...)}, and differently: the standard alphabet breaks its base64url decoding
+ * ({@code InvalidCharacterError}), while a SubjectPublicKeyInfo decodes and then fails its P-256 point check
+ * ({@code InvalidAccessError}). The padding is decided on the wire, RFC 8292 §3.2 spelling {@code k} as JOSE base64url.
  *
  * <p>The vector is RFC 8292 §2.4's own application-server key, so the expected string is published rather than whatever
  * this encoder currently produces.
@@ -54,18 +57,30 @@ class VapidKeysEncodingTest {
     }
 
     /**
-     * The local-keys mode: whatever string {@link VapidKeys#fromBase64} was configured with comes back out of the
-     * encoder unchanged, so an application serving it to its frontend need keep no second copy beside the pair.
+     * The local-keys mode: a string {@link VapidKeys#fromBase64} accepted comes back out of the encoder in the form the
+     * browser and the {@code k} parameter want, so an application serving it to its frontend need keep no second copy
+     * beside the pair. Canonical rather than identical, and the difference is the padding: {@code fromBase64} takes it
+     * or leaves it — a 65-byte key always carries exactly one {@code '='} from a padded encoder — while the encoder
+     * never emits it, so a padded input round-trips to the unpadded spelling rather than to itself.
      */
     @Test
-    void returnsTheStringFromBase64WasConfiguredWith() {
+    void returnsTheConfiguredKeyInTheCanonicalUnpaddedForm() {
         VapidKeys generated = PushTestSupport.generateVapidKeys();
-        Base64.Encoder base64url = Base64.getUrlEncoder().withoutPadding();
-        String publicKey = base64url.encodeToString(generated.publicKey());
+        String unpadded = Base64.getUrlEncoder().withoutPadding().encodeToString(generated.publicKey());
+        String padded = Base64.getUrlEncoder().encodeToString(generated.publicKey());
+        String privateScalar = Base64.getUrlEncoder().withoutPadding().encodeToString(generated.privateScalar());
 
-        VapidKeys configured = VapidKeys.fromBase64(publicKey, base64url.encodeToString(generated.privateScalar()));
-
-        assertThat(VapidKeys.encodePublicKey(configured.publicKey())).isEqualTo(publicKey);
+        assertThat(padded)
+                .as("a padded encoder does pad a 65-byte key, so the case below is real")
+                .endsWith("=");
+        assertThat(VapidKeys.encodePublicKey(
+                        VapidKeys.fromBase64(unpadded, privateScalar).publicKey()))
+                .as("an unpadded input comes back as itself")
+                .isEqualTo(unpadded);
+        assertThat(VapidKeys.encodePublicKey(
+                        VapidKeys.fromBase64(padded, privateScalar).publicKey()))
+                .as("a padded input comes back canonical, with the '=' gone")
+                .isEqualTo(unpadded);
     }
 
     /**

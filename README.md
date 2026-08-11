@@ -198,9 +198,17 @@ way to be sure the key you advertise is the key the next send will be signed wit
 
 Both produce unpadded base64url in the URL-safe alphabet (`-` and `_`, never `+`, `/` or `=`) over
 the raw 65-byte X9.62 point — not a `SubjectPublicKeyInfo`, which is what `ECPublicKey.getEncoded()`
-returns and what the browser cannot read. Each of those three is the sort of mistake that surfaces
-as an `InvalidAccessError` from `pushManager.subscribe(...)`, in a browser console far from the code
-that produced the string. `VapidKeys.encodePublicKey` additionally refuses bytes that are not a
+returns and what the browser cannot read. Those are three different mistakes, and
+`pushManager.subscribe(...)` tells two of them apart: a string in the standard alphabet fails
+base64url decoding and rejects with an `InvalidCharacterError`, while a `SubjectPublicKeyInfo`
+decodes perfectly well and is then refused for not describing a valid point on P-256, with an
+`InvalidAccessError` — steps 10.2 and 10.3 of
+[`subscribe()`](https://www.w3.org/TR/push-api/#subscribe-method). The padding is the protocol's
+requirement rather than the browser's: RFC 8292 §3.2 spells the `k` parameter as JOSE base64url,
+which carries no `=`. Either browser rejection lands in a console far from the code that produced
+the string.
+
+`VapidKeys.encodePublicKey` additionally refuses bytes that are not a
 point on P-256 with an `IllegalArgumentException`, since they may have come from anywhere;
 `publicKeyBase64Url()` applies exactly the check a send applies to the same value, and raises the
 same `PushCryptoException` with the same wording when a signer returns the wrong shape.
