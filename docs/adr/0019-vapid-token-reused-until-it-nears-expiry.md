@@ -76,7 +76,10 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   behaviour is a `default` an operator can turn off without a release, the failure has a stated shape,
   and RFC 8292 §5 asks for the behaviour outright. Anyone who does run that check is answering a
   question this ADR left open, not correcting it — and if a service is found to refuse, the finding
-  belongs in `docs/PUSH-SERVICES.md` and the default belongs back at `false`.
+  is an issue and then an ADR flipping the default, not a row in `docs/PUSH-SERVICES.md`. A negative
+  result is a one-off experiment exactly as a positive one is, and that document's authority is the
+  operator's own current documentation linked beside the claim; nothing about the answer being
+  inconvenient makes an unsourced observation citable there.
 - **The cache is internal to `PushSender`, and the three SPIs stay three.** ADR-005 admits a seam
   when the deployment knows something the library cannot decide for it, and an in-process cache of
   a value the sender itself minted is not such a thing: it is correct for every deployment, needs no
@@ -96,12 +99,21 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   sharing survives (below); the sentence does not, and ADR-004's status line records that this ADR
   supersedes that clause and nothing else in it. `docs/adr/README.md` carries no form for a partial
   supersession, so this ADR fixes the wording rather than leaving it to be invented at implementation
-  time — the status line ADR-004 takes, and the only edit its body ever takes, is
-  `**Status:** Accepted; the clause "`PushSender` holds only final configuration" is superseded by
-  [ADR-019](0019-vapid-token-reused-until-it-nears-expiry.md)`. The index's status column takes the
-  same short form, and the procedure section gains the general shape of it. Nothing else in ADR-004
-  is touched, and the edit happens when this ADR becomes `Accepted`, not before: until then there is
-  no decision to supersede.
+  time. The status line ADR-004 takes, and the only edit its body ever takes, is:
+
+  ```markdown
+  **Status:** Accepted; one clause superseded by [ADR-019](0019-vapid-token-reused-until-it-nears-expiry.md)
+  ```
+
+  The index's status cell, which today reads `Accepted`, becomes
+  `Accepted; one clause superseded by [019](0019-vapid-token-reused-until-it-nears-expiry.md)`. Which
+  clause it is stays in ADR-019 rather than in ADR-004's status line, because naming it there would
+  put this decision's reasoning into a document that may not carry it. The procedure section gains
+  the general shape of both, beside the full-supersession form it already has — and so do the four
+  other places that today state the full form as the only one: `CLAUDE.md`, `CONTRIBUTING.md`,
+  `docs/adr/README.md` itself and the review skill's ADR reference. Nothing else in ADR-004 is
+  touched, and the edit happens when this ADR becomes `Accepted`, not before: until then there is no
+  decision to supersede.
 - **The key is the audience *and* the signer's advertised public key, and what it detects is a change
   in the *advertised* key.** What is cached is the whole header, `t` and `k` minted together in one
   call, so the two can never disagree with each other inside one entry whatever the key is — that is
@@ -154,13 +166,20 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
 - **One `publicKey()` read per minted entry feeds both the header's `k` and the entry's key.** Under
   the sentence above the two cannot disagree anyway; the single read is what makes that independent of
   the contract being honoured, so a signer that violates it still cannot produce an entry filed under
-  an identity its own header does not carry. The residue is named rather than papered over: `sign` and
-  `publicKey` remain two calls, so a violating signer can still sign under one key and advertise
-  another within one header — which is true of the code today, before any cache, and this decision
-  neither repairs nor worsens it. Against such a signer the cache degrades to detection: the lookup on
-  a later send is a fresh read, a key that moved no longer matches what the entry was filed under, and
-  the entry is replaced. So the guarantee is exact for a signer that meets the contract, and
-  self-correcting on the next send for one that does not.
+  an identity its own header does not carry. The residue is named rather than papered over, and it is
+  not free: `sign` and `publicKey` remain two calls, so a violating signer can still sign under one
+  key and advertise another *within one header*. That mismatch exists in the code today, before any
+  cache — but today it costs one send, and a cached one is filed and re-served until renewal, with the
+  no-eviction rule below keeping it there. It is the same amplification this document already records
+  for the supplied-key mode: reuse makes a broken configuration fail longer rather than differently.
+  The single read does not answer it, because the disagreement is between the signature and `k` rather
+  than between `k` and the entry's key; what answers it is the contract sentence above, and
+  `jwtReuse(false)` for a deployment that has met a signer ignoring it. Against a signer whose
+  advertised key merely moves, the cache still degrades to detection rather than silence: the lookup
+  on a later send is a fresh read, the moved key no longer matches what the entry was filed under, and
+  the entry is replaced. So the guarantee is exact for a signer that meets the contract,
+  self-correcting across sends for one whose key moves between them, and a longer version of an
+  already fatal failure for one that contradicts itself inside a single header.
 - **The safety margin is an absolute duration, not a fraction of `jwtExpiry`.** Both things it
   protects against are absolute. The push service checks `exp` against its own clock, so what has to
   be covered is clock skew, which is minutes whatever the token's lifetime is; and a send that picks
@@ -185,23 +204,35 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   `build()`, which the builder convention here does not want to do. A negative margin is an ordinary
   argument failure at the step that set it, as is a `jwtCacheSize` below one — the cap is not a
   second way to spell the switch.
-- **A clock that goes backwards empties the cache, and the trigger is the step, not the entry.** The
-  sender's `Clock` both mints `exp` and judges staleness, so the two never disagree about what time
-  it is — but `Clock.systemUTC()` is wall-clock, and an NTP step backwards, a snapshot restore or an
-  operator setting the clock leaves every cached entry over-estimating its own remaining life by the
-  size of the step. Today that event is harmless, because each send mints a fresh `exp` from the same
-  wrong clock; under reuse the sender keeps presenting a token the push service considers expired for
-  the whole of the step, and a large enough step also puts `exp` more than 24 hours from the request,
-  which RFC 8292 §4.2 makes a rejection ground of its own. Comparing an entry's own mint instant
-  against `now` does *not* close this, and the point is worth stating because it is the rule that
-  suggests itself: it catches only entries minted after the reading the clock stepped back to, so a
-  token minted at 12:00 survives a step from 12:10 to 12:05 while its remaining life is overstated by
-  five minutes. The sender therefore records the latest instant it has observed from the clock, and a
-  reading earlier than that one discards every entry. It costs a field and a comparison, needs no
-  second time source, catches a step of any size whenever the next send observes it, and subsumes the
-  mint-instant check — an entry can only be in the future if the clock moved back after it was minted,
-  which is exactly what the observation catches. What no rule here can catch is a clock that is simply
-  wrong and stays wrong: that is skew, and the margin is what covers it.
+- **A backwards clock is caught per entry, by a monotonic reading taken beside the wall-clock one.**
+  The sender's `Clock` both mints `exp` and judges staleness, so the two never disagree about what
+  time it is — but `Clock.systemUTC()` is wall-clock, and an NTP step backwards, a snapshot restore
+  or an operator setting the clock leaves every cached entry over-estimating its own remaining life
+  by the size of the step. Today that event is harmless, because each send mints a fresh `exp` from
+  the same wrong clock; under reuse the sender keeps presenting a token the push service considers
+  expired for the whole of the step, and a large enough step also puts `exp` more than 24 hours from
+  the request, which RFC 8292 §4.2 makes a rejection ground of its own. **So an entry records both
+  readings — `clock.instant()` and `System.nanoTime()` — and is discarded when the wall clock has
+  advanced measurably less than the monotonic one since it was minted.** Two rules that suggest
+  themselves first are recorded as rejected, because both look sufficient and are not.
+  *Comparing an entry's mint instant against `now`* catches only entries minted after the reading the
+  clock stepped back to: a token minted at 12:00 survives a step from 12:10 to 12:05 while its
+  remaining life is overstated by five minutes. *A high-water mark over readings the sender has
+  observed*, discarding everything on an earlier reading, fails worse and fails silently: `sendAsync`
+  makes concurrent sends normal, two threads reading the clock a moment apart are not ordered with
+  respect to a shared field, so the thread that reads a hair earlier discards the whole cache while
+  nothing has moved — on a fan-out that fires continuously, reuse collapses to today's cost, and a
+  single-threaded test never sees it. It is also blind to a step that falls entirely inside an idle
+  window, since no reading straddles it. The monotonic comparison has neither problem: both readings
+  in a pair are taken by one thread at one moment, so cross-thread ordering never enters, and
+  `nanoTime` keeps advancing while the sender is idle. It needs a small tolerance — the two readings
+  in a pair are not taken atomically — and the shortfall that matters is one large enough to eat into
+  `jwtRenewBefore`, so anything under a second is left to the margin rather than acted on. The
+  mint-vs-publish race goes the same way: a thread that read the clock before a step and publishes its
+  entry after one is not a special case, because the entry it publishes carries its own pair and is
+  judged on the pair, not on what the sender believed while it was signing. What no rule here can
+  catch is a clock that is simply wrong and stays wrong: that is skew, and the margin is what covers
+  it.
 - **Staleness is judged against the `exp` that went on the wire.** The claim is serialised as
   `getEpochSecond()`, so the value the push service enforces is the whole second, up to just under a
   second earlier than the `Instant` the sender computed; RFC 7519 §4.1.4 requires the current time to
@@ -286,34 +317,52 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
 - **Reuse within a send already exists**, which is why this is an extension rather than a new idea:
   the encrypted body and the VAPID token are held across the retries of one send today. What changes
   is the span over which one token is presented, not whether it is presented more than once.
-- **Four documents and two published sentences are part of implementing this**, not a follow-up.
-  `README.md` and `docs/SPRING.md` for the knobs — two of the three are ones an operator reaches for
-  only after something surprised them, so the sentence that says a token is reused has to exist
-  before the surprise does — and `docs/DESIGN.md` for the pipeline. `docs/PERFORMANCE.md` is the
-  fourth and the one a reader would not think of: its Vault section says the JWT "is rebuilt and
-  re-signed for every message" and that "a cache would remove it from the path rather than speed it
-  up", and both sentences describe the code this decision changes. A figure there that no longer
-  holds is deleted rather than left to age, which is that document's own rule. The two sentences are
-  in `main` sources, which ship as a `sources.jar` and are read by consumers with no clone of this
-  repository:
-  `PushSender`'s class Javadoc says the sender "holds configuration only and derives everything a
-  send needs inside the call", which is the same claim ADR-004 makes and stops being true here; and
-  `VapidSigner`'s says both of its outputs "are checked on every send", which stops being true on a
-  cache hit, where `sign` is not called at all — the check still runs on every miss, which is every
-  path where a new value enters. `VapidSigner` also gains the stability sentence above, beside the
-  thread-safety one it already carries and in the same voice: what an implementor must guarantee, why
-  the library cannot check it, and what breaks when it is not true.
+- **Documents and published sentences are part of implementing this**, not a follow-up. Four
+  documents describe behaviour that changes: `README.md` and `docs/SPRING.md` for the knobs — two of
+  the three are ones an operator reaches for only after something surprised them, so the sentence
+  that says a token is reused has to exist before the surprise does — `docs/DESIGN.md` for the
+  pipeline, and `docs/PERFORMANCE.md`, the one a reader would not think of, whose Vault section says
+  the JWT "is rebuilt and re-signed for every message" and that "a cache would remove it from the
+  path rather than speed it up"; a figure there that no longer holds is deleted rather than left to
+  age, which is that document's own rule. Three more carry the partial-supersession form named above:
+  `docs/adr/0004-stateless-library.md` takes its status line, and `docs/adr/README.md` takes both the
+  index cell and the procedure — alongside `CLAUDE.md`, `CONTRIBUTING.md` and the review skill's ADR
+  reference, which today state the full form as the only one and would otherwise describe a procedure
+  the repository no longer follows.
+  Three sentences are in `main` sources, which ship as a `sources.jar` and are read by consumers with
+  no clone of this repository. `PushSender`'s class Javadoc says the sender "holds configuration only
+  and derives everything a send needs inside the call", which is the same claim ADR-004 makes and
+  stops being true here; a comment further down says "[t]he sender holds no mutable state, so a
+  policy that throws … leaves nothing to corrupt for later sends", whose conclusion survives — the
+  policy runs before the cache is consulted — while its premise does not, so it is the reasoning that
+  has to be rewritten rather than the guarantee; and `VapidSigner`'s says both of its outputs "are
+  checked on every send", which stops being true on a cache hit, where `sign` is not called at all —
+  the check still runs on every miss, which is every path where a new value enters. `VapidSigner`
+  also gains the stability sentence above, beside the thread-safety one it already carries and in the
+  same voice: what an implementor must guarantee, why the library cannot check it, and what breaks
+  when it is not true.
+- **`Vapid.authorizationHeader` changes shape**, and it is named because the guarantee above depends
+  on it. It reads `signer.publicKey()` inside itself and hands back only a `String`, so a caller that
+  must file the entry under the same key would have to read it a second time — which is the thing the
+  single-read rule forbids. The method therefore takes or returns that value instead of hiding it.
+  It is package-private, so no published API moves.
 - **What the implementation has to demonstrate, named here so it is a checklist rather than a
   judgement call at review time.** Every rule above that a test can pin, has one: that concurrent
   misses on one audience produce valid tokens and no signature runs while the cache's lock is held;
   that the bound holds and eviction is least-recently-used, with overflow degrading to signing rather
   than failing; that a backwards clock reading discards the cache, including the 12:00/12:10/12:05
   case a mint-instant check would miss; that an entry is renewed on the second `exp` names and not a
-  fraction of a second later; that a signer whose advertised key changes gets a new token rather than
-  the old one under a new `k`; that a 401 or a 403 leaves the entry in place; that the header appears
-  in no `toString`, log, exception message or health field; and that the three properties bind, with
-  the failure messages naming the YAML spelling rather than the builder's camelCase. `push2u-testkit`
-  is untouched: none of this is a signer's obligation.
+  fraction of a second later; that a signer whose advertised key changes between two sends gets a new
+  token rather than the old one under a new `k`, and that a signer answering a different key from
+  every `publicKey()` call still files each entry under the key its own header carries; that a 401 or
+  a 403 leaves the entry in place; that `jwtReuse(false)` and a `jwtRenewBefore` at or above
+  `jwtExpiry` both mint per send and neither is an error, while a negative margin and a
+  `jwtCacheSize` below one fail at the builder step that set them; that two senders do not share a
+  cache; that the header reaches neither the health indicator's details nor any message on the send
+  path's exceptions — the observable surfaces, rather than a universal negative over a module that
+  has no logger and no `toString` to begin with; and that the three properties bind, with the failure
+  messages naming the YAML spelling rather than the builder's camelCase. `push2u-testkit` is
+  untouched: none of this is a signer's obligation.
 
 **What this decision does not settle.** A shared token store — one signed token used by every node
 of a fleet, through Redis or anything else — is deliberately not built, and not because the idea is
@@ -407,8 +456,8 @@ that judges staleness against an expiry finer than the second the wire carries; 
 by an authentication status; an entry filed under a key read separately from the one its header
 carries; a signature and a public key delivered by one SPI call; a token whose life is bounded by the
 signing key's or whose `aud` names more than one origin; a `byte[]` cache key; and any claim in this
-repository's documents about a named push service accepting a reused token. ADR-002 is untouched — the cache is a
-map and a string, and the core gains no dependency. ADR-005 is untouched and not superseded: the three SPIs
-stay three. ADR-016 and ADR-017 are untouched; the policy still runs on every send, ahead of
+repository's documents about a named push service accepting a reused token. ADR-002 is untouched —
+the cache is a map and a string, and the core gains no dependency. ADR-005 is untouched and not
+superseded: the three SPIs stay three, and the one that gains a sentence gains no member. ADR-016 and ADR-017 are untouched; the policy still runs on every send, ahead of
 everything, and the cache is consulted after it. ADR-004 is superseded in the single clause named
 above and in nothing else.
