@@ -224,8 +224,8 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   words. **So a minted entry records a `System.nanoTime()` reading and then the wall reading `exp` is
   computed from — in that order — and it is renewed when either bound is reached: the wall clock
   arriving at the effective `exp` less `jwtRenewBefore`, or the monotonic reading having run for that
-  same span, `exp` minus the wall reading it was computed from, minus `jwtRenewBefore`, and not one
-  second more.**
+  same span — the effective `exp` minus the wall reading it was computed from, minus
+  `jwtRenewBefore`, and not one second more.**
   Two details in that sentence are load-bearing, and each of them is the difference between the rule
   working and the rule reading as though it worked.
   *The span* is spelled out because the two candidate readings differ by exactly the margin, and the
@@ -240,8 +240,13 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   then extends the entry's life by `min(Δ, P)`, which is the very failure being closed, reintroduced
   through the ordering rather than through the span. Read the monotonic value first and the same pause
   moves the monotonic bound P *earlier*, so it can only shorten an entry's life and cost a signature.
-  That is why no upper bound on the gap is needed anywhere in this decision: the safe order makes the
-  gap's size irrelevant instead of tolerable.
+  The general form of that, which is what the lookup path needs, is: **the monotonic elapsed time an
+  entry is judged on is always measured so as to over-estimate.** At mint that means the anchor is
+  taken as early as possible — before the wall reading. At lookup it means the opposite order for the
+  same reason: the current monotonic value is taken *last*, as late as possible, because a stale one
+  is permissive on exactly the bound that governs alone once a backwards step has pushed the wall
+  bound out. Under that rule no upper bound on any gap is needed anywhere in this decision: the pauses
+  are made to displace in the safe direction rather than made small.
   A backwards wall step then cannot extend an entry's life at all, because the bound that governs is
   measured on a clock that does not step and dated before the one that does. There is nothing to
   detect and no threshold to choose: the failure is not diagnosed, it is made unable to matter.
@@ -276,10 +281,10 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   same absence of a common rate the third rejected rule died of, pointing the other way. On an
   undisciplined counter running fifty parts per million slow, that bound is reached a couple of
   seconds of true time late on a twelve-hour entry. A margin larger than that drift absorbs it, which
-  the default of five minutes is by a factor of well over a hundred; a margin smaller than it does
-  not, and
-  at `jwtRenewBefore(Duration.ZERO)` the token is presented past `exp`. That is what the setting
-  means — no margin is no margin, and a drift-sized residual is what choosing it buys.
+  the default of five minutes is by about a hundred and forty at the fifty parts per million of this
+  example; a margin smaller than that drift does not, and at `jwtRenewBefore(Duration.ZERO)` the
+  token is presented past `exp`. That is what the setting means — no margin is no margin, and a
+  drift-sized residual is what choosing it buys.
   A monotonic reading from a *later timeline* is the one case the pair cannot absorb — a
   checkpoint/restore or a live migration onto a host whose counter is behind. The JDK forbids it: the
   same origin serves every invocation within one virtual-machine instance, and a restore is that same
@@ -406,7 +411,9 @@ PushSender.Builder.jwtCacheSize(int)          // push2u.jwt-cache-size,   defaul
   otherwise be this document: that no signature runs while whatever guards the cache is held, and that
   concurrent misses on one audience produce valid tokens; that the monotonic bound ends an entry's
   life when the wall clock is frozen short of its own bound and the seam is driven past the span, and
-  that a backwards wall step cannot push the effective life past that same span; that a monotonic
+  that a backwards wall step cannot push the effective life past that same span, and that a pause
+  between an entry's two mint readings cannot lengthen its effective life under a later backwards
+  step — the assertion the wrong reading order fails and every `P ≈ 0` test passes; that a monotonic
   reading from a later timeline discards the entry; that renewal happens on the second `exp` names and
   not a fraction of a second later; that a signer whose advertised key changes between two sends gets
   a new token rather than the old one under a new `k`, and that a signer answering a different key
@@ -453,7 +460,10 @@ bearer credential, so putting it in a shared store extends that store's blast ra
 VAPID identity; a store that cannot be reached must cause a signature rather than a failed send; and
 the monotonic half of an entry's pair does not travel — the JDK fixes that origin within one virtual
 machine, so a reading taken by another node means nothing here and a shared entry has to be judged on
-its wall-clock half alone, or re-timed on arrival.
+its wall-clock half alone, or re-timed on arrival — and re-timed under the same over-estimation rule,
+anchoring the local monotonic reading first and deriving the remaining span from the local wall clock
+after it, since anchoring on arrival while keeping a span computed on another node hours earlier is
+the unsafe order with the storage time as its pause.
 
 Rejected alternatives:
 
