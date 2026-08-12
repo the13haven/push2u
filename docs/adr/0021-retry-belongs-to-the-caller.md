@@ -3,135 +3,102 @@
 **Status:** Proposed
 
 `PushSender.send` retries. Three separable things are welded into one `for` loop: **which** responses
-may be retried at all, which is a private static naming 429 and the whole 5xx class; **how long** to
-wait and **when to stop**, which is `RetryPolicy`, a record of three numbers whose backoff doubles
-until a ceiling stops it; and **who executes** the schedule, which is the loop itself — one thread,
-inside one call, sleeping through every wait. A parseable `Retry-After` overrides the computed
-schedule, clamped at the same ceiling, from code in `PushSender` rather than in the record. Only the
-middle of the three is configurable, and only in the numbers the record holds.
+may be retried, a private static naming 429 and the whole 5xx class; **how long** to wait and **when
+to stop**, which is `RetryPolicy`, a record of three numbers whose backoff doubles until a ceiling
+stops it; and **who executes** the schedule, which is the loop itself — one thread, inside one call,
+sleeping through every wait. A parseable `Retry-After` overrides the computed schedule, clamped at
+the same ceiling, from code in `PushSender` rather than in the record. Only the middle of the three
+is configurable, and only in the numbers the record holds.
 
 Reported as https://github.com/the13haven/push2u/issues/86, from the deployment where that bites
 hardest: a sender whose retries are *durable*. There the next attempt is a job the engine reschedules
 minutes or hours later, across a process restart or a deploy, and a `Thread.sleep` inside `send`
 cannot participate in it — it holds a worker for the wait and its state dies with the process. So the
 sender is configured for one attempt per call and the application owns backoff, expiry and the
-404/410 delete. The report's complaint is precise: the consumer that most needs the push service's
+404/410 delete. The complaint is precise: the consumer that most needs the push service's
 `Retry-After` is the one configuration that cannot see it, and it reschedules on a blind exponential
 backoff that may POST again well before the service said it would accept anything — the exact harm
 the header exists to prevent.
 
-The first reading of that report is that the library's retry should become pluggable: a policy behind
-a seam, a driver the caller can supply, a resumable state the caller can persist. This ADR was
-drafted in that shape and the shape was wrong. The questions it needed answering were what a policy
-that throws does to a send, which of the two clocks measures elapsed time, who bounds a policy that
-never gives up, whether a held thread is acceptable, and what a driver would have to be handed across
-a restart. Not one of them is a question about Web Push. When a feature's design cost is five open
-questions in a neighbouring domain, the feature is in the wrong library.
-
 ## The decision
 
-**The library does not retry.** `PushSender.send` performs exactly one POST and returns what happened.
-`RetryPolicy`, the internal sleep indirection, the loop and the `push2u.retry.*` properties are
-removed, and no retry mechanism replaces them: no SPI, no shipped retrying wrapper, no separate
+**The library does not retry.** `PushSender.send` performs exactly one POST and reports what became
+of it. `RetryPolicy`, the internal sleep indirection, the loop and the `push2u.retry.*` properties
+are removed, and no retry mechanism replaces them: no SPI, no shipped retrying wrapper, no separate
 retry module.
-
-Three things make that a boundary rather than an abdication.
 
 **Every deployment that sends push at volume already owns a retrier** — Spring Retry, Resilience4j, a
 job engine, a queue with redelivery — and the library's loop integrates with none of them. It
-competes, and it competes from ignorance: it cannot see the deployment's retry budget, its
-dead-letter path, its concurrency limit, or what survives a restart. The reporter's situation is that
-competition in its plainest form, two retriers in one call path, discovered by symptom.
+competes from ignorance: it cannot see the deployment's retry budget, its dead-letter path, its
+concurrency limit, or what survives a restart. The reporter's situation is that competition in its
+plainest form, two retriers in one call path, found by symptom.
 
 **It is on by default, so it wins that competition by accident.** On the shipped defaults `send` — a
 method that looks like one POST — has a blocking budget approaching 93 seconds: three attempts, each
 bounded by the transport's 30-second per-request timeout, plus one and two seconds of computed
-backoff. A push service answering `429` with a large `Retry-After` raises the bound to three and a
-half minutes, since an honoured hint is capped only at the 60-second ceiling the computed schedule
-never reaches. Both are bounds rather than reachable durations: each attempt has to *answer* just
-short of its timeout, because a timeout is not retried today at all. That a caller cannot easily tell
-which of the two bounds applies to them is part of the same problem.
+backoff. A `429` carrying a large `Retry-After` raises the bound to three and a half minutes, since
+an honoured hint is capped only at the 60-second ceiling the computed schedule never reaches. Both
+are bounds rather than reachable durations — each attempt has to *answer* just short of its timeout,
+a timeout itself not being retried today — and that a caller cannot easily tell which bound applies
+is part of the same problem.
 
 **And it can never be the better of the two.** Everything the loop does — count, wait, give up — the
-caller's retrier does knowing things the library cannot know. No configuration of three numbers beats
-a scheduler with a persistent store.
+caller's retrier does knowing what the library cannot. No configuration of three numbers beats a
+scheduler with a persistent store.
 
-Six alternatives were considered and rejected.
+The first reading of the report is that retry should become *pluggable*: a policy behind a seam, a
+driver the caller supplies, a resumable state the caller persists. This ADR was drafted that way and
+the shape was wrong. Every question it opened — what a policy that throws does to a send, which clock
+measures elapsed time, who bounds a policy that never gives up, what a driver would be handed across
+a restart — is a question about retrying and none is a question about Web Push. Five further
+alternatives were weighed and are recorded here for the reader who will reach for one of them:
 
-*Surface `Retry-After` on the result and keep the loop*, which is what the report itself proposes, is
-the one a later reader will reach for first: minimal, very nearly non-breaking, and it would have
-worked. It fixes the symptom the reporter could see and leaves the cause they described — a scheduler
-in the library, competing with theirs, which they had already switched off. What it produces is a
-library owning a retry loop nobody in a durable deployment can use, and a result type whose reason to
-exist is making the opt-out survivable.
+- **Surface `Retry-After` and keep the loop**, which the report itself proposes, fixes the symptom
+  and leaves the cause: a scheduler in the library, competing with the caller's, which they had
+  already switched off.
+- **Keep the loop but default it off** disarms the accident and nothing else. The loop still has to
+  be carried — its tests, its properties, its coupling to the VAPID renewal margin — and every
+  failure still has to be classified twice, once for it and once for the caller.
+- **Hand the caller a resumable send** needs no mechanism: a send holds nothing across attempts that
+  a second call would not rebuild. The endpoint policy re-runs, the VAPID token is re-minted or
+  served from its cache (ADR-019), and the body is re-encrypted under a fresh ephemeral key and salt,
+  which is what this library does per message in any case — RFC 8291 §2 has the application server
+  generate both per message and says nothing about what a retransmission may reuse.
+- **Declare a checked exception** so the compiler forces the handling. Rejected mechanically rather
+  than stylistically: a checked contract does not travel across `CompletableFuture`, so it would
+  oblige the synchronous caller and say nothing to the asynchronous one — the path recommended for
+  volume. A guarantee that holds on half an API is worse than none.
+- **Catch everything inside the sender** so `send` becomes total. This launders defects: a
+  `NullPointerException` from a bug here would arrive as a value indistinguishable from an outcome,
+  and *broken* would stop being distinguishable from *unsuccessful*.
 
-*Keep the loop, default it off, and surface `Retry-After` anyway* is the strongest form of the middle
-option, and the one that has to be answered rather than the weak form. It disarms the second reason
-outright: a loop nobody gets without asking cannot win by accident, and the competition becomes one a
-deployment opts into. It also has the one benefit removal does not — no existing caller is broken by
-it. Both are conceded. What it does not answer is that the loop still has to be *carried*: its tests,
-its Spring properties, its coupling to the VAPID renewal margin, and — the clause that decides it —
-an exception surface where every failure has to be classified twice, once for the loop and once for
-the caller, in two vocabularies that this decision is about unifying. The third reason survives too,
-in the form the alternative leaves it: offering a mechanism that no deployment sending at volume
-should use is a commitment to maintaining it for the deployments that use it by not knowing better.
-The compatibility benefit is real and is outweighed by what the next section says about who is being
-weighed here.
+## What the library keeps
 
-*Fold the unanswered POST in with the answered failures*, four variants rather than five, was drafted
-first and is the shape this record carried until a protocol reading killed it. It is cheaper by one
-type and it costs a status code standing for "no response", a cause on a variant that mostly has
-none, and — decisively — the claim that an unanswered POST is safe to repeat. The section on the
-result and exception line gives that argument in full; it is the one place where a tidier type
-shape and the protocol disagreed, and the protocol won.
+Two things about a response would otherwise be re-derived by every caller, and neither is a loop.
 
-*Declare a checked exception and let the compiler force the handling* is the shape that answers the
-real complaint behind all of this — that an unchecked exception is invisible in a signature and
-therefore forgettable. It is rejected on a mechanical ground rather than a stylistic one:
-`sendAsync` returns a `CompletableFuture`, across which a checked contract does not travel. The
-compiler would oblige the synchronous caller and say nothing to the asynchronous one, on the path
-this library recommends for volume — a guarantee that holds on half an API is worse than none,
-because it creates confidence exactly where it is absent. It also breaks `Supplier`, the Stream API
-and ordinary callbacks, which is the natural shape of a fan-out, and it still permits
-`catch (PushSendException ignored) {}`. The concern is answered instead by leaving nothing
-operational in the exception channel at all.
+**The classification of a status.** Parts of it are specified and the whole is not, which is why it
+is worth publishing. RFC 8030 §8.4 has a push service answer a rate-limited delivery with `429` and
+SHOULD carry a `Retry-After`; RFC 9110 §15.6.4 says a `503`'s condition is temporary and MAY carry
+one; §15.5.9 lets a client repeat after `408` and §15.5.20 lets it retry a `421` on another
+connection. The rest is this library's judgement, and it is a matrix because the class rule in the
+code today — `429` plus every 5xx — is wrong in both directions. `501` and `505` are answers about
+the request and will not change on repetition, while `408` and `421` are marked repeatable and are
+excluded. So: `2xx` accepted; `404` and `410` expired; `408`, `421`, `429` and the 5xx class **except
+`501` and `505`** retryable; everything else not. `413` is left out deliberately — RFC 9110 §15.5.14
+lets a temporary one carry a `Retry-After`, but this library's body is the same size on every
+attempt.
 
-*Catch every exception inside the sender and report one*, so that `send` becomes total, goes further
-and fails: it launders defects. A `NullPointerException` from a bug in this library, or a builder
-misconfiguration, would arrive as a value indistinguishable from an outcome, and the fact that
-something is *broken* rather than *unsuccessful* would never reach a human.
+**What the `Retry-After` said** — delta-seconds or any of the three HTTP-date forms a recipient must
+accept, with the two-digit-year rule and the leap second. It is reported with no ceiling applied, so
+the caller's own is the only one. That this parsed value is today reachable *only* from inside the
+loop is why the two changes are one: deleting the loop without surfacing it discards the parser's
+whole output.
 
-*Hand the caller a resumable send*, the third shape the pluggable reading took, needs no mechanism
-and so gets none: a send holds nothing across attempts that a second call would not rebuild. The
-endpoint policy re-runs, the VAPID token is re-minted or served from its cache (ADR-019), and the
-body is re-encrypted under a fresh ephemeral key and salt — which is what this library does for every
-message in any case, RFC 8291 §2 having the application server generate both per message and being
-silent on what a retransmission may reuse. There is no state to serialize, so there is no schema for
-the library to publish and then have to version.
+## The outcome
 
-## What the library keeps, and in what shape
-
-Two things about a *response* would otherwise be re-derived by every caller, and neither is a loop:
-
-- the classification of a status. Parts of it have a specification behind them and the whole does not,
-  which is exactly why it is worth publishing. RFC 8030 §8.4 has a push service answer a rate-limited
-  delivery with `429` and says it SHOULD carry a `Retry-After` saying how long to wait before the next
-  request to that resource; RFC 9110 §15.6.4 says a `503`'s condition is temporary and that the server
-  MAY send a `Retry-After` suggesting how long to wait before retrying; §15.5.9 lets a client repeat a
-  request after `408`, and §15.5.20 lets it retry a `421` on another connection. Everything else is
-  this library's judgement, and it is written as a matrix rather than as a class rule, because the
-  class rule the code carries today is wrong in both directions.
-- what the push service's `Retry-After` said — delta-seconds, or any of the three HTTP-date forms a
-  recipient must accept, with RFC 9110's two-digit-year rule and the leap-second case.
-
-Both become values on the outcome. That the parsed `Retry-After` is today reachable *only* from inside
-the loop is why the two changes are one: deleting the loop without surfacing the value would discard
-the parser's whole output.
-
-**The result type is renamed to `PushOutcome` and becomes a sealed hierarchy.** The rename is not
-cosmetic: `PushOutcome` named the result of the HTTP attempts, and what the type now reports is what
-became of a *requested send* — accepted, rejected, never attempted, or attempted with no answer. A
-breaking change is already happening; the name should stop describing the narrower thing.
+`PushResult` is renamed `PushOutcome` and becomes a sealed hierarchy. The rename is not cosmetic: the
+old name described the result of the HTTP attempts, and the type now reports what became of a
+*requested send* — accepted, rejected, never attempted, or attempted with no answer.
 
 ```java
 public sealed interface PushOutcome {
@@ -144,7 +111,7 @@ public sealed interface PushOutcome {
 
     record NonRetryableFailure(int statusCode) implements PushOutcome {}
 
-    /** No request was made. Nothing can have been delivered, so a repeat cannot duplicate. */
+    /** No request was made, so nothing can have been delivered and a repeat cannot duplicate. */
     sealed interface NotAttempted extends PushOutcome {}
 
     record SignerUnavailable(...) implements NotAttempted {}
@@ -152,298 +119,221 @@ public sealed interface PushOutcome {
     record EndpointRejected(...) implements NotAttempted {}
     record SubscriptionKeyRejected(...) implements NotAttempted {}
 
-    /** The request went out and no answer came back. It may have been delivered. */
+    /** The request went out and no answer came back; it may have been delivered. */
     final class Indeterminate implements PushOutcome { /* cause(), and a redacting toString() */ }
 }
 ```
 
-`NotAttempted` is a marker rather than a wrapper, and the leaves implement it directly, so a caller
-switches once and picks its own grain: `case NotAttempted n` takes the group, `case PayloadRejected p`
-takes the one that carries sizes. A variant holding a nested failure object was drafted and rejected —
-it forces two dispatches for one decision. The count of types is not itself the thing to minimise:
-each leaf exists because it carries exactly the fields its case has, and a shape that admits a
-combination which cannot occur is the more expensive mistake.
+`NotAttempted` is a marker and its leaves implement it directly, so a caller switches once and
+chooses its own grain: `case NotAttempted n` takes the group, `case PayloadRejected p` takes the one
+carrying sizes. A variant wrapping a nested failure object was drafted and rejected for forcing two
+dispatches on one decision. The count of types is not what to minimise — each leaf carries exactly
+the fields its case has, and a shape admitting a combination that cannot occur is the costlier
+mistake.
 
-**`Accepted`, not `Delivered`.** RFC 8030 §5 has the push service answer a successful POST with `201
-Created`, and is explicit that this means the service has accepted the message for delivery, not that
-a user agent received it: the message may still expire undelivered. The enum constant being replaced
-is called `DELIVERED` while its own Javadoc says "the push service accepted the message" — the code
-has known better than its name since it was written, and a breaking change is the moment that costs
-nothing to fix. A caller that needs a delivery receipt needs RFC 8030's receipt subscription, which
-this library does not implement, and the name should not suggest otherwise.
+**`Accepted`, not `Delivered`.** RFC 8030 §5 has the service answer with `201 Created` and is
+explicit that this means the message was accepted for delivery, not that a user agent received it;
+it may still expire undelivered. The constant being replaced is named `DELIVERED` while its own
+Javadoc says "the push service accepted the message" — the code has known better than its name since
+it was written. A delivery receipt needs RFC 8030's receipt subscription, which this library does not
+implement.
 
-**Two independent questions, and neither variant answers both.** A caller deciding what to do next is
-asking whether a repeat is *safe* — could it duplicate a notification — and whether it is *useful* —
-could it come out differently. Collapsing those into one flag is what made the first draft of this
-taxonomy wrong. Here safety is structural rather than judged: everything but `Indeterminate` is safe,
-because the message provably did not reach the service or was provably refused by it, and
-`Indeterminate` is the one case where nobody knows. Usefulness is what the answered variants and the
-`NotAttempted` leaves name. No third mechanism carries either axis: a `RetryAdvice` enum was
-considered and rejected as a retry policy under another name, which is the thing this ADR removes.
+**Two independent questions, and no single flag answers both.** A caller asks whether a repeat is
+*safe* — could it duplicate a notification — and whether it is *useful* — could it come out
+differently. Here safety is structural rather than judged: everything but `Indeterminate` is safe,
+because the message provably did not reach the service or was provably refused by it. Usefulness is
+what the variants name. A `RetryAdvice` enum was considered and rejected as a retry policy under
+another name; a single `ResponseRejected` leaving classification to the caller was rejected because
+it deletes what the section above keeps and pushes callers into guards on status numbers, which make
+a `switch` non-exhaustive — nothing would tell a caller they never handled `501`.
 
-The answered-failure names state the library's verdict about the response, not a prediction about the
-world. `TRANSIENT` and `PERMANENT` were the alternative and claim knowledge nobody here has — a `500`
-may well be permanent. `NonRetryableFailure` says only that the same request will get the same answer,
-which is what those statuses mean; `RetryableFailure` says only that another attempt is legitimate,
-not that it will succeed.
-
-A single `ResponseRejected(statusCode, retryAfter)` leaving the classification to the caller was the
-other alternative, and it is rejected because it deletes one of the two things this section exists to
-keep. It also pushes every caller into guards on numbers — `case ResponseRejected r when
-r.statusCode() == 429` — and a switch made of guards is not exhaustive, so nothing tells a caller they
-never handled `501`. Publishing a classification of a *response* is not reinstating a retry policy: a
-schedule, a budget and a driver are what this decision removes, and knowing what a status code means
-is protocol knowledge of the same kind as parsing `Retry-After`.
-
-The classification is a matrix, and it is one because the class rule in the code today —
-`429` plus every 5xx — is wrong in both directions. `501` and `502` are not alike: a service that has
-not implemented the method will not have implemented it a second later, and `505` says the same about
-the HTTP version, so both are answers about the request rather than about the service's moment. In
-the other direction the rule ignores three statuses HTTP marks as repeatable: `408`, `421` and `429`,
-of which only the last is in the set. So: `2xx` accepted; `404` and `410` expired; `408`, `421`,
-`429` and the 5xx class **except** `501` and `505` retryable; everything else not. `413` was
-considered and left out — RFC 9110 §15.5.14 lets a temporary one carry a `Retry-After`, but this
-library's body is the same size on every attempt, so a repeat is a repeat of the rejected request.
-
-The taxonomy is one of actions rather than of causes, which is why `SubscriptionExpired` keeps a
-variant of its own: ADR-007 made a dead subscription an outcome because pruning a store is expected
-control flow, and this decision extends that reasoning rather than departing from it. A hostile row
-the endpoint policy refuses, a subscription whose key material will not encrypt, and a notification
-that grew past the size ceiling are all the same shape of thing — a fact about one row or one message
-in a fan-out over many — and none of them should end the fan-out.
+The failure names state a verdict about the response, not a prediction about the world. `TRANSIENT`
+and `PERMANENT` were the alternative and claim knowledge nobody here has. `NonRetryableFailure` says
+only that the same request will get the same answer; `RetryableFailure` says only that another
+attempt is legitimate, never that it will succeed.
 
 `attempts` is removed: the sender makes one POST and has no count to report, while the caller's
-retrier has one and it is the only correct one. `isDelivered()` and `isSubscriptionExpired()` go too,
-and not because the convention stops blessing them — it blesses the form, and uses `isDelivered()`
-itself as its worked example, so this decision also costs that document the example it teaches with.
-They go because an exhaustive `switch` puts every outcome in front of a caller who has decided to
-read the result, where a predicate lets that caller read one and forget the rest. Each variant that
-carries a status code keeps the validation the current compact constructor applies to it: a negative
-one still describes a send that cannot have happened.
+retrier has one and it is the only correct one. `isDelivered()` and `isSubscriptionExpired()` go with
+it — not because the convention stops blessing predicates, since it blesses the form and uses
+`isDelivered()` as its worked example, which this decision therefore costs that document. They go
+because an exhaustive `switch` puts every case in front of a caller who has decided to read the
+outcome, where a predicate lets that caller read one and forget the rest. Each variant keeps the
+validation the current compact constructor applies to it.
 
 ## The line between an outcome and an exception
 
 **An outcome describes what became of a requested send, whether or not a POST was reached. An
 exception is reserved for using the API wrongly, for a defect the caller cannot act on per send, and
-for cancellation.** Everything a fan-out meets in normal running — every status the service answers,
-a subscription the policy refuses, key material that will not encrypt, a message over the ceiling, a
-key service that is down, a POST that goes unanswered — arrives as a value. Nothing that a caller has
-to decide about is delivered by a channel the compiler does not mention.
+for cancellation.** Everything a fan-out meets in normal running arrives as a value; nothing a caller
+must decide about is delivered by a channel the compiler does not mention. The first draft drew the
+line at "a POST was attempted", which was tidy and bad for the caller: it split one logical operation
+across `switch` and `catch`, and across `CompletionException` under `sendAsync`.
 
-That is a deliberate move away from this draft's first rule, "a result describes a POST that was
-attempted", which was technically clean and bad for the caller: it split one logical operation across
-`switch` and `catch`, and under `sendAsync` across a third layer, `CompletionException`. The rule
-that replaces it costs the neat coincidence that every outcome carried a status code, and buys a
-single channel for everything a retrier reasons about.
-
-- **A POST that goes unanswered is `Indeterminate`, and it is the one outcome the library refuses to
-  call retryable.** A push POST is not idempotent: RFC 8030 §5 has a successful one create a new push
-  message resource, and RFC 9110 §9.2.2 says a client should not automatically retry a non-idempotent
-  request unless it knows the request was never applied. A read timeout after the request went out is
-  exactly the case where nobody knows — the service may have accepted the message and lost the answer
-  — so a second attempt may deliver a second notification. Calling that retryable would be the library
-  telling every caller that a duplicate is acceptable, on behalf of applications whose tolerance for
-  one it cannot see. `Topic` narrows that window without closing it: it replaces a message the service
-  has not yet delivered and says nothing about one already on its way. The library also does not split
-  the case into "definitely not sent" and "outcome unknown" even where the shipped transport could
-  tell them apart, because `PushHttpClient` is a consumer seam and a wrong "definitely not sent"
-  produces exactly the duplicate the variant exists to prevent.
-- **A key service that cannot be reached is `NotAttempted`, not an exception on the facade.**
-  `PushCryptoException` today covers both "this JVM has no `AES/GCM/NoPadding`" and "Vault did not
-  answer", deliberately and in its own words, and no caller can act on a type that means both. The
-  split stays and is useful, but it becomes an *internal* contract: a signer signals unreachability
-  with `VapidSignerUnavailableException`, the sender catches that type and reports
-  `NotAttempted`, and `PushCryptoException` returns to meaning a cryptographic defect that recurs. A
-  missing provider algorithm is such a defect and keeps throwing; a subscription whose key material
-  will not encrypt is a bad row rather than a broken deployment, and is an outcome like the others.
+- **A POST that goes unanswered is `Indeterminate`, and the library refuses to call it retryable.** A
+  push POST is not idempotent: RFC 8030 §5 has a successful one create a new push message resource,
+  and RFC 9110 §9.2.2 says a client should not automatically retry a non-idempotent request unless it
+  knows the request was never applied. A read timeout after the request went out is exactly where
+  nobody knows — the service may have accepted the message and lost the answer — so a repeat may
+  deliver a second notification. Calling it retryable would be the library ruling that a duplicate is
+  acceptable, on behalf of applications whose tolerance for one it cannot see. `Topic` narrows that
+  window without closing it. The library also does not split the case into "definitely not sent" and
+  "unknown" even where the shipped transport could tell them apart, because `PushHttpClient` is a
+  consumer seam and a wrong "definitely not sent" produces the very duplicate the variant prevents.
+- **A key service that cannot be reached is `NotAttempted`.** `PushCryptoException` today covers both
+  "this JVM has no `AES/GCM/NoPadding`" and "Vault did not answer", deliberately and in its own
+  words, and no caller can act on a type meaning both. The split stays but becomes *internal*: a
+  signer signals unreachability with `VapidSignerUnavailableException`, the sender catches it and
+  reports the outcome, and `PushCryptoException` returns to meaning a cryptographic defect that
+  recurs. A missing provider algorithm is such a defect and keeps throwing; subscription key material
+  that will not encrypt is a bad row and is an outcome.
 - **An endpoint the policy refuses is `NotAttempted`.** The first draft threw, reasoning that an SSRF
   control should not be swallowed by a `switch` branch. The stronger argument runs the other way: one
-  hostile row in a store must not abort a fan-out over a hundred thousand subscriptions, which is a
-  denial of service a deployment inflicts on itself. The policy did its job — the request never left —
-  and the application records a bad row and continues. The seam is unchanged: `EndpointPolicy` still
-  signals a refusal with `EndpointRejectedException`, the sender catches **that type** and reports
-  the outcome, and any other `RuntimeException` from a consumer-written policy stays a defect and
-  propagates.
-- **A `PushHttpClient` still throws `PushDeliveryException`** for a transport failure, so that seam's
-  signalling is unchanged too; the facade stops rethrowing. Only that type converts — any other
-  `RuntimeException` from a transport propagates as a defect, which is the rule `EndpointPolicy`
-  already states for its own seam.
-- **An interrupted send stays an exception**, and it is the one thing above that is not an outcome. A
-  request may well have gone out, but the caller has asked to stop, and handing back a value it is
-  expected to act on is the wrong answer to that. Reporting it as retryable would be worse: the loop
-  spins, every attempt failing instantly on an interrupt status nobody cleared. So the conversion is
-  skipped, on both the push and the signer paths, when the cause chain carries an
-  `InterruptedException` **or** the current thread's interrupt status is set. Neither test alone is
-  sound: an interruption surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries
-  no `InterruptedException` beneath it, and a transport may attach a cause without re-setting the
-  flag or the reverse.
+  hostile row must not abort a fan-out over a hundred thousand subscriptions, which is a denial of
+  service a deployment inflicts on itself. The policy did its job — the request never left — and the
+  application records a bad row and continues.
+- **A payload over the ceiling is `NotAttempted`.** It is a fact about one message rather than about
+  the deployment: the case that made it concrete is a translated notification that fits in one
+  language and not another, discovered in production. Killing a service over it is the wrong
+  behaviour. Whether the refusal should also be answerable *before* the send is
+  https://github.com/the13haven/push2u/issues/87's to decide.
+- **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
+  may well have gone out, but the caller asked to stop, and handing back a value it is expected to
+  act on answers the wrong question; reporting it as retryable would be worse, since the loop spins,
+  every attempt failing instantly on an interrupt status nobody cleared. The conversion is skipped,
+  on both the push and the signer paths, when the cause chain carries an `InterruptedException`
+  **or** the current thread's interrupt status is set. Neither test alone is sound: an interruption
+  surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries no
+  `InterruptedException` beneath it, and a transport may attach a cause without re-setting the flag.
 
-What still throws, then, is API misuse and defect: a `null` where the contract forbids one, a builder
-configured with a value it rejects, a JCE provider that cannot do `AES/GCM/NoPadding`, an unexpected
+What still throws is misuse and defect: a `null` where the contract forbids one, a builder configured
+with a value it rejects, a JCE provider that cannot do `AES/GCM/NoPadding`, an unexpected
 `RuntimeException` out of a consumer-written seam, a violated internal invariant, and cancellation.
-None of those is something a caller derives a per-send action from, and each of them should reach a
-human rather than a retry queue.
+None of those yields a per-send action, and each should reach a human rather than a retry queue.
 
-**Nothing that carries a cause may carry a capability URL.** `Indeterminate` holds a `Throwable`, and
-the `NotAttempted` leaves carry a redacted endpoint or a structured reason and never a raw one. This
-is why `Indeterminate` is a class with a written `toString()` rather than a record: a record's
-generated one prints its components, and a JDK transport exception's cause chain can embed the raw
-subscription URL. The exposure is not new — a thrown `PushDeliveryException` carries the same chain
-today — but a value prints it by default, where an exception prints it only when somebody logs the
-cause.
+The seams keep signalling as they do now — `PushHttpClient` throws `PushDeliveryException`,
+`EndpointPolicy` throws `EndpointRejectedException` — and it is the facade that stops rethrowing.
+Only those types convert; any other `RuntimeException` from a consumer implementation stays a defect
+and propagates, which is the rule `EndpointPolicy` already states for its own seam.
 
-A limit worth stating rather than implying: neither channel forces a caller to handle anything
-meaningfully. A checked exception can be caught and dropped; a returned outcome can be discarded at
-the call site, and Java has no `#[must_use]`. What the sealed hierarchy buys is that a caller who
-*does* switch gets every case put in front of them by the compiler, and that there is one place to
-look. Coercion is not available; a single channel is.
+**Nothing carrying a cause may carry a capability URL.** The `NotAttempted` leaves carry a redacted
+endpoint or a structured reason, never a raw one, and `Indeterminate` is a class with a written
+`toString()` rather than a record precisely because a record's generated one prints its components
+and a JDK transport exception's cause chain can embed the subscription URL. The exposure is not new —
+a thrown `PushDeliveryException` carries the same chain today — but a value prints it by default.
 
-Both transport seams therefore take the same two obligations, and `VaultHttpTransport` — the fourth
-seam ADR-005 names — takes them as a change to its published contract rather than as nothing. It
-must signal an unreachable Vault distinguishably from a failure that will recur, and it must meet the
-interruption requirement above. Today it throws `PushCryptoException` for both sides at once: its
-contract spans no connection, a timeout **and** an oversized response, and its shipped implementation
+A limit worth stating rather than implying: neither channel forces meaningful handling. A checked
+exception can be caught and dropped, an outcome can be discarded at the call site, and Java has no
+`#[must_use]`. What the sealed hierarchy buys is that a caller who does switch has every case put in
+front of them, and that there is one place to look.
+
+`VaultHttpTransport` — the fourth seam ADR-005 names — takes a change to its published contract
+rather than none. It must signal an unreachable Vault distinguishably from a failure that will recur,
+and meet the interruption requirement above. Today it throws `PushCryptoException` for both at once:
+its contract spans no connection, a timeout **and** an oversized response, and its implementation
 adds an unusable request URI and an illegal request header — the documented instance being a token
-from a YAML block scalar that ends with a newline. A signer translating that on the way out would
-have to discriminate on a message or a cause chain, which is the ambiguity this decision exists to
-remove, and would tell a caller that a trailing newline in a token is a transient condition. So the
-split belongs at the seam, where the transport knows which of its own failures it raised, and
-`VaultTransitVapidSigner` translates nothing.
-
-This is not the seam's vocabulary changing on ADR-005's account: the Vault transport already speaks a
-core exception type, and ADR-005 kept the two transports apart for a different reason — opposite
-trust domains, one of which must read a response body and the other must never. That reason is
-untouched, and it is why the split is stated for each seam separately rather than once for a shared
-one.
-
-Everything else about the exception surface — the `IllegalArgumentException` ambiguity reported as
-https://github.com/the13haven/push2u/issues/87, and what shape the hierarchy settles into — belongs
-to that work. This ADR decides which side of the line each failure falls on, and needs one new type
-to be able to say it.
+from a YAML block scalar ending in a newline. A signer translating that on the way out would have to
+discriminate on a message or a cause chain, and would tell a caller that a trailing newline is a
+transient condition. So the split belongs at the seam, and `VaultTransitVapidSigner` translates
+nothing. This is not the seam's vocabulary changing on ADR-005's account — the Vault transport
+already speaks a core exception type, and ADR-005 separates the two transports over trust domains and
+response bodies, a reason this leaves untouched.
 
 ## What replaces the removed code
 
-**The documentation is the deliverable**, and not as a paragraph appended to a README section. A
-library that hands the retry decision to its caller owes that caller the material to decide with.
-Four rules govern the rewrite; the file-by-file inventory belongs to the implementation task, not to
-a record that cannot be corrected once it is settled.
+**The documentation is the deliverable.** A library that hands the retry decision to its caller owes
+that caller the material to decide with. Four rules govern the rewrite; the file-by-file inventory
+belongs to the implementation task, not to a record that cannot be corrected once settled.
 
-*The status mapping is rewritten rather than amended*, wherever it appears. Its result column becomes
-variants instead of enum constants, so every row is touched, and the failure row becomes three: the
-two answered failures and the unanswered one. The transport row keeps an exception only for the
-interrupted send, everything else about it having become a result. The crypto row does not become a
-result at all — it gains a second exception type, for the unreachable key service, and keeps
-`PushCryptoException` for every cryptographic failure that recurs. The policy rejection row is
-unchanged.
+*The status mapping is rewritten rather than amended*, wherever it appears: its result column becomes
+variants, the failure row becomes three, and the transport and crypto rows lose everything except
+what still throws.
 
-*Two facts a caller must not get wrong on its own are stated where a caller will meet them*: that
-`Retry-After` is reported with no ceiling applied, so the caller's own is the only one; and that
-RFC 8030's `TTL` counts from receipt, so an attempt sent hours later re-bases the message's lifetime
-unless the caller decrements what it passes.
+*Two facts a caller must not get wrong are stated where a caller meets them*: that `Retry-After` is
+reported with no ceiling applied, and that RFC 8030's `TTL` counts from receipt, so an attempt sent
+hours later re-bases the message's lifetime unless the caller decrements what it passes.
 
-*The migration guide inverts and is the one document that is dangerous rather than merely stale.* It
-warns that an application retry loop on top of push2u multiplies, and instructs the reader — in prose
-and again as a numbered step — to delete theirs. After this decision push2u behaves as the library
-being migrated from does, so the warning is false and the instruction silently costs a reader their
-retry. Its neighbouring promise, that an outer attempt costs one POST rather than three, survives and
-becomes trivially true.
+*The migration guide inverts and is the one document that is dangerous rather than stale.* It warns
+that an application retry loop on top of push2u multiplies and instructs the reader — in prose and
+again as a numbered step — to delete theirs. After this decision push2u behaves as the library being
+migrated from does, so the warning is false and the instruction silently costs a reader their retry.
 
-*Sentences that reason from the removed behaviour are restated rather than deleted*, and a rule
-rather than a list is what finds them, because a list in a record that cannot be corrected is worse
-than none. Three shapes qualify, wherever they appear — in Javadoc, in a comment, in a reference
-document. A sentence that **names what a send throws**, whether as a contract, an enumeration of what
-an exception covers, or a contrast that borrows one to explain another type's existence. A sentence
-that **reasons from the retry window** — a duration, a margin, a budget, or an indirection justified
-by the sleeps. And a sentence that **uses the observable difference between a status and an exception
-as an argument**, which is how the SSRF threat model states its oracle in every place it is stated,
-and which after this decision is a distinction between two result variants rather than between a
-result and an exception.
+*Sentences that reason from the removed behaviour are restated rather than deleted*, and a rule finds
+them rather than a list, because a list in a record that cannot be corrected is worse than none.
+Three shapes qualify, in Javadoc, in a comment or in a reference document alike: a sentence that
+**names what a send throws** — a contract, an enumeration of what an exception covers, or a contrast
+borrowing one to explain another type; a sentence that **reasons from the retry window** — a
+duration, a margin, a budget, or an indirection justified by the sleeps; and a sentence that **uses
+the observable difference between a status and an exception as an argument**, which is how the SSRF
+threat model states its oracle everywhere it is stated. The most on-point of all are `send`'s own
+`@throws` clauses and their twin on `sendAsync`, which state this decision's subject directly and
+which a rewrite driven by a list could omit. These ship in a `sources.jar` to readers with no
+repository to check them against.
 
-Two things make that rule load-bearing rather than tidy. The first is that these ship in a
-`sources.jar` to readers with no repository to check them against — which is true of the Javadoc and
-the comments, while the reference documents are caught by the same rule for the same reason a
-consumer reads them. The second is that the most on-point sentences of all are `send`'s own `@throws`
-clauses and their twin on `sendAsync`: they state this decision's subject directly, and a rewrite
-that started from a list would be a rewrite that could omit them.
-
-The suites follow the same rule as the sentences: those whose subject is the loop, the attempt count,
-the removed properties or the replaced enum are rewritten rather than adjusted, and the shared
-fixtures that exist to feed a loop several answers go with them. The `Retry-After` parser's own
-vectors are the exception worth naming, because they look like they should move and do not: they call
-the parser directly, and the parser is unchanged and stays package-private. What becomes public is
-what it produced.
+The suites follow the same rule: those whose subject is the loop, the attempt count, the removed
+properties or the replaced enum are rewritten rather than adjusted, and the shared fixtures that
+exist to feed a loop several answers go with them. The `Retry-After` parser's own vectors are the
+exception worth naming, because they look like they should move and do not: they call the parser
+directly, and the parser is unchanged and stays package-private. What becomes public is what it
+produced.
 
 ## What it costs
 
-The reporter's channel already makes one POST per call, so its retry logic is unaffected — but its
-result handling is not, and neither is anyone's: the result type changes shape and a transport
-failure stops arriving as an exception. `0.1.0` shipped and its release note declared `0.x` the
+The reporter's channel already makes one POST per call, so its retry logic is unaffected — its
+outcome handling is not, and neither is anyone's: the type is renamed and reshaped, and three
+failures that were exceptions become values. `0.1.0` shipped and its release note declared `0.x` the
 window for revising names and constructor forms once real integrations exist; this is that revision,
 and the next release note carries it. There is no second consumer whose upgrade path is being weighed
-here, and the decision is taken on what the library should be. The one consumer-visible cost worth
-stating precisely is the new exception type outside the send path: a signer may be unreachable at
-construction, where no result exists to land in, so a `catch (PushCryptoException)` around signer
-construction or a direct `sign` call must add the new type or the failure flies past. That is the
-intended consequence of not subtyping, arriving in the one place where nothing softens it.
+here.
 
-A `Throwable` on a record compares by identity, so two `IndeterminateFailure` values describing the
-same timeout are unequal. Results are switched on rather than compared, so this is accepted — and
-written down, because it is the class of trap ADR-019 recorded for a `byte[]` cache key.
+A `Throwable` on `Indeterminate` compares by identity, so two values describing the same timeout are
+unequal. Outcomes are switched on rather than compared, so this is accepted — and written down,
+because it is the class of trap ADR-019 recorded for a `byte[]` cache key.
 
 Two defaults elsewhere were derived partly from the retry window and deliberately do not move. The
-async executor's rationale gives two reasons its tasks block for a long time, the synchronous HTTP
-call and the backoff sleeps, and loses the second; the library-owned virtual-thread executor stays,
-because a blocking HTTP call still has no business on the common pool. The VAPID renewal margin is
-the sharper case, and the honest word is that it stops being *derived*: ADR-019 sized five minutes
-against a worst-case send of about two minutes, with clock skew as the room on top. Delete the
-retries and the sized quantity is gone. The default is retained rather than recomputed, because skew
-against a push service checking `exp` on its own clock is minutes whatever the token's lifetime is,
-and the margin costs 0.7 % of a twelve-hour token's life. ADR-019 is immutable and cannot say this,
-which is why it is said here.
+async executor's rationale gives two reasons its tasks block for a long time and loses the second;
+the library-owned virtual-thread executor stays, because a blocking HTTP call still has no business
+on the common pool. The VAPID renewal margin is the sharper case, and the honest word is that it
+stops being *derived*: ADR-019 sized five minutes against a worst-case send of about two minutes,
+with clock skew as the room on top. Delete the retries and the sized quantity is gone. The default is
+retained rather than recomputed, because skew against a service checking `exp` on its own clock is
+minutes whatever the token's lifetime is, and the margin costs 0.7 % of a twelve-hour token's life.
+ADR-019 is immutable and cannot say this, which is why it is said here.
 
 ## What else moves, and what does not
 
 **ADR-007 is superseded in one clause.** Its decision — that `404` and `410` are an ordinary result
-the caller inspects rather than exception-driven control flow — is kept and extended. What does not
-survive is its next sentence: *"Exceptions stay for what they are for — a transport failure
-(`PushDeliveryException`), a cryptographic failure (`PushCryptoException`), an endpoint the
-deployment's policy refuses (`EndpointRejectedException`)."* **All three move**, each becoming an
-outcome: the transport failure except where the send was interrupted, the half of the cryptographic
-failure that names an unreachable key service or unusable subscription keys, and the policy refusal
-for the self-inflicted denial-of-service reason given above. What survives is the principle behind
-the sentence — that exceptions are for what they are for — under a sharper line than ADR-007 had
-occasion to draw. The spelling it uses for its own decision, an enum constant and a predicate,
-changes with it, but that is a spelling and not a clause: the decision is that the expiry is a value
-the caller inspects, and a variant is that value.
+the caller inspects rather than exception-driven control flow — is kept and extended to every
+operational failure. What does not survive is its next sentence: *"Exceptions stay for what they are
+for — a transport failure (`PushDeliveryException`), a cryptographic failure (`PushCryptoException`),
+an endpoint the deployment's policy refuses (`EndpointRejectedException`)."* All three move. What
+survives is the principle behind it, under a sharper line than ADR-007 had occasion to draw. The
+spelling it uses for its own decision, an enum constant and a predicate, changes with it, but that is
+a spelling and not a clause: the decision is that the expiry is a value the caller inspects, and a
+variant is that value.
 
-**ADR-018 is superseded in half of one clause.** Settling where the second structural check on the
-encoded public key lives, it decided that a `PushCryptoException` raised by `publicKey()` itself —
+**ADR-018 is superseded in half of one clause.** Deciding where the second structural check on the
+encoded public key lives, it settled that a `PushCryptoException` raised by `publicKey()` itself —
 naming *"a remote custodian that is unreachable or refuses to publish the key"* — propagates
-untouched because it is already the right type, and that an override signals failure with that type
-and no other. Of the two cases that clause names, only the unreachable one moves; a custodian that
-answers and refuses is a decision that will be repeated, and keeps `PushCryptoException`. The rule
-ADR-018 set produced a sentence now published on the `VapidSigner` contract, and that is where the
-cost lands: an override uses that type *"so that one signer does not answer for one value in two
-exception types."* After this decision a Vault-backed signer does. ADR-018's reason is understood and
-overridden, not overlooked: it refused to split at all, holding one value to one type, and this
-splits by whether the failure recurs — the axis a caller who now owns the retry has to read, and one
-ADR-018 had no reason to consider. The rest of it stands: the encoding, the name, the placement of
-the shape check, the `NullPointerException` for a `null` key, and the conformance kit's agreement,
-which asserts no exception types.
+untouched because it is already the right type. Of the two cases it names only the unreachable one
+moves; a custodian that answers and refuses will refuse again and keeps its type. The rule produced a
+sentence published on the `VapidSigner` contract, which is where the cost lands: an override uses
+that type *"so that one signer does not answer for one value in two exception types."* After this
+decision a Vault-backed signer does. ADR-018's reason is understood and overridden, not overlooked:
+it refused to split at all, holding one value to one type, and this splits by whether the failure
+recurs — the axis a caller who now owns the retry has to read. The rest of it stands, including the
+conformance kit's agreement, which asserts no exception types.
 
 Those two are the only ADRs whose decisions move, and each keeps its status line until this one is
 implemented, as ADR-004's did until ADR-019 was. ADR-004 is untouched and reinforced: the library
 holds no per-send state, and this removes the loop that came closest to holding some. **ADR-005's
-enumeration of seams is untouched — none is added and none removed** — but three of the four
-contracts it names do change: both transports take the interruption obligation and the
-unreachable-versus-recurring split, and `VapidSigner` takes the exception vocabulary above. Those are
-changes *within* seams rather than to which seams exist, which is what ADR-005 decides. Its reasoning
-survives untouched too, and is quoted above for what it does and does not say. ADR-010's pluggable
-key custody is untouched: which signer a deployment uses does not change, only what one of them
-throws. ADR-019 keeps its decision; one derivation loses the quantity it was sized against, as
-recorded above. ADR-011's size limit is unaffected. ADR-016 and ADR-017 keep theirs, and not because
-this change stays away from the egress path — it decides something there, recorded above as the
-rule's first override. ADR-016's threat model rests on what a caller can observe being an oracle, and
-that mechanism survives in the new shape the documentation rules describe. It is closed by the same
-thing it always was — the policy runs first and unconditionally, before the encryption, the signature
-and any I/O, so neither what a rejection is nor when it is reached has moved.
+enumeration of seams is untouched** — none added, none removed — but three of the four contracts it
+names change: both transports take the interruption obligation and the unreachable-versus-recurring
+split, and `VapidSigner` takes the exception vocabulary above. Those are changes *within* seams
+rather than to which seams exist. ADR-010's key custody is untouched: which signer a deployment uses
+does not change, only what one of them throws. ADR-019 keeps its decision; one derivation loses the
+quantity it was sized against, as recorded above. ADR-011's size limit is unaffected, though where
+its refusal is *reported* moves. ADR-016 and ADR-017 keep theirs, and not because this stays away
+from the egress path — it decides something there, that a refusal is an outcome. ADR-016's threat
+model rests on what a caller can observe being an oracle, and that mechanism survives in the new
+shape; it is closed by the same thing it always was, the policy running first and unconditionally,
+before the encryption, the signature and any I/O.
