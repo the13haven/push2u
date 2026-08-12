@@ -260,9 +260,9 @@ contact, and the expiry `jwtExpiry(Duration)` puts 12 hours out by default. So `
 one token per origin and reuses it for every later send to that origin, until it comes within
 `jwtRenewBefore(Duration)` of the expiry — five minutes by default — and signs a fresh one. RFC
 8292 §5 encourages this outright, because reuse also lets a push service cache the result of
-verifying the signature. A fan-out to 100 000 subscriptions therefore pays for a handful of
-signatures rather than 100 000 — a useful saving on a local key pair, and a decisive one with the
-[Vault Transit signer](#vault-transit-signer), where every signature is a network round trip and
+verifying the signature. A fan-out to 100 000 subscriptions therefore pays for as many signatures as
+it meets origins rather than 100 000 — a useful saving on a local key pair, and a decisive one with
+the [Vault Transit signer](#vault-transit-signer), where every signature is a network round trip and
 Vault's availability would otherwise gate every push.
 
 The tokens sit in a per-sender cache bounded at `jwtCacheSize(int)` entries — 64 by default,
