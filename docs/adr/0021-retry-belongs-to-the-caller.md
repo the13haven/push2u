@@ -132,7 +132,7 @@ public sealed interface PushOutcome {
     /** No POST was made, so nothing can have been delivered and a repeat cannot duplicate. */
     sealed interface NotAttempted extends PushOutcome {}
 
-    record SignerUnavailable(...) implements NotAttempted {}
+    record SignerUnavailable(Optional<Duration> retryAfter, ...) implements NotAttempted {}
     record PayloadRejected(int encryptedBodyBytes, int maximumBytes) implements NotAttempted {}
     record EndpointRejected(...) implements NotAttempted {}
 
@@ -293,10 +293,11 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   client raises it. It names delivery, and nothing was delivered; it is the vocabulary of the one
   operation this library performs that can duplicate a notification, and a signing call is the one
   that provably cannot. Two signer types — unreachable against refusing-for-now — were weighed and
-  rejected on the same test the retry hint failed: both produce one outcome and one caller decision,
-  so an implementer over an HSM or a KMS would be choosing between them for nothing, and what an
-  operator reads to tell an unroutable Vault from a sealed one is the message and the cause, which
-  both carry. That much of `PushCryptoException`'s reasoning survives intact; what does not is
+  rejected on what a type is for: both produce one outcome and one caller decision, so an implementer
+  over an HSM or a KMS would be choosing between them for nothing, and what an operator reads to tell
+  an unroutable Vault from a sealed one is the message and the cause, which both carry. The retry
+  hint below is not the same question and does not get the same answer — it is not a second name for
+  one thing but a value the caller acts on, present or absent on either half. That much of `PushCryptoException`'s reasoning survives intact; what does not is
   bundling a defect in with it.
 
   This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
@@ -309,21 +310,36 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   dead-letter path at the end of it. The alternative is a guess, and a guess wrong in the likelier
   direction turns a maintenance window into an aborted fan-out.
 
-  **The outcome carries no hint about when to come back.** A status code cannot cross `VapidSigner`
-  in any case: that seam is implemented by a PKCS#11 token, a cloud KMS and a file-backed key as
-  well as by Vault, and an HTTP number would oblige all of them to speak a protocol one of them has.
-  A protocol-neutral `Duration` would carry the useful half of a `429` without that objection, and
-  is rejected on what such a field would actually hold. `LocalEcVapidSigner` can never fill it — a
-  key in a configuration file has no moment it becomes available again — and neither can a PKCS#11
-  token or a KMS refusing on quota, so for the custody this library ships by default the field is
-  permanently empty. Vault fills it on a `429` alone, and only where an operator has set
-  `enable_rate_limit_response_headers`, which HashiCorp documents as defaulting to false. A caller
-  would therefore handle an absent hint on every path it can be shown, in exchange for a value it
-  sees in a configuration it has to opt into. What the signer has to say is that it cannot sign now,
-  and a sender that does not retry needs nothing further to report it. A deployment that does want
-  to pace against Vault's own headers implements `VaultHttpTransport`, which is where the response
-  arrives and the only place it exists — `VaultHttpResponse` carries a status and a body, and no
-  header crosses into the signer to be forwarded from.
+  **A custodian that declares when to come back has that declaration reported.** `SignerUnavailable`
+  carries an `Optional<Duration>` retry hint, the same shape and the same meaning `RetryableFailure`
+  carries for the push service's `Retry-After`. The reason is the reason this decision exists: the
+  caller now owns the repeat, and repeating before the moment a service named is the harm the header
+  was invented to prevent. That harm does not become acceptable because the service refusing is the
+  one holding the key rather than the one holding the subscription. Where Vault answers with a hint,
+  the caller's scheduler is the only place it can be honoured, and dropping it in the sender would
+  put the library back in the position the report opened with — parsing a value the one component
+  able to act on it never sees.
+
+  A status code is not reported with it, and that is not the same question. `VapidSigner` is
+  implemented by a PKCS#11 token, a cloud KMS and a file-backed key as well as by Vault, and an HTTP
+  number would oblige all of them to speak a protocol one of them has; a `Duration` obliges nobody,
+  because "not before this long from now" is a statement about signing.
+
+  The hint is absent far more often than it is present, and that is ordinary rather than a defect in
+  the shape. `LocalEcVapidSigner` never fills it — a key in a configuration file has no moment it
+  becomes available again — and neither does a PKCS#11 token or a KMS refusing on quota. Vault fills
+  it on a `429` alone, and there only where an operator has set `enable_rate_limit_response_headers`,
+  which HashiCorp documents as defaulting to false. An earlier draft removed the field over exactly
+  that arithmetic, and the arithmetic proves too much: `RetryableFailure`'s own hint is absent from
+  most of the answers it accompanies, since RFC 9110 only has a `503` *MAY* carry one, and nobody
+  proposes deleting it. A field earns its place on the case where it is filled, so long as its
+  absence is the ordinary reading rather than a surprise. Here the case where it is filled is the
+  rate-limited one — the case where repeating early is worst.
+
+  It is not free. `VaultHttpResponse` carries a status and a body today, so the hint has to cross
+  that record before it can cross the signer: a second change to a published type in the Vault
+  module, beside the transport's exception split above. That is the price of the header reaching the
+  only component that can act on it, and it is the same price this decision pays on the push side.
 
   Key material that cannot be used is not in this category at all: `Subscription`'s constructor
   already applies the full on-curve check and refuses such a value at the boundary that supplied it,
@@ -422,6 +438,13 @@ contract says so. It is `VaultTransitVapidSigner` that today turns every non-`20
 `PushCryptoException`, and that is the site of the temporary-versus-recurring split above. Two
 seams, one axis, and neither of them the caller's problem: what leaves the signer is
 `VapidSignerUnavailableException` or a defect.
+
+`VaultHttpResponse` widens by one value in the same movement, because the retry hint above cannot
+reach the signer through a record carrying a status and a body alone. It is a response header and it
+stops at the transport unless the transport hands it on — which is the whole reason the header is
+invisible today. What crosses is the hint and not the headers: a bag of them from a service whose
+answers this library reads under a size bound is more surface than one `Retry-After` is worth, and
+the transport is the component that already parses what Vault says.
 
 ## What replaces the removed code
 
