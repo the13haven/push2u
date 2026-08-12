@@ -55,3 +55,6 @@ coverage/
 
 # Generated
 **/generated/
+
+# Tooling trace logs, not part of the repository
+eis-skill-trace.md
