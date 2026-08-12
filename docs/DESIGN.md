@@ -208,7 +208,11 @@ without which that bound is untestable at any span worth modelling.
 The map is an access-ordered LRU bounded at `jwtCacheSize`, and the bound is a safety property
 rather than a tuning one: audiences are the origins of endpoints inside subscriptions, which an
 `EndpointPolicy` built from domain rules bounds only by a DNS zone, so an unbounded map would be a
-memory-exhaustion path from data ADR-016 already treats as untrusted. Overflow evicts and degrades
+memory-exhaustion path from data ADR-016 already treats as untrusted. The entry-count bound is
+absolute because each entry's size is bounded too: `Subscription` refuses an endpoint above 2048
+characters ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)), so the audience an entry
+stores — twice, in the key and inside the retained header — cannot be inflated by the party
+supplying subscriptions, and the cache deliberately carries no size mechanism of its own. Overflow evicts and degrades
 to signing per send — never to a refusal, since a bound the deployment chose must not become a
 delivery failure. Two further rules are not obvious from the code's shape. A `401` or `403` never
 evicts the entry that produced it: RFC 8292 §4.2 lists a subscription created under a different
@@ -302,7 +306,11 @@ Three seams in the core are public, and only three
 Two public utility classes let an application enforce the `Subscription` contract at its own
 registration boundary — rejecting a bad registration before persisting it — instead of storing
 data every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030
-contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. `P256PublicKeys`
+contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. One check of the
+`Subscription` contract deliberately does not live in `requireSecure`: the 2048-character endpoint
+length bound ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)) is a resource control
+with no RFC 8030 clause behind it, and `requireSecure` stays the protocol check ADR-005 named it —
+the bound sits in `Subscription`'s canonical constructor, which every construction path runs. `P256PublicKeys`
 carries two checks of deliberately different strength: `requireUncompressedPoint` is structural
 (65 bytes, the `0x04` X9.62 tag) and `requireOnCurve` is the full check — coordinates inside the
 P-256 prime field and the curve equation satisfied. The full check runs on hard-coded FIPS 186-4
