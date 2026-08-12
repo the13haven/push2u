@@ -85,15 +85,31 @@ connection. The rest is this library's judgement, and it is taken per status rat
 because the class rule in the code today — `429` plus every 5xx — is wrong in both directions. `501`
 and `505` are answers about the request and will not change on repetition, while `408` and `421` are
 marked repeatable and are excluded. So: `2xx` accepted; `404` and `410` expired; `408`, `421`, `429`
-and the 5xx class **except `501` and `505`** retryable; everything else not. `413` is left out
-deliberately — RFC 9110 §15.5.14 lets a temporary one carry a `Retry-After`, but this library's body
-is the same size on every attempt.
+and the 5xx class **except `501` and `505`** retryable; everything else not.
+
+`413` is the single status whose class its own answer decides, and it is the one place a header
+rather than a number does the classifying. RFC 9110 §15.5.14 has a server refusing a request for its
+size generate a `Retry-After` *if the condition is temporary* — which makes the header that server's
+own statement that it refused this moment rather than this request, the exact distinction the two
+failure variants are named for. A `413` carrying a parseable `Retry-After` is therefore retryable,
+and a bare one is not. The first draft classified every `413` as non-retryable on the ground that
+this library's body is the same size on every attempt; that answers a question nobody asked, since a
+temporary `413` says what the server could accept just then and nothing about how large the body is.
+Carrying the header on the non-retryable variant instead was the alternative: it would have kept the
+value from being discarded — which the section below promises — while handing the caller a hint that
+contradicts the variant's name. The header *is* the classification here, so it travels on the
+variant the classification produces.
 
 **What the `Retry-After` said** — delta-seconds or any of the three HTTP-date forms a recipient must
 accept, with the two-digit-year rule and the leap second. It is reported with no ceiling applied, so
 the caller's own is the only one. That this parsed value is today reachable *only* from inside the
 loop is why the two changes are one: deleting the loop without surfacing it discards the parser's
-whole output.
+whole output. It is reported where the classification leaves it actionable, which is the retryable
+variant: a header on a response that has answered something about the request itself advises a wait
+before repeating a request whose answer will not have changed. `413` is the one status whose
+temporary reading the header alone supplies, and it is on the retryable side when it carries one for
+exactly that reason — everywhere else the number says whether the moment or the request was refused,
+and the header only says for how long.
 
 ## The outcome
 
@@ -139,13 +155,25 @@ not implement.
 
 **Two independent questions, and no single flag answers both.** A caller asks whether a repeat is
 *safe* — could it duplicate a notification — and whether it is *useful* — could it come out
-differently. Here safety is structural rather than judged: of the failures, every one but
-`Indeterminate` is safe to repeat, because the message provably did not reach the service or was
-provably refused by it, and `Indeterminate` is the single case where nobody can say. (`Accepted` is
-not in that comparison: it is not a failure, and repeating it duplicates by definition.) Usefulness
-is what the variants name. A `RetryAdvice` enum was considered and rejected as a retry policy under
-another name; a single `ResponseRejected` leaving classification to the caller was rejected because
-it deletes what the section above keeps and pushes every caller into guards on status numbers. A
+differently. Only one answer to the first is structural: under `NotAttempted` no request was made,
+so a repeat provably duplicates nothing. `Indeterminate` is the declared unknown at the other end.
+The answered failures sit between them, and the honest reading of an answer is weaker than *safe*:
+it proves that something refused the request, and where that something is the push service the
+message was provably not accepted. `502` and `504` are the named exception — RFC 9110 §15.6.3 and
+§15.6.5 define both as an intermediary reporting that it received no valid, or no timely, response
+from upstream, so the upstream may have applied the POST and answered into a connection nobody read.
+That is `Indeterminate`'s situation wearing a status code. The library does not reclassify the two
+into `Indeterminate`, because it cannot tell an intermediary's `502` from a push service's own, and
+inventing that distinction would manufacture the wrong "definitely not sent" the paragraph above
+refuses to produce. So `RetryableFailure` states that a repeat is *useful* and states nothing about
+whether it is safe; RFC 9110 §9.2.2 leaves a non-idempotent repeat to a client that knows the first
+request was never applied, and the caller is the only party here who can know that or price a
+duplicate. (`Accepted` is not in the comparison: it is not a failure, and repeating it duplicates by
+definition.) Usefulness is what the variants name.
+
+A `RetryAdvice` enum was considered and rejected as a retry policy under another name; a single
+`ResponseRejected` leaving classification to the caller was rejected because it deletes what the
+section above keeps and pushes every caller into guards on status numbers. A
 `switch` made of guards is not exhaustive, so each caller re-derives the judgement and carries its
 own copy of it; under the adopted shape nobody has to name `501` at all.
 
@@ -184,15 +212,36 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   window without closing it. The library also does not split the case into "definitely not sent" and
   "unknown" even where the shipped transport could tell them apart, because `PushHttpClient` is a
   consumer seam and a wrong "definitely not sent" produces the very duplicate the variant prevents.
-- **A key service that cannot be reached is `NotAttempted`.** `PushCryptoException` today covers
+- **A key service that cannot sign *now* is `NotAttempted`.** `PushCryptoException` today covers
   both "this JVM has no `AES/GCM/NoPadding`" and "Vault did not answer", deliberately and in its own
   words, and no caller can act on a type meaning both. The split stays but becomes *internal*: a
-  signer signals unreachability with `VapidSignerUnavailableException`, the sender catches it and
-  reports the outcome, and `PushCryptoException` returns to meaning a cryptographic defect that
-  recurs. A missing or hostile provider algorithm is such a defect and keeps throwing. Key material
-  that cannot be used is not in this category at all: `Subscription`'s constructor already applies the
-  full on-curve check and refuses such a value at the boundary that supplied it, deliberately, so no
-  outcome needs to exist for it and none is added.
+  signer signals a custodian that cannot serve this send with `VapidSignerUnavailableException`, the
+  sender catches it and reports the outcome, and `PushCryptoException` returns to meaning a
+  cryptographic defect that recurs. A missing or hostile provider algorithm is such a defect and
+  keeps throwing.
+
+  **The axis is whether the failure recurs, not whether the custodian answered.** A custodian that
+  answers is not thereby refusing permanently, and reading it that way would rebuild the very
+  duality this decision removes — an operational condition arriving as an unchecked exception the
+  fan-out has to catch out of band. Vault documents most of its own error statuses as temporary in
+  so many words: `500` "try again later", `503` down for maintenance, sealed or temporarily
+  overloaded, `412` a request that cannot be processed *yet* under eventual consistency and "should
+  be retried, perhaps with a little backoff", `429` a standby node or a rate-limit quota, `502` a
+  third party Vault itself called. Each of those is `SignerUnavailable`. What recurs is the answer
+  about the request: `400`, `403`, `404` and `405` — a malformed call, a token without the
+  capability, a key or mount that is not there, a method the path does not take — and so is a
+  response Vault could not have meant, an unparseable signature or a key that is not on P-256. Those
+  stay `PushCryptoException`, alongside a defect and a misconfiguration.
+
+  A hint the custodian supplied travels with the outcome as a `Duration` and nothing else. A status
+  code does not cross `VapidSigner`: that seam is implemented by a PKCS#11 token, a cloud KMS and a
+  file-backed key as well as by Vault, and an HTTP number would oblige all of them to speak a
+  protocol one of them has. "Not before this long from now" is the part of a `429` that is about
+  signing rather than about HTTP, and it is the part a caller who owns the retry can use.
+
+  Key material that cannot be used is not in this category at all: `Subscription`'s constructor
+  already applies the full on-curve check and refuses such a value at the boundary that supplied it,
+  deliberately, so no outcome needs to exist for it and none is added.
 - **An endpoint the policy refuses is `NotAttempted`.** The first draft threw, reasoning that an
   SSRF control should not be swallowed by a `switch` branch. The stronger argument runs the other way:
   one hostile row must not abort a fan-out over a hundred thousand subscriptions, which is a denial of
@@ -206,12 +255,13 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   statement, that this payload does not fit this sender's configuration, and splitting them would make
   the caller ask which bound it hit before it can shorten anything.
 
-This decides https://github.com/the13haven/push2u/issues/87 rather than deferring to it. That report
-asks for the size refusal to be told apart from a malformed subscription, and proposes a typed
-exception carrying the two sizes; `PayloadRejected` carries the same two numbers through the outcome
-channel and supersedes the proposed class, while the subscription's own refusals stay where they
-are, on a different method. What remains open there is the separate question raised in its thread —
-whether the refusal should also be answerable *before* a send — which needs no decision here.
+  This decides https://github.com/the13haven/push2u/issues/87 rather than deferring to it. That
+  report asks for the size refusal to be told apart from a malformed subscription, and proposes a
+  typed exception carrying the two sizes; `PayloadRejected` carries the same two numbers through the
+  outcome channel and supersedes the proposed class, while the subscription's own refusals stay
+  where they are, on a different method. What remains open there is the separate question raised in
+  its thread — whether the refusal should also be answerable *before* a send — which needs no
+  decision here.
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
   may well have gone out, but the caller asked to stop, and handing back a value it is expected to act
   on answers the wrong question; reporting it as retryable would be worse, since the loop spins, every
@@ -233,11 +283,23 @@ The seams keep signalling as they do now — `PushHttpClient` throws `PushDelive
 Only those types convert; any other `RuntimeException` from a consumer implementation stays a defect
 and propagates, which is the rule `EndpointPolicy` already states for its own seam.
 
-**Nothing carrying a cause may carry a capability URL.** The `NotAttempted` leaves carry a redacted
-endpoint or a structured reason, never a raw one, and `Indeterminate` is a class with a written
-`toString()` rather than a record precisely because a record's generated one prints its components
-and a JDK transport exception's cause chain can embed the subscription URL. The exposure is not new
-— a thrown `PushDeliveryException` carries the same chain today — but a value prints it by default.
+**No outcome discloses a capability URL unless the caller asks for it by name.** The `NotAttempted`
+leaves carry a redacted endpoint or a structured reason, never a raw one, and `Indeterminate` is a
+class with a written `toString()` rather than a record precisely because a record's generated one
+prints its components and a JDK transport exception's cause chain can embed the subscription URL.
+
+`cause()` is the one deliberate way out, and the invariant is about the paths a caller does not
+choose: `toString()`, the `equals`, `hashCode` and component printing a record would have generated,
+and a bean-convention serializer, which finds no getter on this type. Calling the accessor is a
+choice, and its own Javadoc says what the returned chain may contain and that logging it verbatim
+publishes a capability URL — the same responsibility a caller takes today when it catches
+`PushDeliveryException` and logs that. Replacing the chain with a sanitised diagnostic — an
+enumerated reason, or a message with the URL stripped — was the alternative and is rejected: the
+facade has just swallowed the transport's exception, so with the chain gone nothing anywhere can
+still say why a send went unanswered, and `PushHttpClient` is a consumer seam whose failure modes
+cannot be enumerated in advance, which makes a closed vocabulary over an open set. The exposure is
+not new — a thrown `PushDeliveryException` carries the same chain today — and what changes is only
+that a value must not print it by default, which is what the written `toString()` is for.
 
 One security clause changes with the ceiling. Today the honoured `Retry-After` is clamped at
 `maxBackoff` inside the loop; reported raw, a hostile push service can hand a caller's scheduler a
@@ -253,16 +315,23 @@ exception can be caught and dropped, an outcome can be discarded at the call sit
 front of them, and that there is one place to look.
 
 `VaultHttpTransport` — the fourth seam ADR-005 names — takes a change to its published contract
-rather than none. It must signal an unreachable Vault distinguishably from a failure that will
-recur, and meet the interruption requirement above. Today it throws `PushCryptoException` for both
-at once: its contract spans no connection, a timeout **and** an oversized response, and its
+rather than none. It must signal a Vault that cannot answer *now* distinguishably from a failure
+that will recur, and meet the interruption requirement above. Today it throws `PushCryptoException`
+for both at once: its contract spans no connection, a timeout **and** an oversized response, and its
 implementation adds an unusable request URI and an illegal request header — the documented instance
 being a token from a YAML block scalar ending in a newline. A signer translating that on the way out
 would have to discriminate on a message or a cause chain, and would tell a caller that a trailing
-newline is a transient condition. So the split belongs at the seam, and `VaultTransitVapidSigner`
-translates nothing. This is not the seam's vocabulary changing on ADR-005's account — the Vault
+newline is a transient condition. So that split belongs at the seam, and `VaultTransitVapidSigner`
+translates none of it. This is not the seam's vocabulary changing on ADR-005's account — the Vault
 transport already speaks a core exception type, and ADR-005 separates the two transports over trust
 domains and response bodies, a reason this leaves untouched.
+
+The status codes are the other half and they stay where they already are, in the signer, because the
+transport hands back a response rather than raising on an error status — deliberately, and its
+contract says so. It is `VaultTransitVapidSigner` that today turns every non-`200` into one
+`PushCryptoException`, and that is the site of the temporary-versus-recurring split above. Two
+seams, one axis, and neither of them the caller's problem: what leaves the signer is
+`VapidSignerUnavailableException` or a defect.
 
 ## What replaces the removed code
 
@@ -332,19 +401,25 @@ the caller inspects rather than exception-driven control flow — is kept and ex
 operational failure. What does not survive is its next sentence: *"Exceptions stay for what they are
 for — a transport failure (`PushDeliveryException`), a cryptographic failure
 (`PushCryptoException`), an endpoint the deployment's policy refuses
-(`EndpointRejectedException`)."* All three leave the facade's contract — the types remain, and two
-of them keep signalling inside a seam, but none of them is what `send` reports any more. What
-survives of the sentence is the principle behind it, under a sharper line than ADR-007 had occasion
-to draw. The spelling it uses for its own decision, an enum constant and a predicate, changes with
-it, but that is a spelling and not a clause: the decision is that the expiry is a value the caller
-inspects, and a variant is that value.
+(`EndpointRejectedException`)."* Two of the three leave the facade's contract outright:
+`PushDeliveryException` and `EndpointRejectedException` keep signalling inside their seams, but
+neither is anything `send` reports any more. `PushCryptoException` is not removed from `send` but
+narrowed — to a cryptographic defect and a misconfiguration, the operational half of what it used to
+mean leaving through `SignerUnavailable` instead. What survives of the sentence is the principle
+behind it, under a sharper line than ADR-007 had occasion to draw. The spelling it uses for its own
+decision, an enum constant and a predicate, changes with it, but that is a spelling and not a
+clause: the decision is that the expiry is a value the caller inspects, and a variant is that value.
 
-**ADR-018 is superseded in half of one clause.** Deciding where the second structural check on the
+**ADR-018 is superseded in part of one clause.** Deciding where the second structural check on the
 encoded public key lives, it settled that a `PushCryptoException` raised by `publicKey()` itself —
 naming *"a remote custodian that is unreachable or refuses to publish the key"* — propagates
-untouched because it is already the right type. Of the two cases it names only the unreachable one
-moves; a custodian that answers and refuses will refuse again and keeps its type. The rule produced
-a sentence published on the `VapidSigner` contract, which is where the cost lands: an override uses
+untouched because it is already the right type. The line does not fall between the two cases it
+names. The unreachable one moves whole, and the refusal splits: a custodian that answers has not
+thereby refused for good, and a `503` from a sealed Vault or a `412` from a node that has not caught
+up is a custodian that would publish the key a minute later. What keeps its type is a refusal *about
+the request* — a token without the capability to read that key, a mount that is not there — which
+the next call receives again unchanged. The rule produced a sentence published on the `VapidSigner`
+contract, which is where the cost lands: an override uses
 that type *"so that one signer does not answer for one value in two exception types."* After this
 decision a Vault-backed signer does. ADR-018 refused to split at all, holding one value to one type,
 and this splits by whether the failure recurs — the axis a caller who now owns the retry has to
