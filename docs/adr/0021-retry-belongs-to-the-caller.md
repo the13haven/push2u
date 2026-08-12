@@ -222,6 +222,14 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   "definitely not sent" and "unknown" even where the shipped transport could tell them apart, because
   `PushHttpClient` is a consumer seam and a wrong "definitely not sent" produces the very duplicate
   the variant prevents.
+
+  **Indeterminacy is a property of what was called, not of how the call broke.** The same timeout,
+  raised by the same JDK HTTP client, is not indeterminate when it happened on the way to the
+  custodian: a signing request has no effect on the push service, so whatever became of it no
+  notification exists to be duplicated by a repeat. That is the whole of why the next bullet is
+  `NotAttempted` while this one is not — the failure modes are identical and the operations are not,
+  and reading the symmetry off the exception instead of off the operation would hand a caller a
+  false duplicate risk every time its key custodian hiccuped.
 - **A key service that cannot sign *now* is `NotAttempted`.** `PushCryptoException` today covers
   both "this JVM has no `AES/GCM/NoPadding`" and "Vault did not answer", deliberately and in its own
   words, and no caller can act on a type meaning both. The split stays but becomes *internal*: a
@@ -237,9 +245,12 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   custodian's own condition or the request that was made. Vault answers the first in so many words
   for most of its error statuses: `500` "try again later", `503` "down for maintenance, currently
   sealed, or temporarily overloaded", `412` a request that cannot be processed *yet* under eventual
-  consistency and one that "should be retried, perhaps with a little backoff", `429` the default for
-  a standby node's health and also "Too Many Requests", `473` the same for a performance standby,
-  `502` a third party Vault itself called. Each of those is `SignerUnavailable`. The second is what
+  consistency and one that "should be retried, perhaps with a little backoff", `501` "Vault is not
+  initialized", `429` the default for a standby node's health and also "Too Many Requests", `473`
+  the same for a performance standby, `472` the same for "disaster recovery mode replication
+  secondary and active", `502` a third party Vault itself called. Each of those is
+  `SignerUnavailable` — every one of them names a state of the cluster that ends when an operator or
+  a replication catches up, and none of them names anything about the request. The second is what
   recurs: `400`, `403`, `404` and `405` — a malformed call, a token without the capability, a key or
   mount that is not there, a method the path does not take — and so is a response Vault could not
   have meant, an unparseable signature or a key that is not on P-256. Those stay
@@ -251,10 +262,41 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   a 5xx say the server "is aware that it has erred or is incapable of performing the requested
   method", which is a statement about the custodian, and §15.5 has a 4xx say "the client seems to
   have erred", which is one about the request. So an unrecognised 5xx is `SignerUnavailable` and an
-  unrecognised 4xx is a defect. This is deliberately not the push
-  service's matrix, where `501` and `505` are carved out of the retryable 5xx class: there the caller
-  owns the repeat and a pointless one costs it a scheduled attempt, while here the alternative to
-  waiting is a fan-out aborted by an operator's maintenance window.
+  unrecognised 4xx is a defect — which is why `472` and `473` are named above rather than left to the
+  fallback: both are 4xx numbers carrying a statement about the cluster, and only the vendor's own
+  table says so.
+
+  `501` is the sharpest illustration that this is deliberately not the push service's matrix. There
+  it is carved out of the retryable 5xx class, because a push service answering "not implemented"
+  has answered about the request and will answer the same next time; here Vault publishes it as "not
+  initialized", a cluster state that ends the moment someone initializes it. The same number, the
+  opposite class, and neither reading is a judgement this library makes — each is the vendor's, read
+  off the specification that governs that seam. The asymmetry underneath is in what a mistake costs:
+  there the caller owns the repeat and a pointless one costs it a scheduled attempt, while here the
+  alternative to waiting is a fan-out aborted by an operator's maintenance window.
+
+  **A signer that reaches over a network says so honestly.** The other half of what a remote
+  custodian produces is no answer at all — a refused connection, a TLS handshake that failed, a
+  timeout — and `PushCryptoException`'s own text concedes what happens to it today: it records that a
+  signer backed by a remote key service reports its transport failures as a cryptographic one, that
+  the Vault Transit signer does exactly this for a request timeout and a dropped connection, and that
+  the message and the cause chain rather than the type say which happened. That was a fair trade
+  while every failure left through the exception channel and a human read all of them. It stops being
+  one when the caller reads outcomes: a dropped connection is not a cryptographic failure, and
+  filing it as one costs an operator the first thing they would have looked at. So it leaves as
+  `VapidSignerUnavailableException` too, carrying the `IOException` or the timeout as its cause,
+  declared in the core beside the other seam exceptions because `VapidSigner` is a core SPI and a
+  module implementing it over HTTP needs a core word for this.
+
+  `PushDeliveryException` is not reused for it, though the failure is the same shape and the same JDK
+  client raises it. It names delivery, and nothing was delivered; it is the vocabulary of the one
+  operation this library performs that can duplicate a notification, and a signing call is the one
+  that provably cannot. Two signer types — unreachable against refusing-for-now — were weighed and
+  rejected on the same test the retry hint failed: both produce one outcome and one caller decision,
+  so an implementer over an HSM or a KMS would be choosing between them for nothing, and what an
+  operator reads to tell an unroutable Vault from a sealed one is the message and the cause, which
+  both carry. That much of `PushCryptoException`'s reasoning survives intact; what does not is
+  bundling a defect in with it.
 
   **The outcome carries no hint about when to come back.** A status code cannot cross `VapidSigner`
   in any case: that seam is implemented by a PKCS#11 token, a cloud KMS and a file-backed key as
@@ -355,8 +397,10 @@ implementation adds an unusable request URI and an illegal request header — th
 being a token from a YAML block scalar ending in a newline. A signer translating that on the way out
 would have to discriminate on a message or a cause chain, and would tell a caller that a trailing
 newline is a transient condition. So that split belongs at the seam, and `VaultTransitVapidSigner`
-translates none of it. This is not the seam's vocabulary changing on ADR-005's account — the Vault
-transport already speaks a core exception type, and ADR-005 separates the two transports over trust
+translates none of it: no connection and a timeout leave as `VapidSignerUnavailableException`, while
+the unusable URI, the illegal header and the oversized response stay `PushCryptoException`, which is
+what each of them is. This is not the seam's vocabulary changing on ADR-005's account — the Vault
+transport already speaks core exception types, and ADR-005 separates the two transports over trust
 domains and response bodies, a reason this leaves untouched.
 
 The status codes are the other half and they stay where they already are, in the signer, because the
