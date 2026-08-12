@@ -129,7 +129,7 @@ public sealed interface PushOutcome {
 
     record NonRetryableFailure(int statusCode) implements PushOutcome {}
 
-    /** No request was made, so nothing can have been delivered and a repeat cannot duplicate. */
+    /** No POST was made, so nothing can have been delivered and a repeat cannot duplicate. */
     sealed interface NotAttempted extends PushOutcome {}
 
     record SignerUnavailable(...) implements NotAttempted {}
@@ -159,7 +159,8 @@ not implement.
 
 **Two independent questions, and no single flag answers both.** A caller asks whether a repeat is
 *safe* — could it duplicate a notification — and whether it is *useful* — could it come out
-differently. Only one answer to the first is structural: under `NotAttempted` no request was made,
+differently. Only one answer to the first is structural: under `NotAttempted` no POST was made — a
+signer may well have called out over a network, but the push service was never asked for anything —
 so a repeat provably duplicates nothing. `Indeterminate` is the declared unknown at the other end.
 The answered failures sit between them, and the honest reading of an answer is weaker than *safe*:
 it proves that something refused the request, and where that something is the push service the
@@ -298,6 +299,16 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   both carry. That much of `PushCryptoException`'s reasoning survives intact; what does not is
   bundling a defect in with it.
 
+  This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
+  is not on offer: nothing answered, so nothing states whether the condition will hold next time. A
+  host name with a typo recurs identically forever and arrives here indistinguishable from a Vault
+  that is down for an hour — no test this library could run tells them apart, and the same move is
+  made on the answered side when the class decides a status the vendor's table does not name. It
+  falls to the honest side, where "cannot sign now" is true of both, and a permanent one surfaces
+  where this decision has just put every other exhausted repeat: in the caller's retry budget and the
+  dead-letter path at the end of it. The alternative is a guess, and a guess wrong in the likelier
+  direction turns a maintenance window into an aborted fan-out.
+
   **The outcome carries no hint about when to come back.** A status code cannot cross `VapidSigner`
   in any case: that seam is implemented by a PKCS#11 token, a cloud KMS and a file-backed key as
   well as by Vault, and an HTTP number would oblige all of them to speak a protocol one of them has.
@@ -397,9 +408,10 @@ implementation adds an unusable request URI and an illegal request header — th
 being a token from a YAML block scalar ending in a newline. A signer translating that on the way out
 would have to discriminate on a message or a cause chain, and would tell a caller that a trailing
 newline is a transient condition. So that split belongs at the seam, and `VaultTransitVapidSigner`
-translates none of it: no connection and a timeout leave as `VapidSignerUnavailableException`, while
-the unusable URI, the illegal header and the oversized response stay `PushCryptoException`, which is
-what each of them is. This is not the seam's vocabulary changing on ADR-005's account — the Vault
+translates none of it: no connection, a failed handshake and a timeout leave as
+`VapidSignerUnavailableException` — the same three the signer paragraph names, since they are the
+same failures seen from the seam that raises them — while the unusable URI, the illegal header and
+the oversized response stay `PushCryptoException`, which is what each of them is. This is not the seam's vocabulary changing on ADR-005's account — the Vault
 transport already speaks core exception types, and ADR-005 separates the two transports over trust
 domains and response bodies, a reason this leaves untouched.
 
