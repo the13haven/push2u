@@ -411,9 +411,10 @@ newline is a transient condition. So that split belongs at the seam, and `VaultT
 translates none of it: no connection, a failed handshake and a timeout leave as
 `VapidSignerUnavailableException` — the same three the signer paragraph names, since they are the
 same failures seen from the seam that raises them — while the unusable URI, the illegal header and
-the oversized response stay `PushCryptoException`, which is what each of them is. This is not the seam's vocabulary changing on ADR-005's account — the Vault
-transport already speaks core exception types, and ADR-005 separates the two transports over trust
-domains and response bodies, a reason this leaves untouched.
+the oversized response stay `PushCryptoException`, which is what each of them is. This is not the
+seam's vocabulary changing on ADR-005's account — the Vault transport already speaks core exception
+types, and ADR-005 separates the two transports over trust domains and response bodies, a reason
+this leaves untouched.
 
 The status codes are the other half and they stay where they already are, in the signer, because the
 transport hands back a response rather than raising on an error status — deliberately, and its
