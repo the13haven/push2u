@@ -19,6 +19,8 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,27 +53,32 @@ class PushSenderJwtConcurrencyTest {
                 .build();
         sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()); // audience A is now cached
 
-        signer.blockNextSign();
-        CompletableFuture<PushResult> blockedMint =
-                CompletableFuture.supplyAsync(() -> sender.send(subscriptionAt(AUDIENCE_B_ENDPOINT), message()));
-        assertThat(signer.awaitSignEntered(5, TimeUnit.SECONDS))
-                .as("the miss on audience B reached the signer")
-                .isTrue();
-
-        try {
-            PushResult hit = CompletableFuture.supplyAsync(
-                            () -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()))
-                    .get(5, TimeUnit.SECONDS);
-            assertThat(hit.isDelivered())
-                    .as("the hit on audience A completed while B's signature was still in flight")
+        // An explicit pool, never the common pool: these tasks rendezvous (one blocks until the other has
+        // finished), so they need one worker each, and the common pool's parallelism — availableProcessors() - 1 —
+        // can be smaller than that on a small machine, parking the rendezvous forever.
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            signer.blockNextSign();
+            CompletableFuture<PushResult> blockedMint = CompletableFuture.supplyAsync(
+                    () -> sender.send(subscriptionAt(AUDIENCE_B_ENDPOINT), message()), executor);
+            assertThat(signer.awaitSignEntered(5, TimeUnit.SECONDS))
+                    .as("the miss on audience B reached the signer")
                     .isTrue();
-            assertThat(blockedMint.isDone())
-                    .as("B's mint really was still in flight when A's hit completed")
-                    .isFalse();
-        } finally {
-            signer.releaseSign();
+
+            try {
+                PushResult hit = CompletableFuture.supplyAsync(
+                                () -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()), executor)
+                        .get(5, TimeUnit.SECONDS);
+                assertThat(hit.isDelivered())
+                        .as("the hit on audience A completed while B's signature was still in flight")
+                        .isTrue();
+                assertThat(blockedMint.isDone())
+                        .as("B's mint really was still in flight when A's hit completed")
+                        .isFalse();
+            } finally {
+                signer.releaseSign();
+            }
+            assertThat(blockedMint.get(5, TimeUnit.SECONDS).isDelivered()).isTrue();
         }
-        assertThat(blockedMint.get(5, TimeUnit.SECONDS).isDelivered()).isTrue();
     }
 
     /**
@@ -112,12 +119,18 @@ class PushSenderJwtConcurrencyTest {
                 .httpClient(client)
                 .build();
 
+        // An explicit pool with one worker per barrier party, never the common pool: its parallelism is
+        // availableProcessors() - 1, so on a 4-vCPU CI runner only three of the four tasks start and a barrier
+        // that needs all four can never trip — the waiters deadlock until the await times out.
         List<CompletableFuture<PushResult>> sends = new ArrayList<>();
-        for (int i = 0; i < threads; i++) {
-            sends.add(CompletableFuture.supplyAsync(() -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message())));
-        }
-        for (CompletableFuture<PushResult> send : sends) {
-            assertThat(send.get(10, TimeUnit.SECONDS).isDelivered()).isTrue();
+        try (ExecutorService executor = Executors.newFixedThreadPool(threads)) {
+            for (int i = 0; i < threads; i++) {
+                sends.add(CompletableFuture.supplyAsync(
+                        () -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()), executor));
+            }
+            for (CompletableFuture<PushResult> send : sends) {
+                assertThat(send.get(10, TimeUnit.SECONDS).isDelivered()).isTrue();
+            }
         }
 
         assertThat(signCalls.get())
