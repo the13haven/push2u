@@ -164,7 +164,7 @@ the ~0.6 ms the rest of the send spends locally, and that is the lower bound des
 has changed since these numbers were taken is how often a send pays it. Nothing in the token is
 per-message — it depends only on the push service's origin, the contact and an expiry that defaults
 to 12 hours — so the sender signs one per origin and reuses it until it nears expiry, and a large
-fan-out now waits on Vault a handful of times rather than once per subscription. `publicKey()`, by
+fan-out now waits on Vault once per distinct origin met rather than once per subscription. `publicKey()`, by
 contrast, is a field clone at 7 ns — near the floor of what this harness can resolve at all: the
 fetched mode reads Vault once at startup and never again.
 
