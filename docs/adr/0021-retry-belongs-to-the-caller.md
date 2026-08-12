@@ -85,7 +85,8 @@ connection. The rest is this library's judgement, and it is taken per status rat
 because the class rule in the code today — `429` plus every 5xx — is wrong in both directions. `501`
 and `505` are answers about the request and will not change on repetition, while `408` and `421` are
 marked repeatable and are excluded. So: `2xx` accepted; `404` and `410` expired; `408`, `421`, `429`
-and the 5xx class **except `501` and `505`** retryable; everything else not.
+and the 5xx class **except `501` and `505`** retryable; `413` retryable when it carries a parseable
+`Retry-After` and not otherwise, for the reason the next paragraph gives; everything else not.
 
 `413` is the single status whose class its own answer decides, and it is the one place a header
 rather than a number does the classifying. RFC 9110 §15.5.14 has a server refusing a request for its
@@ -144,7 +145,10 @@ public sealed interface PushOutcome {
 chooses its own grain: `case NotAttempted n` takes the group, `case PayloadRejected p` takes the one
 carrying sizes. A variant wrapping a nested failure object was drafted and rejected for forcing two
 dispatches on one decision. Each leaf carries exactly the fields its case has: a shape admitting a
-combination that cannot occur costs more than a type does.
+combination that cannot occur costs more than a type does. The `413` rule below leaves one such
+residue and it is accepted rather than designed away — `RetryableFailure(413, empty)` is
+representable and cannot arise, since a bare `413` is classified as non-retryable. The alternative
+is a variant per status, which pays a type for one dead pair.
 
 **`Accepted`, not `Delivered`.** RFC 8030 §5 has the service answer with `201 Created` and is
 explicit that this means the message was accepted for delivery, not that a user agent received it;
@@ -207,11 +211,17 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   and RFC 9110 §9.2.2 says a client should not automatically retry a non-idempotent request unless it
   knows the request was never applied. A read timeout after the request went out is exactly where
   nobody knows — the service may have accepted the message and lost the answer — so a repeat may
-  deliver a second notification. Calling it retryable would be the library ruling that a duplicate is
-  acceptable, on behalf of applications whose tolerance for one it cannot see. `Topic` narrows that
-  window without closing it. The library also does not split the case into "definitely not sent" and
-  "unknown" even where the shipped transport could tell them apart, because `PushHttpClient` is a
-  consumer seam and a wrong "definitely not sent" produces the very duplicate the variant prevents.
+  deliver a second notification. Neither failure variant can carry that case, and the reason is not
+  the duplicate: both report what an answer said about itself, and here nothing answered, so there is
+  no more ground to call a repeat *useful* than to call it safe. Filing it under `RetryableFailure`
+  would put the one case in which no evidence whatever bounds the duplicate risk behind a name the
+  caller reads as a recommendation, where every answered failure at least carries somebody's refusal.
+  The variant exists so that the unknown is named rather than averaged into a verdict, and what to
+  spend on it is left to an application whose tolerance for a duplicate the library cannot see.
+  `Topic` narrows that window without closing it. The library also does not split the case into
+  "definitely not sent" and "unknown" even where the shipped transport could tell them apart, because
+  `PushHttpClient` is a consumer seam and a wrong "definitely not sent" produces the very duplicate
+  the variant prevents.
 - **A key service that cannot sign *now* is `NotAttempted`.** `PushCryptoException` today covers
   both "this JVM has no `AES/GCM/NoPadding`" and "Vault did not answer", deliberately and in its own
   words, and no caller can act on a type meaning both. The split stays but becomes *internal*: a
@@ -223,15 +233,28 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   **The axis is whether the failure recurs, not whether the custodian answered.** A custodian that
   answers is not thereby refusing permanently, and reading it that way would rebuild the very
   duality this decision removes — an operational condition arriving as an unchecked exception the
-  fan-out has to catch out of band. Vault documents most of its own error statuses as temporary in
-  so many words: `500` "try again later", `503` down for maintenance, sealed or temporarily
-  overloaded, `412` a request that cannot be processed *yet* under eventual consistency and "should
-  be retried, perhaps with a little backoff", `429` a standby node or a rate-limit quota, `502` a
-  third party Vault itself called. Each of those is `SignerUnavailable`. What recurs is the answer
-  about the request: `400`, `403`, `404` and `405` — a malformed call, a token without the
-  capability, a key or mount that is not there, a method the path does not take — and so is a
-  response Vault could not have meant, an unparseable signature or a key that is not on P-256. Those
-  stay `PushCryptoException`, alongside a defect and a misconfiguration.
+  fan-out has to catch out of band. The question to put to an answer is whether it describes the
+  custodian's own condition or the request that was made. Vault answers the first in so many words
+  for most of its error statuses: `500` "try again later", `503` "down for maintenance, currently
+  sealed, or temporarily overloaded", `412` a request that cannot be processed *yet* under eventual
+  consistency and one that "should be retried, perhaps with a little backoff", `429` the default for
+  a standby node's health and also "Too Many Requests", `473` the same for a performance standby,
+  `502` a third party Vault itself called. Each of those is `SignerUnavailable`. The second is what
+  recurs: `400`, `403`, `404` and `405` — a malformed call, a token without the capability, a key or
+  mount that is not there, a method the path does not take — and so is a response Vault could not
+  have meant, an unparseable signature or a key that is not on P-256. Those stay
+  `PushCryptoException`, alongside a defect and a misconfiguration.
+
+  Those lists are the worked cases and the question is the rule, because a status neither list names
+  will arrive — from a version of Vault later than this text, or from a proxy in front of it. It
+  falls by the same question, and the class answers it where the vendor does not: RFC 9110 §15.6 has
+  a 5xx say the server "is aware that it has erred or is incapable of performing the requested
+  method", which is a statement about the custodian, and §15.5 has a 4xx say "the client seems to
+  have erred", which is one about the request. So an unrecognised 5xx is `SignerUnavailable` and an
+  unrecognised 4xx is a defect. This is deliberately not the push
+  service's matrix, where `501` and `505` are carved out of the retryable 5xx class: there the caller
+  owns the repeat and a pointless one costs it a scheduled attempt, while here the alternative to
+  waiting is a fan-out aborted by an operator's maintenance window.
 
   **The outcome carries no hint about when to come back.** A status code cannot cross `VapidSigner`
   in any case: that seam is implemented by a PKCS#11 token, a cloud KMS and a file-backed key as
