@@ -128,19 +128,23 @@ attempt is a result; what will fail identically until someone changes something 
   Note the position this reverses: today the library retries statuses and declines to retry a
   transport failure at all, so calling one retryable is a new claim. It is the right one — a
   connection that timed out may well connect next time — and it was never the library's call to make.
-- **An interrupted send is the one transport failure that stays an exception**, because it is the one
-  that will not differ on another attempt. The transport converts an `InterruptedException` into a
-  `PushDeliveryException`, so under the bullet above an interrupt would arrive labelled "another
-  attempt is legitimate" and the caller's loop would spin — every retry failing instantly on an
-  interrupt status nobody cleared. The carve-out keys on the failure rather than on the thread: a
-  `PushDeliveryException` whose cause chain carries an `InterruptedException` propagates instead of
-  converting. Testing the calling thread's interrupt status was the first shape and is rejected
-  twice over — it re-classifies an ordinary connect timeout that merely happened to race a shutdown,
-  and it would make the rule depend on a consumer transport remembering to re-set a flag, which is
-  the kind of trust the bullet below refuses to place in the other consumer seam. It also has no
-  answer under `sendAsync`, where "the calling thread" is an executor's worker and a cancelled
-  future does not interrupt at all. The cause chain is a property of the failure and reads the same
-  on both paths.
+- **An interrupted send is not a delivery outcome and stays an exception.** The transport converts an
+  `InterruptedException` into a `PushDeliveryException`, so under the bullet above an interrupt would
+  arrive labelled "another attempt is legitimate" and the caller's loop would spin — every retry
+  failing instantly on an interrupt status nobody cleared. The carve-out is therefore a disjunction,
+  and it is one because neither test alone is sound. A cause chain carrying an `InterruptedException`
+  misses an interruption that surfaces as `ClosedByInterruptException` or `InterruptedIOException`,
+  both of which are `IOException`s a transport will wrap without an `InterruptedException` anywhere
+  beneath — the spin, exactly. The calling thread's interrupt status misses nothing but catches more
+  than interruption: an ordinary connect timeout that merely raced a shutdown propagates too, which
+  is not a false positive worth avoiding, since a caller whose thread is being shut down is better
+  served by an exception than by an invitation to schedule another attempt. So: a
+  `PushDeliveryException` propagates unconverted when its cause chain carries an `InterruptedException`
+  **or** the current thread's interrupt status is set. Neither limb is free of the seam — a cause
+  chain is a property of how a transport chose to report the failure, not of the failure — so the
+  transport contract gains the requirement the shipped one already meets: a transport that meets an
+  interruption re-sets the flag and attaches the cause. The disjunction is what keeps a transport
+  that honours only one of the two from producing the spin.
 - `EndpointRejectedException` and `IllegalArgumentException` keep propagating. A payload that does
   not fit will not fit next time either. A refused endpoint is treated as permanent **by decision**
   rather than by observation: `EndpointPolicy` is a consumer-implemented seam whose own contract
@@ -188,14 +192,14 @@ its own: that
 the only one applied; and that RFC 8030's `TTL` counts from receipt, so a retry sent hours later
 re-bases the message's lifetime unless the caller decrements the value it passes.
 
-Five documents describe retry as a feature and all five move. `README.md` loses its retry section,
-its feature bullet and its worst-case blocking budget, and gains the worked `switch`; one of its
-arguments is collateral, since it justifies an exception type by contrast with a *retryable*
-transport failure, and what escapes `send` afterwards is the one transport failure that is not.
-`docs/SPRING.md` loses the `retry.*` property block and the prose attributing a rejected bound to its
-key. `CONTRIBUTING.md` names `isDelivered()` twice as its worked example of the boolean convention,
-on the very type this decision reshapes, and needs a different example rather than a smaller one.
-`docs/MIGRATION.md` is the one that **inverts** and is therefore the one to get wrong: it warns that
+Four consumer-facing documents describe retry as a feature and all four move — `README.md`,
+`docs/SPRING.md`, `docs/MIGRATION.md` and `docs/DESIGN.md` above — and two more move for a reason
+other than retry. `README.md` loses its retry section, its feature bullet and its worst-case blocking
+budget, and gains the worked `switch`; one of its arguments is collateral, since it justifies an
+exception type by contrast with a *retryable* transport failure, and what escapes `send` afterwards
+is the one transport failure that is not. `docs/SPRING.md` loses the `retry.*` property block and the
+prose attributing a rejected bound to its key. `docs/MIGRATION.md` is the one that **inverts** and is
+therefore the one to get wrong: it warns that
 an application retry loop on top of push2u multiplies, and instructs the reader to delete theirs or
 configure it away. After this decision the two libraries behave the same here, so that warning is
 false and the instruction silently costs a reader their retry entirely. Its neighbouring promise —
@@ -204,7 +208,22 @@ three — survives, and becomes trivially true of every failure kind. Three more
 carry retry outside the section: a comparison-table row, the builder-option list and two uses of the
 attempt count. `docs/PERFORMANCE.md` needs nothing — checked, it measures the pipeline and never the
 loop. The status mapping also appears in this repository's own instructions, which follow the same
-edit.
+edit. And `CONTRIBUTING.md` moves for a different reason than the rest: it uses `isDelivered()` three
+times as the worked example of the boolean convention, on the one type this decision reshapes, so it
+needs a different example rather than a smaller one.
+
+The published sentences the change falsifies are its own category, because they ship in a
+`sources.jar` to readers with no repository to check them against, and there are more of them than
+the retry documentation suggests. Beyond the renewal margin's Javadoc and the comment beside the
+token cache, which reason from the retry window directly: the threat model stated in two places on
+the endpoint policy and its factories names the caller-visible pair — a status code *versus* a
+`PushDeliveryException` — as what makes an unrestricted sender an SSRF oracle, and that pair becomes
+a variant carrying a zero status code; the delivery exception's own class Javadoc enumerates "a
+connection failure, a timeout, an interrupted send" and only the third survives it; the transport
+seam's Javadoc says the sender "owns retry and status interpretation", of which half remains; and the
+sender's class Javadoc says it interprets the status into a result "with retries". None of these is a
+comment to be deleted — each states a reason a consumer needs, and each needs the reason restated for
+what the code now does.
 
 ## What this rules out
 
@@ -294,9 +313,10 @@ spelling and not a clause: the decision is that the expiry is a value the caller
 Deciding where the second structural check on the encoded public key lives, ADR-018 settled that a
 `PushCryptoException` raised by `publicKey()` itself — naming, in its own words, *"a remote custodian
 that is unreachable"* — propagates untouched because it is already the right type, and that an
-override signals failure with that same type *"so that one signer does not answer for one value in
-two exception types"*. That sentence is published on the `VapidSigner` contract, which is where the
-cost really falls: after this decision a Vault-backed signer does answer for one value in two types —
+override may signal failure with that type and no other. The sentence that rule produced is published
+on the `VapidSigner` contract, and it is where the cost really falls: an override uses that type
+*"so that one signer does not answer for one value in two exception types"*. After this decision a
+Vault-backed signer does answer for one value in two types —
 the new one when the custodian cannot be reached, `PushCryptoException` when what it returned is the
 wrong shape. ADR-018's reason is understood and overridden rather than overlooked. It optimised for
 one signer speaking one language about one value; this decision splits on a different axis — whether
@@ -312,5 +332,12 @@ closest to holding some. ADR-005 is untouched and not superseded — no seam is 
 ADR nearly added is ruled out above. ADR-010's pluggable key custody is untouched: which signer a
 deployment uses is unchanged, and only what one of them throws moves. ADR-019 is untouched in its
 decision; one derivation loses the quantity it was sized against, as recorded in the paragraph above.
-ADR-011's size limit, ADR-016's required egress decision and ADR-017's rule kinds are unaffected:
-nothing here reaches the request-shaping or endpoint-policy paths.
+ADR-011's size limit is unaffected — nothing here reaches the request-shaping path. ADR-016 and
+ADR-017 keep their decisions, but not because this change stays away from them: it decides something
+about the endpoint policy above, that a refusal is permanent by decision, and ADR-016 illustrates its
+own threat model with the very pair this ADR reshapes — a status code against a
+`PushDeliveryException`, plus timing, as the blind SSRF oracle an unrestricted sender offers. The
+security property survives for a reason that has nothing to do with how a failure is reported: the
+policy still runs first and unconditionally, before the encryption, the signature and any I/O, so
+what a rejection *is* has not moved. Only the shape of what a later failure is reported as, which the
+oracle argument used as an illustration rather than as its mechanism.
