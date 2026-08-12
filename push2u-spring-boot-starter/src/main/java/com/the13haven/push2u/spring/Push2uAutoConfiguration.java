@@ -131,14 +131,19 @@ public final class Push2uAutoConfiguration {
      * rather than {@link PushSender#builder(VapidSigner, String, EndpointPolicy)}'s generic {@code "contact is
      * required"}.
      *
-     * <p>{@code push2u.jwt-expiry}, {@code push2u.default-ttl}, {@code push2u.record-size} and
-     * {@code push2u.max-encrypted-body-bytes} failures from {@link PushSender.Builder#jwtExpiry(Duration)},
-     * {@link PushSender.Builder#defaultTtl(Duration)}, {@link PushSender.Builder#recordSize(int)} and
-     * {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown with the property name prefixed, since the
-     * builder's own message names its camelCase parameter, not the YAML property. All three {@code push2u.retry.*} keys
-     * get the same treatment ahead of {@link RetryPolicy}'s own constructor, which validates the attempt count and both
-     * backoff bounds together — and reports the two bounds through one shared message — so it cannot be blamed on a
-     * single property by its message alone; {@code retryPolicy(…)} below carries the reasoning.
+     * <p>{@code push2u.jwt-expiry}, {@code push2u.jwt-renew-before}, {@code push2u.jwt-cache-size},
+     * {@code push2u.default-ttl}, {@code push2u.record-size} and {@code push2u.max-encrypted-body-bytes} failures from
+     * {@link PushSender.Builder#jwtExpiry(Duration)}, {@link PushSender.Builder#jwtRenewBefore(Duration)},
+     * {@link PushSender.Builder#jwtCacheSize(int)}, {@link PushSender.Builder#defaultTtl(Duration)},
+     * {@link PushSender.Builder#recordSize(int)} and {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are
+     * re-thrown with the property name prefixed, since the builder's own message names its camelCase parameter, not the
+     * YAML property. {@code push2u.jwt-reuse} takes the same route although
+     * {@link PushSender.Builder#jwtReuse(boolean)} has no value to reject: a boolean the binder accepted is always
+     * legal, and routing it with its siblings is what keeps a later constraint on it from arriving unnamed. All three
+     * {@code push2u.retry.*} keys get the same treatment ahead of {@link RetryPolicy}'s own constructor, which
+     * validates the attempt count and both backoff bounds together — and reports the two bounds through one shared
+     * message — so it cannot be blamed on a single property by its message alone; {@code retryPolicy(…)} below carries
+     * the reasoning.
      *
      * <p>The {@link EndpointPolicy} comes from one of two sources, and exactly one of them: the allowlist properties,
      * {@code push2u.allowed-origins} and {@code push2u.allowed-domains}, or an application-supplied
@@ -172,9 +177,10 @@ public final class Push2uAutoConfiguration {
      *     {@code push2u.allowed-origins} or {@code push2u.allowed-domains} is configured beside an
      *     {@code EndpointPolicy} bean; if neither property nor a bean is configured; or if neither property has an
      *     entry and no bean is configured
-     * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.default-ttl},
-     *     {@code push2u.record-size}, {@code push2u.max-encrypted-body-bytes} or any {@code push2u.retry.*} key is set
-     *     to a value the builder or {@link RetryPolicy} rejects, or if an entry of {@code push2u.allowed-origins} or
+     * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.jwt-renew-before},
+     *     {@code push2u.jwt-cache-size}, {@code push2u.default-ttl}, {@code push2u.record-size},
+     *     {@code push2u.max-encrypted-body-bytes} or any {@code push2u.retry.*} key is set to a value the builder or
+     *     {@link RetryPolicy} rejects, or if an entry of {@code push2u.allowed-origins} or
      *     {@code push2u.allowed-domains} is not a well-formed origin or domain — the failure names the property and the
      *     index of the entry
      */
@@ -203,6 +209,9 @@ public final class Push2uAutoConfiguration {
         // Every optional property is applied through the same translate-the-error helper, so a
         // rejected value fails naming the YAML key instead of the builder's camelCase parameter.
         applyIfPresent(properties.jwtExpiry(), builder::jwtExpiry, "push2u.jwt-expiry");
+        applyIfPresent(properties.jwtRenewBefore(), builder::jwtRenewBefore, "push2u.jwt-renew-before");
+        applyIfPresent(properties.jwtReuse(), builder::jwtReuse, "push2u.jwt-reuse");
+        applyIfPresent(properties.jwtCacheSize(), builder::jwtCacheSize, "push2u.jwt-cache-size");
         applyIfPresent(properties.defaultTtl(), builder::defaultTtl, "push2u.default-ttl");
         applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
         applyIfPresent(

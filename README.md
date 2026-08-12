@@ -65,18 +65,25 @@ The browser supplies the endpoint, `p256dh`, and `auth` values — the endpoint 
 JSON parsing remains an application responsibility. Use only the HTTPS endpoint returned by the
 browser, and treat the complete endpoint as a secret: Web Push endpoints are capability URLs.
 
-`Subscription` validates what it accepts: the endpoint must be an absolute `https` URL, `auth`
-must be 16 bytes, and `p256dh` must decode to a real point on the P-256 curve — not merely a
-65-byte value of the right shape. Both `p256dh` and the endpoint are attacker-influenced (a
-registration endpoint accepts whatever a client posts), and a subscription carrying an off-curve
-point can never be sent to, so it is rejected with an `IllegalArgumentException` where the
-subscription is created instead of failing as a `PushCryptoException` on every later send. The
-curve check runs on the fixed FIPS 186-4 P-256 parameters and needs no JCA provider, so it works
-wherever the subscription is built. To enforce the same contract at your own registration
+`Subscription` validates what it accepts: the endpoint must be an absolute `https` URL of at most
+2048 characters, `auth` must be 16 bytes, and `p256dh` must decode to a real point on the P-256
+curve — not merely a 65-byte value of the right shape. Both `p256dh` and the endpoint are
+attacker-influenced (a registration endpoint accepts whatever a client posts), and a subscription
+carrying an off-curve point can never be sent to, so it is rejected with an
+`IllegalArgumentException` where the subscription is created instead of failing as a
+`PushCryptoException` on every later send. The curve check runs on the fixed FIPS 186-4 P-256
+parameters and needs no JCA provider, so it works wherever the subscription is built. The length
+bound is structural, not a fact about any push service: a resolvable hostname is capped at 253
+characters (RFC 1035 fixes 255 octets, 253 in presentation form), a capability path needs only
+enough characters to be unguessable, and roughly 1780 characters of headroom remain — while the
+ceiling caps what an attacker-chosen endpoint can cost, since its origin is embedded in every
+`Authorization` header a send builds, and the sender retains one such header per origin while a
+token is reused. To enforce the same contract at your own registration
 boundary — rejecting a bad registration before persisting it — the checks are public:
 `Endpoints.requireSecure(endpoint)` for the endpoint, `P256PublicKeys.requireOnCurve(bytes,
 "p256dh")` for the key material (and `P256PublicKeys.requireUncompressedPoint` when only the
-shape matters).
+shape matters). The length bound needs no helper — it is a plain `endpoint.length() <= 2048`
+comparison; `requireSecure` itself stays a protocol check.
 
 ```java
 Subscription subscription = Subscription.fromBase64(
@@ -124,9 +131,11 @@ the rule for you — `EndpointPolicies.allowedEndpoints(…)` takes the allowlis
 services your users arrive from, and `EndpointPolicies.unrestricted()` says, in your own source,
 that this deployment applies no restriction.
 
-A `PushSender` holds only final configuration and keeps no per-send state, so build one at startup
-and share that instance across every thread that sends. A custom `PushHttpClient` or `VapidSigner`
-has to be thread-safe for the same reason; the ones shipped here are.
+A `PushSender` is thread-safe and keeps no per-send state, so build one at startup and share that
+instance across every thread that sends. Its configuration is final; the one thing it holds beyond
+it is the cache of signed VAPID tokens described under [VAPID token reuse](#vapid-token-reuse),
+which is safe to share for the same reason. A custom `PushHttpClient` or `VapidSigner` has to be
+thread-safe too; the ones shipped here are.
 
 The three message headers are optional. Without `ttl`, the message goes out with the sender's
 default of **24 hours** — how long the push service may hold it for a client that is offline;
@@ -242,6 +251,66 @@ once at startup — the allowlist itself is in [Endpoint policy](#endpoint-polic
 ```java
 EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
 ```
+
+### VAPID token reuse
+
+**One signed token serves every message to a push-service origin, not one per message.** Nothing in
+a VAPID token is per-message: RFC 8292 §2 gives it three claims — the push service's *origin*, your
+contact, and the expiry `jwtExpiry(Duration)` puts 12 hours out by default. So `PushSender` signs
+one token per origin and reuses it for every later send to that origin, until it comes within
+`jwtRenewBefore(Duration)` of the expiry — five minutes by default — and signs a fresh one. RFC
+8292 §5 encourages this outright, because reuse also lets a push service cache the result of
+verifying the signature. A fan-out to 100 000 subscriptions therefore pays for as many signatures as
+it meets origins rather than 100 000 — a useful saving on a local key pair, and a decisive one with
+the [Vault Transit signer](#vault-transit-signer), where every signature is a network round trip and
+Vault's availability would otherwise gate every push.
+
+The tokens sit in a per-sender cache bounded at `jwtCacheSize(int)` entries — 64 by default,
+evicting the least recently used. That bound is not a tuning knob but the reason the cache is safe
+to hold: the origins a sender meets come from the endpoints inside the subscriptions it is handed,
+which are as trustworthy as wherever those subscriptions arrive from. A full cache costs a
+signature per send, never a delivery.
+
+```java
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
+    .jwtRenewBefore(Duration.ofMinutes(15))  // a longer margin for slow sends or loose clocks
+    .jwtCacheSize(128)
+    .build();
+```
+
+The margin is an absolute duration rather than a fraction of `jwtExpiry`, because both things it
+covers are absolute: clock skew against the push service, which checks `exp` against its own clock,
+and a send that picked a token up just before the boundary and must still present a valid one at
+its last retry — with `Retry-After` honoured up to the retry policy's ceiling, that is minutes
+rather than seconds. Raise it if your retry policy or HTTP timeouts allow a longer send. A negative
+value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the token is held to its
+last second, with the skew consequences of saying so — and a value at or above `jwtExpiry` means
+the margin has swallowed the token's whole life, so every send signs afresh. `jwtCacheSize(0)` is
+rejected rather than read as "cache nothing": the bound is not a second spelling of the switch
+below, and the two mean different things.
+
+**`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
+this library always did:
+
+```java
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
+    .jwtReuse(false)
+    .build();
+```
+
+Three situations call for it. A push service that refuses a token it has seen before would answer
+`401` or `403` on every send to that origin after the first, with a signature that verifies — this
+is the remedy, and it needs no new release of anything. A deployment that treats process memory as
+reachable may not want a bearer credential resident at all: nothing sweeps the cache, so an entry
+leaves it only when a later send to that origin finds it stale and replaces it, or when the bound
+evicts it — an origin that goes quiet keeps its header, and the token inside stays usable until its
+own `exp`, which `jwtRenewBefore` does not move. *Raising* the margin retires an entry sooner and
+lowering it holds one longer — the margin is subtracted from the life an entry is served for — but
+either way the change is noticed only by a later send to that origin, so a bigger margin shortens
+residency only where traffic keeps arriving to notice. `jwtReuse(false)` is what puts a token in
+the process for the length of one send and no longer, which is what this library did before. And it
+makes a signer whose signing key rotates under an unchanged advertised key fail at once rather than
+up to `jwtExpiry` later.
 
 ### Asynchronous sending
 
@@ -596,18 +665,30 @@ An external `VapidSigner` controls its own signing provider.
 A public key that does not correspond to the configured private scalar is therefore rejected at
 startup instead of producing repeated `401`/`403` responses at send time.
 
-Whatever the signer, its two outputs are checked on every send: the signature must be the raw
-64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point (RFC 8292 §3.2).
-A violation raises `PushCryptoException` saying what was returned — otherwise it would surface as
-an opaque `401`/`403` on every send, with nothing pointing at the signer. If your implementation
-signs through JCA, note that `SHA256withECDSA` produces DER: ask for
-`SHA256withECDSAinP1363Format` or convert before returning, and the rejection message will say so
-if you forget.
+Whatever the signer, its two outputs are checked wherever a new one enters a send: the signature
+must be the raw 64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point
+(RFC 8292 §3.2). Under the default token reuse that is every send that signs — a reused
+`Authorization` value was checked when it was signed, and `sign` is not called for it again — so a
+misencoded signer is still caught the first time it is asked, on the send that asks. A violation
+raises `PushCryptoException` saying what was returned; otherwise it would surface as an opaque
+`401`/`403`, with nothing pointing at the signer. If your implementation signs through JCA, note
+that `SHA256withECDSA` produces DER: ask for `SHA256withECDSAinP1363Format` or convert before
+returning, and the rejection message will say so if you forget.
+
+**The key a signer advertises must stay the same for that signer's lifetime.** VAPID's public key
+is your application server's published identity: a browser subscription is bound to the
+`applicationServerKey` it was created with, and RFC 8292 §4.2 lets a push service refuse a JWT
+whose key is not the one that subscription was created under. So a signer that starts answering
+`publicKey()` differently has already broken every restricted subscription taken out before the
+change — rotation is a re-subscription event that produces a *new* signer, not a new answer from
+the existing one. The library cannot check this from outside, since two equal answers say nothing
+about the next one, and states it as contract instead.
 
 ## Conformance kit for a custom signer
 
-The check above is what your signer meets on every send; `push2u-testkit` is how it finds out in
-its own test suite instead. It is a test-scoped artifact holding one abstract JUnit Jupiter class:
+The two shape checks above are what your signer meets on the sends that reach it; `push2u-testkit`
+is how it finds out in its own test suite instead. It is a test-scoped artifact holding one
+abstract JUnit Jupiter class:
 
 ```kotlin
 dependencies {
@@ -625,9 +706,10 @@ class MySignerContractTest extends VapidSignerContractTest {
 }
 ```
 
-Five checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
+Six checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
 coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
-by the JCA without complaint), `publicKey()` and `sign()` each hand out a fresh array rather than
+by the JCA without complaint), `publicKeyBase64Url()` is exactly the unpadded URL-safe base64 of
+those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than
 one the signer keeps — two successive calls must not return the same object — and a signature is
 the raw 64-byte `r || s` that verifies against that key. Verification uses the JDK alone and runs
 on a FIPS-only JVM: the kit prefers
@@ -672,7 +754,7 @@ Four things this library will not do, whatever it is configured with:
 
 - Content coding other than `aes128gcm`, or more than one RFC 8188 record per message.
 - A VAPID JWT valid for longer than 24 hours (RFC 8292 §2).
-- Anything with the subscription after the send: the library is stateless, and persisting or
+- Anything with the subscription after the send: the library stores none, and persisting or
   deleting one belongs to the application.
 - A body over the configured limits — see [Payload size limits](#payload-size-limits) for the two
   that are raisable and how they interact.

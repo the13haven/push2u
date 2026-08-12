@@ -16,6 +16,9 @@ push2u:
     private-key: "${VAPID_PRIVATE_KEY}"
     subject: "mailto:ops@example.com"
   jwt-expiry: 12h
+  jwt-renew-before: 5m
+  jwt-reuse: true
+  jwt-cache-size: 64
   default-ttl: 24h
   record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
@@ -40,20 +43,38 @@ property. The endpoint policy is required in the same way, from one of its two s
 [Endpoint policy](#endpoint-policy). Neither is required when the application supplies its own
 `PushSender` bean — that bean bypasses the starter's checks entirely.
 
-`jwt-expiry`, `default-ttl`, `record-size` and `max-encrypted-body-bytes` are optional; unset, they
-leave `PushSender`'s defaults untouched (12h, 24h, 4096 bytes and 4096 bytes respectively — see
+`jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl`, `record-size` and
+`max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
+5m, `true`, 64 entries, 24h, 4096 bytes and 4096 bytes respectively — see
 [`README.md` → Payload size limits](../README.md#payload-size-limits) for the two size
 properties). The three `retry.*` properties carry their own defaults instead (3 attempts, 1s
 initial backoff, 60s ceiling), which match `RetryPolicy.defaults()`, so a `RetryPolicy` is always
 built explicitly.
 
 Setting any of them to a value the builder — or, for `retry.*`, `RetryPolicy` itself — rejects
-(`jwt-expiry` not strictly positive or over 24h, `default-ttl` negative, `record-size` below 18,
-`max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead, `retry.max-attempts`
-below 1, or either `retry.*` backoff negative) fails the context with that message, prefixed by the
-YAML property name (the builder and `RetryPolicy` only name their Java parameters). Both backoff
-bounds share one message in `RetryPolicy`, so the prefix is the only thing that says which of the
-two you got wrong.
+(`jwt-expiry` not strictly positive or over 24h, `jwt-renew-before` negative, `jwt-cache-size`
+below 1, `default-ttl` negative, `record-size` below 18, `max-encrypted-body-bytes` below the fixed
+103-byte `aes128gcm` overhead, `retry.max-attempts` below 1, or either `retry.*` backoff negative)
+fails the context with that message, prefixed by the YAML property name (the builder and
+`RetryPolicy` only name their Java parameters). Both backoff bounds share one message in
+`RetryPolicy`, so the prefix is the only thing that says which of the two you got wrong.
+
+**The three `jwt-*` reuse properties are the ones to know about before something surprises you.**
+With `jwt-reuse` at its default, an autoconfigured sender signs one VAPID token per push-service
+origin and reuses it for every later message to that origin until it is within `jwt-renew-before`
+of expiry, holding at most `jwt-cache-size` of them and evicting the least recently used.
+`jwt-reuse: false` restores a fresh signature per message.
+[`README.md` → VAPID token reuse](../README.md#vapid-token-reuse) says what each of the three is
+for and when a deployment reaches for it. All three are builder values, and the starter builds the
+`PushSender` once when the context starts, so a change to any of them — `jwt-reuse: false` included
+— reaches sending only on the next start: a redeploy, or whatever restart a configuration refresh
+amounts to in your deployment. Plan the switch as one, since the situations it answers are the ones
+met while the application is running.
+
+Neither `jwt-renew-before` nor `jwt-cache-size` is validated against `jwt-expiry` or against the
+other: a margin at or above `jwt-expiry` is not an error but simply means every send signs afresh,
+and a cache bound is never a second way to spell `jwt-reuse: false`, which is why below 1 is
+refused rather than read as "cache nothing".
 
 ## Endpoint policy
 

@@ -150,6 +150,62 @@ class SubscriptionValueTest {
     }
 
     @Test
+    void anEndpointOfExactlyTheMaximumLengthIsAccepted() {
+        String prefix = "https://push.example.net/wpush/v1/";
+        String endpoint = prefix + "t".repeat(2048 - prefix.length());
+
+        Subscription subscription = new Subscription(endpoint, key(), auth());
+
+        assertThat(subscription.endpoint()).hasSize(2048);
+    }
+
+    /**
+     * The endpoint is attacker-influenced (a registration endpoint accepts whatever a client posts), its origin is
+     * embedded in every {@code Authorization} header, and the sender's token cache retains one such header per origin —
+     * so an unbounded endpoint would let the party supplying subscriptions choose both the per-request and the retained
+     * cost. No resolvable host can come near the bound: RFC 1035 caps a hostname at 253 characters.
+     */
+    @Test
+    void anEndpointOverTheMaximumLengthIsRejectedAtConstruction() {
+        String host = "h".repeat(4000) + ".example.net";
+        String endpoint = "https://" + host + "/wpush/v1/token";
+
+        assertThatThrownBy(() -> new Subscription(endpoint, key(), auth()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2048")
+                .hasMessageContaining(String.valueOf(endpoint.length()))
+                // Not the endpoint, and not even its redacted form: the redaction's origin half
+                // carries the host, which is exactly where the oversized part lives.
+                .hasMessageNotContaining("hhhh")
+                .hasMessageNotContaining("example.net");
+    }
+
+    /** One character over, so the boundary itself is pinned rather than only a value far beyond it. */
+    @Test
+    void theEndpointLengthBoundaryIsExact() {
+        String prefix = "https://push.example.net/wpush/v1/";
+        String oneOver = prefix + "t".repeat(2049 - prefix.length());
+
+        assertThatThrownBy(() -> new Subscription(oneOver, key(), auth()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2048")
+                .hasMessageContaining("2049");
+    }
+
+    /** The same refusal through {@link Subscription#fromBase64} — no construction path evades the bound. */
+    @Test
+    void anOversizedEndpointIsRejectedOnTheFromBase64Path() {
+        String endpoint = "https://push.example.net/" + "t".repeat(3000);
+
+        assertThatThrownBy(() -> Subscription.fromBase64(
+                        endpoint,
+                        java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(key()),
+                        java.util.Base64.getUrlEncoder().encodeToString(auth())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2048");
+    }
+
+    @Test
     void toStringDoesNotLeakTheSubscriptionToken() {
         String rendered = new Subscription(ENDPOINT, key(), auth()).toString();
 

@@ -5,10 +5,12 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
 import java.net.URI;
 import java.security.Provider;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -33,11 +35,18 @@ import org.jspecify.annotations.Nullable;
  * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a store on expiry is
  * expected control flow, not an error.
  *
- * <p><b>A built sender is immutable and thread-safe.</b> It holds configuration only and derives everything a send
- * needs inside the call, so it is built once and shared across threads — {@link #sendAsync} makes concurrent sends the
- * normal case rather than an edge one. The same obligation therefore falls on the three SPIs it calls
- * ({@link VapidSigner}, {@link PushHttpClient}, {@link EndpointPolicy}), each of which states it.
+ * <p><b>A built sender is thread-safe: built once and shared across every sending thread</b> — {@link #sendAsync} makes
+ * concurrent sends the normal case rather than an edge one. Its configuration is immutable; the one thing it holds
+ * beyond configuration is an internal bounded cache of the VAPID {@code Authorization} values it has itself signed (see
+ * {@link Builder#jwtReuse(boolean)}), safely shared across those same threads and reconstructible at any moment by
+ * signing again — losing it costs one signature, never a delivery. The same thread-safety obligation falls on the three
+ * SPIs the sender calls ({@link VapidSigner}, {@link PushHttpClient}, {@link EndpointPolicy}), each of which states it.
  */
+// CouplingBetweenObjects: this is the facade over the whole send pipeline — the size preconditions,
+// the endpoint policy, the encryption, the VAPID signature with its token cache, the transport and
+// the retry schedule are its collaborators by design, and carving the coordinator into pieces to
+// satisfy the metric would scatter one pipeline across classes that mean nothing on their own.
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 public final class PushSender {
 
     private final VapidSigner signer;
@@ -51,6 +60,19 @@ public final class PushSender {
     private final int maxEncryptedBodyBytes;
     private final Sleeper sleeper;
     private final Clock clock;
+    private final Ticker ticker;
+    private final boolean jwtReuse;
+    private final Duration jwtRenewBefore;
+    /**
+     * Signed {@code Authorization} values, one per audience under the key the signer currently advertises, reused until
+     * an entry nears its own {@code exp}. Guarded by its own monitor: the map is an access-ordered LRU, so even a
+     * lookup mutates it. No signature is ever taken while that monitor is held — a signature may be a remote
+     * key-service round trip, and holding the lock across it would queue every send to every audience behind one
+     * signature, the exact stall this cache exists to remove. The {@code sub} claim and the expiry offset are
+     * deliberately not part of the key: both are final fields of this sender, so one cache belongs to one contact and
+     * one expiry by construction — a change that ever made either per-send would have to widen this key.
+     */
+    private final Map<JwtCacheKey, CachedJwt> jwtCache;
     /** {@code null} selects the library-owned virtual-thread executor; see {@link #sendAsync}. */
     @Nullable
     private final Executor executor;
@@ -75,6 +97,10 @@ public final class PushSender {
         this.maxEncryptedBodyBytes = builder.maxEncryptedBodyBytes;
         this.sleeper = builder.sleeper;
         this.clock = builder.clock;
+        this.ticker = builder.ticker;
+        this.jwtReuse = builder.jwtReuse;
+        this.jwtRenewBefore = builder.jwtRenewBefore;
+        this.jwtCache = new JwtCache(builder.jwtCacheSize);
         this.executor = builder.executor;
         this.endpointPolicy = builder.endpointPolicy;
     }
@@ -185,12 +211,12 @@ public final class PushSender {
         }
         // Unconditional, and before the encryption as well as the signature and the POST: a policy
         // rejection is a verdict on the subscription, and reaching it must not depend on — or pay
-        // for — any per-send cryptography. The sender holds no mutable state, so a policy that
-        // throws (a rejection or its own defect) leaves nothing to corrupt for later sends.
+        // for — any per-send cryptography. The policy also runs before the token cache is
+        // consulted, and that cache is the sender's only mutable state, so a policy that throws
+        // (a rejection or its own defect) leaves nothing to corrupt for later sends.
         endpointPolicy.validate(endpoint);
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
-        String authorization = Vapid.authorizationHeader(
-                signer, Origin.serialize(endpoint), contact, clock.instant().plus(jwtExpiry));
+        String authorization = authorization(Origin.serialize(endpoint));
         Map<String, String> headers = requestHeaders(authorization, message);
 
         for (int attempt = 1; attempt <= retryPolicy.maxAttempts(); attempt++) {
@@ -258,6 +284,148 @@ public final class PushSender {
         static final Executor INSTANCE = Executors.newVirtualThreadPerTaskExecutor();
 
         private DefaultAsyncExecutor() {}
+    }
+
+    /**
+     * The {@code Authorization} header value for one send to {@code audience}: a cached one while it is fresh, a newly
+     * signed one otherwise — and always a newly signed one when reuse is off. Fresh means both of an entry's bounds
+     * still hold; see {@link CachedJwt#isFresh}.
+     */
+    private String authorization(String audience) {
+        if (!jwtReuse) {
+            return Vapid.authorizationHeader(
+                    signer, audience, contact, clock.instant().plus(jwtExpiry));
+        }
+        // A fresh publicKey() read on every lookup, encoded exactly as the header's k parameter is
+        // encoded: an entry is only ever served to the signer in the identity it currently
+        // publishes, so an advertised key that moved since the entry was filed misses here and the
+        // stale identity is replaced. Deliberately the raw publicKey() bytes rather than
+        // publicKeyBase64Url(), which an implementation may override: the lookup has to track the
+        // value the wire carries, not what an override says about it.
+        JwtCacheKey key = new JwtCacheKey(audience, Base64Url.encode(signer.publicKey()));
+        synchronized (jwtCache) {
+            CachedJwt cached = jwtCache.get(key);
+            if (cached != null) {
+                // Wall reading first, monotonic reading last. Of the two orders this is the one
+                // that over-estimates monotonic elapsed time: a pause between the two statements
+                // (nothing in Java bounds it) only makes the entry look older, which at worst costs
+                // one signature. The opposite order would serve an entry past its monotonic bound
+                // by the length of the pause — exactly when a backwards wall step has left that
+                // bound the only honest one.
+                Instant wallNow = clock.instant();
+                long nowNanos = ticker.nanoTime();
+                if (cached.isFresh(wallNow, nowNanos)) {
+                    return cached.authorization;
+                }
+                jwtCache.remove(key);
+            }
+        }
+        // Look up, release, sign, publish: the signature runs outside the monitor (see jwtCache's
+        // contract for why). Two threads missing on one audience concurrently is a benign race —
+        // two independently valid tokens, one published and the other used for its own send only.
+        // The monotonic anchor is read before the wall reading exp is computed from: at mint,
+        // over-estimating elapsed time means anchoring as early as possible, so that a pause
+        // between the two readings can only shorten the entry's life, never let a later backwards
+        // wall step lengthen it.
+        long anchorNanos = ticker.nanoTime();
+        Instant mintWall = clock.instant();
+        Instant expiry = mintWall.plus(jwtExpiry);
+        Vapid.SignedHeader signed = Vapid.signedAuthorizationHeader(signer, audience, contact, expiry);
+        // The claim went on the wire as whole seconds, so staleness is judged against that value —
+        // per RFC 7519 §4.1.4 the token is invalid from the second exp names, up to just under a
+        // second earlier than the Instant computed above. The renewal margin must not be what
+        // hides the difference: this has to be right at jwtRenewBefore ZERO.
+        Instant effectiveExpiry = Instant.ofEpochSecond(expiry.getEpochSecond());
+        // Compared rather than subtracted first: the margin is bounded below at zero but not above,
+        // and a subtraction with an enormous margin would overflow. A margin at or above the
+        // token's whole life means nothing is cached and every send signs — a consequence of the
+        // configuration, never an error — so the entry is simply not published.
+        Duration tokenLife = Duration.between(mintWall, effectiveExpiry);
+        if (jwtRenewBefore.compareTo(tokenLife) < 0) {
+            // Both bounds allow the same span, and whichever is reached first ends the entry: the
+            // wall clock arriving within jwtRenewBefore of the effective exp, or the monotonic
+            // clock having run for (effective exp − the wall reading it was computed from) −
+            // jwtRenewBefore. Equal spans are the point — a monotonic bound of the whole jwtExpiry
+            // would hand a backwards wall step up to jwtRenewBefore of extra life, presenting the
+            // token right up to exp with nothing left for the retry window or clock skew.
+            Duration span = tokenLife.minus(jwtRenewBefore);
+            CachedJwt minted = new CachedJwt(
+                    signed.headerValue(), anchorNanos, span.toNanos(), effectiveExpiry.minus(jwtRenewBefore));
+            JwtCacheKey mintedKey = new JwtCacheKey(audience, signed.publicKeyBase64Url());
+            synchronized (jwtCache) {
+                jwtCache.putIfAbsent(mintedKey, minted);
+            }
+        }
+        return signed.headerValue();
+    }
+
+    /**
+     * The token cache's key: one audience under the signer's currently advertised public key, the key as the base64url
+     * string the header's {@code k} parameter carries. A string rather than the raw bytes on purpose:
+     * {@link VapidSigner#publicKey()} returns a fresh array on every call by contract, and arrays compare by identity,
+     * so a {@code byte[]} component would produce a cache that compiles and silently never hits.
+     */
+    private record JwtCacheKey(String audience, String publicKeyBase64Url) {}
+
+    /**
+     * One cached {@code Authorization} value with the two readings its life is judged by. A plain class rather than a
+     * record so that the bearer credential it holds can never reach a generated {@code toString}.
+     */
+    private static final class CachedJwt {
+
+        /** The full header value — a bearer credential: never in a {@code toString}, a log line or a message. */
+        private final String authorization;
+        /** The monotonic reading taken at mint, before the wall reading {@code exp} was computed from. */
+        private final long anchorNanos;
+        /** How long the monotonic clock may run before renewal — the same span the wall bound allows. */
+        private final long spanNanos;
+        /** The effective (whole-second) {@code exp} less the renewal margin; served strictly before it only. */
+        private final Instant wallDeadline;
+
+        private CachedJwt(String authorization, long anchorNanos, long spanNanos, Instant wallDeadline) {
+            this.authorization = authorization;
+            this.anchorNanos = anchorNanos;
+            this.spanNanos = spanNanos;
+            this.wallDeadline = wallDeadline;
+        }
+
+        /**
+         * Whether this entry may still be served. Both bounds are checked and either ends it: the monotonic clock must
+         * not have run for the span, and the wall clock must be strictly before the deadline — strictly, because RFC
+         * 7519 §4.1.4 makes the token invalid from the second {@code exp} names, not after it. A negative elapsed
+         * reading is one from a later timeline, which the JVM's single per-instance origin makes impossible on a
+         * conforming platform — it discards the entry for the cost of one comparison.
+         */
+        private boolean isFresh(Instant wallNow, long nowNanos) {
+            long elapsedNanos = nowNanos - anchorNanos;
+            return elapsedNanos >= 0 && elapsedNanos < spanNanos && wallNow.isBefore(wallDeadline);
+        }
+    }
+
+    /**
+     * An access-ordered LRU map bounded at the configured capacity. Overflow evicts the least recently used entry, so a
+     * full cache degrades to signing per send — today's cost — and never to a refusal: the audience set is chosen by
+     * whoever supplies subscriptions, and a bound the deployment configured must not become a delivery failure.
+     */
+    private static final class JwtCache extends LinkedHashMap<JwtCacheKey, CachedJwt> {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        /** Not named {@code capacity} to keep it apart from {@link LinkedHashMap}'s own notion of capacity. */
+        private final int maxEntries;
+
+        private JwtCache(int maxEntries) {
+            // Access order is what makes get() move an entry to the tail and eviction pick the head
+            // — and also what makes even a read a mutation, hence the monitor around every access.
+            super(16, 0.75f, true);
+            this.maxEntries = maxEntries;
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<JwtCacheKey, CachedJwt> eldest) {
+            return size() > maxEntries;
+        }
     }
 
     private Map<String, String> requestHeaders(String authorization, PushMessage message) {
@@ -338,8 +506,12 @@ public final class PushSender {
         private Duration defaultTtl = Duration.ofDays(1);
         private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
         private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES;
+        private Duration jwtRenewBefore = Duration.ofMinutes(5);
+        private boolean jwtReuse = true;
+        private int jwtCacheSize = 64;
         private Sleeper sleeper = Sleeper.REAL;
         private Clock clock = Clock.systemUTC();
+        private Ticker ticker = Ticker.REAL;
 
         @Nullable
         private Executor executor;
@@ -406,6 +578,86 @@ public final class PushSender {
                 throw new IllegalArgumentException("jwtExpiry must be > 0 and <= 24h (RFC 8292 §2)");
             }
             this.jwtExpiry = jwtExpiry;
+            return this;
+        }
+
+        /**
+         * Whether a signed VAPID token is reused for later sends to the same push-service origin until it nears its
+         * {@code exp}; default {@code true}. Nothing about the token is per-message — its claims are the origin, the
+         * contact and the expiry — and RFC 8292 §5 encourages application servers to reuse tokens, which also lets the
+         * push service cache the result of verifying the signature. The reused value is the whole signed
+         * {@code Authorization} header, held per origin under the public key the {@link VapidSigner} currently
+         * advertises, renewed within {@link #jwtRenewBefore(Duration)} of its {@code exp} and bounded by
+         * {@link #jwtCacheSize(int)}.
+         *
+         * <p>{@code false} is the declared off switch: every send builds and signs a fresh JWT, the behaviour this
+         * library always had. It needs no release to reach for — the specification asks for reuse, but should a push
+         * service nevertheless refuse a token it has seen before (the shape of that failure: 401 or 403 on every send
+         * to an origin after the first, with a signature that verifies), this is the remedy. It also collapses to zero
+         * the delay with which a misconfigured signer — one whose signing key rotates under a constant advertised key —
+         * surfaces its misconfiguration, and it removes the residency of a bearer credential in process memory for a
+         * deployment that treats a heap dump as reachable.
+         *
+         * @param jwtReuse whether to reuse signed tokens until they near expiry
+         * @return this builder
+         */
+        public Builder jwtReuse(boolean jwtReuse) {
+            this.jwtReuse = jwtReuse;
+            return this;
+        }
+
+        /**
+         * The safety margin: how long before a cached token's {@code exp} it stops being served and a fresh one is
+         * signed; default 5 minutes, never negative. The margin is what keeps a send that picks a token up just before
+         * the boundary still presenting a valid one at its last retry — with {@code Retry-After} honoured up to
+         * {@link RetryPolicy#maxBackoff()}, a send can legitimately outlive its token's final minutes — and what covers
+         * clock skew against the push service, which checks {@code exp} on its own clock. Both are absolute quantities,
+         * which is why this is an absolute duration and not a fraction of {@link #jwtExpiry(Duration)}. A deployment
+         * whose retry policy or {@code Retry-After} tolerance allows a much longer send raises it; the library does not
+         * derive one knob from the other, because a send's duration also includes HTTP timeouts it does not own.
+         *
+         * <p>{@link Duration#ZERO} is legal and is <em>not</em> an off switch — zero margin is the most reuse, holding
+         * the token to its last second, with the skew consequences of saying so; {@link #jwtReuse(boolean)} is the
+         * declared switch. A value at or above {@code jwtExpiry} is legal too and simply means the margin has swallowed
+         * the token's whole life, so every send signs afresh — a consequence of the configuration, never an error,
+         * which is why {@link #build()} performs no cross-validation between the two.
+         *
+         * @param jwtRenewBefore the renewal margin before the token's {@code exp}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code jwtRenewBefore} is negative
+         */
+        public Builder jwtRenewBefore(Duration jwtRenewBefore) {
+            Objects.requireNonNull(jwtRenewBefore, "jwtRenewBefore");
+            if (jwtRenewBefore.isNegative()) {
+                throw new IllegalArgumentException("jwtRenewBefore must not be negative, was " + jwtRenewBefore);
+            }
+            this.jwtRenewBefore = jwtRenewBefore;
+            return this;
+        }
+
+        /**
+         * The bound on the token cache, in entries; default 64, evicting least-recently-used. The bound is what makes
+         * the cache safe to hold at all rather than a tuning knob: the audiences a sender meets are the origins of the
+         * endpoints inside the {@link Subscription}s it is handed, a set exactly as trustworthy as wherever those
+         * subscriptions arrive from, and an unbounded map keyed by it would be a memory-exhaustion path under any
+         * policy that admits more than a fixed list of origins. Overflow degrades to signing per send — the cost the
+         * library always paid — and never to a refusal, because a bound this deployment chose must not become a
+         * delivery failure. The default sits well above the four browser push services while leaving room for the
+         * vendors whose hostnames vary.
+         *
+         * <p>Below one is rejected rather than read as "cache nothing": {@link #jwtReuse(boolean)} is the declared way
+         * to switch reuse off, and the cap is not a second spelling of it.
+         *
+         * @param jwtCacheSize the maximum number of cached tokens; at least 1
+         * @return this builder
+         * @throws IllegalArgumentException if {@code jwtCacheSize} is less than 1
+         */
+        public Builder jwtCacheSize(int jwtCacheSize) {
+            if (jwtCacheSize < 1) {
+                throw new IllegalArgumentException("jwtCacheSize must be at least 1, was " + jwtCacheSize
+                        + " (to switch token reuse off, use jwtReuse(false) — the cache bound is not the switch)");
+            }
+            this.jwtCacheSize = jwtCacheSize;
             return this;
         }
 
@@ -503,6 +755,15 @@ public final class PushSender {
         // Package-private test seam: pin "now" for Retry-After dates and the VAPID expiry.
         Builder clock(Clock clock) {
             this.clock = Objects.requireNonNull(clock, "clock");
+            return this;
+        }
+
+        // Package-private test seam: drive the monotonic half of a cached token's two bounds.
+        // Without it that bound is untestable — pinning the Clock leaves the monotonic side the
+        // test's own real elapsed microseconds, and every case that turns on the bound would pass
+        // for the wrong reason.
+        Builder ticker(Ticker ticker) {
+            this.ticker = Objects.requireNonNull(ticker, "ticker");
             return this;
         }
 

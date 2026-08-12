@@ -1,14 +1,13 @@
 # ADR-019 — The VAPID token is reused until it nears expiry
 
-**Status:** Proposed
+**Status:** Accepted
 
 `PushSender.send` builds and signs a VAPID JWT for every single message. Nothing about that token is
 per-message: RFC 8292 §2 gives it three claims — `aud`, which is the *origin* of the push service
 rather than the endpoint, `sub`, which is the sender's configured contact, and `exp`, which the
 library sets `jwtExpiry` ahead of now and defaults to 12 hours out of a permitted 24. A fan-out to
-100 000 subscriptions therefore produces 100 000 signatures over what is, at most, a handful of
-distinct tokens: one per push-service origin. Reported as
-https://github.com/the13haven/push2u/issues/102.
+100 000 subscriptions therefore produces 100 000 signatures over what is one distinct token per
+push-service origin met. Reported as https://github.com/the13haven/push2u/issues/102.
 
 What that costs was measured, and the two modes are not the same problem. With
 `LocalEcVapidSigner` the ES256 signature is 115.6 µs of a 726.6 µs send on the JDK provider — 16 %,
@@ -525,8 +524,9 @@ Rejected alternatives:
   of the text. It is rejected on three counts, in order of weight: whether a push service accepts an
   array is a fact about four implementations and not about the specification, and this change asserts
   no vendor behaviour; the set of origins is discovered from the subscriptions the application hands
-  us rather than known in advance, so the token could not be minted until it was already needed; and
-  the saving over a per-origin token is a handful of signatures per twelve hours.
+  us rather than known in advance, so the token could not be minted until it was already needed;
+  and the saving over a per-origin token is one signature per twelve hours for every distinct
+  origin met beyond the first.
 - **Changing `VapidSigner` so that one call returns the signature and the key together**, which is
   what "make it atomic" means in practice. What it would genuinely offer is worth stating before it is
   refused, because the weaker claim is the honest one: a single call cannot *guarantee* a consistent

@@ -118,10 +118,11 @@ PushSender sender = PushSender.builder(
 
 The key source, the contact and the endpoint policy are required, so they are parameters of the
 factory method rather than builder steps — `build()` has no missing value left to refuse.
-Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `recordSize`,
-`maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and lives on the builder. A
-`PushSender` is immutable and thread-safe once built; build it once and share it, as you would a
-`PushService`.
+Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`,
+`jwtRenewBefore`, `jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`,
+`cryptoProvider`) is optional and lives on the builder. A `PushSender` is thread-safe once built,
+with final configuration and one internal cache of the VAPID tokens it has signed; build it once
+and share it, as you would a `PushService`.
 
 The third parameter has no counterpart in `web-push`, and it is the one that will stop a
 mechanical port: see [`EndpointPolicy` — a decision you now have to
@@ -145,11 +146,20 @@ Subscription subscription = Subscription.fromBase64(endpoint, p256dh, auth);
 ```
 
 `push2u`'s `Subscription` is a record that validates on construction: an absolute `https` endpoint
-with a host, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must be a real point on the
-P-256 curve, a 16-byte `auth`. A bad subscription fails where it is registered instead of on every
-later send, and the failure message never contains the endpoint's path or query — a push endpoint
-is a capability URL. `Endpoints.requireSecure` and `P256PublicKeys.requireOnCurve` are public so
-you can apply the same checks at your own registration boundary before persisting.
+with a host and at most 2048 characters, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must
+be a real point on the P-256 curve, a 16-byte `auth`. A bad subscription fails where it is
+registered instead of on every later send, and the failure message never contains the endpoint's
+path or query — a push endpoint is a capability URL. The length bound matters to a migration with
+stored subscriptions: nothing in `web-push`'s published sources checks the endpoint's length — its
+`Subscription` assigns its public fields as given (above), and no such check exists anywhere on
+its send path either — so an oversized endpoint may be sitting in your store, and constructing a
+`Subscription` from it now throws. A hostname above
+RFC 1035's 253-character cap cannot resolve, so a subscription refused for its host was never
+deliverable; a refusal over a capability path longer than roughly 1780 characters is the deliberate
+cost of bounding attacker-chosen endpoint size. `Endpoints.requireSecure` and
+`P256PublicKeys.requireOnCurve` are public so you can apply the same checks at your own
+registration boundary before persisting (the length bound is a plain `endpoint.length()`
+comparison and needs no helper).
 
 ### Sending
 
@@ -493,15 +503,18 @@ public interface VapidSigner {
 }
 ```
 
-The contract is narrow, and push2u checks both halves of it on every send *before* the POST goes
-out: a signature that is not 64 bytes is refused with a `PushCryptoException` that names DER when
-the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is refused
-the same way. So a *wrongly encoded* signer fails loudly at the first send rather than collecting
-opaque `401`/`403` answers. What those checks cannot see is a signer whose output is well-formed
-but wrong — one signing with a key that does not match the public point it advertises, the
-mistake `builderWithSuppliedPublicKey` invites. That one still collects `401`/`403`, and it is why
-the conformance kit verifies the signature against the advertised key rather than only measuring
-it. Extend the kit in your own test suite instead:
+The contract is narrow, and push2u checks both halves of it *before* the POST goes out, on every
+send that signs: a signature that is not 64 bytes is refused with a `PushCryptoException` that names
+DER when the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is
+refused the same way. So a *wrongly encoded* signer fails loudly at the first send rather than
+collecting opaque `401`/`403` answers. (Signed VAPID tokens are reused per push-service origin
+until they near expiry, so a send served from that cache calls neither `sign` nor the checks — the
+first send to an origin is the one that runs them, and it is the one a broken signer fails at.)
+What those checks cannot see is a signer whose output is well-formed but wrong — one signing with a
+key that does not match the public point it advertises, the mistake `builderWithSuppliedPublicKey`
+invites. That one still collects `401`/`403`, and it is why the conformance kit verifies the
+signature against the advertised key rather than only measuring it. Extend the kit in your own test
+suite instead:
 
 ```kotlin
 dependencies {

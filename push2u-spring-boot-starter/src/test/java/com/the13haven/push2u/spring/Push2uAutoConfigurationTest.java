@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
+import java.net.URI;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
@@ -21,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -53,6 +56,7 @@ import com.the13haven.push2u.PushResult;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.Subscription;
+import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
 
 /**
@@ -378,6 +382,180 @@ class Push2uAutoConfigurationTest {
                     .hasMessageContaining("push2u.jwt-expiry:")
                     .hasMessageContaining("jwtExpiry must be > 0 and <= 24h");
         });
+    }
+
+    @Test
+    void invalidJwtRenewBeforeFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.jwt-renew-before=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-renew-before:"))
+                    .hasMessageContaining("push2u.jwt-renew-before:")
+                    .hasMessageContaining("jwtRenewBefore must not be negative");
+        });
+    }
+
+    @Test
+    void invalidJwtCacheSizeFailsTheContextNamingTheProperty() {
+        // Zero is the value an operator reaches for meaning "cache nothing" — the core refuses it
+        // and says so, because push2u.jwt-reuse is the switch and a cache bound is not a second
+        // spelling of it. The starter's job is only to put the YAML key in front of that message.
+        keyedRunner().withPropertyValues("push2u.jwt-cache-size=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-cache-size:"))
+                    .hasMessageContaining("push2u.jwt-cache-size:")
+                    .hasMessageContaining("jwtCacheSize must be at least 1")
+                    .as("the core's message points at the declared off switch; the prefix must not truncate it")
+                    .hasMessageContaining("jwtReuse(false)");
+        });
+    }
+
+    @Test
+    void tokenReuseIsOnByDefaultSoOneOriginCostsOneSignature() {
+        // No push2u.jwt-* property set at all: the sender's own default (reuse on) must survive the
+        // starter, which is exactly what leaving the properties nullable buys — the default lives in
+        // one place. Two sends to one origin, one signature.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void jwtReuseFalseSignsEverySend() {
+        // The declared off switch, and the property whose name nothing but this test pins.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-reuse=false")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations())
+                            .as("with reuse off every send builds and signs a fresh token")
+                            .isEqualTo(2);
+                });
+    }
+
+    @Test
+    void aJwtRenewBeforeAtTheTokensWholeLifeStartsCleanlyAndSignsEverySend() {
+        // The margin has swallowed the token's whole life, so nothing is ever worth caching. That is
+        // a consequence of the configuration and never an error: the context must start, and it is
+        // deliberately not cross-validated against push2u.jwt-expiry. It doubles as the proof that
+        // push2u.jwt-renew-before reached the builder — at the default 5m margin the same two sends
+        // cost one signature (the test above).
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-expiry=12h", "push2u.jwt-renew-before=12h")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(2);
+                });
+    }
+
+    @Test
+    void aZeroJwtRenewBeforeStartsCleanlyAndIsNotAnOffSwitch() {
+        // Zero margin is the MOST reuse — hold the token to its last second — not "reuse nothing".
+        // An operator reaching for it as a switch must get reuse, not a rejection and not a fresh
+        // signature per send.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-renew-before=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void jwtCacheSizeBoundsHowManyOriginsAreHeldAtOnce() {
+        // Two origins, alternating, four sends. At the default bound both entries survive and the
+        // sender signs twice; bounded at one entry, each send evicts the other origin's token and
+        // every send signs — which is what a full cache costs, never a refused delivery.
+        CountingSigner atDefault = countingSigner();
+        twoOriginRunner()
+                .withBean(VapidSigner.class, () -> atDefault)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    alternateBetweenTwoOrigins(context.getBean(PushSender.class));
+                    assertThat(atDefault.signOperations()).isEqualTo(2);
+                });
+
+        CountingSigner boundedToOne = countingSigner();
+        twoOriginRunner()
+                .withPropertyValues("push2u.jwt-cache-size=1")
+                .withBean(VapidSigner.class, () -> boundedToOne)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    alternateBetweenTwoOrigins(context.getBean(PushSender.class));
+                    assertThat(boundedToOne.signOperations())
+                            .as("a cache holding one entry evicts the other origin on every send")
+                            .isEqualTo(4);
+                });
+    }
+
+    @Test
+    void theCachedVapidTokenNeverReachesTheHealthIndicatorDetails() {
+        // The cached Authorization header is a bearer credential: it authenticates this application
+        // server to the push service for the rest of the token's life, so it must not surface on any
+        // observable surface. The health payload is the one such surface in this module — served to
+        // whoever can reach the endpoint once show-details is opened up, which `always` commonly is.
+        //
+        // The indicator is given the signer, never the sender, so it has no reference through which
+        // it could reach the cache at all. That is the answer, and it is pinned here rather than
+        // argued: the assertion is over the payload an operator actually sees, in both of its
+        // states, with a token demonstrably sitting in the sender's cache while they are produced.
+        CountingSigner signer = countingSigner();
+        RecordingTransport transport = new RecordingTransport();
+        keyedRunner()
+                .withPropertyValues("push2u.health.cache-ttl=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .withBean(PushHttpClient.class, () -> transport)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    String header = transport.authorizations.get(0);
+                    assertThat(transport.authorizations)
+                            .as("the second send was served from the cache, so a token is resident")
+                            .containsExactly(header, header);
+                    // The header is "vapid t=<jwt>, k=<public key>": the credential is the JWT, and
+                    // its signature is the part no assertion on a prefix could catch.
+                    String jwt = header.substring(header.indexOf("t=") + 2, header.indexOf(", k="));
+                    String signature = jwt.substring(jwt.lastIndexOf('.') + 1);
+
+                    Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+                    Health up = indicator.health();
+                    assertThat(up.getStatus()).isEqualTo(Status.UP);
+                    // ...and again with the probe failing, which is the payload that carries values
+                    // derived from an exception rather than fixed strings.
+                    signer.failing.set(true);
+                    Health down = indicator.health();
+                    assertThat(down.getStatus()).isEqualTo(Status.DOWN);
+
+                    for (Health health : List.of(up, down)) {
+                        assertThat(health.getDetails().toString())
+                                .doesNotContain(header)
+                                .doesNotContain(jwt)
+                                .doesNotContain(signature);
+                    }
+                });
     }
 
     @Test
@@ -1089,6 +1267,45 @@ class Push2uAutoConfigurationTest {
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test");
     }
 
+    /**
+     * A context whose allowlist admits two push-service origins, for the cases where more than one audience is the
+     * point — the token cache is keyed by audience, so a second origin is what makes its bound observable.
+     */
+    private ApplicationContextRunner twoOriginRunner() {
+        return keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test,https://other.push.example.test");
+    }
+
+    /** Two sends to one origin: the second is the one a reused token serves. */
+    private static void sendTwice(PushSender sender) {
+        for (int i = 0; i < 2; i++) {
+            assertThat(sender.send(
+                                    subscription(),
+                                    PushMessage.builder(new byte[1]).build())
+                            .isDelivered())
+                    .isTrue();
+        }
+    }
+
+    /** Four sends alternating between two origins — two audiences, each visited twice. */
+    private static void alternateBetweenTwoOrigins(PushSender sender) {
+        for (int i = 0; i < 2; i++) {
+            for (String endpoint :
+                    List.of("https://push.example.test/send/abc", "https://other.push.example.test/send/abc")) {
+                assertThat(sender.send(
+                                        subscription(endpoint),
+                                        PushMessage.builder(new byte[1]).build())
+                                .isDelivered())
+                        .isTrue();
+            }
+        }
+    }
+
+    /** A real local signer that counts its signatures, and can be failed for the health-probe half of a test. */
+    private static CountingSigner countingSigner() {
+        return new CountingSigner(new LocalEcVapidSigner(VapidKeys.fromBase64(publicKeyB64, privateKeyB64)));
+    }
+
     /** Keys and subject only — for the cases that supply the endpoint policy themselves, or deliberately omit it. */
     private ApplicationContextRunner keyedRunnerWithoutEndpointPolicy() {
         return runner.withPropertyValues(
@@ -1147,6 +1364,52 @@ class Push2uAutoConfigurationTest {
         @Bean
         EndpointPolicy unrestrictedPolicy() {
             return EndpointPolicies.unrestricted();
+        }
+    }
+
+    /**
+     * A signer that counts the signatures it is asked for — the only way to observe from outside whether a token was
+     * reused, since a cache hit calls {@code publicKey()} but never {@code sign()}. It can also be failed on demand,
+     * for the health-probe half of the leak test.
+     */
+    private static final class CountingSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final AtomicInteger signOperations = new AtomicInteger();
+        private final AtomicBoolean failing = new AtomicBoolean();
+
+        CountingSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            signOperations.incrementAndGet();
+            if (failing.get()) {
+                throw new IllegalStateException("signer backend unavailable");
+            }
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+
+        int signOperations() {
+            return signOperations.get();
+        }
+    }
+
+    /** Answers every POST with 201 and keeps the {@code Authorization} header each send presented. */
+    private static final class RecordingTransport implements PushHttpClient {
+
+        private final List<String> authorizations = new CopyOnWriteArrayList<>();
+
+        @Override
+        public PushResponse post(URI endpoint, Map<String, String> headers, byte[] body) {
+            authorizations.add(headers.get("Authorization"));
+            return new PushResponse(201, Map.of());
         }
     }
 

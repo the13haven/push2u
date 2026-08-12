@@ -30,7 +30,7 @@ of what the vendors publish rather than anything this repository verifies; it sa
 names the two rows whose vendor page carries the host but not the last step to Web Push — those
 clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…019) with
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…020) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
 the environment the numbers were taken on — a snapshot someone took, not an output the build
@@ -49,9 +49,12 @@ vulnerability policy.
 **An ADR is immutable once its decision is implemented.** It is not reworded, not brought up to date
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
 and the superseded one keeps its number, title and body while its status line becomes
-`Superseded by ADR-NNN` — the only edit its body ever takes. The description of how things currently
-work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
-`docs/adr/README.md` carries the procedure.
+`Superseded by ADR-NNN` — the only edit its body ever takes. A decision that moves only in part
+takes the same one-line edit in a narrower form, `Accepted; one clause superseded by ADR-NNN`,
+beside the full form rather than in place of it — ADR-004's status line, superseded in part by
+ADR-019, is the worked example. The description of how things currently work belongs in
+`docs/DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md` carries
+the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same

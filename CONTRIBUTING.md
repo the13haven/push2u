@@ -32,9 +32,11 @@ follows.
 
 **An ADR is immutable once its decision is implemented.** Do not edit one to match a change: a
 decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
-its title and its body while its status line becomes `Superseded by ADR-NNN`. Descriptions of how
-the code works now belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture
-moves. [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
+its title and its body while its status line becomes `Superseded by ADR-NNN`. A decision that moves
+only in part takes the same status-line edit in a narrower form, `Accepted; one clause superseded
+by ADR-NNN`, beside the full form rather than in place of it. Descriptions of how the code works now
+belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture moves.
+[`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
 The [non-goals](docs/DESIGN.md#non-goals) are equally settled: subscription persistence,
 browser-side code, legacy `aesgcm`, general JSON parsing.

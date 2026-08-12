@@ -137,6 +137,17 @@ public abstract class VapidSignerContractTest {
                 .isEqualTo(VapidKeys.encodePublicKey(signer.publicKey()));
     }
 
+    /**
+     * The signature is the raw {@code r || s} pair and it verifies against the key the signer advertises beside it.
+     * That second half carries a contract obligation of its own: {@link VapidSigner} requires the advertised key to be
+     * stable for the signer's lifetime — the key is the application server's published identity, and a subscription is
+     * bound to the {@code applicationServerKey} it was created under — and pinning one signature against the key
+     * advertised in the same breath is one of the two moments that sentence can be enforced at, the other being two
+     * consecutive calls answering the same key, which {@link #publicKeyIsAFreshCopyOnEveryCall} carries. It is a
+     * moment's agreement, not the lifetime's: a signer whose key drifts between test time and production, or hours into
+     * a run, passes both and is bound by the contract sentence alone, because stability across a lifetime cannot be
+     * checked from outside.
+     */
     // UnitTestContainsTooManyAsserts: the signature's length and its verification are one claim —
     // raw r||s that verifies — and asserting the length first is what turns a DER signature into
     // "expected 64 bytes" instead of an opaque `verify() == false`.
@@ -166,6 +177,14 @@ public abstract class VapidSignerContractTest {
      * signer's key intact — a mutation probe would zero it, and the three checks above would then fail as well, for a
      * reason that has nothing to do with what they test. A signer rotating a pool of buffers defeats this and any other
      * check made from outside; the contract is what binds there.
+     *
+     * <p>The equality half of the assertion has grown a second job. {@link VapidSigner} requires the advertised key to
+     * be stable for the signer's lifetime — the key is the application server's published identity, and every
+     * subscription is bound to the {@code applicationServerKey} it was created under — and two consecutive calls
+     * answering the same key is the checkable half of that requirement, enforced nowhere but here. The other half,
+     * stability across a <em>lifetime</em>, stays uncheckable from outside — this method observes two adjacent calls,
+     * not the hours between two sends — so the kit does not claim it: a signer whose key moves later is bound by the
+     * contract sentence alone.
      */
     @Test
     void publicKeyIsAFreshCopyOnEveryCall() {
