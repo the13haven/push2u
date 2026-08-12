@@ -550,9 +550,8 @@ holds no per-send state, and this removes the loop that came closest to holding 
 enumeration of seams is untouched** — none added, none removed — and two of the four contracts it
 names change: `VaultHttpTransport` takes two — the temporary-versus-recurring split, and the retry
 hint its response record has to start carrying — and `VapidSigner` takes the exception vocabulary
-above. `PushHttpClient`'s does not: it throws what it throws today,
-and the interrupt test is the facade's, written as a disjunction precisely so that no transport has
-to be obliged to anything. Both are changes *within* seams rather than to which seams exist.
+above. `PushHttpClient`'s does not: it throws what it throws today, and the interrupt test is the
+facade's, written as a disjunction precisely so that no transport has to be obliged to anything. Both are changes *within* seams rather than to which seams exist.
 ADR-010's key custody is untouched: which signer a deployment uses does not change, only what one of
 them throws. ADR-019 keeps its decision; one derivation loses the quantity it was sized against, as
 recorded above. ADR-011's size limit is unaffected, though where its refusal is *reported* moves.
