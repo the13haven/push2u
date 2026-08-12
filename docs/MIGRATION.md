@@ -150,8 +150,10 @@ with a host and at most 2048 characters, a 65-byte uncompressed `p256dh` (`0x04`
 be a real point on the P-256 curve, a 16-byte `auth`. A bad subscription fails where it is
 registered instead of on every later send, and the failure message never contains the endpoint's
 path or query — a push endpoint is a capability URL. The length bound matters to a migration with
-stored subscriptions: `web-push` accepted endpoints of any length, so an oversized one may be
-sitting in your store, and constructing a `Subscription` from it now throws. A hostname above
+stored subscriptions: nothing in `web-push`'s published sources checks the endpoint's length — its
+`Subscription` assigns its public fields as given (above), and no such check exists anywhere on
+its send path either — so an oversized endpoint may be sitting in your store, and constructing a
+`Subscription` from it now throws. A hostname above
 RFC 1035's 253-character cap cannot resolve, so a subscription refused for its host was never
 deliverable; a refusal over a capability path longer than roughly 1780 characters is the deliberate
 cost of bounding attacker-chosen endpoint size. `Endpoints.requireSecure` and

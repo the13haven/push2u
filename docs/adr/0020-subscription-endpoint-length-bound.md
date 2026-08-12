@@ -13,9 +13,11 @@ once in the cache key and once inside the header it retains. Measured on that br
 host costs 1.0 KB per entry, a 10 000-char host 23 KB, a 1 000 000-char host 2.3 MB — linear at
 ~2.33 bytes per host character per entry, 142 MB across the default 64 entries at the last size,
 with no ceiling. The cache did not create the cost, it made it *retained*: a megabyte endpoint
-produced a megabyte header on every POST before the cache existed. No real push service can supply
-such a value — RFC 1035 caps a domain name at 253 characters in presentation form, so no longer
-host resolves — which is what makes a bound safe to impose.
+produced a megabyte header on every POST before the cache existed. What makes a bound safe to
+impose is structural: RFC 1035 §2.3.4 caps a domain name at 255 octets, 253 as a presentation-form
+hostname, so no longer host resolves and only the capability path and query legitimately vary —
+and a capability needs only enough characters to be unguessable, tens of them, two orders of
+magnitude below the headroom the bound below leaves.
 
 **Decision.** `Subscription` refuses an endpoint longer than **2048 characters** at construction,
 with an `IllegalArgumentException` naming the limit and the actual length — and not the endpoint,
