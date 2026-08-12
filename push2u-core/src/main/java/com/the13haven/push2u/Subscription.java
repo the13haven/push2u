@@ -19,19 +19,22 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Construction validates what it accepts: {@code p256dh} must encode a point on the P-256 curve (the full
  * {@link P256PublicKeys#requireOnCurve} check — see the constructor), {@code auth} must be exactly 16 bytes, and the
- * endpoint must satisfy {@link Endpoints#requireSecure}. A value that cannot ever be sent to is refused here, with an
- * {@link IllegalArgumentException}, rather than at every later send.
+ * endpoint must satisfy {@link Endpoints#requireSecure} and be at most 2048 characters long. A value that cannot ever
+ * be sent to is refused here, with an {@link IllegalArgumentException}, rather than at every later send.
  *
  * <p>The array components are defensively copied in the compact constructor and the accessors, and
  * {@code equals}/{@code hashCode}/{@code toString} are overridden for content-based value semantics with the
  * {@code auth} secret kept out of {@code toString}.
  *
  * <p>The endpoint must be an absolute {@code https} URL (RFC 8030 requires TLS between the application server and the
- * push service). It is a capability URL — whoever holds it can send messages to the subscriber — so it is treated as a
- * secret and never printed verbatim; see {@link Endpoints#redact}.
+ * push service) of at most 2048 characters. The bound is structural: RFC 1035 §2.3.4 caps a domain name at 255 octets,
+ * 253 as a presentation-form hostname, and a capability path needs only enough characters to be unguessable — a 256-bit
+ * token is 43 base64url characters — so roughly 1780 characters of headroom remain beyond the longest resolvable host.
+ * It is a capability URL — whoever holds it can send messages to the subscriber — so it is treated as a secret and
+ * never printed verbatim; see {@link Endpoints#redact}.
  *
- * @param endpoint the push service endpoint URL that encrypted messages are POSTed to — an absolute {@code https} URL,
- *     treated as a secret
+ * @param endpoint the push service endpoint URL that encrypted messages are POSTed to — an absolute {@code https} URL
+ *     of at most 2048 characters, treated as a secret
  * @param p256dh the user agent's P-256 public key — a 65-byte X9.62 uncompressed point encoding a point on the P-256
  *     curve
  * @param auth the 16-byte authentication secret (RFC 8291 §3.2)
@@ -44,7 +47,20 @@ import org.jspecify.annotations.Nullable;
 public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
     /**
-     * Validates the key material, requires an absolute {@code https} endpoint, and defensively copies the arrays.
+     * The longest endpoint a subscription may carry, in characters: {@value} — a hard ceiling on what an
+     * attacker-chosen endpoint can cost, argued structurally rather than from any push service's behaviour. RFC 1035
+     * §2.3.4 caps a domain name at 255 octets, 253 as a presentation-form hostname, so beyond the longest resolvable
+     * host an endpoint varies only in its capability path and query — and a capability needs only enough characters to
+     * be unguessable, 43 base64url characters for a 256-bit token, two orders of magnitude below the ~1780 characters
+     * of headroom the bound leaves. Every send derives an {@code Authorization} header that embeds the endpoint's
+     * origin, and the sender's token cache retains one such header per origin, so without this bound the party
+     * supplying subscriptions would choose both the per-request and the retained cost.
+     */
+    private static final int MAX_ENDPOINT_LENGTH = 2048;
+
+    /**
+     * Validates the key material, requires an absolute {@code https} endpoint of bounded length, and defensively copies
+     * the arrays.
      *
      * <p>{@code p256dh} gets the full {@link P256PublicKeys#requireOnCurve} check — shape, coordinates inside the P-256
      * field, curve equation — not merely the structural one. The value is attacker-supplied (a registration endpoint
@@ -61,6 +77,13 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
         P256PublicKeys.requireOnCurve(p256dh, "p256dh");
         if (auth.length != 16) {
             throw new IllegalArgumentException("auth must be 16 bytes (RFC 8291 §3.2)");
+        }
+        // Before requireSecure, so nothing downstream ever works on an unbounded string. The message
+        // carries the two lengths and not the endpoint — not even the redacted form, whose origin
+        // half contains the host, which is the very part of an oversized endpoint that is oversized.
+        if (endpoint.length() > MAX_ENDPOINT_LENGTH) {
+            throw new IllegalArgumentException(
+                    "endpoint must be at most " + MAX_ENDPOINT_LENGTH + " characters, was " + endpoint.length());
         }
         Endpoints.requireSecure(endpoint);
         p256dh = p256dh.clone();

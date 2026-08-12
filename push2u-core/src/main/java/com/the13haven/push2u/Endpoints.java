@@ -66,10 +66,12 @@ public final class Endpoints {
     }
 
     /**
-     * Validates the {@link Subscription} endpoint contract: an absolute {@code https} URL with a host (RFC 8030
-     * requires TLS between the application server and the push service; there is no loopback exception). Public so
-     * consumers can enforce the same contract at their own API boundary — e.g. reject a subscription registration
-     * before persisting it — instead of storing data every later send will refuse.
+     * Validates the protocol half of the {@link Subscription} endpoint contract: an absolute {@code https} URL with a
+     * host (RFC 8030 requires TLS between the application server and the push service; there is no loopback exception).
+     * Public so consumers can enforce the same contract at their own API boundary — e.g. reject a subscription
+     * registration before persisting it — instead of storing data every later send will refuse. Deliberately not
+     * checked here: the 2048-character length bound {@link Subscription}'s constructor applies, which is a resource
+     * control rather than a protocol rule and needs no helper — it is a plain length comparison.
      *
      * <p>Violations throw {@link IllegalArgumentException} whose message never contains the raw URL — only the
      * {@link #redact}ed form (origin + fingerprint, never the capability path/query), if the URI parsed at all.
