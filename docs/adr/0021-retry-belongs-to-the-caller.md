@@ -297,7 +297,8 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   over an HSM or a KMS would be choosing between them for nothing, and what an operator reads to tell
   an unroutable Vault from a sealed one is the message and the cause, which both carry. The retry
   hint below is not the same question and does not get the same answer — it is not a second name for
-  one thing but a value the caller acts on, present or absent on either half. That much of
+  one thing but a value the caller acts on, carried by the one type across both halves and filled
+  only where something was declared, which is to say on the answered one. That much of
   `PushCryptoException`'s reasoning survives intact; what does not is bundling a defect in with it.
 
   This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
@@ -330,11 +331,15 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   becomes available again — and neither does a PKCS#11 token or a KMS refusing on quota. Vault fills
   it on a `429` alone, and there only where an operator has set `enable_rate_limit_response_headers`,
   which HashiCorp documents as defaulting to false. An earlier draft removed the field over exactly
-  that arithmetic, and the arithmetic proves too much: `RetryableFailure`'s own hint is absent from
-  most of the answers it accompanies, since RFC 9110 only has a `503` *MAY* carry one, and nobody
-  proposes deleting it. A field earns its place on the case where it is filled, so long as its
-  absence is the ordinary reading rather than a surprise. Here the case where it is filled is the
-  rate-limited one — the case where repeating early is worst.
+  that arithmetic, and the arithmetic proves too much, because `RetryableFailure`'s own hint is
+  optional for the same reason. Most of the statuses that variant covers — `408`, `421`, `500`, `502`
+  and `504` — have no `Retry-After` provision in any specification this decision cites, and `503`'s
+  is a *MAY*. Two have one: RFC 8030 §8.4's *SHOULD* on `429`, and RFC 9110 §15.5.14's on a `413`,
+  which is the whole of why a `413` is classified where it is. Nobody proposes deleting the field
+  over the statuses that leave it empty, because a field earns its place on the case where it is
+  filled, so long as its absence is the ordinary reading rather than a surprise. The parallel is
+  tighter than an analogy: on both seams the case that fills the hint is the rate-limited one, and on
+  both it is the case where repeating early is worst.
 
   It is not free. `VaultHttpResponse` carries a status and a body today, so the hint has to cross
   that record before it can cross the signer: a second change to a published type in the Vault
@@ -543,8 +548,9 @@ Those two are the only ADRs whose decisions move, and each keeps its status line
 implemented, as ADR-004's did until ADR-019 was. ADR-004 is untouched and reinforced: the library
 holds no per-send state, and this removes the loop that came closest to holding some. **ADR-005's
 enumeration of seams is untouched** — none added, none removed — and two of the four contracts it
-names change: `VaultHttpTransport` takes the unreachable-versus-recurring split, and `VapidSigner`
-takes the exception vocabulary above. `PushHttpClient`'s does not: it throws what it throws today,
+names change: `VaultHttpTransport` takes two — the temporary-versus-recurring split, and the retry
+hint its response record has to start carrying — and `VapidSigner` takes the exception vocabulary
+above. `PushHttpClient`'s does not: it throws what it throws today,
 and the interrupt test is the facade's, written as a disjunction precisely so that no transport has
 to be obliged to anything. Both are changes *within* seams rather than to which seams exist.
 ADR-010's key custody is untouched: which signer a deployment uses does not change, only what one of
