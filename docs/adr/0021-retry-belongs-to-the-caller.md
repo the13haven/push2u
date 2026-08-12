@@ -233,11 +233,21 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   response Vault could not have meant, an unparseable signature or a key that is not on P-256. Those
   stay `PushCryptoException`, alongside a defect and a misconfiguration.
 
-  A hint the custodian supplied travels with the outcome as a `Duration` and nothing else. A status
-  code does not cross `VapidSigner`: that seam is implemented by a PKCS#11 token, a cloud KMS and a
-  file-backed key as well as by Vault, and an HTTP number would oblige all of them to speak a
-  protocol one of them has. "Not before this long from now" is the part of a `429` that is about
-  signing rather than about HTTP, and it is the part a caller who owns the retry can use.
+  **The outcome carries no hint about when to come back.** A status code cannot cross `VapidSigner`
+  in any case: that seam is implemented by a PKCS#11 token, a cloud KMS and a file-backed key as
+  well as by Vault, and an HTTP number would oblige all of them to speak a protocol one of them has.
+  A protocol-neutral `Duration` would carry the useful half of a `429` without that objection, and
+  is rejected on what such a field would actually hold. `LocalEcVapidSigner` can never fill it — a
+  key in a configuration file has no moment it becomes available again — and neither can a PKCS#11
+  token or a KMS refusing on quota, so for the custody this library ships by default the field is
+  permanently empty. Vault fills it on a `429` alone, and only where an operator has set
+  `enable_rate_limit_response_headers`, which HashiCorp documents as defaulting to false. A caller
+  would therefore handle an absent hint on every path it can be shown, in exchange for a value it
+  sees in a configuration it has to opt into. What the signer has to say is that it cannot sign now,
+  and a sender that does not retry needs nothing further to report it. A deployment that does want
+  to pace against Vault's own headers implements `VaultHttpTransport`, which is where the response
+  arrives and the only place it exists — `VaultHttpResponse` carries a status and a body, and no
+  header crosses into the signer to be forwarded from.
 
   Key material that cannot be used is not in this category at all: `Subscription`'s constructor
   already applies the full on-curve check and refuses such a value at the boundary that supplied it,
