@@ -273,10 +273,10 @@ single channel for everything a retrier reasons about.
   expected to act on is the wrong answer to that. Reporting it as retryable would be worse: the loop
   spins, every attempt failing instantly on an interrupt status nobody cleared. So the conversion is
   skipped, on both the push and the signer paths, when the cause chain carries an
-  `InterruptedException` **or** the current thread's interrupt status is set. Neither test alone is sound: an interruption
-  surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries no
-  `InterruptedException` beneath it, and a transport may attach a cause without re-setting the flag or
-  the reverse.
+  `InterruptedException` **or** the current thread's interrupt status is set. Neither test alone is
+  sound: an interruption surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries
+  no `InterruptedException` beneath it, and a transport may attach a cause without re-setting the
+  flag or the reverse.
 
 What still throws, then, is API misuse and defect: a `null` where the contract forbids one, a builder
 configured with a value it rejects, a JCE provider that cannot do `AES/GCM/NoPadding`, an unexpected
