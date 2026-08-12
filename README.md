@@ -73,10 +73,12 @@ carrying an off-curve point can never be sent to, so it is rejected with an
 `IllegalArgumentException` where the subscription is created instead of failing as a
 `PushCryptoException` on every later send. The curve check runs on the fixed FIPS 186-4 P-256
 parameters and needs no JCA provider, so it works wherever the subscription is built. The length
-bound refuses nothing a real push service can issue — a resolvable hostname is capped at 253
-characters (RFC 1035), and the rest is generous headroom for the capability path — while capping
-what an attacker-chosen endpoint can cost: its origin is embedded in every `Authorization` header
-a send builds, and the sender retains one such header per origin while a token is reused. To enforce the same contract at your own registration
+bound is structural, not a fact about any push service: a resolvable hostname is capped at 253
+characters (RFC 1035 fixes 255 octets, 253 in presentation form), a capability path needs only
+enough characters to be unguessable, and roughly 1780 characters of headroom remain — while the
+ceiling caps what an attacker-chosen endpoint can cost, since its origin is embedded in every
+`Authorization` header a send builds, and the sender retains one such header per origin while a
+token is reused. To enforce the same contract at your own registration
 boundary — rejecting a bad registration before persisting it — the checks are public:
 `Endpoints.requireSecure(endpoint)` for the endpoint, `P256PublicKeys.requireOnCurve(bytes,
 "p256dh")` for the key material (and `P256PublicKeys.requireUncompressedPoint` when only the

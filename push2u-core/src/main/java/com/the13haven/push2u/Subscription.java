@@ -27,10 +27,11 @@ import org.jspecify.annotations.Nullable;
  * {@code auth} secret kept out of {@code toString}.
  *
  * <p>The endpoint must be an absolute {@code https} URL (RFC 8030 requires TLS between the application server and the
- * push service) of at most 2048 characters — a bound no real push service can exceed, since a resolvable hostname is
- * capped at 253 characters by RFC 1035 and the rest is generous headroom for the capability path. It is a capability
- * URL — whoever holds it can send messages to the subscriber — so it is treated as a secret and never printed verbatim;
- * see {@link Endpoints#redact}.
+ * push service) of at most 2048 characters. The bound is structural: RFC 1035 §2.3.4 caps a domain name at 255 octets,
+ * 253 as a presentation-form hostname, and a capability path needs only enough characters to be unguessable — a 256-bit
+ * token is 43 base64url characters — so roughly 1780 characters of headroom remain beyond the longest resolvable host.
+ * It is a capability URL — whoever holds it can send messages to the subscriber — so it is treated as a secret and
+ * never printed verbatim; see {@link Endpoints#redact}.
  *
  * @param endpoint the push service endpoint URL that encrypted messages are POSTed to — an absolute {@code https} URL
  *     of at most 2048 characters, treated as a secret
@@ -46,14 +47,14 @@ import org.jspecify.annotations.Nullable;
 public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
 
     /**
-     * The longest endpoint a subscription may carry, in characters: {@value} — comfortably above anything a resolvable
-     * push service can issue, and a hard ceiling on what an attacker-chosen endpoint can cost. A hostname cannot exceed
-     * the 253-octet presentation form RFC 1035 §2.3.4 fixes, so of a real endpoint only the capability path and query
-     * vary in length, and a capability needs only enough characters to be unguessable — a 256-bit token is 43 base64url
-     * characters. The remaining ~1780 characters are headroom of two orders of magnitude over that. Every send derives
-     * an {@code Authorization} header that embeds the endpoint's origin, and the sender's token cache retains one such
-     * header per origin, so without this bound the party supplying subscriptions would choose both the per-request and
-     * the retained cost.
+     * The longest endpoint a subscription may carry, in characters: {@value} — a hard ceiling on what an
+     * attacker-chosen endpoint can cost, argued structurally rather than from any push service's behaviour. RFC 1035
+     * §2.3.4 caps a domain name at 255 octets, 253 as a presentation-form hostname, so beyond the longest resolvable
+     * host an endpoint varies only in its capability path and query — and a capability needs only enough characters to
+     * be unguessable, 43 base64url characters for a 256-bit token, two orders of magnitude below the ~1780 characters
+     * of headroom the bound leaves. Every send derives an {@code Authorization} header that embeds the endpoint's
+     * origin, and the sender's token cache retains one such header per origin, so without this bound the party
+     * supplying subscriptions would choose both the per-request and the retained cost.
      */
     private static final int MAX_ENDPOINT_LENGTH = 2048;
 

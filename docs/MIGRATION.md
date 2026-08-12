@@ -146,11 +146,18 @@ Subscription subscription = Subscription.fromBase64(endpoint, p256dh, auth);
 ```
 
 `push2u`'s `Subscription` is a record that validates on construction: an absolute `https` endpoint
-with a host, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must be a real point on the
-P-256 curve, a 16-byte `auth`. A bad subscription fails where it is registered instead of on every
-later send, and the failure message never contains the endpoint's path or query — a push endpoint
-is a capability URL. `Endpoints.requireSecure` and `P256PublicKeys.requireOnCurve` are public so
-you can apply the same checks at your own registration boundary before persisting.
+with a host and at most 2048 characters, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must
+be a real point on the P-256 curve, a 16-byte `auth`. A bad subscription fails where it is
+registered instead of on every later send, and the failure message never contains the endpoint's
+path or query — a push endpoint is a capability URL. The length bound matters to a migration with
+stored subscriptions: `web-push` accepted endpoints of any length, so an oversized one may be
+sitting in your store, and constructing a `Subscription` from it now throws. A hostname above
+RFC 1035's 253-character cap cannot resolve, so a subscription refused for its host was never
+deliverable; a refusal over a capability path longer than roughly 1780 characters is the deliberate
+cost of bounding attacker-chosen endpoint size. `Endpoints.requireSecure` and
+`P256PublicKeys.requireOnCurve` are public so you can apply the same checks at your own
+registration boundary before persisting (the length bound is a plain `endpoint.length()`
+comparison and needs no helper).
 
 ### Sending
 
