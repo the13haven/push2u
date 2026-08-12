@@ -96,13 +96,14 @@ the library to publish and then have to version.
 Two things about a *response* would otherwise be re-derived by every caller, and neither is a loop:
 
 - the classification of a status — worth another attempt, a permanent rejection, or a dead
-  subscription. Half of it has a specification behind it and half does not, which is exactly why it
-  is worth publishing. RFC 8030 §8.6 has a push service answer a rate-limited delivery with `429` and
-  says it SHOULD carry a `Retry-After` saying how long to wait before the next request to that
-  resource: that clause is the whole warrant for honouring the header, and the closest any RFC comes
-  to calling a status worth retrying. Nothing does the same for 5xx — RFC 9110 defines the class
-  without ruling on retrying it — so the *set* the library treats as retryable is its own judgement.
-  A caller reproducing it is reproducing a judgement, not reading a specification.
+  subscription. Parts of it have a specification behind them and the whole does not, which is exactly
+  why it is worth publishing. RFC 8030 §8.4 has a push service answer a rate-limited delivery with
+  `429` and says it SHOULD carry a `Retry-After` saying how long to wait before the next request to
+  that resource; RFC 9110 §15.6.4 says a `503`'s condition is temporary and that the server MAY send
+  a `Retry-After` suggesting how long to wait before retrying. Those two clauses are the warrant for
+  honouring the header at all. Nothing says the same for the rest of the 5xx class, which the library
+  treats as retryable anyway, so the *set* is its own judgement stitched from two specified cases and
+  a generalisation. A caller reproducing it is reproducing a judgement, not reading a specification.
 - what the push service's `Retry-After` said — delta-seconds, or any of the three HTTP-date forms a
   recipient must accept, with RFC 9110's two-digit-year rule and the leap-second case.
 
@@ -222,8 +223,12 @@ a record that cannot be corrected once it is settled.
 
 *The status mapping is rewritten rather than amended*, wherever it appears. Its result column becomes
 variants instead of enum constants, so every row is touched; the failure row splits in two; and both
-the transport and the crypto rows split, each keeping an exception only for the interrupted send. The
-one row that survives unchanged is the policy rejection, which stays an exception outright.
+the transport and the crypto rows split, though not alike. The transport row keeps an exception only
+for the interrupted send, everything else about it having become a result. The crypto row keeps one
+for every cryptographic failure that recurs — a missing algorithm, a key of the wrong shape, a
+custodian that answers and refuses — and loses only unreachability to the new type, which is then
+itself an exception when the send was interrupted. The one row that survives unchanged is the policy
+rejection, which stays an exception outright.
 
 *Two facts a caller must not get wrong on its own are stated where a caller will meet them*: that
 `Retry-After` is reported with no ceiling applied, so the caller's own is the only one; and that
