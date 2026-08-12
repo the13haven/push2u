@@ -145,6 +145,11 @@ attempt is a result; what will fail identically until someone changes something 
   transport contract gains the requirement the shipped one already meets: a transport that meets an
   interruption re-sets the flag and attaches the cause. The disjunction is what keeps a transport
   that honours only one of the two from producing the spin.
+
+  What escapes `send` afterwards is therefore best named as *a send that was interrupted*, and not as
+  an `InterruptedException`. The failure that surfaced may be an ordinary connect timeout; what makes
+  it not a delivery outcome is the interruption it happened under, which is the thing the two limbs
+  detect between them. Everywhere below that names this case, that is what is meant.
 - `EndpointRejectedException` and `IllegalArgumentException` keep propagating. A payload that does
   not fit will not fit next time either. A refused endpoint is treated as permanent **by decision**
   rather than by observation: `EndpointPolicy` is a consumer-implemented seam whose own contract
@@ -169,15 +174,13 @@ around signer construction, or around a direct `sign` call, must add the new typ
 the failure will fly past. That is the intended consequence of not subtyping, arriving in the one
 place where no result exists to soften it.
 
-What moves with it is the `VapidSigner` contract itself, which is the larger half and is dealt with
-in the roll-call below rather than here: the SPI's published Javadoc names `PushCryptoException` for
-a remote key service that cannot be reached, and ADR-018 decided that wording deliberately.
+What moves with it is the `VapidSigner` contract itself, which is the larger half and belongs to
+ADR-018 rather than to this paragraph; the roll-call below settles it.
 
 Apart from that type, this ADR decides only *which side of the line* each failure falls on. It does
 change the surface in doing so: `PushDeliveryException` stops escaping `send` for every reason but
-one, so the status-mapping row narrows to the interrupted send rather than disappearing — which is
-the form the table takes wherever it is written down, and a narrower repair than deletion in the one
-published argument that uses a *retryable* transport failure as its foil. What it does not touch is the
+one, so the status-mapping row narrows to the interrupted send rather than disappearing, which is the
+form the table takes wherever it is written down. What it does not touch is the
 shape of the hierarchy: the `IllegalArgumentException` ambiguity reported as
 https://github.com/the13haven/push2u/issues/87, and whatever the exception types settle into, are
 that work's to decide.
@@ -196,8 +199,9 @@ Four consumer-facing documents describe retry as a feature and all four move —
 `docs/SPRING.md`, `docs/MIGRATION.md` and `docs/DESIGN.md` above — and two more move for a reason
 other than retry. `README.md` loses its retry section, its feature bullet and its worst-case blocking
 budget, and gains the worked `switch`; one of its arguments is collateral, since it justifies an
-exception type by contrast with a *retryable* transport failure, and what escapes `send` afterwards
-is the one transport failure that is not. `docs/SPRING.md` loses the `retry.*` property block and the
+exception type by contrast with "a retryable transport failure", and no transport failure escaping
+`send` afterwards is a delivery outcome at all — the contrast needs a new second term, not a smaller
+one. `docs/SPRING.md` loses the `retry.*` property block and the
 prose attributing a rejected bound to its key. `docs/MIGRATION.md` is the one that **inverts** and is
 therefore the one to get wrong: it warns that
 an application retry loop on top of push2u multiplies, and instructs the reader to delete theirs or
@@ -219,7 +223,9 @@ token cache, which reason from the retry window directly: the threat model state
 the endpoint policy and its factories names the caller-visible pair — a status code *versus* a
 `PushDeliveryException` — as what makes an unrestricted sender an SSRF oracle, and that pair becomes
 a variant carrying a zero status code; the delivery exception's own class Javadoc enumerates "a
-connection failure, a timeout, an interrupted send" and only the third survives it; the transport
+connection failure, a timeout, an interrupted send", which stops being a list of what that type
+reports out of a send — all three become results, and any of the three escapes when the send was
+being interrupted, which is the axis the sentence does not have; the transport
 seam's Javadoc says the sender "owns retry and status interpretation", of which half remains; and the
 sender's class Javadoc says it interprets the status into a result "with retries". None of these is a
 comment to be deleted — each states a reason a consumer needs, and each needs the reason restated for
@@ -269,10 +275,18 @@ is populated on every variant and the coarse "should I retry" question needs a s
 both. Five types and a marker for one conditional field is the worse trade today; it is where to go
 if the conditional cause proves awkward in practice.
 
-The suites go with the code: `RetryPolicyTest` and `SleeperTest` cease to have a subject, as does the
-recording sleeper in the shared test fixtures, and the RFC vectors in `RetryAfterTest` keep theirs —
-they simply reach it through the result instead of through the loop. The parser stays
-package-private; what becomes public is what it produced.
+The suites go with the code, and more of them than the removed classes suggest. `RetryPolicyTest` and
+`SleeperTest` cease to have a subject, as does the recording sleeper in the shared test fixtures. The
+RFC vectors in `RetryAfterTest` keep theirs and simply reach it through the result instead of through
+the loop. `PushSenderStatusClassificationTest` is the large one and is rewritten rather than adjusted:
+its subject is the enum being replaced, and nearly every method it holds encodes either the loop or
+the attempt count — a retryable status retried after one backoff, retries exhausted, a default sender
+exhausting after exactly three attempts, and a long tail asserting that some outcome took one attempt.
+`Push2uAutoConfigurationTest` loses the whole `push2u.retry.*` half, including the filler-combination
+assertions that are what pin the property-name attribution trick the design document calls out — the
+trick goes with the properties, and so does its pin. `PushSenderTest`, `Push2uPropertiesTest` and the
+BC-FIPS sender test each carry retry assertions of their own. The parser stays package-private; what
+becomes public is what it produced.
 
 Two defaults elsewhere were derived partly from the retry window and are deliberately left where they
 are. The async executor's rationale gives two reasons its tasks block for a long time — the
@@ -290,9 +304,7 @@ default nonetheless does not move, for a reason ADR-019 states in the same breat
 to carry it alone: skew against a push service checking `exp` on its own clock is minutes whatever
 the token's lifetime is, and the margin costs 0.7 % of a twelve-hour token's life. Five minutes is
 retained rather than recomputed, and that distinction is the whole content of this paragraph. ADR-019
-is immutable and cannot say it, which is why it is said here; the published sentences that reason
-from the retry window, in the margin's own documentation and in the comment beside the cache, are
-among the ones this change falsifies and rewrites.
+is immutable and cannot say it, which is why it is said here.
 
 ## What else moves, and what does not
 
@@ -337,7 +349,8 @@ ADR-017 keep their decisions, but not because this change stays away from them: 
 about the endpoint policy above, that a refusal is permanent by decision, and ADR-016 illustrates its
 own threat model with the very pair this ADR reshapes — a status code against a
 `PushDeliveryException`, plus timing, as the blind SSRF oracle an unrestricted sender offers. The
-security property survives for a reason that has nothing to do with how a failure is reported: the
+observable pair is not an illustration in that argument but its mechanism — what the caller can
+observe *is* the oracle. The mechanism survives this change in a new shape, a variant carrying a zero
+status code where an exception used to be, and it is closed by the same decision either way: the
 policy still runs first and unconditionally, before the encryption, the signature and any I/O, so
-what a rejection *is* has not moved. Only the shape of what a later failure is reported as, which the
-oracle argument used as an illustration rather than as its mechanism.
+nothing about what a rejection *is*, or about when it is reached, has moved.
