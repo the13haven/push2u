@@ -55,7 +55,7 @@ class PushSenderJwtConcurrencyTest {
 
         // An explicit pool, never the common pool: these tasks rendezvous (one blocks until the other has
         // finished), so they need one worker each, and the common pool's parallelism — availableProcessors() - 1 —
-        // can be smaller than that on a small machine, parking the rendezvous forever.
+        // can be smaller than that on a small machine, deadlocking the rendezvous until its bounded waits time out.
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             signer.blockNextSign();
             CompletableFuture<PushResult> blockedMint = CompletableFuture.supplyAsync(
