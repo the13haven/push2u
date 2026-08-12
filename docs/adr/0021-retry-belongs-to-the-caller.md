@@ -297,8 +297,8 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   over an HSM or a KMS would be choosing between them for nothing, and what an operator reads to tell
   an unroutable Vault from a sealed one is the message and the cause, which both carry. The retry
   hint below is not the same question and does not get the same answer — it is not a second name for
-  one thing but a value the caller acts on, present or absent on either half. That much of `PushCryptoException`'s reasoning survives intact; what does not is
-  bundling a defect in with it.
+  one thing but a value the caller acts on, present or absent on either half. That much of
+  `PushCryptoException`'s reasoning survives intact; what does not is bundling a defect in with it.
 
   This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
   is not on offer: nothing answered, so nothing states whether the condition will hold next time. A
