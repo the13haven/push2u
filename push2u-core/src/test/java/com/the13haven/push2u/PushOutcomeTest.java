@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
@@ -143,5 +144,43 @@ class PushOutcomeTest {
         assertThat(outcome.status()).hasValue(473);
         assertThat(outcome.retryAfter()).contains(Duration.ofSeconds(5));
         assertThat(outcome.cause()).isSameAs(cause);
+    }
+
+    /**
+     * {@link VapidSignerUnavailableException} is extensible and its accessors are not final, so a third-party subtype
+     * can answer differently on every call. The outcome snapshots the status and the hint once, at construction —
+     * ADR-021 has them "copied across", not delegated — so what the same outcome answers can never move afterwards, on
+     * the accessors or in the rendering. Pinned by a subtype whose answers shift after the first read.
+     */
+    @Test
+    void signerUnavailableAnswersDoNotMoveWhenTheExceptionsDo() {
+        VapidSignerUnavailableException shifting =
+                new VapidSignerUnavailableException("standby", 473, Duration.ofSeconds(5), null) {
+                    private int statusReads;
+                    private int hintReads;
+
+                    @Override
+                    public OptionalInt status() {
+                        return statusReads++ == 0 ? super.status() : OptionalInt.of(200);
+                    }
+
+                    @Override
+                    public Optional<Duration> retryAfter() {
+                        return hintReads++ == 0 ? super.retryAfter() : Optional.of(Duration.ofDays(365));
+                    }
+                };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(shifting);
+
+        // The subtype has genuinely moved on: every read after the construction-time one answers differently.
+        assertThat(shifting.status()).hasValue(200);
+        assertThat(shifting.retryAfter()).contains(Duration.ofDays(365));
+
+        // The outcome's answers are the construction-time ones — repeatedly, and in toString() too.
+        assertThat(outcome.status()).hasValue(473);
+        assertThat(outcome.status()).hasValue(473);
+        assertThat(outcome.retryAfter()).contains(Duration.ofSeconds(5));
+        assertThat(outcome.retryAfter()).contains(Duration.ofSeconds(5));
+        assertThat(outcome.toString()).contains("custodian status 473").contains("retry after PT5S");
     }
 }

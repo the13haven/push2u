@@ -226,14 +226,21 @@ public sealed interface PushOutcome {
     final class SignerUnavailable implements NotAttempted {
 
         private final VapidSignerUnavailableException cause;
+        private final OptionalInt status;
+        private final Optional<Duration> retryAfter;
 
         /**
-         * Creates the outcome from the signer's own signal, whose declared status and retry hint this outcome reports.
+         * Creates the outcome from the signer's own signal, snapshotting the status and the retry hint the signal
+         * declares at this moment. The exception type is extensible and its accessors are not final, so both values are
+         * read exactly once, here: what this outcome answers is fixed at construction, and nothing the exception
+         * computes or changes afterwards can move it.
          *
          * @param cause what the {@link VapidSigner} raised
          */
         public SignerUnavailable(VapidSignerUnavailableException cause) {
             this.cause = Objects.requireNonNull(cause, "cause");
+            this.status = cause.status();
+            this.retryAfter = cause.retryAfter();
         }
 
         /**
@@ -242,12 +249,13 @@ public sealed interface PushOutcome {
          * why this outcome exists at all. It is the <b>custodian's</b> status and never a push service's — a
          * {@code 503} here is a sealed or overloaded custodian and no POST was made, where a {@code 503} on
          * {@link RetryableFailure} is the push service refusing a delivery. Empty for a key held locally, for a PKCS#11
-         * token, and for the whole half where nothing answered at all.
+         * token, and for the whole half where nothing answered at all. Snapshotted from the signer's signal when this
+         * outcome was constructed, so every read answers the same.
          *
          * @return the custodian's status, or empty where nothing answered a number
          */
         public OptionalInt status() {
-            return cause.status();
+            return status;
         }
 
         /**
@@ -256,17 +264,17 @@ public sealed interface PushOutcome {
          * the one whoever schedules the next attempt chooses.
          *
          * <p><b>Nor is it a floor: this value is not checked, and a scheduler reading it guards it.</b> The duration is
-         * whatever the {@link VapidSigner} put on its signal, handed across unexamined so that an outage report can
-         * never be replaced by a complaint about how it was written — which means a signer that fills the hint badly
-         * can hand a caller a zero or negative delay, and the sender will not turn that into a failure. Treat anything
-         * at or below zero as no declaration at all rather than as a due time already past. The push service's hint on
-         * {@link RetryableFailure} is the deliberate contrast: that one is validated where the outcome is built, so it
-         * is never negative.
+         * whatever the {@link VapidSigner} put on its signal, read once when this outcome was constructed and handed
+         * across unexamined so that an outage report can never be replaced by a complaint about how it was written —
+         * which means a signer that fills the hint badly can hand a caller a zero or negative delay, and the sender
+         * will not turn that into a failure. Treat anything at or below zero as no declaration at all rather than as a
+         * due time already past. The push service's hint on {@link RetryableFailure} is the deliberate contrast: that
+         * one is validated where the outcome is built, so it is never negative.
          *
          * @return the declared delay, or empty where none was declared; not guaranteed to be positive
          */
         public Optional<Duration> retryAfter() {
-            return cause.retryAfter();
+            return retryAfter;
         }
 
         /**

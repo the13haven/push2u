@@ -33,10 +33,12 @@
         across the facade, and cause() handing back that very instance is the accessor's whole
         contract — the one deliberate way to the full diagnostic, documented as such. A Throwable is
         technically mutable (its cause chain and suppressed list), but a defensive copy of an
-        exception is not a meaningful object, and the outcome deliberately never derives anything
-        from the instance after construction, so a caller mutating it changes nothing the outcome
-        promised. The store side (EI_EXPOSE_REP2) does not fire because the constructor takes the
-        exception the seam raised on purpose, for the same reason.
+        exception is not a meaningful object, and neither outcome derives anything from the instance
+        after construction — Indeterminate reads nothing from it at all, and SignerUnavailable
+        snapshots the declared status and retry hint into final fields of its own in the
+        constructor — so a caller mutating the exception, or a subtype overriding its accessors,
+        changes nothing the outcome promised. The store side (EI_EXPOSE_REP2) does not fire because
+        the constructor takes the exception the seam raised on purpose, for the same reason.
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP"/>
