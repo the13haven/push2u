@@ -146,12 +146,25 @@ or Vault types reach it.
 `PushSender` is the facade; `send`/`sendAsync` run one pipeline (docs/DESIGN.md §4):
 
 size preconditions → `EndpointPolicy` → decode subscription key → ephemeral P-256 + salt → ECDH +
-HKDF-SHA-256 → one AES-128-GCM RFC 8188 record → VAPID JWT → POST via `PushHttpClient` → retry
-429/5xx per `RetryPolicy` → `PushResult`.
+HKDF-SHA-256 → one AES-128-GCM RFC 8188 record → VAPID JWT → **one** POST via `PushHttpClient` →
+`PushOutcome`.
 
-Status mapping: `2xx` → `DELIVERED`; `404`/`410` → `SUBSCRIPTION_EXPIRED` (a result, not an
-exception — ADR-007); other → `FAILED`; transport → `PushDeliveryException`; crypto →
-`PushCryptoException`; policy → `EndpointRejectedException`.
+**The library does not retry (ADR-021).** `send` performs exactly one POST and publishes the
+classification a repeat decision needs; the schedule is the caller's. `PushOutcome` is sealed:
+`Accepted` (`2xx`) · `SubscriptionExpired` (`404`/`410`, a value and not an exception — ADR-007) ·
+`RetryableFailure(statusCode, retryAfter)` (`408`, `421`, `429`, a `413` carrying a parseable
+`Retry-After`, and the 5xx class except `501`, `505`, `506`, `508`, `511`) · `NonRetryableFailure`
+(everything else answered) · `Indeterminate` (the POST went out, nothing answered) · and the
+`NotAttempted` marker over `SignerUnavailable`, `PayloadRejected` and `EndpointRejected`. The
+`Retry-After` is reported with no ceiling applied.
+
+Exactly three seam signals convert (ADR-022's taxonomy, ADR-021's sorting):
+`EndpointRejectedException` → `EndpointRejected`; `VapidSignerUnavailableException` →
+`SignerUnavailable`; `PushDeliveryException` → `Indeterminate`. Any other `RuntimeException` from a
+consumer seam is a defect and propagates. `send` itself throws `PushCryptoException` (a defect, an
+unusable substrate, a misconfiguration that recurs), `PushInterruptedException` (recognised by the
+facade's disjunction — an `InterruptedException` in the chain *or* the thread's interrupt flag —
+never by a seam), and `IllegalArgumentException`/`NullPointerException`.
 
 Three SPIs, and only three (ADR-005):
 
@@ -204,10 +217,11 @@ starter is ordered before the core starter and outranks the local signer.
 - **Boolean naming** (CONTRIBUTING.md carries the full form, nothing enforces it): a record's
   component accessor keeps the component's name (`Health.enabled()`) because the language says so;
   a question about state is `is…`/`has…`/`can…` regardless of whether the answer is stored or
-  computed (`isDelivered()`, `isSupported()`); an action or a two-argument relation keeps its verb
-  (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived predicate wearing a
-  component accessor's name — `delivered()` beside `status()` — and the pair that takes judgement
-  is predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
+  computed (`isSupported()`, the token cache entry's `isFresh(...)`); an action or a two-argument
+  relation keeps its verb (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived
+  predicate wearing a component accessor's name, so that a judgement reads as one more stored value
+  — `fresh(...)` beside the three quantities the entry holds — and the pair that takes judgement is
+  predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
 - **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
   method, optional ones become builder steps — `PushMessage.builder(payload)`,
   `PushSender.builder(keys, contact, endpointPolicy)`. The firm rule is that `build()` must not be

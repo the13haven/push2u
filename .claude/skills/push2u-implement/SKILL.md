@@ -120,14 +120,15 @@ This is the procedure most often left half-finished, because the useful part wor
    Use it rather than writing the try/catch inline: four inline copies is what pushed
    `pushSender(...)` past PMD's complexity thresholds, and a fifth would do it again.
 
-   A value that reaches a *constructor* validating several properties at once (as `push2u.retry.*`
-   does) needs the other helper, `requireValid(property, probe)`. `applyIfPresent` would compile,
-   but it cannot attribute the failure: one constructor call rejects on behalf of any of its
-   arguments, and `RetryPolicy` reports both backoff bounds through a single message. So
-   `retryPolicy(...)` calls that constructor once per key, passing one real value and filling the
-   rest with values the constructor accepts regardless. Read its Javadoc before copying the shape —
-   the attribution rests on a stated invariant that a test samples, and the Javadoc is explicit
-   about what the sampling does and does not decide.
+   `applyIfPresent` is the only helper there is now, and it works because every property the starter
+   forwards reaches a *setter* that validates that one value. A property group that instead reached
+   a constructor validating several at once could not be attributed this way — one constructor call
+   rejects on behalf of any of its arguments — and would need a probe per key, offering the
+   constructor one real value and filling the rest with values it accepts regardless. The starter
+   had exactly one such group, `push2u.retry.*`, and it went with the retry loop; if a change ever
+   introduces another, that shape is what it needs, along with a test sampling the invariant the
+   attribution rests on — that the filler values stay acceptable beside any value of the key being
+   probed.
 
 4. **Document it.** The README property table, and the protocol-limits section if the option changes
    a limit. `docs/DESIGN.md` too if it changes the pipeline's contract rather than a number.
