@@ -44,6 +44,12 @@ Vault signer starter its own `push2u.signer.vault.*`. **There is no `push2u.retr
 library performs one POST per send and schedules no repeat, so there is nothing under this prefix
 to configure — see [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
+**If you are upgrading from a version that had one, delete it from your YAML.** A key the starter
+does not bind is ignored rather than refused, so a context still carrying `push2u.retry.max-attempts`
+and its siblings starts cleanly and then sends without a single retry — nothing at startup or at run
+time will tell you that the block stopped meaning anything, and it goes on reading like configuration
+that is in force.
+
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl`, `record-size` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
 5m, `true`, 64 entries, 24h, 4096 bytes and 4096 bytes respectively — see

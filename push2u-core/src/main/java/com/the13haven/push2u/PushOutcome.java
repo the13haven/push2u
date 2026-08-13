@@ -255,7 +255,15 @@ public sealed interface PushOutcome {
          * custodians never do. Reported exactly as it arrived, <b>with no ceiling applied</b>, so the only ceiling is
          * the one whoever schedules the next attempt chooses.
          *
-         * @return the declared delay, or empty where none was declared
+         * <p><b>Nor is it a floor: this value is not checked, and a scheduler reading it guards it.</b> The duration is
+         * whatever the {@link VapidSigner} put on its signal, handed across unexamined so that an outage report can
+         * never be replaced by a complaint about how it was written — which means a signer that fills the hint badly
+         * can hand a caller a zero or negative delay, and the sender will not turn that into a failure. Treat anything
+         * at or below zero as no declaration at all rather than as a due time already past. The push service's hint on
+         * {@link RetryableFailure} is the deliberate contrast: that one is validated where the outcome is built, so it
+         * is never negative.
+         *
+         * @return the declared delay, or empty where none was declared; not guaranteed to be positive
          */
         public Optional<Duration> retryAfter() {
             return cause.retryAfter();

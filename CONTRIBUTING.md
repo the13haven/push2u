@@ -57,6 +57,10 @@ Run `qualityCheck` before pushing: it is what CI runs (as `qualityCheckCi`, whic
 formatting instead of applying it), and it is the only way to see Checkstyle, PMD, SpotBugs,
 Error Prone, NullAway and the coverage threshold.
 
+Javadoc is the exception, and worth knowing before it surprises you: `build` fails on any javadoc
+warning, because `assemble` builds the published `-javadoc` jar and that task runs with `-Xwerror`.
+See [What the build enforces](#what-the-build-enforces).
+
 Useful narrower runs:
 
 ```bash
@@ -120,9 +124,10 @@ a value copied out of another repository.
 
 ## What the build enforces
 
-Formatting (Spotless/Palantir), naming and Javadoc on the public API (Checkstyle), bug patterns
-(PMD, SpotBugs, Error Prone) and the nullness contract (NullAway) all fail the build rather than
-warn. Aggregated instruction coverage must stay at or above 80 %.
+Formatting (Spotless/Palantir), naming and the presence of Javadoc on the public API (Checkstyle),
+bug patterns (PMD, SpotBugs, Error Prone), the nullness contract (NullAway) and every warning the
+`javadoc` tool itself emits all fail the build rather than warn. Aggregated instruction coverage
+must stay at or above 80 %.
 
 | Tool                 | What it enforces                                            | Configuration                                |
 |----------------------|-------------------------------------------------------------|----------------------------------------------|
@@ -132,12 +137,22 @@ warn. Aggregated instruction coverage must stay at or above 80 %.
 | SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
 | Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
 | JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
+| Javadoc              | Every javadoc warning, through `-Xwerror` — including on a plain `./gradlew build` | `build-logic/.../push2u-quality.gradle.kts`  |
 
-Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
-the test compilations as well, since its checks are about defects rather than style; NullAway runs
-on `main` and on `testFixtures`, which share `main`'s packages and so its nullness contract.
-Practical consequences:
+Checkstyle, PMD, SpotBugs and `javadoc` run on `main` sources only — test code is exempt. Error
+Prone covers the test compilations as well, since its checks are about defects rather than style;
+NullAway runs on `main` and on `testFixtures`, which share `main`'s packages and so its nullness
+contract. Practical consequences:
 
+- **A javadoc warning is a build failure, and it is the one check that does not wait for
+  `qualityCheck`.** The `javadoc` task runs with `-Xwerror`, so a `@param` that names no parameter,
+  a `{@link}` that resolves to nothing, a missing `@return` or a stale `@throws` stops the build
+  instead of scrolling past in the log. It catches you on a plain `./gradlew build` too, because
+  `javadoc` is not an analyser hooked to `check` — it is the task that produces the published
+  `-javadoc` jar, which `assemble` pulls in, so the strictness applies unconditionally and
+  `./gradlew javadoc` on its own tells you exactly what the gate will. Fix the finding rather than
+  the option: a JDK toolchain bump can surface a fresh warning on sources nobody touched, and that
+  is a finding like any other.
 - A new package needs a `package-info.java` carrying JSpecify's `@NullMarked`; forgetting it is a
   build failure, not a lint warning.
 - Every `.java` file carries the Apache-2.0 SPDX licence header. You do not have to type it:
