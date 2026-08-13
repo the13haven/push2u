@@ -6,18 +6,36 @@
 package com.the13haven.push2u;
 
 /**
- * Thrown when a cryptographic operation cannot be set up or carried out — a required JCE algorithm or provider is
- * missing, a key is invalid, an EC point is malformed, or a {@link VapidSigner} could not produce the VAPID signature.
- * Never a normal protocol outcome: a dead subscription is a {@code PushResult}, not an exception.
+ * Thrown when the cryptography a send needs cannot be performed, and repeating the send would fail in exactly the same
+ * way. Three kinds of failure, one remediation, so one type:
+ *
+ * <ul>
+ *   <li><b>A substrate that cannot perform the cryptography</b> — a JCE provider without {@code AES/GCM/NoPadding},
+ *       {@code HmacSHA256} or the {@code secp256r1} parameters, a key the provider will not accept, a malformed EC
+ *       point.
+ *   <li><b>An answer no key custodian could have meant</b> — something that is not an ES256 signature where a signature
+ *       was asked for, something that is not a point on P-256 where the VAPID public key was.
+ *   <li><b>A misconfiguration that recurs</b> — a mount that is not there, a token without the capability to use the
+ *       key, a key of a type VAPID cannot use, a pinned key version the custodian no longer holds.
+ * </ul>
+ *
+ * <p><b>What separates it from {@link VapidSignerUnavailableException} is whose state the answer describes.</b> A
+ * custodian that is unreachable, sealed, still catching up or rate-limiting is describing its own condition, or that of
+ * a service it called itself, and such a condition ends on its own terms — so the identical request can come back
+ * different, and that one is not this type. Everything here answers about the request, about what this deployment
+ * supplied, or about this deployment's own substrate, and answers identically until a person changes something. "Until
+ * a human acts" is not the line and would sort these wrongly: an operator unseals a custodian too.
+ *
+ * <p>A push service's verdict on a send is never this — that is a value the caller reads, not a failure.
  *
  * <p>Unchecked on purpose: the library's contract is that the public surface throws only on genuine errors, and none of
- * these is something the call site can correct by trying differently.
+ * these is something the call site can correct by trying differently. What clears one is a person — a configuration
+ * edited, a provider installed, or a defect fixed in whichever implementation answered something impossible. This type
+ * says that much and no more; <em>which</em> person and what they change is in the message and the cause chain, which
+ * are as specific as the site that threw could make them.
  *
- * <p><b>Not every occurrence is permanent.</b> A missing {@code AES/GCM/NoPadding} or {@code HmacSHA256} is a
- * deployment fault that will fail identically on the next send, and wants an alert rather than a retry. A
- * {@link VapidSigner} backed by a remote key service reports its transport failures as this exception too — the Vault
- * Transit signer does so for a request timeout and for a dropped connection — and those are transient by nature. One
- * type covers both on purpose; the message and the cause chain, not the type, say which happened.
+ * <p>The name is kept for what the type still covers rather than out of habit: in every remaining case the cryptography
+ * is what could not be performed.
  */
 public class PushCryptoException extends RuntimeException {
 

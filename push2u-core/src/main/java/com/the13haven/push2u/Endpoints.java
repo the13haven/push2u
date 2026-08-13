@@ -108,8 +108,13 @@ public final class Endpoints {
         try {
             digest = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
-            // Every JVM ships SHA-256; if it is missing the runtime is broken beyond this library.
-            throw new IllegalStateException("SHA-256 MessageDigest is unavailable", e);
+            // The fingerprint hashes with the platform's own SHA-256 whatever provider this library
+            // is configured with, deliberately: it is diagnostics rather than protocol. So a failure
+            // here does not mean a misconfigured provider — it means a runtime that is not a Java SE
+            // implementation, since every one of those ships SHA-256. That is an unusable
+            // cryptographic substrate, and an unusable substrate is worth one channel and not two,
+            // which is why it leaves as the same type a missing AES/GCM or HmacSHA256 does.
+            throw new PushCryptoException("SHA-256 MessageDigest is unavailable", e);
         }
         byte[] hash = digest.digest(endpoint.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(hash).substring(0, FINGERPRINT_HEX_LENGTH);
