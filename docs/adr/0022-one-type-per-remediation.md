@@ -245,7 +245,8 @@ hemmed them in.
 type this record does not already have. Reading the key lazily on first use instead of inside
 `build()` moves *when* the custodian is asked, not what happens when it does not answer: inside a
 send that is the `SignerUnavailable` outcome, whose repeat the caller already owns, and outside one —
-an explicit refresh, or an application asking for the key it publishes to browsers — it is
+an explicit refresh, an application asking for the key it publishes to browsers, or this repository's
+own health indicator, which probes the signer rather than a sender — it is
 `VapidSignerUnavailableException`, the same answer `build()` gives. The part of that report which
 made it sharp is settled here rather than deferred: a fetched-mode boot fails today with a type that
 cannot be told from a Transit key of the wrong sort, so failing the deployment is the only honest
@@ -259,12 +260,15 @@ here forecloses an explicit switch, and the starters' `IllegalStateException` go
 means, a context that could not be built from what was configured.
 
 **The health indicator** — https://github.com/the13haven/push2u/issues/89 — gains a distinction for
-nothing. It probes the signer, catches `RuntimeException` broadly, and reports the exception's class
-as a detail while deliberately keeping its message out of the payload. Today every signer failure
-reaches it as one class, so a DOWN says only that signing failed; after this record a custodian that
-is down and a custodian that is misconfigured arrive as different classes, which is the difference an
-operator reading a DOWN is trying to make and the one that report is about. The indicator needs no
-change to show it.
+nothing, and it is deliberately not the one that report asks for. Because the indicator probes the
+signer directly rather than through a `PushSender`, it sees exception types where a caller sees
+outcomes; it catches `RuntimeException` broadly and reports the exception's class as a detail while
+keeping the message out of the payload on purpose. Today a custodian's failures all reach it as one
+class, so a DOWN says only that signing failed, and after this record one that is down and one that
+is misconfigured arrive as different ones, with no change to the indicator to show it. What that
+report is about lies elsewhere and is untouched: a non-standard opt-out, and the indicator sitting in
+the group a container's health check polls, so that a custodian outage marks the whole container
+unhealthy. Both classes still answer `Health.down()`, and nothing here changes that.
 
 ## What this rules out
 
