@@ -47,7 +47,7 @@ public sealed interface PushOutcome {
     /**
      * The push service accepted the message for delivery. RFC 8030 §5 has the service answer {@code 201 Created} and is
      * explicit that this means accepted for delivery, not that a user agent received it — the message may still expire
-     * undelivered, and a delivery receipt would need the receipt subscription of RFC 8030 §5.3, which this library does
+     * undelivered, and a delivery receipt would need the receipt subscription of RFC 8030 §5.1, which this library does
      * not implement. The whole {@code 2xx} class lands here: a service answering {@code 200} or {@code 202} has
      * accepted the message just the same, and the precise code is in {@code statusCode} for a caller that needs to tell
      * them apart. Repeating an accepted send duplicates the notification by definition.

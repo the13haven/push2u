@@ -159,6 +159,10 @@ class PushSenderPayloadSizeTest {
         assertThat(WebPushEncryptor.maxPlaintextBytes(Integer.MAX_VALUE, 4096))
                 .as("and the other way round")
                 .isEqualTo(3993);
+        assertThat(WebPushEncryptor.maxPlaintextBytes(Integer.MIN_VALUE, Integer.MIN_VALUE))
+                .as("inputs below the builder's minimums clamp to zero — a negative long narrowed to int would"
+                        + " wrap into a large positive maximum, the one failure a size bound must never have")
+                .isZero();
     }
 
     @Test

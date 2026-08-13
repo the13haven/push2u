@@ -192,16 +192,20 @@ final class WebPushEncryptor {
      * when the payload does not fit, because plaintext octets are the unit the caller can act in.
      *
      * <p>Takes the two configured values rather than a payload so the boundaries near {@link Integer#MAX_VALUE} are
-     * testable without allocating multi-gigabyte arrays; the subtraction runs in {@code long} and the result of the
-     * {@code min} always fits an {@code int}, since each operand is an {@code int} less a positive constant.
+     * testable without allocating multi-gigabyte arrays. The subtractions run in {@code long}, and the result is
+     * clamped below at zero before it is narrowed back to {@code int}: the builder's own minimums ({@code rs} at least
+     * 18, the body ceiling at least 103) keep both operands non-negative on every real sender, but this method takes
+     * arbitrary {@code int}s, and a negative {@code long} narrowed to {@code int} can wrap into a large positive
+     * maximum — the one failure a size bound must never have. Zero is also the honest answer for such a configuration:
+     * no plaintext fits it.
      *
      * @param recordSize the configured {@code rs}
      * @param maxEncryptedBodyBytes the configured ceiling on the encrypted body
-     * @return the largest plaintext length, in octets, that both preconditions permit
+     * @return the largest plaintext length, in octets, that both preconditions permit; never negative
      */
     static int maxPlaintextBytes(int recordSize, int maxEncryptedBodyBytes) {
         long fromBodyCeiling = (long) maxEncryptedBodyBytes - BODY_OVERHEAD;
-        return (int) Math.min(fromBodyCeiling, maxPlaintextForRecordSize(recordSize));
+        return (int) Math.max(0, Math.min(fromBodyCeiling, maxPlaintextForRecordSize(recordSize)));
     }
 
     /**
