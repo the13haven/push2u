@@ -91,7 +91,11 @@ about it are worth stating where a Spring deployment meets them.
 Retry, a `@Scheduled` sweep over a store, a queue with redelivery — feed any of them
 `RetryableFailure` and the `Retry-After` it carries, which is reported exactly as it arrived with no
 ceiling applied. Neither the starter nor the core applies one, so the bound is whatever the
-retrier's own configuration says, and that is the only place it can be right.
+retrier's own configuration says, and that is the only place it can be right. *Useful* is that
+variant's whole verdict — it never says a repeat is *safe*, since a `502` or `504` may cover a POST
+an upstream applied — so pricing a possible duplicate, and holding a `507` that answered a user
+action until a fresh one asks as RFC 4918 §11.5 requires, comes before anything is fed to the
+retrier.
 
 **A repeat re-bases the message's lifetime**, since RFC 8030 §5.2 counts `TTL` from receipt. A
 `@Scheduled` retry an hour later carries a fresh `default-ttl` unless the application decrements the

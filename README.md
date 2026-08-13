@@ -108,7 +108,8 @@ PushMessage message = PushMessage.builder(payloadBytes)
 switch (sender.send(subscription, message)) {
     case PushOutcome.Accepted a -> log.debug("Accepted for delivery: HTTP {}", a.statusCode());
     case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);
-    case PushOutcome.RetryableFailure f -> retrier.schedule(subscription, message, f.retryAfter());
+    case PushOutcome.RetryableFailure f ->   // a 507 that a user action produced waits for a fresh one
+        retrier.scheduleIfADuplicateIsAcceptable(subscription, message, f.retryAfter());
     case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
     case PushOutcome.SignerUnavailable s -> stopSending(s);          // nothing was sent
     case PushOutcome.PayloadRejected p ->
@@ -122,8 +123,10 @@ switch (sender.send(subscription, message)) {
 `PushOutcome` is a sealed hierarchy, so that `switch` needs no `default` and a variant added in a
 later release fails your compilation instead of falling into a branch that was written for
 something else. `retrier` above is yours: the library performs one POST per `send` and never
-repeats one — [What a send reports](#what-a-send-reports-and-what-it-still-throws) is the whole of
-what it hands you to decide with.
+repeats one. The two branches that reschedule share their spelling on purpose — `RetryableFailure`
+says a repeat may be *useful*, never that it is *safe*, so the duplicate is priced on both — and
+[What a send reports](#what-a-send-reports-and-what-it-still-throws) is the whole of what it hands
+you to decide with, the `507` condition in the comment included.
 
 `VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
 scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
@@ -288,7 +291,12 @@ provably duplicates nothing.
 push POST is not idempotent — RFC 8030 §5 has a successful one create a new push message resource —
 and `502`/`504` in particular are an intermediary reporting that it got no answer from upstream,
 which the upstream may still have applied. Pricing a possible duplicate against a possible loss is
-the application's; a `Topic` on the message narrows the window without closing it.
+the application's; a `Topic` on the message narrows the window without closing it. One retryable
+status carries a condition of its own: RFC 4918 §11.5 keeps `507` temporary — which is why it is in
+the retryable set — and requires in the same section that a request it refused, where that request
+was the result of a user action, not be repeated until a separate user action asks for it. The
+condition is on what *produced* the request, not on what executes the repeat, so a scheduler is no
+exemption from it; which of your sends are user actions is a fact only your application holds.
 
 **Three things worth getting right:**
 
