@@ -9,9 +9,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -22,9 +20,11 @@ import com.sun.net.httpserver.HttpsServer;
 import org.jspecify.annotations.Nullable;
 
 /**
- * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpsServer} that replies with a
- * pre-queued sequence of status codes (defaulting to 201 once the queue drains) and records every request it receives.
- * No third-party HTTP mock — the test stack stays as dependency-free as the library.
+ * A minimal in-process push service for the send-pipeline tests: a JDK {@link HttpsServer} that answers every request
+ * with one configured response — a status code, optionally with a {@code Retry-After} header; {@code 201 Created} until
+ * a test says otherwise — and records every request it receives. One response, not a scripted sequence: a send makes at
+ * most one POST, so a test that wants a different answer for its next send configures it between the sends. No
+ * third-party HTTP mock — the test stack stays as dependency-free as the library.
  *
  * <p>It serves real TLS, presenting the per-JVM {@link LoopbackTls} certificate, so {@link #endpoint()} is an
  * {@code https://127.0.0.1:<port>/push} URI that passes {@link Endpoints#requireSecure} exactly as a production
@@ -35,8 +35,8 @@ import org.jspecify.annotations.Nullable;
 final class MockPushReceiver implements AutoCloseable {
 
     private final HttpsServer server;
-    private final Deque<Response> responses = new ArrayDeque<>();
     private final List<RecordedRequest> requests = new ArrayList<>();
+    private Response response = new Response(201, null);
 
     MockPushReceiver() throws IOException {
         server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
@@ -49,29 +49,29 @@ final class MockPushReceiver implements AutoCloseable {
                     headers.put(name.toLowerCase(Locale.ROOT), values.getFirst());
                 }
             });
-            Response response;
+            Response configured;
             synchronized (this) {
                 requests.add(new RecordedRequest(exchange.getRequestMethod(), headers, bodyLength));
-                response = responses.isEmpty() ? new Response(201, null) : responses.poll();
+                configured = response;
             }
-            if (response.retryAfter() != null) {
-                exchange.getResponseHeaders().set("Retry-After", response.retryAfter());
+            if (configured.retryAfter() != null) {
+                exchange.getResponseHeaders().set("Retry-After", configured.retryAfter());
             }
-            exchange.sendResponseHeaders(response.status(), -1);
+            exchange.sendResponseHeaders(configured.status(), -1);
             exchange.close();
         });
         server.start();
     }
 
-    /** Queue one reply (FIFO). After the queue drains, further requests get 201. */
-    void enqueue(int status) {
-        enqueue(status, null);
+    /** Answer every request from now on with this status and no {@code Retry-After}. */
+    void respondWith(int status) {
+        respondWith(status, null);
     }
 
-    /** Queue one reply carrying a {@code Retry-After} header; {@code null} sends none. */
-    void enqueue(int status, @Nullable String retryAfter) {
+    /** Answer every request from now on with this status, carrying a {@code Retry-After} header unless {@code null}. */
+    void respondWith(int status, @Nullable String retryAfter) {
         synchronized (this) {
-            responses.add(new Response(status, retryAfter));
+            response = new Response(status, retryAfter);
         }
     }
 
@@ -88,7 +88,7 @@ final class MockPushReceiver implements AutoCloseable {
         server.stop(0);
     }
 
-    /** A queued reply. {@code retryAfter} is nullable because most replies carry no such header. */
+    /** The configured reply. {@code retryAfter} is nullable because most replies carry no such header. */
     record Response(int status, @Nullable String retryAfter) {}
 
     record RecordedRequest(String method, Map<String, String> headers, int bodyLength) {}

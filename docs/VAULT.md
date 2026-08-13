@@ -87,7 +87,10 @@ The fetched key is validated as P-256 before the signer is created: the response
 `ecdsa-p256` (a missing `type` is a failure too), the parsed public key must carry P-256's domain
 parameters, and its point must satisfy the curve equation — the JCA checks none of this on its
 own. A key of another type or curve — `ecdsa-p384`, for instance — fails startup with a
-`PushCryptoException` instead of producing a VAPID key that every push service rejects later.
+`PushCryptoException` instead of producing a VAPID key that every push service rejects later. That
+is the recurring half of what this `build()` can throw; *[What the signer
+throws](#what-the-signer-throws)* below has the other half and the order a startup supervisor reads
+them in.
 
 Vault Enterprise reports HSM/KMS-backed keys as `type: managed_key`, which describes the wrapper
 rather than the curve; that value is therefore also accepted and the key is admitted only if the
@@ -222,6 +225,57 @@ with; that remains the caller's responsibility, and a mismatch surfaces on the f
 subscription bound to your `applicationServerKey`, as a push-service rejection of the JWT. The Vault-side validation described under *Fetched public key*
 (the Transit `type`, the atomic version/key pair) applies to that mode alone.
 
+## What the signer throws
+
+Every failure of this signer leaves in one of two types, and the axis is whether waiting can clear
+it. It matters twice: at startup, where a supervisor decides whether to retry the boot, and on every
+send, where the sender converts one of the two into an outcome and rethrows the other.
+
+- **`VapidSignerUnavailableException` — Vault cannot serve the request *now*.** Either nothing
+  answered (no connection, a failed TLS handshake, a timeout, an interrupted wait), or Vault
+  answered a status naming its own condition rather than the request's. The signer reads those
+  statuses off [Vault's own published
+  table](https://developer.hashicorp.com/vault/api-docs#http-status-codes): `500` "try again later",
+  `503` sealed, in maintenance or overloaded, `501` not initialized, `502` a third party Vault
+  itself called, `412` eventually-consistent data not yet present, `429` a standby node or too many
+  requests, `472` a disaster-recovery secondary, `473` a performance standby. A status the table
+  does not name falls to RFC 9110's classes — an unrecognised `5xx` joins these, an unrecognised
+  `4xx` does not.
+- **`PushCryptoException` — the failure recurs until a person changes something.** Vault answering
+  about the request or about what this deployment supplied: `400` a malformed call, `403` a token
+  without the capability, `404` a mount or key that is not there, `405` a method the path does not
+  take, and a key of a type VAPID cannot use or a pinned version Vault no longer holds. Also an
+  answer Vault could not have meant — an unparseable signature, a key that is not on P-256 — and a
+  substrate that cannot perform the cryptography at all.
+
+**On a send** the first type never reaches the application: `PushSender.send` reports it as the
+`PushOutcome.SignerUnavailable` outcome, carrying the status Vault answered with and, where Vault
+declared one, how long to wait. Nothing was signed, so nothing was sent and no repeat can duplicate
+a notification — but the whole fan-out is meeting the same outage, so the advice is to stop rather
+than to reschedule row by row. The second type is rethrown as it is: stop the sender and fetch a
+person.
+
+**On a fetched-mode `build()`**, which reads the key over the network, both reach a startup
+supervisor, and the order it tests them in is part of the contract:
+
+1. **The interruption first** — the current thread's interrupt status set, *or* an
+   `InterruptedException` somewhere in the cause chain; neither half of that disjunction is sound
+   alone. A boot interrupted while the key is being read raises the *unavailable* type as well,
+   because a transport does not sort an incomplete exchange by what made it incomplete. A supervisor
+   that reads the type first therefore answers a shutdown by looping its own boot, with every
+   backoff it sleeps failing instantly on a flag nobody cleared.
+2. **`VapidSignerUnavailableException`** — a boot worth retrying with backoff, and not before any
+   moment its `retryAfter()` names.
+3. **`PushCryptoException`** — fail the deployment. Retrying the boot over it only postpones the
+   page.
+
+**The retry hint is present far more rarely than it is absent**, and that is ordinary rather than a
+defect. Vault sets `Retry-After` on a rate-limited answer alone, and only where an operator enabled
+the rate-limit response headers on `sys/quotas/config` — [an API-managed
+setting](https://developer.hashicorp.com/vault/api-docs/system/quotas-config) that defaults to
+false. Where it is present it is reported exactly as it arrived, with no ceiling applied, so the
+only bound on the wait is the one whoever schedules the next attempt chooses.
+
 ## Vault namespaces (Enterprise / HCP)
 
 Vault Enterprise and HCP Vault partition a server into
@@ -271,6 +325,14 @@ counted in raw streamed bytes (an oversized response fails the call; it is never
 [`README.md` → Redirects must never be followed](../README.md#redirects-must-never-be-followed)).
 Defaults: 10 s connect timeout, 30 s request timeout, 1 MiB cap.
 
+Vault answering — any status — comes back as a `VaultHttpResponse` rather than as an exception,
+because classifying a status is the signer's job. That record carries three values: the status, the
+UTF-8 body, and the parsed `Retry-After` where Vault declared one. The hint is on the record because
+a response header stops at the transport unless the transport hands it on, and the signer copies it
+into the exception it raises — which is the only route by which the one component able to act on it,
+the caller's scheduler, ever sees it. What crosses is the parsed hint and not the headers: a bag of
+them from a service read under a size bound is more surface than one value is worth.
+
 The starter exposes these as properties:
 
 ```yaml
@@ -288,7 +350,15 @@ Resolution order (two extension points, plus the properties-only fallback):
 1. A `VaultHttpTransport` bean — full control (custom HTTP stack, observability). The transport
    properties above are then ignored; the bean owns those concerns. Implementations must honour
    the interface contract: a response-size cap, a per-request timeout, no redirect following, and
-   no request headers in exception messages.
+   no request headers in exception messages. They must also signal in the two types the seam
+   declares, since that split lives at the transport rather than in the signer — an exchange that
+   produced no response leaves as `VapidSignerUnavailableException`, while a failure that recurs
+   whatever Vault's health leaves as `PushCryptoException`: an unusable request URI, a request
+   header carrying a character illegal in an HTTP field value, and a response over the
+   implementation's own size cap, which is over it again on the next attempt too. An implementation
+   is never asked to recognise an interruption; what it owes there is what any code catching an
+   `InterruptedException` owes — re-set the flag on its own thread, and keep that exception in the
+   cause chain.
 2. A `java.net.http.HttpClient` bean qualified `push2uVaultHttpClient` — the middle road for
    mTLS/proxy setups. The starter wraps it in a `JdkVaultHttpTransport` with the configured
    `request-timeout` and `max-response-bytes` (`connect-timeout` is ignored; the supplied client

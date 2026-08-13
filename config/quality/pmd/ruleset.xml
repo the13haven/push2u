@@ -113,9 +113,6 @@
     <rule ref="category/java/errorprone.xml">
         <!-- Status codes and byte lengths from the RFCs are the clearest way to express the check -->
         <exclude name="AvoidLiteralsInIfCondition"/>
-        <!-- The library's exceptions are never serialized; a serialVersionUID on PushCryptoException
-             and friends would be ceremony -->
-        <exclude name="MissingSerialVersionUID"/>
         <!-- Owned by Error Prone's ReferenceEquality check -->
         <exclude name="CompareObjectsWithEquals"/>
         <!-- Record-style accessors: field name matching method name is the point -->

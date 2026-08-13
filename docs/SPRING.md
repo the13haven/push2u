@@ -28,10 +28,6 @@ push2u:
   allowed-domains:                  # a whole DNS zone per entry — see Endpoint policy below
     - "push.apple.com"
     - "notify.windows.com"
-  retry:
-    max-attempts: 3
-    initial-backoff: 1s
-    max-backoff: 60s
 ```
 
 The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
@@ -43,21 +39,28 @@ property. The endpoint policy is required in the same way, from one of its two s
 [Endpoint policy](#endpoint-policy). Neither is required when the application supplies its own
 `PushSender` bean — that bean bypasses the starter's checks entirely.
 
+That is every key the sender itself takes — the health probe adds `push2u.health.*` below, and the
+Vault signer starter its own `push2u.signer.vault.*`. **There is no `push2u.retry.*` block**: the
+library performs one POST per send and schedules no repeat, so there is nothing under this prefix
+to configure — see [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
+
+**If you are upgrading from a version that had one, delete it from your YAML.** A key the starter
+does not bind is ignored rather than refused, so a context still carrying `push2u.retry.max-attempts`
+and its siblings starts cleanly and then sends without a single retry — nothing at startup or at run
+time will tell you that the block stopped meaning anything, and it goes on reading like configuration
+that is in force.
+
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl`, `record-size` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
 5m, `true`, 64 entries, 24h, 4096 bytes and 4096 bytes respectively — see
 [`README.md` → Payload size limits](../README.md#payload-size-limits) for the two size
-properties). The three `retry.*` properties carry their own defaults instead (3 attempts, 1s
-initial backoff, 60s ceiling), which match `RetryPolicy.defaults()`, so a `RetryPolicy` is always
-built explicitly.
+properties).
 
-Setting any of them to a value the builder — or, for `retry.*`, `RetryPolicy` itself — rejects
-(`jwt-expiry` not strictly positive or over 24h, `jwt-renew-before` negative, `jwt-cache-size`
-below 1, `default-ttl` negative, `record-size` below 18, `max-encrypted-body-bytes` below the fixed
-103-byte `aes128gcm` overhead, `retry.max-attempts` below 1, or either `retry.*` backoff negative)
-fails the context with that message, prefixed by the YAML property name (the builder and
-`RetryPolicy` only name their Java parameters). Both backoff bounds share one message in
-`RetryPolicy`, so the prefix is the only thing that says which of the two you got wrong.
+Setting any of them to a value the builder rejects (`jwt-expiry` not strictly positive or over 24h,
+`jwt-renew-before` negative, `jwt-cache-size` below 1, `default-ttl` negative, `record-size` below
+18, or `max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead) fails the context
+with the builder's own message, prefixed by the YAML property name — the builder names only its
+Java parameter, and the operator wrote the property.
 
 **The three `jwt-*` reuse properties are the ones to know about before something surprises you.**
 With `jwt-reuse` at its default, an autoconfigured sender signs one VAPID token per push-service
@@ -75,6 +78,34 @@ Neither `jwt-renew-before` nor `jwt-cache-size` is validated against `jwt-expiry
 other: a margin at or above `jwt-expiry` is not an error but simply means every send signs afresh,
 and a cache bound is never a second way to spell `jwt-reuse: false`, which is why below 1 is
 refused rather than read as "cache nothing".
+
+## The outcome a Spring caller reads
+
+The autoconfigured bean is an ordinary `PushSender`, so `send` returns a `PushOutcome` and
+`sendAsync` a `CompletableFuture` of one.
+[`README.md` → What a send reports](../README.md#what-a-send-reports-and-what-it-still-throws) has
+the variants, the classification behind them and the short list of what still throws; three things
+about it are worth stating where a Spring deployment meets them.
+
+**Retrying is the application's, and Spring deployments usually already own a retrier.** Spring
+Retry, a `@Scheduled` sweep over a store, a queue with redelivery — feed any of them the
+`RetryableFailure` whole. The `Retry-After` it carries is reported exactly as it arrived with no
+ceiling applied: neither the starter nor the core applies one, so the bound is whatever the
+retrier's own configuration says, and that is the only place it can be right. *Useful* is that
+variant's whole verdict — it never says a repeat is *safe*, since a `502` or `504` may cover a POST
+an upstream applied — so pricing a possible duplicate, and holding a `507` that answered a user
+action until a fresh one asks as RFC 4918 §11.5 requires, comes before anything is scheduled; the
+`statusCode()` on the outcome is what that last rule reads, which is why the whole value goes in.
+
+**A repeat re-bases the message's lifetime**, since RFC 8030 §5.2 counts `TTL` from receipt. A
+`@Scheduled` retry an hour later carries a fresh `default-ttl` unless the application decrements the
+`ttl` it puts on the `PushMessage`.
+
+**A fan-out that meets `SignerUnavailable` should stop**, which under Vault Transit is the case to
+plan for: the signer's custodian is down, no POST was made, and every remaining subscription would
+make its own round trip to it. The health indicator below reports the same condition, but it does
+not gate a send in progress — stopping the loop, or stopping submission on the async path, is the
+application's.
 
 ## Endpoint policy
 
@@ -154,7 +185,8 @@ origins-only allowlist, which can express neither zone.
 That second answer is the quieter failure, and it is quiet in two different ways. Edge's endpoints
 sit on varying subdomains, so an origins-only allowlist refuses them now: the subscription is
 registered and then refused at every send for the rest of its life, and the application sees an
-`EndpointRejectedException` per send and nothing else, since the core has no logger of its own.
+`EndpointRejected` outcome per send and nothing else, since the core has no logger of its own — a
+value it may well be discarding, which makes this quieter still.
 Safari's sit on one host today, so naming that host works — until Apple uses the rest of the zone
 its own documentation reserves, and those subscriptions then fail the same way. Neither is unsafe
 and neither fails a startup, so there is nothing in a review to notice; the feature simply stops

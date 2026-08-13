@@ -34,12 +34,15 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import com.the13haven.push2u.PushCryptoException;
+import com.the13haven.push2u.VapidSignerUnavailableException;
 
 /**
  * {@link JdkVaultHttpTransport} against live sockets — the transport-level guarantees the Vault signer relies on: the
  * per-request timeout (a Vault that accepts the connection but never answers must not hang application startup
- * forever), the fail-closed response-size cap counted in raw bytes, interrupt handling, argument validation, and
- * exception hygiene (no token, no query).
+ * forever), the fail-closed response-size cap counted in raw bytes, interrupt handling, argument validation, exception
+ * hygiene (no token, no query), and the temporary-versus-recurring exception split — an exchange with no answer leaves
+ * as {@link VapidSignerUnavailableException}, while the transport's own bounds (URI shape, header legality, response
+ * size) stay {@link PushCryptoException} because they recur on every attempt whatever Vault's health.
  */
 class JdkVaultHttpTransportTest {
 
@@ -77,16 +80,39 @@ class JdkVaultHttpTransportTest {
     @Test
     void aServerThatAcceptsButNeverAnswersHitsTheRequestTimeoutInsteadOfHangingForever() throws Exception {
         // A bound socket with a backlog: the kernel completes the TCP handshake, so connectTimeout
-        // is satisfied — exactly the hang the per-request timeout exists to break.
+        // is satisfied — exactly the hang the per-request timeout exists to break. A timeout is an
+        // exchange with no answer, so it leaves as the custodian-unavailable type (ADR-021), never
+        // as a cryptographic defect.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             URI uri = URI.create("http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid");
 
             assertThatThrownBy(() -> transport(Duration.ofSeconds(1), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
-                    .isInstanceOf(PushCryptoException.class)
+                    .isInstanceOf(VapidSignerUnavailableException.class)
                     .hasMessageContaining("timed out")
                     .hasCauseInstanceOf(HttpTimeoutException.class)
                     .satisfies(e -> assertThat(e.getMessage()).doesNotContain(TOKEN));
         }
+    }
+
+    @Test
+    void aRefusedConnectionLeavesAsTheUnavailableTypeWithNoStatusAndNoHint() throws Exception {
+        // Nothing answered, so nothing declared a status or a moment to come back: both accessors
+        // must be empty, not zero-filled. The port is taken from a socket that was bound and then
+        // closed, so nothing is listening on it.
+        int refusedPort;
+        try (ServerSocket toClose = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            refusedPort = toClose.getLocalPort();
+        }
+        URI uri = URI.create("http://127.0.0.1:" + refusedPort + "/v1/transit/keys/vapid");
+
+        assertThatThrownBy(() -> transport(Duration.ofSeconds(5), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
+                .isInstanceOf(VapidSignerUnavailableException.class)
+                .satisfies(e -> {
+                    VapidSignerUnavailableException unavailable = (VapidSignerUnavailableException) e;
+                    assertThat(unavailable.status()).isEmpty();
+                    assertThat(unavailable.retryAfter()).isEmpty();
+                    assertThat(unavailable.getMessage()).doesNotContain(TOKEN);
+                });
     }
 
     @Test
@@ -133,7 +159,12 @@ class JdkVaultHttpTransportTest {
     }
 
     @Test
-    void interruptionRestoresTheInterruptFlagAndReportsAsThisModulesException() throws Exception {
+    void interruptionRestoresTheInterruptFlagAndLeavesAsTheUnavailableType() throws Exception {
+        // The transport is not asked to recognise an interruption — an interrupted exchange is an
+        // exchange with no answer, so it wears the same unavailable type as a timeout. What the
+        // transport owes is what lets whoever supervises the call recognise one: the interrupt flag
+        // re-set on the calling thread and the InterruptedException kept in the cause chain, the
+        // two halves of the disjunction the facade (and a startup supervisor) tests first.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             URI uri = URI.create("http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid");
             AtomicReference<Throwable> thrown = new AtomicReference<>();
@@ -154,13 +185,72 @@ class JdkVaultHttpTransportTest {
             assertThat(caller.isAlive())
                     .as("the interrupted call returns promptly")
                     .isFalse();
+            assertThat(flagRestored.get())
+                    .as("the interrupt flag is restored for the caller — the half of the recognition"
+                            + " test no cause chain can supply")
+                    .isTrue();
             assertThat(thrown.get())
-                    .isInstanceOf(PushCryptoException.class)
+                    .isInstanceOf(VapidSignerUnavailableException.class)
                     .hasMessageContaining("Interrupted")
                     .hasCauseInstanceOf(InterruptedException.class);
-            assertThat(flagRestored.get())
-                    .as("the interrupt flag is restored for the caller")
-                    .isTrue();
+        }
+    }
+
+    @Test
+    void aRetryAfterHeaderInDeltaSecondsIsParsedIntoTheResponse() throws Exception {
+        withHeaderedServer(429, "{\"errors\":[\"rate limit quota exceeded\"]}", "17", uri -> {
+            VaultHttpResponse response = transport(Duration.ofSeconds(5), 1024).get(uri, Map.of());
+            assertThat(response.statusCode()).isEqualTo(429);
+            assertThat(response.retryAfter()).contains(Duration.ofSeconds(17));
+        });
+    }
+
+    @Test
+    void aResponseWithoutRetryAfterReportsNoHint() throws Exception {
+        withServer(429, "{\"errors\":[]}".getBytes(StandardCharsets.UTF_8), true, uri -> {
+            VaultHttpResponse response = transport(Duration.ofSeconds(5), 1024).get(uri, Map.of());
+            assertThat(response.retryAfter())
+                    .as("absent is the ordinary case — Vault fills the header only where an operator"
+                            + " enabled the rate-limit response headers")
+                    .isEmpty();
+        });
+    }
+
+    @Test
+    void aRetryAfterValueVaultWouldNeverSendYieldsNoHintRatherThanAGuess() throws Exception {
+        // Vault sends delta-seconds — a plain digit run — and nothing else. An HTTP-date, a signed
+        // value or garbage is not Vault's declaration, and guessing at one would schedule a caller
+        // against a value nobody named. The signed form also pins the floor: no parse of these can
+        // ever produce a negative hint.
+        for (String header : new String[] {"Fri, 31 Dec 1999 23:59:59 GMT", "-5", "+5", "3.5", "17s"}) {
+            withHeaderedServer(429, "{\"errors\":[]}", header, uri -> {
+                VaultHttpResponse response =
+                        transport(Duration.ofSeconds(5), 1024).get(uri, Map.of());
+                assertThat(response.retryAfter()).as("Retry-After '%s'", header).isEmpty();
+            });
+        }
+    }
+
+    /** Serve {@code status} + {@code body} with a {@code Retry-After} header and run {@code test} against it. */
+    private static void withHeaderedServer(int status, String body, String retryAfter, ServerTest test)
+            throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        try {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            server.createContext("/v1", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                if (!retryAfter.isEmpty()) {
+                    exchange.getResponseHeaders().add("Retry-After", retryAfter);
+                }
+                exchange.sendResponseHeaders(status, bytes.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(bytes);
+                }
+            });
+            server.start();
+            test.run(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1/transit/keys/vapid"));
+        } finally {
+            server.stop(0);
         }
     }
 
@@ -197,8 +287,10 @@ class JdkVaultHttpTransportTest {
             URI uri = URI.create(
                     "http://127.0.0.1:" + silent.getLocalPort() + "/v1/transit/keys/vapid?secret-query=marker");
 
+            // The silent socket ends the exchange at the request timeout, which leaves as the
+            // custodian-unavailable type — the redaction rule under test holds on it all the same.
             assertThatThrownBy(() -> transport(Duration.ofMillis(500), 1024).get(uri, Map.of("X-Vault-Token", TOKEN)))
-                    .isInstanceOf(PushCryptoException.class)
+                    .isInstanceOf(VapidSignerUnavailableException.class)
                     .hasMessageContaining("GET <unrenderable address>")
                     .satisfies(e -> assertThat(e.getMessage())
                             .doesNotContain(TOKEN)

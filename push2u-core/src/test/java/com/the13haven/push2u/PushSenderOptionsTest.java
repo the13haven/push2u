@@ -27,8 +27,6 @@ import org.junit.jupiter.api.Test;
  */
 class PushSenderOptionsTest {
 
-    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
-
     @Test
     void urgencyAndTopicAreSentUnderTheirRfc8030HeaderNames() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
@@ -77,7 +75,6 @@ class PushSenderOptionsTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .defaultTtl(Duration.ofMinutes(5))
                     .build()
                     .send(subscription(receiver), PushMessage.of(bytes("x")));
@@ -181,7 +178,6 @@ class PushSenderOptionsTest {
     private PushSender pusher() {
         return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                 .httpClient(trustingPushHttpClient())
-                .sleeper(sleeper)
                 .build();
     }
 

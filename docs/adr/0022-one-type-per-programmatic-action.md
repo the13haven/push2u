@@ -1,6 +1,6 @@
 # ADR-022 — One exception type per programmatic action
 
-**Status:** Proposed
+**Status:** Accepted
 
 Reported as https://github.com/the13haven/push2u/issues/128, which is the wider review promised in
 https://github.com/the13haven/push2u/issues/87 rather than a new complaint. Counted over every

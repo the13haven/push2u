@@ -57,6 +57,10 @@ Run `qualityCheck` before pushing: it is what CI runs (as `qualityCheckCi`, whic
 formatting instead of applying it), and it is the only way to see Checkstyle, PMD, SpotBugs,
 Error Prone, NullAway and the coverage threshold.
 
+Javadoc is the exception, and worth knowing before it surprises you: `build` fails on any javadoc
+warning, because `assemble` builds the published `-javadoc` jar and that task runs with `-Xwerror`.
+See [What the build enforces](#what-the-build-enforces).
+
 Useful narrower runs:
 
 ```bash
@@ -120,9 +124,10 @@ a value copied out of another repository.
 
 ## What the build enforces
 
-Formatting (Spotless/Palantir), naming and Javadoc on the public API (Checkstyle), bug patterns
-(PMD, SpotBugs, Error Prone) and the nullness contract (NullAway) all fail the build rather than
-warn. Aggregated instruction coverage must stay at or above 80 %.
+Formatting (Spotless/Palantir), naming and the presence of Javadoc on the public API (Checkstyle),
+bug patterns (PMD, SpotBugs, Error Prone), the nullness contract (NullAway) and every warning the
+`javadoc` tool itself emits all fail the build rather than warn. Aggregated instruction coverage
+must stay at or above 80 %.
 
 | Tool                 | What it enforces                                            | Configuration                                |
 |----------------------|-------------------------------------------------------------|----------------------------------------------|
@@ -132,12 +137,22 @@ warn. Aggregated instruction coverage must stay at or above 80 %.
 | SpotBugs             | Bytecode-level bug patterns                                  | `config/quality/spotbugs/exclusions.xml`     |
 | Error Prone + NullAway | Compiler-attached checks; a named set and the nullness contract fail the build | `build-logic/.../push2u-quality.gradle.kts` |
 | JaCoCo               | Aggregated coverage, minimum 80% of instructions             | `build.gradle.kts`                           |
+| Javadoc              | Every javadoc warning, through `-Xwerror` — including on a plain `./gradlew build` | `build-logic/.../push2u-quality.gradle.kts`  |
 
-Checkstyle, PMD and SpotBugs run on `main` sources only — test code is exempt. Error Prone covers
-the test compilations as well, since its checks are about defects rather than style; NullAway runs
-on `main` and on `testFixtures`, which share `main`'s packages and so its nullness contract.
-Practical consequences:
+Checkstyle, PMD, SpotBugs and `javadoc` run on `main` sources only — test code is exempt. Error
+Prone covers the test compilations as well, since its checks are about defects rather than style;
+NullAway runs on `main` and on `testFixtures`, which share `main`'s packages and so its nullness
+contract. Practical consequences:
 
+- **A javadoc warning is a build failure, and it is the one check that does not wait for
+  `qualityCheck`.** The `javadoc` task runs with `-Xwerror`, so a `@param` that names no parameter,
+  a `{@link}` that resolves to nothing, a missing `@return` or a stale `@throws` stops the build
+  instead of scrolling past in the log. It catches you on a plain `./gradlew build` too, because
+  `javadoc` is not an analyser hooked to `check` — it is the task that produces the published
+  `-javadoc` jar, which `assemble` pulls in, so the strictness applies unconditionally and
+  `./gradlew javadoc` on its own tells you exactly what the gate will. Fix the finding rather than
+  the option: a JDK toolchain bump can surface a fresh warning on sources nobody touched, and that
+  is a finding like any other.
 - A new package needs a `package-info.java` carrying JSpecify's `@NullMarked`; forgetting it is a
   build failure, not a lint warning.
 - Every `.java` file carries the Apache-2.0 SPDX licence header. You do not have to type it:
@@ -169,25 +184,29 @@ Practical consequences:
 - A rule exclusion carries a comment saying why. A per-file exception is a
   `@SuppressWarnings("PMD.<Rule>")` at the narrowest scope that covers it, next to its reason.
 - **Boolean methods are named by what they are, in three kinds.** Checkstyle does not enforce this
-  and cannot; the point of writing it down is that one type should not end up with two habits, as
-  `PushResult` did before `delivered()` became `isDelivered()`.
+  and cannot; the point of writing it down is that one type should not end up with two habits.
 
   1. **A record's component accessor** keeps the component's name — `Push2uProperties.Health`
      holds a `boolean enabled`, so its accessor is `enabled()`. That is the language, not a
      preference: the component names the method, and there is nothing to decide.
   2. **A question about state** is a predicate: `is…` for what something *is*
-     (`PushResult.isDelivered()`, `Es256Verifier.isSupported()`), `has…` for what it holds,
-     `can…` for what it is able to do. Whether the answer is stored, computed, or cached does not
-     enter into it — `String.isEmpty()` computes, `isSupported()` caches, both are `is`.
+     (`Es256Verifier.isSupported()`, and the cached VAPID token entry answering `isFresh(...)`),
+     `has…` for what it holds, `can…` for what it is able to do. Whether the answer is stored,
+     computed, or cached does not enter into it — `String.isEmpty()` computes, `isSupported()`
+     caches, both are `is`.
   3. **An action or a relation keeps its verb**, with no prefix: `Es256Verifier.verify(...)`
      performs a check and reports the outcome, `endsMember(json, end)` reads as its own sentence,
      and a two-argument comparison like `sameCurve(actual, expected)` states a relation the way
      `Objects.equals` does. `isVerify` would be nonsense, and that is the tell.
 
   The failure this exists to prevent is 1 against 2 — a derived predicate wearing a component
-  accessor's name, which is what `delivered()` did next to `status()` and `attempts()` until it
-  became `isDelivered()`. The pair that takes judgement to apply is 2 against 3: one subject and a
-  question about it is a predicate; two subjects, or something performed, is a verb.
+  accessor's name, so that a judgement reads as one more stored value. `isFresh(...)` above is the
+  worked example: it sits beside the three quantities a cache entry actually holds, and calling it
+  `fresh(...)` would read as a fourth. The same trap is one step away from any record —
+  `VaultHttpResponse` carries `statusCode()`, `body()` and `retryAfter()`, and a question derived
+  from them would be `isRateLimited()`, never `rateLimited()`. The pair that takes judgement to
+  apply is 2 against 3: one subject and a question about it is a predicate; two subjects, or
+  something performed, is a verb.
 
   A name fixed by an interface or superclass is not ours to choose — `getBody()` in
   `JdkVaultHttpTransport` overrides the JDK's `BodySubscriber` and stays as the JDK named it.
@@ -242,8 +261,9 @@ Practical consequences:
 
 ## Tests
 
-The suite is the RFC vectors, the sender and retry tests, the Spring Boot auto-configuration tests
-and a Vault Transit integration contract run against a Testcontainers Vault.
+The suite is the RFC vectors, the sender's status matrix and seam-signal conversions, the Spring
+Boot auto-configuration tests and a Vault Transit integration contract run against a Testcontainers
+Vault.
 
 The RFC vectors are the specification, not a snapshot of current behaviour: RFC 5869 for HKDF,
 the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a change makes a

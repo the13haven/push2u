@@ -19,8 +19,6 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 
-import org.assertj.core.api.Assertions;
-import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -28,7 +26,7 @@ import org.junit.jupiter.api.Test;
  * signer signed, and what {@code Authorization} value each request carried. RFC 8292 §5 encourages application servers
  * to reuse tokens; these tests pin what reuse must and must not do — hit without signing, key the entry by the identity
  * the header itself carries, survive authentication statuses, degrade to signing on overflow, and keep the cached
- * bearer credential out of every exception a send can throw. The two-clock renewal bounds live in
+ * bearer credential out of every failure surface a send reports. The two-clock renewal bounds live in
  * {@link PushSenderJwtRenewalTest}, the locking discipline in {@link PushSenderJwtConcurrencyTest}.
  */
 class PushSenderJwtReuseTest {
@@ -44,11 +42,11 @@ class PushSenderJwtReuseTest {
     void aCacheHitSignsNothingAndServesTheIdenticalHeader() {
         PushSender sender = sender();
 
-        PushResult first = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
-        PushResult second = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        PushOutcome first = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        PushOutcome second = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
 
-        assertThat(first.isDelivered()).isTrue();
-        assertThat(second.isDelivered()).isTrue();
+        assertThat(first).isInstanceOf(PushOutcome.Accepted.class);
+        assertThat(second).isInstanceOf(PushOutcome.Accepted.class);
         assertThat(signer.signCount())
                 .as("the second send to the same audience reuses the token — sign() is not called at all")
                 .isEqualTo(1);
@@ -122,12 +120,10 @@ class PushSenderJwtReuseTest {
         PushSender sender = builder().jwtCacheSize(1).build();
 
         for (int round = 0; round < 3; round++) {
-            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message())
-                            .isDelivered())
-                    .isTrue();
-            assertThat(sender.send(subscriptionAt(AUDIENCE_B_ENDPOINT), message())
-                            .isDelivered())
-                    .isTrue();
+            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
+            assertThat(sender.send(subscriptionAt(AUDIENCE_B_ENDPOINT), message()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
         }
 
         assertThat(signer.signCount())
@@ -237,12 +233,11 @@ class PushSenderJwtReuseTest {
         sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
 
         client.respondNextWith(status);
-        PushResult refused = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
-        assertThat(refused.status()).isEqualTo(PushResult.Status.FAILED);
-        assertThat(refused.statusCode()).isEqualTo(status);
+        PushOutcome refused = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        assertThat(refused).isEqualTo(new PushOutcome.NonRetryableFailure(status));
 
-        PushResult after = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
-        assertThat(after.isDelivered()).isTrue();
+        PushOutcome after = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        assertThat(after).isInstanceOf(PushOutcome.Accepted.class);
         assertThat(signer.signCount())
                 .as("the refused send and the one after it both reuse the entry — no eviction on %s", status)
                 .isEqualTo(1);
@@ -265,12 +260,10 @@ class PushSenderJwtReuseTest {
                     .jwtRenewBefore(margin)
                     .build();
 
-            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message())
-                            .isDelivered())
-                    .isTrue();
-            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message())
-                            .isDelivered())
-                    .isTrue();
+            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
+            assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
             assertThat(ownSigner.signCount())
                     .as(
                             "a margin of %s swallows the whole 12h life: every send mints — a consequence, not an error",
@@ -281,11 +274,12 @@ class PushSenderJwtReuseTest {
 
     /**
      * The cached value is a bearer credential. A universal negative is not provable, so this checks the observable
-     * surfaces a caller actually meets: the messages of the exceptions the send path throws once a token is cached —
-     * the policy rejection, the size precondition and a transport failure — none of which may quote it.
+     * surfaces a caller actually meets once a token is cached: the failure outcomes the send path reports — the policy
+     * rejection, the size refusal and an unanswered POST — none of whose default renderings, and none of whose cause
+     * chains, may quote it.
      */
     @Test
-    void theCachedTokenReachesNoExceptionMessageOnTheSendPath() {
+    void theCachedTokenReachesNoFailureSurfaceOnTheSendPath() {
         PushSender sender = PushSender.builder(
                         signer, "mailto:ops@example.com", EndpointPolicies.allowedOrigins("https://push-a.example"))
                 .httpClient(client)
@@ -296,25 +290,19 @@ class PushSenderJwtReuseTest {
                 .substring(
                         "vapid t=".length(), client.authorizations().getFirst().indexOf(", k="));
 
-        Throwable rejected = thrownBy(() -> sender.send(subscriptionAt("https://not-allowed.example/sub"), message()));
-        assertThat(rejected).isInstanceOf(EndpointRejectedException.class);
-        assertNoMessageCarries(rejected, token);
+        PushOutcome rejected = sender.send(subscriptionAt("https://not-allowed.example/sub"), message());
+        assertThat(rejected).isInstanceOf(PushOutcome.EndpointRejected.class);
+        assertThat(rejected.toString()).doesNotContain(token);
 
-        Throwable oversized =
-                thrownBy(() -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), PushMessage.of(new byte[5000])));
-        assertThat(oversized).isInstanceOf(IllegalArgumentException.class);
-        assertNoMessageCarries(oversized, token);
+        PushOutcome oversized = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), PushMessage.of(new byte[5000]));
+        assertThat(oversized).isInstanceOf(PushOutcome.PayloadRejected.class);
+        assertThat(oversized.toString()).doesNotContain(token);
 
         client.failNextWith(new PushDeliveryException("connection reset by push service", new IOException()));
-        Throwable transport = thrownBy(() -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()));
-        assertThat(transport).isInstanceOf(PushDeliveryException.class);
-        assertNoMessageCarries(transport, token);
-    }
-
-    private static Throwable thrownBy(ThrowingCallable callable) {
-        Throwable thrown = Assertions.catchThrowable(callable);
-        assertThat(thrown).isNotNull();
-        return thrown;
+        PushOutcome unanswered = sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message());
+        assertThat(unanswered).isInstanceOf(PushOutcome.Indeterminate.class);
+        assertThat(unanswered.toString()).doesNotContain(token);
+        assertNoMessageCarries(((PushOutcome.Indeterminate) unanswered).cause(), token);
     }
 
     private static void assertNoMessageCarries(Throwable thrown, String token) {

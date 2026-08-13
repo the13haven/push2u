@@ -46,7 +46,8 @@ whose transitive surface and BouncyCastle-typed public API are what
 - A small synchronous API with an asynchronous convenience wrapper.
 - Replaceable VAPID key custody and HTTP transport.
 - Immutable public value types and defensive handling of key material.
-- Expired subscriptions represented as results rather than exception-driven control flow.
+- Every operational outcome of a send represented as a value rather than exception-driven control
+  flow, with the repeat decision and its schedule left to the caller.
 - Optional Spring Boot and Vault integrations outside the core.
 
 ### Non-goals
@@ -64,7 +65,7 @@ push2u-core
 ├── immutable domain types
 ├── RFC 8291 / RFC 8188 encryption
 ├── VAPID JWT construction
-├── retry and response interpretation
+├── response classification and the PushOutcome hierarchy
 ├── LocalEcVapidSigner
 └── JdkPushHttpClient
 
@@ -141,28 +142,68 @@ PushSender.send(subscription, message)
     ├─ Encrypt one RFC 8188 record with AES-128-GCM
     ├─ Look the endpoint's origin up in the sender's VAPID token cache (unless reuse is off)
     ├─ On a miss, build and sign a VAPID JWT and publish it to the cache
-    ├─ POST the encrypted body through PushHttpClient
-    ├─ Retry 429 and 5xx responses according to RetryPolicy
-    └─ Return PushResult
+    ├─ POST the encrypted body through PushHttpClient, exactly once
+    └─ Return PushOutcome
 ```
 
-Status interpretation:
+**The pipeline performs one POST and does not repeat it**
+([ADR-021](adr/0021-retry-belongs-to-the-caller.md)). What a repeat decision needs — the
+classification of the answer, and what the response's `Retry-After` said — is published on the
+outcome instead, and the schedule belongs to whoever called `send`: a deployment sending at volume
+already owns a retrier that can see its retry budget, its dead-letter path and what survives a
+restart, none of which a loop inside the sender could. A send holds nothing across attempts that a
+second call would not rebuild — the policy re-runs, the token is re-minted or served from its cache,
+and the body is re-encrypted under a fresh ephemeral key and salt, which RFC 8291 §2 has the
+application server generate per message in any case.
 
-| HTTP result | `PushResult` |
+`PushOutcome` is a sealed hierarchy, so a `switch` over it is exhaustive and a variant added later
+fails a consumer's compilation rather than falling through:
+
+| What happened | `PushOutcome` variant |
 |---|---|
-| `2xx` | `DELIVERED` |
-| `404`, `410` | `SUBSCRIPTION_EXPIRED` |
-| Other non-retryable response | `FAILED` |
-| Retryable response after attempts are exhausted | `FAILED` |
-| Transport failure | `PushDeliveryException` |
-| Cryptographic failure | `PushCryptoException` |
-| Endpoint policy rejection | `EndpointRejectedException` |
+| `2xx` | `Accepted(statusCode)` |
+| `404`, `410` | `SubscriptionExpired(statusCode)` |
+| `408`, `421`, `429`, a `413` carrying a parseable `Retry-After`, or a `5xx` other than `501`, `505`, `506`, `508`, `511` | `RetryableFailure(statusCode, retryAfter)` |
+| Any other answered status | `NonRetryableFailure(statusCode)` |
+| The POST went out and nothing answered | `Indeterminate` |
+| The key custodian cannot sign now | `SignerUnavailable` — a `NotAttempted` |
+| The payload does not fit the sender's configuration | `PayloadRejected(payloadBytes, maximumPayloadBytes)` — a `NotAttempted` |
+| The endpoint policy refused the endpoint | `EndpointRejected(redactedEndpoint, reason)` — a `NotAttempted` |
 
-The encrypted body and VAPID token are reused across retries of the same send operation, and the
-token's reuse extends past that send: one signed `Authorization` value serves every send to a
+`NotAttempted` is a marker whose three leaves implement it directly, so one `switch` chooses its own
+grain: under it no POST was made, which is the only structural answer to whether a repeat can
+duplicate a notification. The two class-shaped variants, `SignerUnavailable` and `Indeterminate`,
+carry a `Throwable` and therefore compare by identity; both write their own `toString()` so that a
+transport's cause chain, which can embed the subscription's capability URL, is reachable only
+through the `cause()` a caller asks for by name.
+
+The classification is taken per status rather than per class, each carve-out resting on that
+status's own defining specification — the grounds are on the Javadoc of the variant that carries
+them, which is where a consumer reads them. A `5xx` neither list names falls to the class (RFC 9110
+§15.6: a statement about the server rather than about the request), so an unregistered or
+later-registered `5xx` is never permanent by omission.
+
+Three seam signals convert to outcomes and no others: `EndpointRejectedException` from the policy,
+`VapidSignerUnavailableException` from the signer, `PushDeliveryException` from the transport. Any
+other `RuntimeException` out of a consumer-written seam is a defect in that implementation and
+propagates unchanged rather than being laundered into a value. What `send` itself throws is
+`PushCryptoException` for a failure that recurs, `PushInterruptedException` for a cancellation, and
+`IllegalArgumentException`/`NullPointerException` for an argument that is not a legal value of its
+parameter ([ADR-022](adr/0022-one-type-per-programmatic-action.md)).
+
+The interruption test is the facade's rather than any seam's, written as a disjunction — an
+`InterruptedException` anywhere in the cause chain, *or* the current thread's interrupt status set —
+because neither half is sound alone: an interruption can surface as a `ClosedByInterruptException`
+or an `InterruptedIOException` with no `InterruptedException` beneath it, and a transport can attach
+a cause without re-setting the flag. It runs on the signer path as well as the transport path, and
+the cause-chain walk is guarded against a cycle a defective seam could construct. The interrupt
+status is re-set before the throw, which on the async path means the worker's flag is re-set before
+the future completes.
+
+The VAPID token's reuse spans sends: one signed `Authorization` value serves every send to a
 push-service origin until it nears expiry
-([ADR-019](adr/0019-vapid-token-reused-until-it-nears-expiry.md)). The body's reuse remains
-confined to one send, since it is encrypted to one subscriber under one ephemeral key pair.
+([ADR-019](adr/0019-vapid-token-reused-until-it-nears-expiry.md)). The encrypted body is confined to
+one send, since it is encrypted to one subscriber under one ephemeral key pair.
 
 The endpoint policy runs after the size preconditions and before everything else — encryption, the
 VAPID signature (a remote Vault/KMS call under an external signer) and the POST — so a rejected
@@ -202,8 +243,8 @@ can only shorten an entry's life. Staleness is judged against `Instant.ofEpochSe
 value that went on the wire, because RFC 7519 §4.1.4 invalidates a token from the second `exp`
 names. What the pair leaves is the two clocks' relative drift over an entry's life, seconds at the
 tens of parts per million a raw counter shows and invisible against a five-minute margin. The
-monotonic reading has a package-private seam beside the existing `Clock` and `Sleeper` ones,
-without which that bound is untestable at any span worth modelling.
+monotonic reading has a package-private seam of its own beside the sender's `Clock`, without which
+that bound is untestable at any span worth modelling.
 
 The map is an access-ordered LRU bounded at `jwtCacheSize`, and the bound is a safety property
 rather than a tuning one: audiences are the origins of endpoints inside subscriptions, which an
@@ -224,39 +265,66 @@ look up, release, sign, publish — because a signature may be a Vault round tri
 across it would rebuild the very stall the cache removes. Two threads missing on one audience
 concurrently is a benign race: each signs its own valid token, one is published.
 
-The two size preconditions are evaluated first, before any cryptography or network I/O, and are
-reported independently because they constrain different things:
+The two size preconditions are evaluated first, before any cryptography or network I/O. They
+constrain different things and are configured independently:
 
 | Precondition | Source | Default |
 |---|---|---|
 | `103 + payload ≤ maxEncryptedBodyBytes` | RFC 8030 §7.2 body limit | 4096 bytes (3993 of plaintext) |
 | `recordSize > payload + 1 + 16` | RFC 8291 §4 | `rs` 4096 |
 
-Either failure is an `IllegalArgumentException`: the first names the resulting body size, the
-configured limit, and the maximum plaintext; the second names the minimum `rs` required.
+They are *reported* as one value, `PayloadRejected`, carrying the plaintext the caller handed over
+and the largest plaintext this configuration would have carried — the smaller of what the two
+permit, computed once by `WebPushEncryptor.maxPlaintextBytes`. Both numbers are plaintext octets,
+the unit the caller can act in, since the remedy is a shorter notification; which of the two bounds
+was binding is a fact about the configuration rather than about the message, readable from that
+maximum by an operator holding both configured values. That is not ADR-011 moving: where the limit
+is *configured* stays on the encrypted body, and the plaintext maximum is a derivation ADR-011
+already makes. The refusal is an outcome rather than an exception because it is a fact about one
+message — the concrete case is a translated notification that fits in one language and not another —
+and killing a fan-out over it is the wrong behaviour.
+
+**The RFC 8291 §4 rule still has a single implementation**, and it is now the one both spellings of
+it are expressed in terms of: `maxPlaintextForRecordSize`, which inverts the rule into the largest
+plaintext a given `rs` carries. The pre-flight above reaches it through `maxPlaintextBytes`, and
+`checkRecordSize` — the encryptor's own last-moment refusal, reachable directly and so not covered
+by the pre-flight — compares against it too. A second copy of the rule is a defect even where it
+agrees today. The maximum is clamped below at zero before it is narrowed back to `int`: the builder's
+minimums keep both operands non-negative on every real sender, but a negative `long` narrowed to
+`int` can wrap into a large positive bound, which is the one failure a size limit must never have.
 
 The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
 hard-coded, so the plaintext maximum tracks a configured body limit
-([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)). The RFC 8291 §4 rule has
-a single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check
-and by the encryptor itself.
+([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)).
 
-Both sums are computed in `long`. For the body sum this is load-bearing and covered by a test: in
-`int`, a payload above `Integer.MAX_VALUE - 103` would wrap to a negative size and pass any limit
-unnoticed. For the record-size sum it matters on the encryptor path, which is reachable without
-the body check; reached through the pre-flight check that sum cannot overflow, because such a
-payload has already failed the body check.
+The arithmetic on both sides is `long`, and it is load-bearing rather than defensive: in `int`, a
+payload above `Integer.MAX_VALUE - 103` wraps to a negative size and passes any limit unnoticed,
+and a caller-supplied `rs` near either extreme wraps the record-size subtraction the same way. Both
+boundaries are covered by tests, which take lengths rather than payloads so they need no
+multi-gigabyte arrays.
 
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
 builder accepts an application-owned `Executor` when bounded concurrency or a shared execution
-policy is required. The HTTP transport itself remains synchronous.
+policy is required. The HTTP transport itself remains synchronous. That default keeps its rationale
+under one attempt per call rather than two: a blocking HTTP call still has no business on the common
+pool. Every outcome completes the future normally; what `send` throws completes it exceptionally,
+and an interrupted send completes it exceptionally with `PushInterruptedException` rather than
+cancelling it, so a caller's own `cancel` — which does not interrupt a running task — stays
+distinguishable from a worker stopped mid-flight.
 
-For retryable responses (`429`, `5xx`), `Retry-After` overrides the exponential schedule when it
-contains either delta-seconds or a valid HTTP-date. The parser accepts the three HTTP-date forms
-required by RFC 9110, including RFC 850's two-digit-year rule and leap seconds, and caps the final
-delay at the retry policy's maximum backoff.
+The `Retry-After` header is parsed for any answered failure and travels on `RetryableFailure`, where
+the classification leaves it actionable. The parser accepts delta-seconds and the three HTTP-date
+forms RFC 9110 requires a recipient to accept, including RFC 850's two-digit-year rule and leap
+seconds; a value matching none of them, or a delta too large for a `long`, is reported as no hint
+rather than as a failure. **No ceiling is applied to what it reports**: the value the caller reads
+is the value that arrived, so the only bound on the wait is the one whoever schedules the repeat
+chooses. The header also classifies rather than merely informing in one place — RFC 9110 §15.5.14
+has a server refusing a request for its size generate it only if the condition is temporary, which
+is why a `413` carrying a parseable one is retryable and a bare `413` is not. It is deliberately not
+reported on `SubscriptionExpired`: on `404`/`410` the subscription is gone, so a wait the service
+named would be handed to a caller with nothing left to wait for.
 
 ## 5. Public API and extension points
 
@@ -290,6 +358,14 @@ Everything else on the builder is optional, and each value is validated where it
 than at send time: the constraint is known at configuration time, so a bad value fails a
 deployment's startup instead of its first delivery.
 
+`send` returns `PushOutcome` and `sendAsync` a `CompletableFuture` of one; §4 has the variants and
+what converts into each. The line between the two channels is that an outcome describes what became
+of a requested send, whether or not a POST was reached, while an exception is reserved for using the
+API wrongly, for a defect the caller cannot act on per send, and for cancellation. Neither channel
+forces meaningful handling — an exception can be caught and dropped, a value can be discarded at the
+call site, and Java has no `#[must_use]`. What the sealed hierarchy buys is that a caller who does
+`switch` has every case put in front of them, and that there is one place to look.
+
 A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
 sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
 is the VAPID token cache Section 4 describes: a value the sender itself minted, reconstructible by
@@ -321,8 +397,8 @@ before and independently of any `PushSender`; hard-coding is sound because P-256
 curve, and a test (with a BC-FIPS twin) pins each constant against what a provider answers for
 `secp256r1`. `Subscription`'s constructor applies `requireOnCurve` to `p256dh` — the value is
 attacker-supplied, and an off-curve point would otherwise be accepted, persisted, and then raise
-`PushCryptoException` (documented as "the deployment is broken") on every send, far from the
-request that supplied it. `VapidKeys` applies the same full check to its public half, catching a
+`PushCryptoException` on every send, far from the request that supplied it, as the recurring
+failure it is. `VapidKeys` applies the same full check to its public half, catching a
 corrupted configuration value where the pair is created. Section 6 describes how these checks
 relate to the provider-parameter check the send pipeline still performs.
 
@@ -354,6 +430,26 @@ naming, and the message does: JCA's `SHA256withECDSA` returns it, and a signer f
 provider's output unconverted looks correct until the wire. The library converts for its own
 signer (below) but cannot here — the provider and encoding behind an external signer are unknown,
 and a valid 64-byte signature may itself begin with `0x30`.
+
+**A failure leaves an implementation in one of two types, and the axis is whether it recurs.** A
+custodian that cannot sign *now* — unreachable, timed out, sealed, not yet initialized, still
+catching up, rate-limiting — raises `VapidSignerUnavailableException`, from `sign` and `publicKey`
+alike; the facade converts it into the `SignerUnavailable` outcome, since a signing call has no
+effect on the push service and so no notification exists for a repeat to duplicate. Everything else
+raises `PushCryptoException` and reaches the caller as that exception: a defect, a substrate that
+cannot perform the cryptography, an answer no custodian could have meant, and a misconfiguration
+that answers identically until a person edits it. The unavailable type carries what only the
+custodian can declare — an `OptionalInt` status and an `Optional<Duration>` hint, both empty for a
+signer that speaks no such protocol, so a signer over an HSM or a smart card fills neither and stays
+conformant — because the facade cannot invent what it was not given, and with nothing carried the
+`IOException` under an unreachable custodian is destroyed at the seam.
+
+Nothing checks which of the two an implementation chose: the conformance kit asserts no exception
+types, deliberately, so a signer reporting its custodian's outages as a cryptographic failure passes
+every test it has while turning each outage into a permanent failure for its callers. That is a
+silent break for a signer written against the older contract, which instructed an implementation to
+raise `PushCryptoException` for a key service that is unreachable, timed out or refusing — it keeps
+compiling, and the facade rightly refuses to sniff a cause chain to guess otherwise.
 
 Both methods return arrays, and the arrays are the caller's. `publicKey()` in particular must
 return a fresh copy on every call: a signer handing out its internal array is corrupted for every
@@ -424,7 +520,11 @@ PushResponse post(URI endpoint, Map<String, String> headers, byte[] body);
 
 This SPI allows applications to replace the JDK transport for proxy, pooling, or observability
 requirements. Implementations return every HTTP status as `PushResponse` and throw
-`PushDeliveryException` only for transport failures.
+`PushDeliveryException` only for an exchange that produced no response — which the facade reports as
+`Indeterminate`. The contract is unchanged by the removal of the retry loop, and deliberately so: a
+transport is not obliged to recognise an interruption either, since the facade's disjunction does
+that. What a transport never does is repeat a request, so however a caller schedules a repeat, each
+attempt arrives here as its own `post` call.
 
 `PushResponse` carries only the status code and headers. Push delivery never consumes a response
 body, and the endpoint is an untrusted capability URL, so the default `JdkPushHttpClient` discards
@@ -448,9 +548,12 @@ void validate(URI endpoint);
 This SPI represents deployment egress policy for push endpoints. The endpoint in a `Subscription`
 is attacker-influenced (a public registration endpoint accepts the browser's `PushSubscription`
 JSON verbatim), so without a policy every send is a POST from inside the network to an address of
-the subscription's choosing — a blind SSRF oracle via `PushResult.statusCode()`,
-`PushDeliveryException` and timing. `Endpoints.requireSecure` stays a protocol check (absolute
-`https` URL with a host); which hosts a deployment may contact is policy, and lives here.
+the subscription's choosing — a blind SSRF oracle via the status code an answered outcome carries,
+an unanswered `Indeterminate`, and timing. That the oracle is now read off one value rather than off
+a value and an exception changes nothing about it: what closes it is the policy running first and
+unconditionally, before the encryption, the signature and any I/O. `Endpoints.requireSecure` stays a
+protocol check (absolute `https` URL with a host); which hosts a deployment may contact is policy,
+and lives here.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
@@ -522,15 +625,24 @@ domain entry verbatim only while it is a bounded ASCII host-shaped token free of
 whitespace and control characters — otherwise omitted, with the caller left to say which entry it
 was.
 
-A rejected *endpoint*, by contrast, throws `EndpointRejectedException` — extending
+A rejected *endpoint*, by contrast, raises `EndpointRejectedException` inside the seam — extending
 `RuntimeException`, not `IllegalArgumentException`, because the argument is well-formed
 (configuration refuses it), and because web frameworks commonly map IAE to a 400 response that
 would echo the redacted-but-fingerprinted message to the caller who registered the subscription.
 Rejection messages never carry the capability path/query (`Endpoints.redact`).
 
+That exception is the seam's vocabulary and not the facade's: `send` recognises exactly this type
+and reports `EndpointRejected`, carrying the endpoint in this library's own redacted rendering
+beside the policy's account of the refusal. The refusal is a value rather than an exception because
+one hostile row must not abort a fan-out over a whole subscription store — a denial of service a
+deployment would inflict on itself — and because the policy has done its job when the request never
+leaves. An application calling `validate` directly, at its own registration boundary, still catches
+the exception, and it means the same thing there.
+
 A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and redirect
 behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redirect.NEVER`, so a
-`3xx` cannot route the send past the policy that just ran. Strict guarantees require
+`3xx` is classified as a non-retryable failure rather than routing the send past the policy that
+just ran. Strict guarantees require
 resolution/egress pinning inside a `PushHttpClient` implementation.
 
 ### Deliberately concrete components
@@ -736,7 +848,13 @@ No traversal route through OSS Vault is claimed here.
   first send. Those three are what the metadata read itself performs; the canonical constructor
   then puts the same key through `P256PublicKeys.requireOnCurve` — the core's check, against its
   hard-coded constants — before the signer exists, which is what §6 weighs against the unverified
-  reference the parameter step uses.
+  reference the parameter step uses. Because that `build()` is the one call in this library outside
+  any send that reaches a custodian, it is also where a startup supervisor's contract is stated: a
+  Vault that cannot serve the read now raises `VapidSignerUnavailableException` and is a boot worth
+  retrying with backoff, while `PushCryptoException` recurs and should fail the deployment — and the
+  supervisor tests the interruption *before* it reads the type, since an interrupted boot raises the
+  unavailable type too and a supervisor that looped on it would sleep every backoff instantly
+  against a flag nobody cleared.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The supplied key gets
   the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
@@ -765,6 +883,40 @@ to untrusted capability URLs and discards response bodies, while the Vault API i
 operator-configured service whose JSON responses must be read. Both Vault calls — the Transit
 `sign` POST and the fetched mode's startup metadata GET — go through the same transport, so an
 application's mTLS, proxy, or observability configuration is never bypassed.
+
+**The seam's failure vocabulary is split by whether the failure recurs**, and the split lives here
+rather than in the signer because a signer translating it would have to discriminate on a message or
+a cause chain. An exchange that produced no response — no connection, a failed handshake, a timeout,
+a connection dropped mid-body, an interrupted wait — leaves as `VapidSignerUnavailableException`:
+nothing about such a failure says it will happen again, and an address with a typo and a Vault that
+is down for an hour arrive here indistinguishably. A failure that is this configuration's own leaves
+as `PushCryptoException`: a request URI that cannot back an HTTP request, a request header carrying
+a character illegal in an HTTP field value (a token from a file or a YAML block scalar commonly ends
+with a newline), and a response over the transport's own size cap — that bound is this library's, so
+a response over it is over it again next time, whatever Vault's health. The transport is not asked
+to recognise an interruption; what it owes is what any code catching an `InterruptedException` owes,
+to re-set the flag and keep the exception in the chain, and the facade's disjunction does the rest.
+
+`VaultHttpResponse` carries a third value beside the status and the body: the parsed `Retry-After`,
+where Vault declared one. A header stops at the transport unless the transport hands it on, and the
+signer copies it into the exception it raises, which is the only route by which the one component
+able to act on it — the caller's scheduler — ever sees it. What crosses is the parsed hint and not
+the headers: a bag of them from a service whose answers are read under a size bound is more surface
+than one value is worth. Empty is the ordinary case, since Vault fills the header on a rate-limited
+answer alone and only where an operator enabled the rate-limit response headers.
+
+Status classification stays in the signer, because the transport returns an answer rather than
+raising on one. `VaultTransitVapidSigner` puts each non-`200` to one question — does the status
+describe Vault's own condition, or that of a service Vault itself called, or the request that was
+made? The worked rows are Vault's own published table: `500`, `503`, `501`, `502`, `412`, `429`,
+`472` and `473` each name a state of the cluster or of something it called, and are the custodian
+unable to serve *now*. A status the table does not name falls to RFC 9110's classes — an
+unrecognised `5xx` is a statement about the server and joins them, an unrecognised `4xx` is a
+statement about the request and recurs — which is why the four `4xx` numbers above are named
+explicitly: only the vendor's table says they are about the cluster. `501` is the sharpest
+illustration that this is not the push service's matrix: there it is carved out of the retryable
+class because a push service answering "not implemented" has answered about the request, while Vault
+publishes it as "not initialized", a cluster state that ends the moment someone initializes it.
 
 The default `JdkVaultHttpTransport` enforces three invariants:
 
@@ -806,17 +958,11 @@ restating it in a second location.
 required", and it is required even when the `VapidSigner` bean comes from another starter: the
 Vault Transit signer starter supplies key custody, not a contact address.
 
-The `retry.*` keys need one extra step, because `RetryPolicy`'s constructor validates all three
-components together and reports both backoff bounds through a single shared message — so a
-rejection cannot be attributed to a key without asking the constructor about one real value at a
-time. The starter probes each key separately, filling the other two components with `1` and
-`Duration.ZERO`, the triple `RetryPolicy.none()` is built from. The attribution rests on those
-filler values staying acceptable beside any value of the key being probed — which `none()` alone
-does not witness, since it fixes all three — and **not** on the order of the checks inside the
-compact constructor. A test asserts the filler combinations directly — the `RetryPolicy.none()`
-baseline plus one per probe — rather than leaving the invariant to a comment; it *samples* the
-invariant rather than deciding it, since a constraint biting only above some threshold would pass
-those points, and no black-box check can do better.
+Every optional property therefore travels through one translate-the-error helper, which skips an
+unset value and re-throws a rejection with the YAML key in front of the core's own message. There is
+no second helper any more: the one property group whose values reached a constructor validating
+several at once was `push2u.retry.*`, and it is gone with the retry loop, so no property needs a
+probe to be attributed.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
@@ -891,7 +1037,9 @@ The automated suite covers:
 - the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
 - payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`);
-- HTTP delivery, status mapping, and retry behavior;
+- HTTP delivery, the status matrix per status and per carve-out, and the conversion of each seam
+  signal into its outcome — including the interrupt disjunction on both the transport and the signer
+  path;
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
   shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in

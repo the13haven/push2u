@@ -5,12 +5,16 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
+
 /**
- * Thrown when the configured {@link EndpointPolicy} refuses a subscription's push endpoint. A dedicated type so that an
- * application iterating a subscription store can tell the outcomes apart: this exception means "this stored
- * subscription violates the deployment's endpoint policy — flag or remove it", where {@link PushDeliveryException}
- * means a transport failure worth retrying and an {@link IllegalArgumentException} from {@link PushSender#send} means a
- * malformed argument (an oversized payload).
+ * Thrown by an {@link EndpointPolicy} that refuses a subscription's push endpoint. This is the policy seam's signal,
+ * and a dedicated type because {@link PushSender#send} recognises a rejection by it and by nothing else: exactly this
+ * type is converted into the {@link PushOutcome.EndpointRejected} outcome a caller reads, while any other
+ * {@code RuntimeException} out of a policy is a defect in that policy and propagates unchanged. An application calling
+ * {@link EndpointPolicy#validate} directly — at its own registration boundary, say — catches this type itself, and it
+ * means the same thing there: this endpoint violates the deployment's endpoint policy — flag or remove the stored
+ * subscription that carries it.
  *
  * <p>It extends {@code RuntimeException} directly — like every exception this library owns — and deliberately
  * <em>not</em> {@code IllegalArgumentException}. The rejected argument is well-formed; what refuses it is deployment
@@ -27,6 +31,12 @@ package com.the13haven.push2u;
  * capability URL that must never travel inside an exception (RFC 8030 §8.3; see {@link Endpoints#redact}).
  */
 public class EndpointRejectedException extends RuntimeException {
+
+    // Declared rather than computed. A computed identifier is derived from every non-private
+    // constructor and method as well as from the fields, so adding either would move it and make an
+    // instance already written to a stream unreadable after an otherwise compatible release.
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception describing the rejection. The message must not contain the raw endpoint — render it with

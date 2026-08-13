@@ -7,8 +7,10 @@ package com.the13haven.push2u.signer.vault;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.Serial;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
@@ -18,6 +20,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
@@ -25,6 +28,7 @@ import java.util.concurrent.Flow;
 import org.jspecify.annotations.Nullable;
 
 import com.the13haven.push2u.PushCryptoException;
+import com.the13haven.push2u.VapidSignerUnavailableException;
 
 /**
  * The default {@link VaultHttpTransport}, over the JDK's {@code java.net.http.HttpClient} — no third-party HTTP stack.
@@ -46,6 +50,14 @@ import com.the13haven.push2u.PushCryptoException;
  * address that resolves to an attacker (DNS hijack, squatted typo host, compromised reverse proxy) could answer 307 and
  * receive the token. A supplied client whose {@link HttpClient#followRedirects()} is not
  * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way.
+ *
+ * <p>What this transport throws follows the seam's contract ({@link VaultHttpTransport}): an exchange that produced no
+ * response — no connection, a failed handshake, a timeout, an interrupted wait — leaves as
+ * {@link VapidSignerUnavailableException}, because nothing about such a failure says it will happen again; a failure
+ * that is this configuration's own and recurs on every attempt whatever Vault's health — the unusable request URI, the
+ * illegal request header, and this transport's own response-size cap — stays {@link PushCryptoException}. The
+ * {@code Retry-After} header of every response is parsed here (Vault sends delta-seconds and nothing else) and handed
+ * on through {@link VaultHttpResponse#retryAfter()}, which is the only way the hint survives past this seam.
  *
  * <p>Exception messages carry the HTTP method and a fail-closed rendering of the request URI: rebuilt from its parsed
  * components without its userinfo (credentials in the authority — {@code https://user:secret@vault:8200} — are secrets
@@ -169,11 +181,23 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
                     + " is illegal in an HTTP header value (a token sourced from a file or a YAML block scalar"
                     + " commonly ends with a newline): " + method + " " + redacted(uri));
         }
+        // One line decides everything below: HttpClient.send declares IOException and
+        // InterruptedException, and anything it throws means it returned no response — so what it
+        // throws is an exchange with no answer, and leaves as the custodian-unavailable type. That
+        // holds even where an answer had begun to arrive (a connection dropped mid-body, a Vault
+        // that sent headers and then stalled into the request timeout): begun is not answered. The
+        // single carve-out is this transport's own response-size cap, dug out of the cause chain
+        // below — that bound is this library's, so a response over it is over it again on every
+        // attempt whatever Vault's health, which is a recurring failure and stays the crypto
+        // exception.
         try {
             HttpResponse<byte[]> response = httpClient.send(request.build(), this::boundedBody);
-            return new VaultHttpResponse(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+            return new VaultHttpResponse(
+                    response.statusCode(),
+                    new String(response.body(), StandardCharsets.UTF_8),
+                    retryAfterHint(response.headers()));
         } catch (HttpTimeoutException e) {
-            throw new PushCryptoException(
+            throw new VapidSignerUnavailableException(
                     "Vault request timed out after " + requestTimeout + ": " + method + " " + redacted(uri), e);
         } catch (IOException e) {
             // The JDK client surfaces a body-subscriber failure wrapped in IOException — recover
@@ -183,11 +207,49 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
             if (tooLarge != null) {
                 throw new PushCryptoException(tooLarge.getMessage() + ": " + method + " " + redacted(uri), e);
             }
-            throw new PushCryptoException("Vault request failed: " + method + " " + redacted(uri), e);
+            throw new VapidSignerUnavailableException(
+                    "Vault request ended with no response: " + method + " " + redacted(uri), e);
         } catch (InterruptedException e) {
+            // Re-setting the flag and keeping the cause is the whole of what this transport owes an
+            // interruption: telling an interrupted exchange apart from any other unanswered one is
+            // the caller's job, and whoever is supervising tests the flag (or finds the
+            // InterruptedException in this chain) before reading the type.
             Thread.currentThread().interrupt();
-            throw new PushCryptoException("Interrupted while waiting for Vault: " + method + " " + redacted(uri), e);
+            throw new VapidSignerUnavailableException(
+                    "Interrupted while waiting for Vault: " + method + " " + redacted(uri), e);
         }
+    }
+
+    /**
+     * The retry hint Vault declared, read from the {@code Retry-After} response header. Vault fills that header in
+     * delta-seconds alone — a plain run of ASCII digits, a "suggested time, in seconds" in its own words — and only on
+     * a rate-limited answer where an operator set {@code enable_rate_limit_response_headers} in the quota
+     * configuration, an API-managed setting on {@code sys/quotas/config} that defaults to false (<a
+     * href="https://developer.hashicorp.com/vault/api-docs/system/quotas-config">Vault quotas configuration API</a>) —
+     * so empty is the ordinary result, not a surprise. Anything else in the header — an HTTP-date, a sign, non-digits —
+     * is not what Vault sends, and yields no hint rather than a guess; the digits-only parse also makes a negative hint
+     * unrepresentable, which is the floor {@link VaultHttpResponse} requires. The length bound exists to keep the
+     * arithmetic inside a {@code long}, not to cap the value: eighteen digits is some thirty billion years of seconds,
+     * and no ceiling is applied to anything that parses.
+     */
+    private static Optional<Duration> retryAfterHint(HttpHeaders headers) {
+        Optional<String> header = headers.firstValue("Retry-After");
+        if (header.isEmpty()) {
+            return Optional.empty();
+        }
+        String value = header.get();
+        if (value.isEmpty() || value.length() > 18) {
+            return Optional.empty();
+        }
+        long seconds = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return Optional.empty();
+            }
+            seconds = seconds * 10 + (c - '0');
+        }
+        return Optional.of(Duration.ofSeconds(seconds));
     }
 
     /**
@@ -267,6 +329,14 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
     /** Marks a size-cap violation so it can be told apart from genuine I/O failures. */
     private static final class ResponseTooLargeException extends IOException {
+
+        // Declared rather than computed, as every exception in this library is: a computed
+        // identifier is derived from every non-private constructor and method as well as from the
+        // fields, so adding either would move it and make an instance already written to a stream
+        // unreadable after an otherwise compatible release. This one never leaves the transport,
+        // and the habit is cheaper to keep than to reason about per class.
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         ResponseTooLargeException(int maxResponseBytes) {
             super("Vault response exceeded the configured limit of " + maxResponseBytes + " bytes");

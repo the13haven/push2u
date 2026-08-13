@@ -37,12 +37,19 @@ public final class Endpoints {
      * URL) are never included; the fingerprint lets log lines about the same subscription be correlated without
      * disclosing it.
      *
-     * <p>Never throws: it runs on error-handling and logging paths. A {@code null} endpoint renders as {@code <null
-     * endpoint>}; an unparseable string or a URI without scheme/host renders as {@code <opaque endpoint>#} plus the
-     * fingerprint of the raw string.
+     * <p><b>Nothing about the endpoint makes it throw</b>, which is what lets it run on error-handling and logging
+     * paths: a {@code null} endpoint renders as {@code <null endpoint>}, and an unparseable string or a URI without
+     * scheme/host renders as {@code <opaque endpoint>#} plus the fingerprint of the raw string.
+     *
+     * <p>One thing can still leave here, and it is about the platform rather than the argument: a runtime with no
+     * {@code SHA-256} raises {@link PushCryptoException}. It is allowed to escape rather than degraded into a
+     * fingerprint-less rendering, because the condition it reports is a runtime that is not a Java SE implementation —
+     * on which every other cryptographic step of a send has already failed for the same reason — and swallowing it here
+     * would buy a promise that holds only where nothing else in this library does.
      *
      * @param endpoint the endpoint URL to redact, possibly {@code null}
      * @return a representation containing only the origin and a fingerprint, never the full URL
+     * @throws PushCryptoException if the platform has no {@code SHA-256}, which no conforming Java runtime can be
      */
     public static String redact(@Nullable String endpoint) {
         if (endpoint == null) {
@@ -78,6 +85,9 @@ public final class Endpoints {
      *
      * @param endpoint the endpoint URL to validate
      * @throws IllegalArgumentException if the endpoint is not an absolute https URL with a host
+     * @throws PushCryptoException if the platform has no {@code SHA-256}, which no conforming Java runtime can be — the
+     *     refusal above renders the endpoint with {@link #redact} to say which one it refused, so it inherits that
+     *     method's one platform condition
      */
     // PreserveStackTrace: the cause is dropped on purpose — URISyntaxException's message embeds the
     // raw endpoint, which is a capability URL and must not travel in an exception the caller logs.
@@ -108,8 +118,13 @@ public final class Endpoints {
         try {
             digest = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
-            // Every JVM ships SHA-256; if it is missing the runtime is broken beyond this library.
-            throw new IllegalStateException("SHA-256 MessageDigest is unavailable", e);
+            // The fingerprint hashes with the platform's own SHA-256 whatever provider this library
+            // is configured with, deliberately: it is diagnostics rather than protocol. So a failure
+            // here does not mean a misconfigured provider — it means a runtime that is not a Java SE
+            // implementation, since every one of those ships SHA-256. That is an unusable
+            // cryptographic substrate, and an unusable substrate is worth one channel and not two,
+            // which is why it leaves as the same type a missing AES/GCM or HmacSHA256 does.
+            throw new PushCryptoException("SHA-256 MessageDigest is unavailable", e);
         }
         byte[] hash = digest.digest(endpoint.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(hash).substring(0, FINGERPRINT_HEX_LENGTH);
