@@ -25,8 +25,9 @@ exact harm the header exists to prevent.
 that the library does not retry; `PushOutcome` and its variants; the two status matrices, the push
 service's and the custodian's; the surfacing of `Retry-After`; the line between an outcome and an
 exception; and which signal from which seam becomes which outcome. Classifying a failure is this
-record's work throughout, at the transport's seam as much as at the facade's. The exception *types*
-are ADR-022's — their names, what each one carries, where each one is declared, and what a caller
+record's work throughout, at the Vault transport's seam as much as at the facade's, and so is which
+of ADR-022's types a failure leaves a seam wearing. The exception *types* are ADR-022's — their
+names, the scope of each, what each one carries, where each one is declared, and what a caller
 catching one is promised. Where this record names a type it is naming ADR-022's, and a decision that
 moves one of those supersedes that record rather than this one. This is written down so that
 whoever supersedes either knows which half they are replacing.
@@ -95,11 +96,12 @@ one; §15.5.9 lets a client repeat after `408` and §15.5.20 lets it retry a `42
 connection. The rest is this library's judgement, and it is taken per status rather than per class,
 because the class rule in the code today — `429` plus every 5xx — is wrong in both directions:
 `408` and `421` are marked repeatable and it excludes them, and the 5xx class holds registered
-statuses whose own defining specification says they answer about the request or about a
-configuration, so a repeat is answered identically. So: `2xx` accepted; `404` and `410` expired;
-`408`, `421`, `429` and the 5xx class **except `501`, `505`, `506`, `508` and `511`** retryable;
-`413` retryable when it carries a parseable `Retry-After` and not otherwise, for the reason the last of
-the paragraphs below gives; everything else not.
+statuses whose own defining specification has them answer about the request, about a configuration,
+or about the sending host's network rather than about this delivery at all — and a repeat is
+answered identically by each. So: `2xx` accepted; `404` and `410` expired; `408`, `421`, `429` and
+the 5xx class **except `501`, `505`, `506`, `508` and `511`** retryable; `413` retryable when it
+carries a parseable `Retry-After` and not otherwise, because there the header rather than the number
+does the classifying, as the paragraph on `413` below sets out; everything else not.
 
 **Each carve-out is its defining specification's own words rather than a guess about a service.**
 RFC 9110 §15.6.2 has a `501` say the server does not support the functionality required to fulfil
@@ -208,7 +210,7 @@ public sealed interface PushOutcome {
 chooses its own grain: `case NotAttempted n` takes the group, `case PayloadRejected p` takes the one
 carrying sizes. A variant wrapping a nested failure object was drafted and rejected for forcing two
 dispatches on one decision. Each leaf carries exactly the fields its case has: a shape admitting a
-combination that cannot occur costs more than a type does. The `413` rule below leaves one such
+combination that cannot occur costs more than a type does. The `413` rule above leaves one such
 residue and it is accepted rather than designed away — `RetryableFailure(413, empty)` is
 representable and cannot arise, since a bare `413` is classified as non-retryable. The alternative
 is a variant per status, which pays a type for one dead pair.
@@ -241,10 +243,9 @@ definition.) Usefulness is what the variants name.
 
 A `RetryAdvice` enum was considered and rejected as a retry policy under another name; a single
 `ResponseRejected` leaving classification to the caller was rejected because it deletes what the
-section above keeps and pushes every caller into guards on status numbers. A
-`switch` made of guards is not exhaustive, so each caller re-derives the judgement and carries its
-own copy of it; under the adopted shape no caller has to name `501`, or any of the four statuses
-carved out beside it, at all.
+section above keeps and pushes every caller into guards on status numbers. A `switch` made of guards
+is not exhaustive, so each caller re-derives the judgement and carries its own copy of it; under the
+adopted shape no caller has to name `501`, or any of the four statuses carved out beside it, at all.
 
 The two names state a verdict about *this response*, not a forecast about the endpoint. `TRANSIENT`
 and `PERMANENT` were the alternative and describe the failure's nature, which nobody here knows — a
@@ -356,9 +357,10 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   why the two halves — nothing answered, against a custodian that answered a refusal for now — take
   one type rather than two, are ADR-022's to settle, and it settles them there. What this record
   needs of that type is only what a seam signal has to give a facade: that it be distinguishable from
-  a defect, so that a custodian's outage converts to an outcome and a broken provider does not. That
-  much of `PushCryptoException`'s reasoning survives intact; what does not is bundling a defect in
-  with it.
+  a defect, so that a custodian's outage converts to an outcome and a broken provider does not.
+  `PushCryptoException`'s own reasoning is not discarded wholesale in that move — the half of it that
+  survives is named in ADR-022, beside the narrowing. What does not survive is what this record
+  takes away: bundling a defect in with an outage.
 
   This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
   is not on offer: nothing answered, so nothing states whether the condition will hold next time. A
@@ -368,11 +370,10 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   member of this half a test *does* reach is the interruption, and it is reached by the facade's
   disjunction rather than by anything the seam decided — which is why a send reports it as a
   cancellation while a `build()`, having no facade over it, sees the unavailable custodian the seam
-  raised. For the rest, it
-  falls to the honest side, where "cannot sign now" is true of both, and a permanent one surfaces
-  where this decision has just put every other exhausted repeat: in the caller's retry budget and the
-  dead-letter path at the end of it. The alternative is a guess, and a guess wrong in the likelier
-  direction turns a maintenance window into an aborted fan-out.
+  raised. For the rest, it falls to the honest side, where "cannot sign now" is true of both, and a
+  permanent one surfaces where this decision has just put every other exhausted repeat: in the
+  caller's retry budget and the dead-letter path at the end of it. The alternative is a guess, and a
+  guess wrong in the likelier direction turns a maintenance window into an aborted fan-out.
 
   **A custodian that declares when to come back has that declaration reported.** `SignerUnavailable`
   carries an `Optional<Duration>` retry hint, the same shape and the same meaning `RetryableFailure`
@@ -491,9 +492,8 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   and "a notification the application must render smaller", and what an application renders is
   plaintext. That the report proposed the encrypted pair regardless is not a preference it stated for
   converting by hand; it is the ADR-011 reading, corrected above, deciding the question for it. What
-  remains open there is the separate question
-  raised in its thread — whether the refusal should also be answerable *before* a send — which needs
-  no decision here.
+  remains open there is the separate question raised in its thread — whether the refusal should also
+  be answerable *before* a send — which needs no decision here.
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
   may well have gone out, but the caller asked to stop, and handing back a value it is expected to act
   on answers the wrong question; reporting it as retryable would be worse, since the loop spins, every
@@ -504,13 +504,11 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   cancellation from the type rather than from whichever seam happened to be blocked when it arrived.
   What that type promises a caller — which differs between `send` and `sendAsync`, because an
   interrupt status does not travel through a `CompletableFuture` — is fixed in ADR-022 with the rest
-  of the taxonomy. Neither test
-  alone is sound: an
-  interruption surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries no
-  `InterruptedException` beneath it, and a transport may attach a cause without re-setting the flag.
-  This is a send's rule: a signer that reads its key inside `build()` is outside it, and what an
-  interruption there raises is the seam's own type, with the flag set for whoever is supervising the
-  boot to test first.
+  of the taxonomy. Neither test alone is sound: an interruption surfacing as
+  `ClosedByInterruptException` or `InterruptedIOException` carries no `InterruptedException`
+  beneath it, and a transport may attach a cause without re-setting the flag. This is a send's rule:
+  a signer that reads its key inside `build()` is outside it, and what an interruption there raises
+  is the seam's own type, with the flag set for whoever is supervising the boot to test first.
 
 What still throws is misuse and defect: a `null` where the contract forbids one, a builder
 configured with a value it rejects, a JCE provider that cannot do `AES/GCM/NoPadding`, an unexpected
@@ -590,13 +588,13 @@ dropped mid-body, or a custodian that sends headers and then stalls until the re
 exchanges whose answer had begun too, and both stay on the unavailable side where they belong. It is
 that the bound is *this library's own*: a response over it is over it again on the next attempt and
 the one after, whatever the custodian's health, which is the recurrence axis this record applies
-everywhere else. **The transport is not asked to recognise an
-interruption anywhere in that**: it re-sets the flag, which any code catching an
-`InterruptedException` owes and which all three sites that raise one here already do, and the
-facade's disjunction does the recognising, which is where this decision already put it. Today the
-interrupted case is a `PushCryptoException`, a type nothing converts, so an interrupted wait for
-Vault propagates untouched and lands on a human as a cryptographic defect — a page over a shutdown,
-and a defect that is neither cryptographic nor a defect.
+everywhere else. **The transport is not asked to recognise an interruption anywhere in that**: it
+re-sets the flag, which any code catching an `InterruptedException` owes and which all three sites
+that raise one here already do, and the facade's disjunction does the recognising, which is where
+this decision already put it. Today the interrupted case is a `PushCryptoException`, a type nothing
+converts, so an interrupted wait for Vault propagates untouched and lands on a human as a
+cryptographic defect — a page over a shutdown, and a defect that is neither cryptographic nor a
+defect.
 
 The status codes are the other half and they stay where they already are, in the signer, because the
 transport hands back a response rather than raising on an error status — deliberately, and its
@@ -708,10 +706,10 @@ neither is anything `send` reports any more. `PushCryptoException` is not remove
 narrowed — to a cryptographic defect and a misconfiguration, the operational half of what it used to
 mean leaving through `SignerUnavailable` instead; where that narrowed type's edge falls exactly is
 ADR-022's, and this record needs only that the operational half is gone from it. What survives of
-the sentence is the principle
-behind it, under a sharper line than ADR-007 had occasion to draw. The spelling it uses for its own
-decision, an enum constant and a predicate, changes with it, but that is a spelling and not a
-clause: the decision is that the expiry is a value the caller inspects, and a variant is that value.
+the sentence is the principle behind it, under a sharper line than ADR-007 had occasion to draw.
+The spelling it uses for its own decision, an enum constant and a predicate, changes with it, but
+that is a spelling and not a clause: the decision is that the expiry is a value the caller inspects,
+and a variant is that value.
 
 **ADR-018 is superseded in part of one clause.** Deciding where the second structural check on the
 encoded public key lives, it settled that a `PushCryptoException` raised by `publicKey()` itself —
@@ -722,12 +720,11 @@ thereby refused for good, and a `503` from a sealed Vault or a `412` from a node
 up is a custodian that would publish the key a minute later. What keeps its type is a refusal *about
 the request* — a token without the capability to read that key, a mount that is not there — which
 the next call receives again unchanged. The rule produced a sentence published on the `VapidSigner`
-contract, which is where the cost lands: an override uses
-that type *"so that one signer does not answer for one value in two exception types."* After this
-decision a Vault-backed signer does. ADR-018 refused to split at all, holding one value to one type,
-and this splits by whether the failure recurs — the axis a caller who now owns the retry has to
-read. The rest of it stands, including the conformance kit's agreement, which asserts no exception
-types.
+contract, which is where the cost lands: an override uses that type *"so that one signer does not
+answer for one value in two exception types."* After this decision a Vault-backed signer does.
+ADR-018 refused to split at all, holding one value to one type, and this splits by whether the
+failure recurs — the axis a caller who now owns the retry has to read. The rest of it stands,
+including the conformance kit's agreement, which asserts no exception types.
 
 Those two are the only ADRs whose decisions move, and each keeps its status line until this one is
 implemented, as ADR-004's did until ADR-019 was. ADR-004 is untouched and reinforced: the library
@@ -738,8 +735,8 @@ hint its response record has to start carrying — and `VapidSigner` takes the e
 above. `PushHttpClient`'s does not: it throws what it throws today, and the interrupt test is the
 facade's, written as a disjunction precisely so that no transport has to be obliged to anything.
 Both are changes *within* seams rather than to which seams exist. ADR-010's key custody is
-untouched: which signer a deployment uses does not change, only what one of
-them throws. ADR-019 keeps its decision; one derivation loses the quantity it was sized against, as
+untouched: which signer a deployment uses does not change, only what one of them throws. ADR-019
+keeps its decision; one derivation loses the quantity it was sized against, as
 recorded above. ADR-011's size limit is unaffected, though where its refusal is *reported* moves.
 ADR-016 and ADR-017 keep theirs, though this does decide something on the egress path: a refusal is
 an outcome. ADR-016's threat model rests on what a caller can observe being an oracle, and that

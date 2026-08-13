@@ -20,14 +20,15 @@ and a thread that was interrupted. `PushSender.send`'s published Javadoc then te
 this type means a key service *"unreachable or refuses the operation, which may be transient"*, so a
 durable retrier that believes the contract retries a wrong-typed Transit key forever.
 
-**This record owns the exception taxonomy, entirely**: which types exist, what each one carries,
-where each is declared, which type a seam raises for a failure it has classified, and what a caller
-or a supervisor catching one is promised. `PushOutcome` and its variants, the two status matrices,
-the surfacing of `Retry-After` and the line between an outcome and an exception are ADR-021's — and
-so is the classification itself, of which a type is only the channel. Where this record names an
-outcome or a classification it is naming that record's, and a decision that moves one of those
-supersedes it rather than this one. This is written down so that whoever supersedes either knows
-which half they are replacing.
+**This record owns the exception taxonomy, entirely**: which types exist, the scope of each — what
+it covers and what it no longer does — what each one carries, where each is declared, and what a
+caller or a supervisor catching one is promised. Classification is ADR-021's, at the Vault
+transport's seam as much as at the facade's, and so is which failure leaves a seam wearing which of
+these types; a type is the channel and that record decides what goes down it. `PushOutcome` and its
+variants, the two status matrices, the surfacing of `Retry-After` and the line between an outcome
+and an exception are ADR-021's too. Where this record names an outcome or a classification it is
+naming that record's, and a decision that moves one of those supersedes it rather than this one.
+This is written down so that whoever supersedes either knows which half they are replacing.
 
 ## The decision
 
@@ -93,24 +94,33 @@ in the log — and a different log line is not a different action, which is the 
 gives the signer split below. A type would be minted for a distinction only a human reads, and the
 message and the cause chain already carry it.
 
-**`PushCryptoException` therefore covers what recurs until a human acts**, whether the human edits a
-property or files a bug, and it keeps its name because the cryptography is what could not be
-performed in every case. A platform without `AES/GCM/NoPadding`, `HmacSHA256` or the `secp256r1`
-parameters; a custodian or a `VapidSigner` implementation that answered something that is not a
-signature or not a key; a Transit key whose type VAPID cannot use, a mount or key name that is not
-there, a token without the capability, a pinned key version Vault no longer holds. `Endpoints`'s
-unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and joins them, on a stated
-ground rather than on a claim of sameness. It is not the same condition: the fingerprint hashes with
-the platform's own SHA-256 whatever provider is configured, deliberately, because it is diagnostics
-and not protocol — so its failure means a runtime that is not a Java SE implementation, where a
-missing `secp256r1` from a configured FIPS provider is an ordinary misconfiguration of a supported
-kind. It joins them because an unusable cryptographic substrate is worth one channel rather than two,
-and because the site is unreachable on a conforming JVM, so the choice costs nothing either way.
+**`PushCryptoException` therefore covers everything that does not speak about the custodian's own
+condition** — an answer about the request and about what this deployment supplied, an answer no
+custodian could have meant, and a substrate that cannot perform the cryptography at all — and it
+keeps its name because the cryptography is what could not be performed in every case. That
+discriminator is ADR-021's and this record does not move it. "Until a human acts" is not the
+discriminator and would sort these wrongly: an operator unseals a Vault, and a node standing by or
+catching up waits on a person or a replication just as surely, yet every one of those is an outcome.
+What separates them is whose state the answer describes, and with it whether a repeat can come back
+different: a cluster's condition ends on its own terms — an operator, a replication, a rate window —
+without this deployment changing anything it configured, where everything left here answers
+identically until the deployment changes what it supplied. A platform without `AES/GCM/NoPadding`,
+`HmacSHA256` or the `secp256r1` parameters; a custodian or a `VapidSigner` implementation that
+answered something that is not a signature or not a key; a Transit key whose type VAPID cannot use,
+a mount or key name that is not there, a token without the capability, a pinned key version Vault no
+longer holds. `Endpoints`'s unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today
+and joins them, on a stated ground rather than on a claim of sameness. It is not the same condition:
+the fingerprint hashes with the platform's own SHA-256 whatever provider is configured,
+deliberately, because it is diagnostics and not protocol — so its failure means a runtime that is
+not a Java SE implementation, where a missing `secp256r1` from a configured FIPS provider is an
+ordinary misconfiguration of a supported kind. It joins them because an unusable cryptographic
+substrate is worth one channel rather than two, and because the site is unreachable on a conforming
+JVM, so the choice costs nothing either way.
 
-So the type loses two things and no more: the operational half
-ADR-021 moves to outcomes, and the cancellation the section below gives a type of its own — the
-interrupted custodian wait, which is `PushCryptoException` today and is neither cryptographic nor a
-defect. The misconfigurations ADR-021 names beside the defects stay where that record puts them.
+So the type loses two things and no more: the operational half ADR-021 moves to outcomes, and the
+cancellation the section below gives a type of its own — the interrupted custodian wait, which is
+`PushCryptoException` today and is neither cryptographic nor a defect. The misconfigurations ADR-021
+names beside the defects stay where that record puts them.
 
 **The starters keep `IllegalStateException`**, and this is stated so the inventory is complete rather
 than silently exempt. Their five conditions are a missing `push2u.vapid.subject`; a
@@ -269,16 +279,19 @@ exactly the caller this taxonomy exists for.
 ## Where the line with ADR-021 runs, and what this costs
 
 The two records were drafted together and decide one send between them, so the line is written out
-rather than left to be inferred. **Every exception type is this record's**: which ones exist, what
-each carries, where it is declared, which one a seam raises for a failure it has classified, the
-narrowing of `PushCryptoException`, the place of `IllegalArgumentException` and of the starters'
-`IllegalStateException`, and the interruption contract on both paths. **Every outcome and every
-classification is ADR-021's**: the shape of `PushOutcome` and its variants, what each variant means
-to a caller, both status matrices — the push service's and the custodian's — the surfacing of
-`Retry-After`, the line between an outcome and an exception, and which seam signal converts to which
-outcome. Neither record re-decides the other's half; where one names something on the far side of
-the line, it is naming and not deciding. An ADR that moves a type supersedes this one; an ADR that
-moves an outcome or a classification supersedes that one.
+rather than left to be inferred. **Every exception type is this record's**: which ones exist, the
+scope of each, what each carries, where it is declared, the narrowing of `PushCryptoException`, the
+place of `IllegalArgumentException` and of the starters' `IllegalStateException`, and the
+interruption contract on both paths. **Every outcome and every classification is ADR-021's**: the
+shape of `PushOutcome` and its variants, what each variant means to a caller, both status matrices —
+the push service's and the custodian's — the surfacing of `Retry-After`, the line between an outcome
+and an exception, which seam signal converts to which outcome, and which failure leaves a seam
+wearing which type. That last one includes the Vault transport's split, which is written out there
+and nowhere else: an oversized response, an unusable request URI and an illegal request header stay
+`PushCryptoException` because that record classified them, not because this one enumerated them.
+Neither record re-decides the other's half; where one names something on the far side of the line,
+it is naming and not deciding. An ADR that moves a type supersedes this one; an ADR that moves an
+outcome or a classification supersedes that one.
 
 Two readings of that line are worth closing off, because a draft of this record proposed both.
 ADR-021's *"a defect and a misconfiguration"*, in the two places it says it, is not narrowed here:
@@ -375,9 +388,10 @@ whichever ADR happens to touch a failure next.
 
 The rows below are what everything above amounts to, for the reader who needs the answer rather than
 the argument. The outcome column names ADR-021's variants and that record fixes what each one means
-to a caller; what this table adds is the type each seam raises and what the reader does with what
-arrives. A row that is hard to fill is a disagreement between two sections rather than a gap in the
-table, and the sections are what to fix.
+to a caller, as it fixes the classification that decides which row a failure lands in; what this
+table adds is the type that leaves each seam, and what the reader does with what arrives. A row that
+is hard to fill is a disagreement between two sections rather than a gap in the table, and the
+sections are what to fix.
 
 | The condition | What the seam signals | What `send` produces | What the reader does |
 |---|---|---|---|
@@ -388,10 +402,12 @@ table, and the sections are what to fix.
 | The POST went out and nothing answered — a timeout, a dropped connection | `PushHttpClient` throws `PushDeliveryException` | `Indeterminate` | Price a possible duplicate against a possible loss; the library will not price it for you |
 | The policy refused the endpoint | `EndpointPolicy` throws `EndpointRejectedException` | `EndpointRejected` | Record the row and keep the fan-out running |
 | The payload does not fit this sender's configuration | the pre-flight check, before any seam is reached | `PayloadRejected(payloadBytes, maximumPayloadBytes)` | Render the notification smaller |
-| The custodian cannot sign now — unreachable, sealed, not caught up, rate-limited | `VapidSigner` throws `VapidSignerUnavailableException`, carrying the cause and, where the custodian declared them, a hint and a status | `SignerUnavailable` | Stop submitting new sends and repeat when the custodian is back |
+| The custodian cannot sign now — unreachable, sealed, not caught up, rate-limited | `VapidSigner` throws `VapidSignerUnavailableException`, carrying the cause, the status wherever the custodian answered a number, and a hint only where one was declared | `SignerUnavailable` | Stop submitting new sends and repeat when the custodian is back |
 | A cryptographic defect, an unusable provider, or a custodian misconfiguration that recurs | `VapidSigner`, the platform or the Vault transport throws `PushCryptoException` | throws `PushCryptoException` | Stop the sender; a human edits a property or files a bug |
 | The sending thread was interrupted | whichever seam was blocked; the facade's disjunction recognises it | throws `PushInterruptedException` — on `sendAsync`, the future completes exceptionally with it and is not cancelled | Propagate the cancellation; retry nothing, alert nobody |
 | An argument is not a legal value of its parameter | the constructor, factory or builder that took it | throws `IllegalArgumentException` | Fix the call site |
+| A `null` where the contract forbids one, or a violated internal invariant | the site that finds it | it propagates as the unchecked defect it is | Fix the call site, or file a bug where the invariant is this library's |
+| Any other `RuntimeException` out of a consumer-written seam | the seam throws whatever it throws | it propagates unchanged — the facade converts three types and no others | Read it as a defect in that implementation, not as an operational condition |
 
 One row has no `send` in it and is left out on purpose: a signer that reads its key inside `build()`
 is outside a send, so an interruption there arrives as `VapidSignerUnavailableException` and the
