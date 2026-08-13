@@ -27,9 +27,9 @@ service's and the custodian's; the surfacing of `Retry-After`; the line between 
 exception; and which signal from which seam becomes which outcome. Classifying a failure is this
 record's work throughout, at the Vault transport's seam as much as at the facade's, and so is which
 of ADR-022's types a failure leaves a seam wearing. The exception *types* are ADR-022's — their
-names, the scope of each, what each one carries, where each one is declared, and what a caller
-catching one is promised. Where this record names a type it is naming ADR-022's, and a decision that
-moves one of those supersedes that record rather than this one. This is written down so that
+names, what each one promises and what each one carries, where each one is declared, and what a
+caller catching one reads from it. Where this record names a type it is naming ADR-022's, and a
+decision that moves one of those supersedes that record rather than this one. This is written down so that
 whoever supersedes either knows which half they are replacing.
 
 ## The decision
@@ -315,8 +315,9 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   initialized", `429` the default for a standby node's health and also "Too Many Requests", `473`
   the same for a performance standby, `472` the same for "disaster recovery mode replication
   secondary and active", `502` a third party Vault itself called. Each of those is
-  `SignerUnavailable` — every one of them names a state of the cluster that ends when an operator or
-  a replication catches up, and none of them names anything about the request. The second is what
+  `SignerUnavailable` — every one of them names a state of the cluster, or of a service the cluster
+  itself called, that ends when an operator, a replication or that upstream catches up, and none of
+  them names anything about the request. The second is what
   recurs: `400`, `403`, `404` and `405` — a malformed call, a token without the capability, a key or
   mount that is not there, a method the path does not take — and so is a response Vault could not
   have meant, an unparseable signature or a key that is not on P-256. Those stay

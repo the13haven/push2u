@@ -20,9 +20,9 @@ and a thread that was interrupted. `PushSender.send`'s published Javadoc then te
 this type means a key service *"unreachable or refuses the operation, which may be transient"*, so a
 durable retrier that believes the contract retries a wrong-typed Transit key forever.
 
-**This record owns the exception taxonomy, entirely**: which types exist, the scope of each — what
-it covers and what it no longer does — what each one carries, where each is declared, and what a
-caller or a supervisor catching one is promised. Classification is ADR-021's, at the Vault
+**This record owns the exception taxonomy, entirely**: which types exist, what each one promises and
+what each one carries, where each is declared, and what a caller or a supervisor catching one reads
+from it. It owns the contracts and not the sorting. Classification is ADR-021's, at the Vault
 transport's seam as much as at the facade's, and so is which failure leaves a seam wearing which of
 these types; a type is the channel and that record decides what goes down it. `PushOutcome` and its
 variants, the two status matrices, the surfacing of `Retry-After` and the line between an outcome
@@ -94,19 +94,21 @@ in the log — and a different log line is not a different action, which is the 
 gives the signer split below. A type would be minted for a distinction only a human reads, and the
 message and the cause chain already carry it.
 
-**`PushCryptoException` therefore covers everything that does not speak about the custodian's own
-condition** — an answer about the request and about what this deployment supplied, an answer no
-custodian could have meant, and a substrate that cannot perform the cryptography at all — and it
-keeps its name because the cryptography is what could not be performed in every case. That
-discriminator is ADR-021's and this record does not move it. "Until a human acts" is not the
-discriminator and would sort these wrongly: an operator unseals a Vault, and a node standing by or
-catching up waits on a person or a replication just as surely, yet every one of those is an outcome.
-What separates them is whose state the answer describes, and with it whether a repeat can come back
-different: a cluster's condition ends on its own terms — an operator, a replication, a rate window —
-without this deployment changing anything it configured, where everything left here answers
-identically until the deployment changes what it supplied. A platform without `AES/GCM/NoPadding`,
-`HmacSHA256` or the `secp256r1` parameters; a custodian or a `VapidSigner` implementation that
-answered something that is not a signature or not a key; a Transit key whose type VAPID cannot use,
+**`PushCryptoException` therefore covers everything that speaks neither about the custodian's own
+condition nor about that of a service the custodian itself called** — an answer about the request
+and about what this deployment supplied, an answer no custodian could have meant, and a substrate
+that cannot perform the cryptography at all — and it keeps its name because the cryptography is what
+could not be performed in every case. That discriminator is ADR-021's and this record does not move
+it. "Until a human acts" is not the discriminator and would sort these wrongly: an operator unseals
+a Vault, and a node standing by or catching up waits on a person or a replication just as surely,
+yet every one of those is an outcome. What separates them is whose state the answer describes, and
+with it whether a repeat can come back different: a custodian's condition, its own or that of an
+upstream it called, ends on its own terms — an operator, a replication, a rate window, a third party
+coming back — without this deployment changing anything it configured, where everything left here
+answers identically until the deployment changes what it supplied. A platform without
+`AES/GCM/NoPadding`, `HmacSHA256` or the `secp256r1` parameters — this deployment's own substrate,
+not anything a custodian calls; a custodian or a `VapidSigner` implementation that answered
+something that is not a signature or not a key; a Transit key whose type VAPID cannot use,
 a mount or key name that is not there, a token without the capability, a pinned key version Vault no
 longer holds. `Endpoints`'s unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today
 and joins them, on a stated ground rather than on a claim of sameness. It is not the same condition:
@@ -279,16 +281,17 @@ exactly the caller this taxonomy exists for.
 ## Where the line with ADR-021 runs, and what this costs
 
 The two records were drafted together and decide one send between them, so the line is written out
-rather than left to be inferred. **Every exception type is this record's**: which ones exist, the
-scope of each, what each carries, where it is declared, the narrowing of `PushCryptoException`, the
-place of `IllegalArgumentException` and of the starters' `IllegalStateException`, and the
-interruption contract on both paths. **Every outcome and every classification is ADR-021's**: the
-shape of `PushOutcome` and its variants, what each variant means to a caller, both status matrices —
-the push service's and the custodian's — the surfacing of `Retry-After`, the line between an outcome
-and an exception, which seam signal converts to which outcome, and which failure leaves a seam
-wearing which type. That last one includes the Vault transport's split, which is written out there
-and nowhere else: an oversized response, an unusable request URI and an illegal request header stay
-`PushCryptoException` because that record classified them, not because this one enumerated them.
+rather than left to be inferred. **Every exception type is this record's** — the contracts, that is,
+and not the sorting: which types exist, what each promises and what each carries, where it is
+declared, the narrowing of `PushCryptoException`'s promise, the place of `IllegalArgumentException`
+and of the starters' `IllegalStateException`, and the interruption contract on both paths. **Every
+outcome and every classification is ADR-021's**: the shape of `PushOutcome` and its variants, what
+each variant means to a caller, both status matrices — the push service's and the custodian's — the
+surfacing of `Retry-After`, the line between an outcome and an exception, which seam signal converts
+to which outcome, and which failure leaves a seam wearing which type. That last one includes the
+Vault transport's split, which is written out there and nowhere else: an oversized response, an
+unusable request URI and an illegal request header stay `PushCryptoException` because that record
+classified them, not because this one enumerated them.
 Neither record re-decides the other's half; where one names something on the far side of the line,
 it is naming and not deciding. An ADR that moves a type supersedes this one; an ADR that moves an
 outcome or a classification supersedes that one.
