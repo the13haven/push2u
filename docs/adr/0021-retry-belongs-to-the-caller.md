@@ -499,8 +499,12 @@ exceptions, `IOException` and `InterruptedException`, and anything it throws mea
 response — so what it throws is an exchange with no answer, and leaves as
 `VapidSignerUnavailableException`. There is exactly one carve-out, and the transport already digs it
 out of the cause chain today: its own response-size cap, which the JDK client surfaces wrapped in an
-`IOException`. That one *had* an answer — a status line and headers arrived, and the body ran past a
-bound this library set — so it stays where it is. **The transport is not asked to recognise an
+`IOException`. What sets that one apart is not that an answer had begun to arrive — a connection
+dropped mid-body, or a custodian that sends headers and then stalls until the request timeout, are
+exchanges whose answer had begun too, and both stay on the unavailable side where they belong. It is
+that the bound is *this library's own*: a response over it is over it again on the next attempt and
+the one after, whatever the custodian's health, which is the recurrence axis this record applies
+everywhere else. **The transport is not asked to recognise an
 interruption anywhere in that**: it re-sets the flag, which any code catching an
 `InterruptedException` owes and which all three sites that raise one here already do, and the
 facade's disjunction does the recognising, which is where this decision already put it. Today the
