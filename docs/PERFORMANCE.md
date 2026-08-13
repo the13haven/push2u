@@ -185,6 +185,12 @@ looks current is worse than no row.
 arithmetic. The next re-recording is the one that answers what a send serving a cached token costs;
 until it happens, this document says a send that signs and does not pretend to know the other.
 
+The two `send` rows are one POST each and were one POST each when they were taken, so the removal of
+the sender's retry loop leaves them where they are: a stub transport answering `2xx` was never
+repeated. What no longer exists is the *worst case* around them — a `send` is now bounded by one
+exchange rather than by a schedule of attempts, so a budget for one is the transport's per-request
+timeout plus the figures above.
+
 A table here is a snapshot someone took, not an output the build maintains. If it stops being
 re-recorded it should be deleted rather than left to age quietly: a stale measurement is read with
 exactly the confidence a fresh one earns.

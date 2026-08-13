@@ -1,6 +1,6 @@
 # ADR-007 — Expired subscription is a result
 
-**Status:** Accepted
+**Status:** Accepted; one clause superseded by [ADR-021](0021-retry-belongs-to-the-caller.md)
 
 A push service answering `404` or `410` is reporting an ordinary, expected fact: the subscription
 is gone and the application should delete it. Callers doing exactly that in a loop over stored

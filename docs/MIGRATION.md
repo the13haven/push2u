@@ -118,11 +118,11 @@ PushSender sender = PushSender.builder(
 
 The key source, the contact and the endpoint policy are required, so they are parameters of the
 factory method rather than builder steps — `build()` has no missing value left to refuse.
-Everything else (`retryPolicy`, `httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`,
-`jwtRenewBefore`, `jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`,
-`cryptoProvider`) is optional and lives on the builder. A `PushSender` is thread-safe once built,
-with final configuration and one internal cache of the VAPID tokens it has signed; build it once
-and share it, as you would a `PushService`.
+Everything else (`httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`, `jwtRenewBefore`,
+`jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and
+lives on the builder. A `PushSender` is thread-safe once built, with final configuration and one
+internal cache of the VAPID tokens it has signed; build it once and share it, as you would a
+`PushService`.
 
 The third parameter has no counterpart in `web-push`, and it is the one that will stop a
 mechanical port: see [`EndpointPolicy` — a decision you now have to
@@ -179,7 +179,7 @@ PushMessage message = PushMessage.builder(payloadBytes)
         .topic("account_update")
         .build();
 
-PushResult result = sender.send(subscription, message);
+PushOutcome outcome = sender.send(subscription, message);
 ```
 
 `PushMessage.of(payloadBytes)` is the shorthand when no header is being set. TTL, urgency and topic
@@ -201,24 +201,33 @@ if (status >= 200 && status < 300) {
 ```
 
 ```java
-// push2u
-if (result.isDelivered()) {
-    // 2xx — the push service accepted the message
-} else if (result.isSubscriptionExpired()) {
-    subscriptionStore.delete(subscription);          // 404 / 410
-} else {
-    log.warn("Push rejected: HTTP {}, attempts={}", result.statusCode(), result.attempts());
+// push2u — the mapping is already made, and the switch is exhaustive
+switch (sender.send(subscription, message)) {
+    case PushOutcome.Accepted a -> { }                                   // 2xx — accepted for delivery
+    case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);   // 404 / 410
+    case PushOutcome.RetryableFailure f -> retrier.schedule(subscription, message, f.retryAfter());
+    case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
+    case PushOutcome.NotAttempted n -> log.warn("Not sent: {}", n);      // nothing left this process
+    case PushOutcome.Indeterminate i -> retrier.scheduleIfADuplicateIsAcceptable(subscription, message);
 }
 ```
 
-`PushResult` has three statuses (`DELIVERED`, `SUBSCRIPTION_EXPIRED`, `FAILED`), the final
-`statusCode()` and the number of POSTs actually made, `attempts()`. Transport failure throws
-`PushDeliveryException`, a cryptographic failure `PushCryptoException`, a policy rejection
-`EndpointRejectedException` — all unchecked, all extending `RuntimeException` directly. The five
-checked exceptions on `PushService.send` have no counterpart; a `try`/`catch` block written for
-them will not compile against push2u and should be rewritten around those three — or around the
-first two, if the policy you pass is `EndpointPolicies.unrestricted()` — the only built-in one that
-never throws `EndpointRejectedException`.
+`PushOutcome` is a sealed hierarchy, so that `switch` needs no `default`. Four variants report what
+the push service answered; three more — grouped under the `NotAttempted` marker used above, and
+separable into `SignerUnavailable`, `PayloadRejected` and `EndpointRejected` when you want the
+detail — report that no POST was made at all, so no repeat of one can duplicate a notification; and
+`Indeterminate` reports a POST that went out and was never answered.
+
+The exception channel is narrower than the five checked exceptions on `PushService.send`, and none
+of them has a counterpart: a `try`/`catch` written for them will not compile. What `send` still
+throws is `PushCryptoException` for a failure that recurs (an unusable provider, a signer answering
+something that is not a signature, a key-service misconfiguration), `PushInterruptedException` for
+an interrupted send, and `IllegalArgumentException`/`NullPointerException` for an illegal argument —
+all unchecked, all extending `RuntimeException` directly. Note that `PushDeliveryException` and
+`EndpointRejectedException` are *not* among them: both are still what a transport and a policy
+throw, but `send` converts them into `Indeterminate` and `EndpointRejected` rather than rethrowing.
+[`README.md` → What a send reports](../README.md#what-a-send-reports-and-what-it-still-throws) has
+the whole table.
 
 ### Asynchronous sending
 
@@ -230,7 +239,7 @@ int status = future.join().getStatusCode();
 
 ```java
 // push2u
-CompletableFuture<PushResult> future = sender.sendAsync(subscription, message);
+CompletableFuture<PushOutcome> future = sender.sendAsync(subscription, message);
 ```
 
 One `PushSender` serves both modes — there is no second service class, and no second HTTP stack.
@@ -253,13 +262,12 @@ JDK one.
 | `Encoding.AES128GCM` | (implicit) | `aes128gcm` is the only content coding |
 | `Encoding.AESGCM` | — | Not supported ([ADR-006](adr/0006-aes128gcm-only.md)) |
 | `Urgency.NORMAL`, `.getHeaderValue()` | `Urgency.NORMAL`, `.headerValue()` | Same four values |
-| `org.apache.http.HttpResponse` / `org.asynchttpclient.Response` | `PushResult` | Status interpreted, body never read |
+| `org.apache.http.HttpResponse` / `org.asynchttpclient.Response` | `PushOutcome` | Status interpreted, body never read |
 | `Utils.loadPublicKey`, `Utils.loadPrivateKey` | `VapidKeys.fromBase64` / `VapidKeys.of` | No BouncyCastle types in the API |
 | `AbstractPushService.setSubject` | `PushSender.builder(…, contact)` | Required, not optional |
 | `setGcmApiKey`, `Notification.isGcm()` | — | Legacy GCM is not supported |
 | — | `VapidSigner` | External key custody (Vault Transit, KMS) |
 | — | `EndpointPolicy` | Egress rule, required by `PushSender.builder(…)` |
-| — | `RetryPolicy` | Retries are built in |
 
 ## Differences that change behaviour
 
@@ -296,15 +304,22 @@ a loopback HTTPS receiver rather than relaxing the rule.
 ### Expired subscriptions are a result, and so is every other status
 
 Neither library throws on `404`/`410`. The difference is who interprets the status: `web-push`
-hands back the transport's response object and you write the mapping; push2u has already made it
-(`DELIVERED` / `SUBSCRIPTION_EXPIRED` / `FAILED`), and expiry is deliberately not an exception so
-that pruning a dead subscription stays ordinary control flow
-([ADR-007](adr/0007-expired-subscription-is-a-result.md)).
+hands back the transport's response object and you write the mapping; push2u has already made it,
+and expiry is deliberately not an exception so that pruning a dead subscription stays ordinary
+control flow ([ADR-007](adr/0007-expired-subscription-is-a-result.md)). push2u extends the same
+treatment to every operational outcome
+([ADR-021](adr/0021-retry-belongs-to-the-caller.md)): a policy refusal, a payload that does not fit,
+a key custodian that cannot sign right now and an unanswered POST are values too, so a fan-out over
+a subscription store meets all of them in one `switch` rather than in a `catch` block beside it.
 
-Two consequences for a port:
+Three consequences for a port:
 
-- Any `switch` on status codes you kept around collapses into `isDelivered()` /
-  `isSubscriptionExpired()`. Keep `statusCode()` for logging — it is the final code, after retries.
+- Any `switch` on status codes you kept around is replaced by a `switch` on `PushOutcome`, which the
+  compiler checks for exhaustiveness. It is not a straight substitution: the variants tell a status
+  the service answered about *its own moment* apart from one it answered about *the request*, which
+  is the distinction your retry logic was making by hand.
+- **The number is the one POST's status, not a final code after retries** — there are no retries to
+  be final after. Each variant carries the `statusCode` of the answer it describes.
 - **You cannot read the response body.** `PushResponse` carries the status and headers only, and
   `JdkPushHttpClient` discards the body without buffering it, because the endpoint is a capability
   URL from an untrusted subscription and a hostile server must not be able to feed the sender an
@@ -312,27 +327,36 @@ Two consequences for a port:
   that goes away — a custom `PushHttpClient` could reinstate it, but the SPI contract asks you not
   to.
 
-### Retries now exist — check that yours does not double up
+### Retrying stays yours — keep the loop you have
 
 `web-push` performs no retries: one POST per `send`, and `Retry-After` is not read. Most production
 integrations therefore wrapped it in a retry loop of their own.
 
-push2u retries `429` and `5xx` by default — up to three attempts, exponential backoff from one
-second, capped at 60 seconds, with a valid `Retry-After` (delta-seconds or any RFC 9110 HTTP-date
-form) overriding the computed delay under the same cap. **An application retry loop on top of that
-multiplies**, but only for a push service that *answers*: a `429` carrying `Retry-After: 60` costs
-two minutes of sleeping per outer attempt, so three attempts inside your three is nine POSTs and up
-to six minutes of blocking. A service that accepts the connection and never replies is the other
-shape — the request times out after `JdkPushHttpClient`'s default 30 seconds (your own timeout if
-you supplied a client), and push2u does **not** retry a transport failure (it retries statuses), so
-each of your outer attempts costs one POST, not three. Either delete yours or configure
-`RetryPolicy.none()`:
+**push2u does the same, so keep yours.** One `send` is one POST, and nothing in the library
+schedules a second: the repeat decision, its budget, its dead-letter path and what survives a
+restart are the caller's, which is what a job engine, a queue with redelivery or a resilience
+library already knows and a loop inside a library never could
+([ADR-021](adr/0021-retry-belongs-to-the-caller.md)). A retry loop written around `PushService` is
+therefore a thing to port rather than to delete, and its arithmetic is unchanged: each of your
+attempts still costs exactly one POST, bounded by `JdkPushHttpClient`'s 30-second per-request
+timeout (or your own, if you supply a client).
 
-```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
-        .retryPolicy(RetryPolicy.none())
-        .build();
-```
+What your loop gains is the part it had to write blind. `web-push` never read `Retry-After`; push2u
+parses it — delta-seconds or any of the three RFC 9110 HTTP-date forms — and hands it to you on
+`RetryableFailure`, **with no ceiling applied**, so the only bound on the wait is the one your
+scheduler chooses. And the classification comes with it: `RetryableFailure` against
+`NonRetryableFailure` says whether the service answered about its own moment or about the request,
+which is the judgement a hand-written loop usually approximates with "`429` or `5xx`". That
+approximation is wrong in both directions — it misses `408` and `421`, which RFC 9110 marks
+repeatable, and it repeats `501`, `505`, `506`, `508` and `511`, which answer identically every
+time.
+
+Two variants are worth wiring into the loop rather than folding into "failed". `Indeterminate` — the
+POST went out and nothing answered — is the one case where a repeat may deliver a duplicate, since
+nobody knows whether the service applied it; push2u refuses to call it retryable and leaves the
+pricing to you. `SignerUnavailable` means no POST was made at all, so a repeat duplicates nothing,
+but a fan-out that meets one should **stop** rather than carry on: with signing failing, every
+remaining row makes its own round trip to a custodian that is already down.
 
 ### The default TTL is different by a factor of 28
 
@@ -353,7 +377,8 @@ explicitly, nothing changes.
 `web-push` performs no size checks; an oversized payload is encrypted, POSTed, and refused by the
 push service (typically `413`) — you pay the cryptography and the round trip to find out.
 
-push2u checks first, and throws `IllegalArgumentException` before encryption or network I/O:
+push2u checks first, before encryption or network I/O, and reports the refusal as the
+`PayloadRejected` outcome:
 
 - **Encrypted body ≤ 4096 bytes** by default, the size RFC 8030 §7.2 lets a push service refuse
   beyond. The single-record `aes128gcm` body adds a fixed 103 bytes to the plaintext, so the
@@ -361,11 +386,14 @@ push2u checks first, and throws `IllegalArgumentException` before encryption or 
   `.maxEncryptedBodyBytes(…)` only for an endpoint documented to accept more.
 - **Record size (`rs`)** must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4); values
   below 18 are invalid outright (RFC 8188 §2) and the builder rejects them. Raising
-  `maxEncryptedBodyBytes` without raising `.recordSize(…)` to match will be rejected at send time
-  with a message naming the minimum `rs` needed.
+  `maxEncryptedBodyBytes` without raising `.recordSize(…)` to match leaves the record-size bound
+  deciding the maximum, and a payload above it is refused at send time.
 
-A payload that used to squeeze through at 4000-odd bytes now throws locally. That is the intended
-behaviour, but it is a throw where there used to be a `413` — make sure the caller handles it.
+One outcome covers both bounds, and both of its numbers are plaintext octets — the plaintext you
+handed over, and the largest this sender's configuration would have carried. A payload that used to
+squeeze through at 4000-odd bytes now comes back as `PayloadRejected` where it used to draw a `413`
+from the push service, so the branch that handled that status is where it belongs: the remedy is the
+same, a notification rendered smaller.
 
 ### VAPID `sub` is required
 
@@ -436,8 +464,9 @@ existing call sites will not compile until each one names a policy.
 The exposure behind it is real. The endpoint inside a `Subscription` is attacker-influenced data,
 since a typical integration accepts the browser's subscription JSON at a public registration
 endpoint. Nothing stops a client posting a hand-crafted subscription pointing into your own network,
-and the visible outcome (`PushResult.statusCode()` versus `PushDeliveryException`, plus timing) then
-works as a blind SSRF oracle for internal host and port existence.
+and the visible outcome — the status code an answered variant carries versus an unanswered
+`Indeterminate`, plus timing — then works as a blind SSRF oracle for internal host and port
+existence.
 
 For almost every deployment the answer is an allowlist of the push services its users arrive from:
 
@@ -464,8 +493,11 @@ kind rather than taking it from the factory it was passed to.
 YAML form as well, with what each vendor's page does and does not say and why no browser is missing
 from it.
 
-The policy runs before encryption, before the VAPID signature and before any I/O; a rejection
-throws `EndpointRejectedException` and costs none of them. An origin entry is exact and
+The policy runs before encryption, before the VAPID signature and before any I/O; a rejection costs
+none of them and comes back as the `EndpointRejected` outcome, carrying the endpoint redacted and
+the policy's own reason, so one hostile row is a line in your log rather than an aborted fan-out.
+(`EndpointRejectedException` is what the policy seam throws and what you catch if you call
+`EndpointPolicy.validate` yourself at a registration boundary.) An origin entry is exact and
 fail-closed — subdomains of an allowed origin are not included. A domain entry matches at a label
 boundary and over `https` on the default port only, so `notify.windows.com` admits
 `cloud.notify.windows.com` at any depth and refuses `evilnotify.windows.com`; it is worth exactly
@@ -513,8 +545,20 @@ first send to an origin is the one that runs them, and it is the one a broken si
 What those checks cannot see is a signer whose output is well-formed but wrong — one signing with a
 key that does not match the public point it advertises, the mistake `builderWithSuppliedPublicKey`
 invites. That one still collects `401`/`403`, and it is why the conformance kit verifies the
-signature against the advertised key rather than only measuring it. Extend the kit in your own test
-suite instead:
+signature against the advertised key rather than only measuring it.
+
+**A signer over a network signals in two types**, and this is the half a migration is least likely
+to look for. A custodian that cannot sign *now* — unreachable, timed out, sealed, still catching up,
+rate-limiting — raises `VapidSignerUnavailableException`, which the sender turns into the
+`SignerUnavailable` outcome and which may carry the status the custodian answered and any moment it
+declared for coming back. Everything that recurs until a person changes something — an unusable
+provider, an answer no custodian could have meant, a token without the capability — raises
+`PushCryptoException`, which `send` rethrows. Nothing checks which one you chose either: the
+conformance kit asserts no exception types on purpose, so a signer that reports outages as
+cryptographic failures passes its whole suite while turning every outage into a permanent failure
+for its callers.
+
+Extend the kit in your own test suite instead:
 
 ```kotlin
 dependencies {
@@ -548,9 +592,13 @@ signer in [`VAULT.md`](VAULT.md).
    contact.
 4. Replace `Notification` with `Subscription` + `PushMessage`; move the endpoint and the browser
    keys into the subscription, the payload and headers into the message.
-5. Rewrite result handling around `PushResult`, and replace the `catch` blocks for the five checked
-   exceptions with `PushDeliveryException` / `PushCryptoException`.
-6. Delete your retry loop, or set `RetryPolicy.none()`.
+5. Rewrite result handling as an exhaustive `switch` over `PushOutcome`, and replace the `catch`
+   blocks for the five checked exceptions with `PushCryptoException` and
+   `PushInterruptedException` — a transport failure and a policy refusal are outcomes now, not
+   exceptions.
+6. **Keep your retry loop.** push2u makes one POST per `send` and schedules nothing, exactly as
+   `web-push` did. Feed it `RetryableFailure` and the `Retry-After` that variant carries, decide for
+   yourself what to do with `Indeterminate`, and stop the fan-out on `SignerUnavailable`.
 7. Set `defaultTtl` explicitly if you were relying on the old 28-day default.
 8. Check that every endpoint you send to — test fixtures included — is `https`.
 9. Check payload sizes against the 3993-byte plaintext default, and topics against the

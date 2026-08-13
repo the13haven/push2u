@@ -62,18 +62,26 @@ never be shut down by the library, while a library-owned one must be.
 opened. A bounded read stays bounded when it fails. Nothing holds a Vault token, a private scalar or
 a decoded key longer than it needs to.
 
-**Error paths.** The exception taxonomy is a contract, not a style choice: transport failure is
-`PushDeliveryException`, cryptographic failure is `PushCryptoException`, a rejected endpoint is
-`EndpointRejectedException`, and an expired subscription is *not* an exception at all but
-`SUBSCRIPTION_EXPIRED` (ADR-007). Check that a new failure lands in the right one, that a cause is
-preserved unless a suppression explains why not, and that no failure is quietly turned into a
-default that looks like success.
+**Error paths.** Which channel a failure leaves by is a contract, not a style choice, and the line
+runs between two of them. **An outcome** describes what became of a requested send, whether or not a
+POST was reached — an expired subscription (ADR-007), a policy refusal, a payload that does not fit,
+a custodian that cannot sign now, an unanswered POST. **An exception** is reserved for using the API
+wrongly, for a defect the caller cannot act on per send, and for cancellation:
+`PushCryptoException` for a failure that recurs, `PushInterruptedException` for an interruption,
+`IllegalArgumentException` for an illegal argument (ADR-021, ADR-022). The seams keep their own
+vocabulary — `PushDeliveryException`, `EndpointRejectedException`,
+`VapidSignerUnavailableException` — and **exactly those three convert**; anything else out of a
+consumer-written seam is a defect and must propagate rather than be laundered into a value. Check
+that a new failure lands in the right channel and the right type, that the recurrence axis is what
+sorted it rather than "does a human have to act", that a cause is preserved unless a suppression
+explains why not, and that no failure is quietly turned into a default that looks like success.
 
 **What the diff does not contain.** Changes here tend to imply work in more than one place: a new
 `PushSender.Builder` option usually needs a `push2u.*` property in the starter, startup validation
 whose message names the YAML property rather than the camelCase parameter, a README entry and often
-a line in the protocol-limits table; a new public exception needs a row in the status-mapping table;
-a new module needs publication wiring. Ask what the change implies and check it is there.
+a line in the protocol-limits table; a new outcome variant or public exception needs a row in the
+status-mapping table, in `README.md` and in `docs/DESIGN.md` alike; a new module needs publication
+wiring. Ask what the change implies and check it is there.
 
 ## 4. History and comments as constraints
 
@@ -107,8 +115,11 @@ Check against the clause, not against intuition:
   encryptor emits (86-byte header + 1 padding delimiter + 16 tag), not written as a constant, so the
   plaintext maximum tracks a configured limit. A newly hardcoded 3993 is a defect.
 - **Record size** — RFC 8291 §4 requires `rs > payload + 1 + 16`, RFC 8188 §2 requires `rs ≥ 18`.
-  There is one implementation of that rule, `WebPushEncryptor.checkRecordSize`, used by both the
-  pre-flight check and the encryptor. A second copy is a defect even if it is correct today.
+  There is one implementation of that rule, `WebPushEncryptor.maxPlaintextForRecordSize`, which
+  inverts it into the largest plaintext an `rs` carries; both spellings are expressed in terms of
+  it — `maxPlaintextBytes`, which the sender's pre-flight compares a payload against, and
+  `checkRecordSize`, the encryptor's own last-moment refusal. A second copy is a defect even if it
+  is correct today.
 - **VAPID** — `aud` is the RFC 6454 §6.1 Unicode serialization produced by `Origin.serialize`;
   `java.net.URI` performs none of that normalization, so a change that "simplifies" this by using
   URI accessors breaks the claim. `sub` is required and non-blank — a push2u contract stricter than
@@ -116,8 +127,10 @@ Check against the clause, not against intuition:
 - **Topic** — at most 32 URL- and filename-safe base64 characters (RFC 8030).
 - **Content coding** — `aes128gcm` only (ADR-006). Reintroducing `aesgcm` is out of scope for this
   library, not an improvement.
-- **Retry-After** — delta-seconds or any of the three HTTP-date forms RFC 9110 requires, capped at
-  the policy's maximum backoff.
+- **Retry-After** — delta-seconds or any of the three HTTP-date forms RFC 9110 requires, reported to
+  the caller **with no ceiling applied**, on `RetryableFailure` and on `SignerUnavailable`. A cap
+  reintroduced anywhere between the parser and the outcome is a defect: the caller's scheduler is
+  the only place a bound can be right, and the library owes it the value that actually arrived.
 
 ### 5.2 The two trust boundaries
 
@@ -127,7 +140,8 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
 - **The endpoint policy must run before any cryptography or I/O**, on `send` *and* `sendAsync` (the
   async path runs the same pipeline precisely so the control cannot be bypassed). A new code path
   that reaches the network without passing `EndpointPolicy` is a must-fix — without it every send is
-  a blind SSRF oracle through `PushResult.statusCode()`, exception type and timing.
+  a blind SSRF oracle through the status code an answered outcome carries, an unanswered
+  `PushOutcome.Indeterminate`, and timing.
 - **`Endpoints.requireSecure` is a protocol check, not a security control.** Which hosts a
   deployment may contact is policy and lives in `EndpointPolicy`. Conflating them weakens both.
 - **The push transport must not read the response body**, so a hostile service cannot create memory
@@ -169,8 +183,11 @@ reasoning, explicitly.
   (mod p)` with both coordinates in `[0, p)`. None implies another, and the JCA validates neither —
   SunEC will happily import a "key" at `(1, 2)`. Dropping one is a must-fix.
 - Coordinates are never truncated or padded away to fit 32 bytes.
-- A fresh ephemeral key pair and salt per message, from `SecureRandom`. Note the deliberate
-  exception: the encrypted body and VAPID token *are* reused across retries of the same send.
+- A fresh ephemeral key pair and salt per message, from `SecureRandom`. There is no reuse inside a
+  send to except: one send is one POST, so a body encrypted under one ephemeral pair is used once
+  and a repeat is a second `send` that rebuilds everything. The one deliberate reuse is the VAPID
+  token, and it spans *different* sends to one origin (ADR-019). A change that carried an encrypted
+  body across attempts would be rebuilding the mechanism this library deleted.
 - **ES256**: native `SHA256withECDSAinP1363Format` preferred; the DER fallback takes
   `SHA256withECDSA` from the *same* provider and converts strictly. Provider lookup must never widen
   on the fallback path — that would silently change which implementation signs.

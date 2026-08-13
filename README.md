@@ -10,8 +10,8 @@
 
 **push2u** (*push events to user*) is a Java library for sending
 [Web Push](https://datatracker.ietf.org/doc/html/rfc8030) messages to browser push services.
-It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, retries,
-and Spring Boot auto-configuration.
+It implements VAPID authentication, `aes128gcm` content encryption, HTTP delivery, and Spring Boot
+auto-configuration.
 
 [Quick start](#quick-start) · [VAPID keys](#vapid-keys) · [Sending in detail](#sending-in-detail) ·
 [Spring Boot](#spring-boot) · [Vault Transit signer](#vault-transit-signer) ·
@@ -30,8 +30,11 @@ limits, `aes128gcm` only, and a VAPID private key that has to be exactly 32 byte
 - RFC 8291 / RFC 8188 payload encryption using JDK cryptography.
 - RFC 8292 VAPID authentication with a local EC key or an external signer.
 - JDK `HttpClient` transport, with a small transport SPI for replacements.
-- Normal result handling for expired subscriptions (`404` / `410`).
-- Configurable retry policy for `429` and `5xx` responses.
+- One POST per send: every operational outcome — an expired subscription, an endpoint the policy
+  refuses, a push service asking to be tried again later — is a value the caller reads, not an
+  exception it has to catch.
+- The push service's status classified against its defining RFCs, with whatever its `Retry-After`
+  said reported unmodified, so the deployment's own retrier decides whether and when to repeat.
 - Optional HashiCorp Vault Transit signer.
 - Optional Spring Boot 4 auto-configuration and health indicator.
 
@@ -102,17 +105,25 @@ PushMessage message = PushMessage.builder(payloadBytes)
     .topic("account_update")
     .build();
 
-PushResult result = sender.send(subscription, message);
-
-if (result.isDelivered()) {
-    // The push service accepted the message.
-} else if (result.isSubscriptionExpired()) {
-    subscriptionStore.delete(subscription);
-} else {
-    log.warn("Push rejected: HTTP {}, attempts={}",
-        result.statusCode(), result.attempts());
+switch (sender.send(subscription, message)) {
+    case PushOutcome.Accepted a -> log.debug("Accepted for delivery: HTTP {}", a.statusCode());
+    case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);
+    case PushOutcome.RetryableFailure f -> retrier.schedule(subscription, message, f.retryAfter());
+    case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
+    case PushOutcome.SignerUnavailable s -> stopSending(s);          // nothing was sent
+    case PushOutcome.PayloadRejected p ->
+        log.warn("Payload {} bytes, this sender carries {}", p.payloadBytes(), p.maximumPayloadBytes());
+    case PushOutcome.EndpointRejected r ->
+        log.warn("Endpoint refused by policy: {} — {}", r.redactedEndpoint(), r.reason());
+    case PushOutcome.Indeterminate i -> retrier.scheduleIfADuplicateIsAcceptable(subscription, message);
 }
 ```
+
+`PushOutcome` is a sealed hierarchy, so that `switch` needs no `default` and a variant added in a
+later release fails your compilation instead of falling into a branch that was written for
+something else. `retrier` above is yours: the library performs one POST per `send` and never
+repeats one — [What a send reports](#what-a-send-reports-and-what-it-still-throws) is the whole of
+what it hands you to decide with.
 
 `VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
 scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
@@ -143,10 +154,8 @@ default of **24 hours** — how long the push service may hold it for a client t
 (RFC 8030 §5.3): it tells the push service whether waking a battery-constrained device is worth it,
 and `NORMAL` is what it assumes when the header is absent.
 
-`404` and `410` are returned as `SUBSCRIPTION_EXPIRED`, not as exceptions. Transport failures
-throw `PushDeliveryException`; cryptographic failures throw `PushCryptoException`. When present,
-`topic` is validated locally before transport: it must contain 1–32 characters from the URL-safe
-Base64 alphabet (`A-Z`, `a-z`, `0-9`, `-`, `_`) required by RFC 8030.
+When present, `topic` is validated locally before transport: it must contain 1–32 characters from
+the URL-safe Base64 alphabet (`A-Z`, `a-z`, `0-9`, `-`, `_`) required by RFC 8030.
 
 ## VAPID keys
 
@@ -252,6 +261,74 @@ once at startup — the allowlist itself is in [Endpoint policy](#endpoint-polic
 EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
 ```
 
+### What a send reports, and what it still throws
+
+**One send is one POST, and the library never repeats one.** Every deployment sending at volume
+already owns a retrier — a job engine, a queue with redelivery, a resilience library — and a loop
+inside `send` could see none of what that retrier knows: the retry budget, the dead-letter path,
+what survives a restart. So what `send` returns is the classification a repeat decision needs, and
+the schedule is yours.
+
+| What happened | What `send` returns |
+|---|---|
+| The push service answered `2xx` | `Accepted(statusCode)` — accepted for delivery, which RFC 8030 §5 is explicit is not a receipt |
+| It answered `404` or `410` | `SubscriptionExpired(statusCode)` — stop sending to it and delete it wherever you store it |
+| It answered `408`, `421`, `429`, a `413` carrying a parseable `Retry-After`, or a `5xx` other than `501`, `505`, `506`, `508`, `511` | `RetryableFailure(statusCode, retryAfter)` — it answered about its own moment, so an identical request has not been answered yet |
+| It answered anything else — those five, a bare `413`, any other `4xx`, a `3xx` | `NonRetryableFailure(statusCode)` — it answered about the request, so repeating it buys nothing |
+| The POST went out and nothing answered — a timeout, a dropped connection | `Indeterminate` — whether the service received the message is unknown, and the library will not guess |
+| The key custodian could not sign *now* — unreachable, sealed, rate-limiting | `SignerUnavailable` — a `NotAttempted`, carrying the custodian's status and hint where it declared either |
+| The payload does not fit this sender's configuration | `PayloadRejected(payloadBytes, maximumPayloadBytes)` — a `NotAttempted`, in plaintext octets |
+| The endpoint policy refused the endpoint | `EndpointRejected(redactedEndpoint, reason)` — a `NotAttempted` |
+
+The three `NotAttempted` variants share a marker interface, so `case PushOutcome.NotAttempted n`
+takes the group where a caller does not need the leaf: under it no POST was made, so a repeat
+provably duplicates nothing.
+
+`RetryableFailure` says a repeat may be *useful*, and says nothing about whether it is *safe*. A
+push POST is not idempotent — RFC 8030 §5 has a successful one create a new push message resource —
+and `502`/`504` in particular are an intermediary reporting that it got no answer from upstream,
+which the upstream may still have applied. Pricing a possible duplicate against a possible loss is
+the application's; a `Topic` on the message narrows the window without closing it.
+
+**Three things worth getting right:**
+
+- **`Retry-After` is reported with no ceiling applied.** Whatever arrived is what you get, parsed
+  from delta-seconds or any of the three HTTP-date forms RFC 9110 requires a recipient to accept,
+  and empty where the header was absent or unparseable — the ordinary case, since most of the
+  statuses above have no `Retry-After` provision in any specification. A hostile push service can
+  name any delay, so the ceiling your scheduler applies is the only one there is.
+- **A repeat re-bases the message's lifetime.** RFC 8030 §5.2 counts `TTL` from the moment the push
+  service receives the message, so an attempt scheduled hours later carries a fresh lifetime unless
+  you decrement the `TTL` you pass by the time already spent.
+- **A fan-out that meets `SignerUnavailable` should stop.** The token cache publishes only after a
+  signature succeeds, so with signing failing it never fills and every row makes its own round trip
+  to a custodian that is already down. A sequential loop breaks on the first one; on the
+  asynchronous path see [Asynchronous sending](#asynchronous-sending), where reacting to the outcome
+  is already too late.
+
+**What `send` still throws** is misuse, a defect you cannot act on per send, and cancellation:
+
+- `PushCryptoException` — the encryption or the signature cannot be produced for a reason that
+  recurs: a provider that cannot do `AES/GCM/NoPadding`, a signer answering something that is not a
+  signature, a key-service misconfiguration such as a token without the capability or a Transit key
+  of the wrong type. Stop the sender; a person edits something. It is deliberately *not* a custodian
+  that cannot sign now — that is the `SignerUnavailable` outcome.
+- `PushInterruptedException` — the sending thread was interrupted. The interrupt status is re-set on
+  the calling thread before the throw, and an `InterruptedException` is in the cause chain wherever
+  one was raised. Propagate it: nothing failed, so retry nothing and alert nobody.
+- `IllegalArgumentException` / `NullPointerException` — an argument that is not a legal value of its
+  parameter.
+- Anything else out of a `PushHttpClient`, `VapidSigner` or `EndpointPolicy` you supplied. Exactly
+  three seam signals convert to outcomes — `EndpointRejectedException`,
+  `VapidSignerUnavailableException`, `PushDeliveryException` — and any other `RuntimeException` from
+  a seam is a defect in that implementation, not an operational condition, so it propagates
+  unchanged rather than being laundered into a value.
+
+Because one send is one POST, a blocking `send` costs at most one push exchange — bounded by the
+transport's per-request timeout, 30 seconds on the default `JdkPushHttpClient` — plus, on a send
+that signs, whatever an external `VapidSigner` spends reaching its custodian. The library schedules
+nothing on top of that.
+
 ### VAPID token reuse
 
 **One signed token serves every message to a push-service origin, not one per message.** Nothing in
@@ -280,14 +357,13 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 
 The margin is an absolute duration rather than a fraction of `jwtExpiry`, because both things it
 covers are absolute: clock skew against the push service, which checks `exp` against its own clock,
-and a send that picked a token up just before the boundary and must still present a valid one at
-its last retry — with `Retry-After` honoured up to the retry policy's ceiling, that is minutes
-rather than seconds. Raise it if your retry policy or HTTP timeouts allow a longer send. A negative
-value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the token is held to its
-last second, with the skew consequences of saying so — and a value at or above `jwtExpiry` means
-the margin has swallowed the token's whole life, so every send signs afresh. `jwtCacheSize(0)` is
-rejected rather than read as "cache nothing": the bound is not a second spelling of the switch
-below, and the two mean different things.
+and the tail of a send that picked a token up just before the boundary and still has to traverse an
+HTTP exchange whose timeouts this library does not own. Raise it if your transport timeouts allow a
+longer send. A negative value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the
+token is held to its last second, with the skew consequences of saying so — and a value at or above
+`jwtExpiry` means the margin has swallowed the token's whole life, so every send signs afresh.
+`jwtCacheSize(0)` is rejected rather than read as "cache nothing": the bound is not a second
+spelling of the switch below, and the two mean different things.
 
 **`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
 this library always did:
@@ -314,7 +390,7 @@ up to `jwtExpiry` later.
 
 ### Asynchronous sending
 
-`sendAsync(subscription, message)` returns a `CompletableFuture<PushResult>`. The blocking send
+`sendAsync(subscription, message)` returns a `CompletableFuture<PushOutcome>`. The blocking send
 pipeline runs on a library-owned virtual-thread-per-task executor by default, never on the common
 `ForkJoinPool`. Applications that need admission control or a shared execution policy can provide
 their own executor:
@@ -327,11 +403,28 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 
 The supplied executor remains application-owned; `PushSender` does not shut it down.
 
+Every outcome completes the future *normally* — `PayloadRejected` and `EndpointRejected` included,
+since they are verdicts rather than failures. What `send` throws completes it exceptionally instead,
+reaching you wrapped in a `CompletionException` on `join` or an `ExecutionException` on `get`. An
+interrupted send is one of those: the future completes exceptionally with `PushInterruptedException`
+and is **not** cancelled — `isCancelled()` answers `false`, so your own `cancel` stays
+distinguishable from a worker stopped mid-flight. The interrupt status on the thread that reads the
+future is not promised, and cannot be: that thread was never interrupted.
+
+**Stopping a fan-out on this path means stopping the source.** By the time the first
+`SignerUnavailable` is read, a caller that has already handed a hundred thousand `sendAsync` calls to
+an executor has had its burst against the dead custodian decided, and no reaction to an outcome
+prevents any of it. Bound the concurrency rather than submitting the list at once, feed rows in as
+outcomes come back, and stop submitting new ones once one of those has arrived.
+
 ### Payload size limits
 
 RFC 8030 §7.2 allows a push service to refuse an entity body larger than 4096 bytes, so
-`PushSender` caps the encrypted body at 4096 bytes by default and rejects an oversized message
-with `IllegalArgumentException` before encrypting it or contacting the push service.
+`PushSender` caps the encrypted body at 4096 bytes by default and reports an oversized message as
+`PushOutcome.PayloadRejected` before encrypting it or contacting the push service. It is a fact
+about one message rather than about the deployment — the case that makes it concrete is a translated
+notification that fits in one language and not another — so it is a value the fan-out records and
+not a failure that stops it.
 
 The single-record `aes128gcm` body adds a fixed 103 bytes of header, padding delimiter and
 authentication tag to the plaintext ([`DESIGN.md` §4](docs/DESIGN.md#4-send-pipeline) breaks the
@@ -351,34 +444,15 @@ requires a push service to accept 4096 bytes; beyond that a service may answer w
 
 `recordSize` is a separate protocol parameter and is never adjusted to follow the body limit.
 RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the padding delimiter
-(1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is rejected
-with a message naming the minimum `rs` it needs. RFC 8188 §2 makes any `rs` below 18 invalid, and
-the builder rejects such values outright.
+(1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is refused too.
+RFC 8188 §2 makes any `rs` below 18 invalid, and the builder rejects such values outright.
 
-### Retry behavior
-
-The default policy makes up to three attempts. Backoff starts at one second, doubles after each
-retry, and is capped at 60 seconds. On retryable responses (`429` and `5xx`), a valid
-`Retry-After` value overrides the computed delay and is capped by the same maximum. Both
-delta-seconds and all HTTP-date forms required by RFC 9110 are accepted; malformed or overflowing
-values fall back to the exponential schedule.
-
-```java
-PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
-    .retryPolicy(new RetryPolicy(
-        5,
-        Duration.ofMillis(500),
-        Duration.ofSeconds(30)))
-    .build();
-```
-
-Use `RetryPolicy.none()` to disable retries.
-
-**Budget for the worst case before calling `send` from a request thread.** On the defaults, three
-attempts at the default 30-second per-request timeout plus 1 s and 2 s of backoff is **93
-seconds** of blocking; a push service that answers `429` with a large `Retry-After` raises that to
-the 60-second ceiling per wait, so **3.5 minutes**. Either lower the numbers, or use
-`sendAsync(…)` and let the request thread go.
+One outcome covers both bounds, and both of its numbers are plaintext octets — the unit you can act
+in. `maximumPayloadBytes` is the largest plaintext this sender's configuration would have carried,
+the smaller of what the two preconditions each permit, so shortening a notification needs no
+arithmetic. Which bound was the binding one is a fact about the configuration rather than about the
+message, and an operator holding both configured values reads it off that maximum: the body ceiling
+less 103, against the record size less 18.
 
 ## Spring Boot
 
@@ -465,9 +539,9 @@ The endpoint inside a `Subscription` is attacker-influenced data: a typical inte
 the browser's `PushSubscription` JSON at a public registration endpoint, and nothing stops a
 client from posting a hand-crafted subscription whose endpoint points into your own network — a
 loopback port, a private-range address, a cloud metadata service. Every later send then POSTs to
-that address from inside your network, and the visible outcome (`PushResult.statusCode()` versus
-`PushDeliveryException`, plus timing) is a blind SSRF oracle for internal host and port
-existence.
+that address from inside your network, and the visible outcome — the status code an answered
+variant carries versus an unanswered `PushOutcome.Indeterminate`, plus timing — is a blind SSRF
+oracle for internal host and port existence.
 
 Which endpoints a sender may POST to is therefore a decision the deployment has to make, and
 `PushSender` takes it as the third parameter of its factory method rather than as an optional
@@ -506,13 +580,19 @@ library knows how to match, not a place to add a third from outside.
 
 The policy runs on every send — `sendAsync` included, it goes through the same pipeline —
 before encryption, before the VAPID signature (a remote Vault/KMS call under an external
-signer), and before any network I/O. A rejected endpoint throws `EndpointRejectedException`
-and costs none of them. The exception extends `RuntimeException` directly (deliberately not
-`IllegalArgumentException`, which web frameworks commonly map to a 400 response echoing the
-message), so a loop over stored subscriptions can tell "this subscription violates policy —
-flag or remove it" apart from a retryable transport failure (`PushDeliveryException`); its
-message never contains the endpoint's path or query, because a push endpoint is a capability
-URL.
+signer), and before any network I/O. A rejected endpoint costs none of them, and reaches the caller
+as `PushOutcome.EndpointRejected`: the policy did its job, and one hostile row must not abort a
+fan-out over a whole subscription store, so a loop records the row as violating policy — flagging or
+removing the stored subscription — and carries on. The variant carries the endpoint in redacted form
+and the policy's own account of the refusal, never the path or query, because a push endpoint is a
+capability URL.
+
+The seam's own signal is `EndpointRejectedException`, which is what an `EndpointPolicy`
+implementation throws and what an application catches when it calls `validate` directly at its
+registration boundary. It extends `RuntimeException` directly, deliberately not
+`IllegalArgumentException`, which web frameworks commonly map to a 400 response echoing the message.
+`PushSender` recognises exactly that type; any other `RuntimeException` from a policy is a defect in
+it and propagates.
 
 The endpoint is normalized once, and every rule compares against that one value — RFC 6454
 normalization on both sides, so lowercase scheme and host, IDNA A-labels decoded and the default
@@ -675,6 +755,20 @@ raises `PushCryptoException` saying what was returned; otherwise it would surfac
 that `SHA256withECDSA` produces DER: ask for `SHA256withECDSAinP1363Format` or convert before
 returning, and the rejection message will say so if you forget.
 
+**A signer failure leaves in one of two types, and this is the split an implementation is most
+likely to get wrong.** A key custodian that cannot sign *now* — unreachable, timed out, sealed, not
+yet initialized, still catching up, rate-limiting — raises `VapidSignerUnavailableException`, from
+`sign` and `publicKey` alike, carrying the status the custodian answered with and any moment it
+declared for coming back where it declared either. That is what the sender converts into the
+`SignerUnavailable` outcome. Everything else raises `PushCryptoException`: a defect, a substrate
+that cannot perform the cryptography, an answer no custodian could have meant, and a
+misconfiguration that answers the same way until a person edits it. Nothing checks which one an
+implementation chose — the conformance kit asserts no exception types on purpose — so a signer that
+reports its custodian's outages as a cryptographic failure passes every test it has while turning
+each of those outages into a permanent failure for its callers. **If you wrote a signer over a
+network, an HSM or a KMS against an older reading of this contract, it keeps compiling unchanged**;
+every `throw` in it is worth a look.
+
 **The key a signer advertises must stay the same for that signer's lifetime.** VAPID's public key
 is your application server's published identity: a browser subscription is bound to the
 `applicationServerKey` it was created with, and RFC 8292 §4.2 lets a push service refuse a JWT
@@ -723,7 +817,7 @@ separate artifact and never a dependency of `push2u-core`.
 
 | Module | Purpose | JPMS module name |
 |---|---|---|
-| `push2u-core` | Domain types, encryption, VAPID, retry logic, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
+| `push2u-core` | Domain types, encryption, VAPID, response classification, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
 | `push2u-testkit` | The `VapidSigner` conformance contract, for a **test** classpath | `com.the13haven.push2u.testkit` |
 | `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
 | `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
