@@ -493,19 +493,20 @@ seam's vocabulary changing on ADR-005's account — the Vault transport already 
 types, and ADR-005 separates the two transports over trust domains and response bodies, a reason
 this leaves untouched.
 
-**An interrupted exchange joins that side rather than opening a fourth.** `HttpClient.send` answers
-an interruption with an `InterruptedException` and a timeout with an `HttpTimeoutException`, and both
-say the same thing about the exchange: it did not complete, and no answer exists. The transport wraps
-them alike, in `VapidSignerUnavailableException`, and re-sets the interrupt flag — which it owes
-anyway, as any code catching an `InterruptedException` does, and which every site that raises one
-here already does today. **It is not asked to recognise an interruption**, and that is the point: it
-sorts on whether an answer exists, which it can see without knowing why one does not — an oversized
-response is an exchange that did not complete either, and it stays on the other side precisely
-because an answer arrived — and the facade's disjunction does the recognising, which is where this
-decision already put it. Today the same case is a
-`PushCryptoException`, a type nothing converts, so an interrupted wait for Vault propagates untouched
-and lands on a human as a cryptographic defect — a page over a shutdown, and a defect that is neither
-cryptographic nor a defect.
+**An interrupted exchange joins that side rather than opening a fourth**, and the rule that puts it
+there is one line rather than a walk through failure modes. `HttpClient.send` declares two checked
+exceptions, `IOException` and `InterruptedException`, and anything it throws means it returned no
+response — so what it throws is an exchange with no answer, and leaves as
+`VapidSignerUnavailableException`. There is exactly one carve-out, and the transport already digs it
+out of the cause chain today: its own response-size cap, which the JDK client surfaces wrapped in an
+`IOException`. That one *had* an answer — a status line and headers arrived, and the body ran past a
+bound this library set — so it stays where it is. **The transport is not asked to recognise an
+interruption anywhere in that**: it re-sets the flag, which any code catching an
+`InterruptedException` owes and which all three sites that raise one here already do, and the
+facade's disjunction does the recognising, which is where this decision already put it. Today the
+interrupted case is a `PushCryptoException`, a type nothing converts, so an interrupted wait for
+Vault propagates untouched and lands on a human as a cryptographic defect — a page over a shutdown,
+and a defect that is neither cryptographic nor a defect.
 
 The status codes are the other half and they stay where they already are, in the signer, because the
 transport hands back a response rather than raising on an error status — deliberately, and its
