@@ -133,7 +133,7 @@ public sealed interface PushOutcome {
     sealed interface NotAttempted extends PushOutcome {}
 
     record SignerUnavailable(Optional<Duration> retryAfter, ...) implements NotAttempted {}
-    record PayloadRejected(int encryptedBodyBytes, int maximumBytes) implements NotAttempted {}
+    record PayloadRejected(int payloadBytes, int maximumPayloadBytes) implements NotAttempted {}
     record EndpointRejected(...) implements NotAttempted {}
 
     /** No answer was obtained, and whether the service received the message is unknown. */
@@ -362,13 +362,51 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   statement, that this payload does not fit this sender's configuration, and splitting them would make
   the caller ask which bound it hit before it can shorten anything.
 
+  **It says so in the units the caller can act in.** `payloadBytes` is the plaintext the caller
+  handed over and `maximumPayloadBytes` is the largest plaintext this sender would have carried,
+  which is the smaller of what the two preconditions each permit. Both convert exactly: the body
+  ceiling less the fixed 103 octets of `aes128gcm` framing, and `rs` less the padding delimiter and
+  the authentication tag and one more, because RFC 8291 §4 requires `rs` to be strictly greater. A
+  first draft reported the encrypted body's size against the configured ceiling, and it fails the
+  bullet above on its own terms twice over. It hands a caller the number it did not choose and cannot
+  shorten, leaving it to subtract a framing constant the library never told it; and where the
+  record-size rule is what refused, the two numbers describe a comparison that *passed* — a payload
+  can sit well inside the body ceiling and still exceed an `rs` configured below it, and then the
+  outcome would report a body size nothing rejected, against a limit nothing reached.
+
+  This is not ADR-011 moving. That decision is about where the limit is *configured* — on the
+  encrypted body, so an operator raising it for a push service documented to accept more converts
+  nothing by hand — and it already derives the plaintext maximum from the configured one, naming
+  3993 bytes at the 4096-byte default. What the outcome reports is that derivation, which the
+  pre-flight check's own message already names beside the encrypted pair it leads with.
+
+  Something is lost by collapsing the two bounds, and it is not the caller's. Today each precondition
+  refuses in a sentence naming its own parameter and, for the record-size rule, the value to raise it
+  to; a pair of numbers names neither. But that sentence answers a question about the configuration
+  rather than about this message: an `rs` that binds before the body ceiling does so for every
+  payload this sender will ever be handed, so it is knowable the moment both values are set and needs
+  no per-send channel to be discovered. An operator holding the two configured numbers reads which
+  one bound from the maximum reported, and ADR-011 decided deliberately that the two stay
+  independent, so that raising one without the other rejects the message rather than quietly
+  re-framing it. What the caller wanted — how much fits — it now has without arithmetic.
+
   This decides https://github.com/the13haven/push2u/issues/87 rather than deferring to it. That
   report asks for the size refusal to be told apart from a malformed subscription, and proposes a
-  typed exception carrying the two sizes; `PayloadRejected` carries the same two numbers through the
-  outcome channel and supersedes the proposed class, while the subscription's own refusals stay
-  where they are, on a different method. What remains open there is the separate question raised in
-  its thread — whether the refusal should also be answerable *before* a send — which needs no
-  decision here.
+  typed exception carrying the encrypted body's size against the configured ceiling.
+  `PayloadRejected` supersedes the proposed class and answers the same need through the outcome
+  channel, and the subscription's own refusals stay where they are, on a different method.
+
+  **On one point the report is overruled rather than followed.** It rules the plaintext length out in
+  terms — "reporting a plaintext number here would re-open" ADR-011's decision that the limit is
+  expressed on the encrypted body. It does not: ADR-011 settles where the limit is *configured*, and
+  reporting a number it already derives re-opens nothing, as the paragraphs above set out. The
+  report's own account of the case is what decides it — the failing side is a healthy subscription
+  and "a notification the application must render smaller", and what an application renders is
+  plaintext. That the report proposed the encrypted pair regardless is not a preference it stated for
+  converting by hand; it is the ADR-011 reading, corrected above, deciding the question for it. What
+  remains open there is the separate question
+  raised in its thread — whether the refusal should also be answerable *before* a send — which needs
+  no decision here.
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
   may well have gone out, but the caller asked to stop, and handing back a value it is expected to act
   on answers the wrong question; reporting it as retryable would be worse, since the loop spins, every
