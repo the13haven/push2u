@@ -308,19 +308,19 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   answers is not thereby refusing permanently, and reading it that way would rebuild the very
   duality this decision removes — an operational condition arriving as an unchecked exception the
   fan-out has to catch out of band. The question to put to an answer is whether it describes the
-  custodian's own condition or the request that was made. Vault answers the first in so many words
-  for most of its error statuses: `500` "try again later", `503` "down for maintenance, currently
-  sealed, or temporarily overloaded", `412` a request that cannot be processed *yet* under eventual
-  consistency and one that "should be retried, perhaps with a little backoff", `501` "Vault is not
-  initialized", `429` the default for a standby node's health and also "Too Many Requests", `473`
-  the same for a performance standby, `472` the same for "disaster recovery mode replication
-  secondary and active", `502` a third party Vault itself called. Each of those is
-  `SignerUnavailable` — every one of them names a state of the cluster, or of a service the cluster
-  itself called, that ends when an operator, a replication or that upstream catches up, and none of
-  them names anything about the request. The second is what
-  recurs: `400`, `403`, `404` and `405` — a malformed call, a token without the capability, a key or
-  mount that is not there, a method the path does not take — and so is a response Vault could not
-  have meant, an unparseable signature or a key that is not on P-256. Those stay
+  custodian's own condition — or that of a service it called — or the request that was made. Vault
+  answers about itself in so many words for most of its error statuses: `500` "try again later",
+  `503` "down for maintenance, currently sealed, or temporarily overloaded", `412` a request that
+  cannot be processed *yet* under eventual consistency and one that "should be retried, perhaps
+  with a little backoff", `501` "Vault is not initialized", `429` the default for a standby node's
+  health and also "Too Many Requests", `473` the same for a performance standby, `472` the same for
+  "disaster recovery mode replication secondary and active", `502` a third party Vault itself
+  called. Each of those is `SignerUnavailable` — every one of them names a state of the cluster, or
+  of a service the cluster itself called, that ends when an operator or a replication catches up or
+  a third party comes back, and none of them names anything about the request. The last of the three
+  is what recurs: `400`, `403`, `404` and `405` — a malformed call, a token without the capability,
+  a key or mount that is not there, a method the path does not take — and so is a response Vault
+  could not have meant, an unparseable signature or a key that is not on P-256. Those stay
   `PushCryptoException`, alongside a defect and a misconfiguration.
 
   Those lists are the worked cases and the question is the rule, because a status neither list names
@@ -705,12 +705,12 @@ for — a transport failure (`PushDeliveryException`), a cryptographic failure
 `PushDeliveryException` and `EndpointRejectedException` keep signalling inside their seams, but
 neither is anything `send` reports any more. `PushCryptoException` is not removed from `send` but
 narrowed — to a cryptographic defect and a misconfiguration, the operational half of what it used to
-mean leaving through `SignerUnavailable` instead; where that narrowed type's edge falls exactly is
-ADR-022's, and this record needs only that the operational half is gone from it. What survives of
-the sentence is the principle behind it, under a sharper line than ADR-007 had occasion to draw.
-The spelling it uses for its own decision, an enum constant and a predicate, changes with it, but
-that is a spelling and not a clause: the decision is that the expiry is a value the caller inspects,
-and a variant is that value.
+mean leaving through `SignerUnavailable` instead; what the narrowed type promises a caller in so
+many words is ADR-022's, and this record needs only that the operational half is gone from it. What
+survives of the sentence is the principle behind it, under a sharper line than ADR-007 had occasion
+to draw. The spelling it uses for its own decision, an enum constant and a predicate, changes with
+it, but that is a spelling and not a clause: the decision is that the expiry is a value the caller
+inspects, and a variant is that value.
 
 **ADR-018 is superseded in part of one clause.** Deciding where the second structural check on the
 encoded public key lives, it settled that a `PushCryptoException` raised by `publicKey()` itself —
