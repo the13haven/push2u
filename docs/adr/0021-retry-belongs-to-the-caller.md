@@ -310,8 +310,9 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   that is down for an hour — no test this library could run tells the two apart, and the same move is
   made on the answered side when the class decides a status the vendor's table does not name. The one
   member of this half a test *does* reach is the interruption, and it is reached by the facade's
-  disjunction rather than by anything the seam decided, which is why it leaves as a cancellation
-  rather than as an unavailable custodian. For the rest, it
+  disjunction rather than by anything the seam decided — which is why a send reports it as a
+  cancellation while a `build()`, having no facade over it, sees the unavailable custodian the seam
+  raised. For the rest, it
   falls to the honest side, where "cannot sign now" is true of both, and a permanent one surfaces
   where this decision has just put every other exhausted repeat: in the caller's retry budget and the
   dead-letter path at the end of it. The alternative is a guess, and a guess wrong in the likelier
@@ -419,8 +420,10 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   attempt failing instantly on an interrupt status nobody cleared. The conversion to an outcome is
   refused, on both the push and the signer paths, when the cause chain carries an
   `InterruptedException` **or** the current thread's interrupt status is set — and what leaves instead
-  is `PushInterruptedException`, so that a caller reads the cancellation from the type rather than
-  from whichever seam happened to be blocked when it arrived. Neither test alone is sound: an
+  is a cancellation type of its own, `PushInterruptedException`, whose taxonomy and contract belong to
+  the review this record's exception clauses were read under, so that a caller reads the cancellation
+  from the type rather than from whichever seam happened to be blocked when it arrived. Neither test
+  alone is sound: an
   interruption surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries no
   `InterruptedException` beneath it, and a transport may attach a cause without re-setting the flag.
   This is a send's rule: a signer that reads its key inside `build()` is outside it, and what an
@@ -490,14 +493,16 @@ seam's vocabulary changing on ADR-005's account — the Vault transport already 
 types, and ADR-005 separates the two transports over trust domains and response bodies, a reason
 this leaves untouched.
 
-**An interrupted exchange is one of the three rather than a fourth case.** `HttpClient.send` answers
+**An interrupted exchange joins that side rather than opening a fourth.** `HttpClient.send` answers
 an interruption with an `InterruptedException` and a timeout with an `HttpTimeoutException`, and both
 say the same thing about the exchange: it did not complete, and no answer exists. The transport wraps
 them alike, in `VapidSignerUnavailableException`, and re-sets the interrupt flag — which it owes
 anyway, as any code catching an `InterruptedException` does, and which every site that raises one
 here already does today. **It is not asked to recognise an interruption**, and that is the point: it
-sorts exchanges into completed and not, which it can see, and the facade's disjunction does the
-recognising, which is where this decision already put it. Today the same case is a
+sorts on whether an answer exists, which it can see without knowing why one does not — an oversized
+response is an exchange that did not complete either, and it stays on the other side precisely
+because an answer arrived — and the facade's disjunction does the recognising, which is where this
+decision already put it. Today the same case is a
 `PushCryptoException`, a type nothing converts, so an interrupted wait for Vault propagates untouched
 and lands on a human as a cryptographic defect — a page over a shutdown, and a defect that is neither
 cryptographic nor a defect.
