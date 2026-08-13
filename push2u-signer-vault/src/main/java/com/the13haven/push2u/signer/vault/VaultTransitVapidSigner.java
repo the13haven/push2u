@@ -34,6 +34,7 @@ import org.jspecify.annotations.Nullable;
 import com.the13haven.push2u.P256PublicKeys;
 import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.VapidSignerUnavailableException;
 
 /**
  * A {@link VapidSigner} that signs the VAPID JWT via HashiCorp Vault Transit — the private key never leaves Vault. It
@@ -204,8 +205,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * A builder for the <b>fetched</b> mode: {@link FetchedPublicKeyBuilder#build()} reads {@code transit/keys/<key>}
-     * from Vault, so it performs I/O and can fail with a {@link PushCryptoException}. It has no {@code keyVersion} step
-     * — the version comes from Vault together with the public key it belongs to, as one atomic pair.
+     * from Vault, so it performs I/O and can fail — with {@link VapidSignerUnavailableException} where Vault cannot
+     * serve the read now, and with {@link PushCryptoException} where the failure recurs; {@code build()}'s own
+     * documentation carries the order a startup supervisor reads those in, interruption first. It has no
+     * {@code keyVersion} step — the version comes from Vault together with the public key it belongs to, as one atomic
+     * pair.
      *
      * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
      *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
@@ -296,8 +300,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         VaultHttpResponse response =
                 transport.post(signUri, vaultHeaders(token, namespace), request.getBytes(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
-            throw new PushCryptoException(
-                    "Vault Transit sign failed: HTTP " + response.statusCode() + " — " + abbreviated(response.body()));
+            throw answerFailure("Vault Transit sign", response);
         }
         String marshalled = extractSignature(response.body());
         byte[] signature;
@@ -354,8 +357,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // constructor, cannot offer an invalid value to the transport.
         VaultHttpResponse response = transport.get(keyUri, vaultHeaders(token.value(), namespace));
         if (response.statusCode() != 200) {
-            throw new PushCryptoException("Vault Transit key read failed: HTTP " + response.statusCode() + " — "
-                    + abbreviated(response.body()));
+            throw answerFailure("Vault Transit key read", response);
         }
         String body = response.body();
         requireP256KeyType(body);
@@ -886,6 +888,63 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
+     * The failure a non-200 Vault answer produces, split by one question: does the status describe Vault's own
+     * condition — or that of a service Vault itself called — or the request that was made? A condition of the cluster
+     * ends on Vault's terms (an operator unseals, a replication catches up, a rate window closes, a third party comes
+     * back) without this deployment changing anything it configured, so it is worth waiting out and leaves as
+     * {@link VapidSignerUnavailableException}. An answer about the request is answered the same way until the
+     * deployment changes what it supplied, so it recurs and stays {@link PushCryptoException}.
+     *
+     * <p>The custodian-unavailable side carries the status Vault answered with, and the retry hint where Vault declared
+     * one — filled on a rate-limited answer alone, and only where an operator enabled the rate-limit response headers,
+     * so absent is the ordinary case. Both are for whoever schedules the next attempt and for the operator reading a
+     * log; the recurring side carries neither, because there is no next attempt to schedule.
+     */
+    private static RuntimeException answerFailure(String operation, VaultHttpResponse response) {
+        int status = response.statusCode();
+        if (custodianCannotServeNow(status)) {
+            return new VapidSignerUnavailableException(
+                    operation + " must wait — Vault cannot serve it now: HTTP " + status + " — "
+                            + abbreviated(response.body()),
+                    status,
+                    response.retryAfter().orElse(null),
+                    null);
+        }
+        return new PushCryptoException(operation + " failed: HTTP " + status + " — " + abbreviated(response.body()));
+    }
+
+    /**
+     * Whether {@code status} names a condition of the Vault cluster rather than an answer about the request. The worked
+     * rows are Vault's own published table (<a
+     * href="https://developer.hashicorp.com/vault/api-docs#http-status-codes">Vault API: HTTP status codes</a>):
+     * {@code 500} "an internal error has occurred, try again later"; {@code 503} sealed, down for maintenance or
+     * overloaded; {@code 501} not initialized; {@code 502} an error from a third party Vault itself called; {@code 412}
+     * eventually-consistent data not yet present, to be retried with a little backoff; {@code 429} a standby node's
+     * health answer as well as "too many requests"; {@code 472} a disaster recovery replication secondary; {@code 473}
+     * a performance standby. Every one of those names a state of the cluster or of a service it called, and none names
+     * the request — so every one is the custodian unable to serve <em>now</em>.
+     *
+     * <p>A status the table does not name will arrive — from a Vault newer than this text, or from a proxy in front of
+     * it — and falls to the classes RFC 9110 defines (<a
+     * href="https://www.rfc-editor.org/rfc/rfc9110#section-15">§15</a>): a 5xx says the server is aware it has erred, a
+     * statement about the custodian, so an unrecognised 5xx lands on the unavailable side with the four named ones; a
+     * 4xx says the client seems to have erred, a statement about the request, so an unrecognised 4xx recurs — like the
+     * answers Vault itself gives about a request: {@code 400} a malformed call, {@code 403} a token without the
+     * capability, {@code 404} a key or mount that is not there, {@code 405} a method the path does not take. That is
+     * why {@code 412}, {@code 429}, {@code 472} and {@code 473} are named here at all: they are 4xx numbers carrying a
+     * statement about the cluster, and only the vendor's table says so. Anything outside both classes — a redirect from
+     * a misconfigured or hijacked address, say — recurs the same way an unrecognised 4xx does.
+     *
+     * <p>This is deliberately not how a push service's statuses read: a push service answering {@code 501} says "not
+     * implemented", an answer about the request that will not change, where Vault publishes {@code 501} as "not
+     * initialized", a cluster state that ends the moment someone initializes it. Same number, opposite meaning, each
+     * read off the specification that governs its own seam.
+     */
+    private static boolean custodianCannotServeNow(int status) {
+        return status == 412 || status == 429 || status == 472 || status == 473 || (status >= 500 && status < 600);
+    }
+
+    /**
      * {@code vault:v1:<base64url>} → {@code <base64url>}, matching the prefix exactly rather than cutting at the last
      * colon. Vault's signature is always {@code vault:v<version>:<payload>}, so anything else is a response this signer
      * did not ask for — an error envelope, a wrapped token, a value from some other Vault API. Cutting at a colon would
@@ -1366,11 +1425,36 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * Reads {@code transit/keys/<keyName>} once, then builds the signer pinned to the version that response
          * advertised as latest.
          *
+         * <p><b>This is the {@code build()} that reads a key over a network, and what it throws is what a startup
+         * supervisor branches on.</b> The order of the tests is part of the contract, and it begins with the interrupt,
+         * not with the type:
+         *
+         * <ol>
+         *   <li><b>Test the interruption first</b> — the current thread's interrupt status is set, <em>or</em> an
+         *       {@link InterruptedException} is somewhere in the cause chain; neither half of that disjunction is sound
+         *       alone. A boot interrupted while the key is being read raises the unavailable type below as well,
+         *       because a transport does not sort an incomplete exchange by what made it incomplete — so a supervisor
+         *       that reads the type first answers a shutdown by looping its own boot, with every backoff it sleeps
+         *       failing instantly on an interrupt status nobody cleared. An interruption is a cancellation: propagate
+         *       it, retry nothing, alert nobody.
+         *   <li>{@link VapidSignerUnavailableException} is a custodian that cannot serve the read <em>now</em> —
+         *       unreachable, sealed, not initialized, standing by, not caught up, rate-limited. That ends on Vault's
+         *       own terms, so it is a boot worth retrying with backoff, not before any moment the exception's
+         *       {@link VapidSignerUnavailableException#retryAfter() retryAfter()} names.
+         *   <li>{@link PushCryptoException} recurs until a person changes something — a token without the capability, a
+         *       key or mount that is not there, a key that is not on P-256, a response Vault could not have meant — so
+         *       it fails the deployment, and retrying the boot over it only postpones the page.
+         * </ol>
+         *
          * @return the signer
          * @throws IllegalArgumentException if the address uses plain {@code http} to a host that is not a literal
          *     loopback and {@link #allowInsecureHttp()} was not called — checked before the Vault read, so a refused
          *     address fails without contacting anything
-         * @throws PushCryptoException if the key read fails or the key is not a usable P-256 key
+         * @throws VapidSignerUnavailableException if Vault cannot serve the key read now — nothing answered (a refused
+         *     connection, a failed handshake, a timeout, an interrupted wait — the interrupt status then re-set), or
+         *     Vault answered a status naming its own condition rather than the request's
+         * @throws PushCryptoException if the key read fails for a reason that recurs, or the key is not a usable P-256
+         *     key
          */
         public VaultTransitVapidSigner build() {
             // First thing, before the Vault read: a refused address must fail without any network
