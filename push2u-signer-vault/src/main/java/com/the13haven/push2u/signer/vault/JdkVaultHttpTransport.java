@@ -7,6 +7,7 @@ package com.the13haven.push2u.signer.vault;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.Serial;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -267,6 +268,14 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
     /** Marks a size-cap violation so it can be told apart from genuine I/O failures. */
     private static final class ResponseTooLargeException extends IOException {
+
+        // Declared rather than computed, as every exception in this library is: a computed
+        // identifier is derived from every non-private constructor and method as well as from the
+        // fields, so adding either would move it and make an instance already written to a stream
+        // unreadable after an otherwise compatible release. This one never leaves the transport,
+        // and the habit is cheaper to keep than to reason about per class.
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         ResponseTooLargeException(int maxResponseBytes) {
             super("Vault response exceeded the configured limit of " + maxResponseBytes + " bytes");

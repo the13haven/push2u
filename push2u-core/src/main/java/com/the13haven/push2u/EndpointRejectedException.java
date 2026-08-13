@@ -5,6 +5,8 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
+
 /**
  * Thrown when the configured {@link EndpointPolicy} refuses a subscription's push endpoint. A dedicated type so that an
  * application iterating a subscription store can tell the outcomes apart: this exception means "this stored
@@ -27,6 +29,12 @@ package com.the13haven.push2u;
  * capability URL that must never travel inside an exception (RFC 8030 §8.3; see {@link Endpoints#redact}).
  */
 public class EndpointRejectedException extends RuntimeException {
+
+    // Declared rather than computed. A computed identifier is derived from every non-private
+    // constructor and method as well as from the fields, so adding either would move it and make an
+    // instance already written to a stream unreadable after an otherwise compatible release.
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception describing the rejection. The message must not contain the raw endpoint — render it with

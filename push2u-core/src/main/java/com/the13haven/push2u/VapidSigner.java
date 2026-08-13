@@ -27,6 +27,21 @@ package com.the13haven.push2u;
  * {@code SHA256withECDSAinP1363Format}, or convert before returning — the library does exactly that for its own signer
  * but cannot do it here, since these bytes arrive from an implementation whose provider and encoding are unknown.
  *
+ * <p><b>A failure leaves in one of two types, and this is the split an implementation is most likely to get wrong.</b>
+ * A key custodian that cannot sign <em>now</em> — unreachable, timed out, sealed, not yet initialized, still catching
+ * up, rate-limiting — raises {@link VapidSignerUnavailableException}, from {@link #sign} and {@link #publicKey} alike.
+ * Everything else raises {@link PushCryptoException}: a defect, a substrate that cannot perform the cryptography, an
+ * answer no custodian could have meant, and a misconfiguration that answers the same way until a person edits it. The
+ * two are not interchangeable, and the difference is what a caller does — wait and repeat, against stop and fetch a
+ * human.
+ *
+ * <p><b>Nothing checks which of the two an implementation chose.</b> The conformance kit asserts no exception types, on
+ * purpose, so a signer that reports its custodian's outages as a cryptographic failure passes every test it has while
+ * turning each of those outages into a permanent failure for its callers — a wait reported as a defect, and no way for
+ * anything above to tell otherwise. That is worth a deliberate look at every {@code throw} in an implementation over a
+ * network, an HSM or a KMS, because a signer written against an older reading of this contract keeps compiling
+ * unchanged.
+ *
  * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
  * {@link PushSender#sendAsync} makes concurrent calls the normal case. This is not checkable by the conformance kit,
  * and the natural mistake is silent: {@code java.security.Signature} is not thread-safe, so one held in a field
@@ -52,11 +67,19 @@ public interface VapidSigner {
      * <p>The returned array becomes the caller's: return freshly produced bytes, never a buffer the implementation
      * retains for reuse.
      *
+     * <p>Failing is the contract, whichever of the two types carries it: returning a placeholder or a zero-filled array
+     * would reach the push service as an opaque 401.
+     *
      * @param signingInput the ASCII JWT signing input
      * @return the raw {@code r || s} ES256 signature (64 bytes for P-256), owned by the caller
-     * @throws PushCryptoException if no signature can be produced — the key is unusable or refused, or a remote key
-     *     service is unreachable, timed out or rejected the operation. Failing is the contract; returning a placeholder
-     *     or a zero-filled array would reach the push service as an opaque 401.
+     * @throws VapidSignerUnavailableException if the key custodian cannot sign now — nothing answered (a refused
+     *     connection, a failed handshake, a timeout, an interrupted exchange), or it answered that it cannot serve this
+     *     request at the moment (sealed, not initialized, still catching up, rate-limited). Carry the custodian's
+     *     status and any moment it declared for coming back, where it declared either
+     * @throws PushCryptoException if no signature can be produced for a reason that recurs — the key is unusable, the
+     *     provider cannot do ES256, or the custodian answered about the request or about what this deployment
+     *     configured: a key of a type VAPID cannot use, a token without the capability, a mount or key that is not
+     *     there
      */
     byte[] sign(byte[] signingInput);
 
@@ -69,8 +92,11 @@ public interface VapidSigner {
      * {@code clone()}, and the {@code push2u-testkit} conformance kit checks it by array identity.
      *
      * @return the 65-byte uncompressed public key, a fresh copy owned by the caller
-     * @throws PushCryptoException if the key cannot be produced — it is unusable, or a remote key service holding it is
-     *     unreachable, timed out or refused to publish it
+     * @throws VapidSignerUnavailableException if a custodian holding the key cannot serve it now — nothing answered, or
+     *     it answered that it cannot serve this request at the moment
+     * @throws PushCryptoException if the key cannot be produced for a reason that recurs — it is unusable, or the
+     *     custodian answered about the request or about what this deployment configured: a token without the capability
+     *     to read it, a mount or key that is not there, a key of a type VAPID cannot use
      */
     byte[] publicKey();
 
@@ -109,8 +135,9 @@ public interface VapidSigner {
      * does not match the key it signs with, and every subscription taken against the published one is unusable from the
      * moment it is created, with nothing but a push service's rejection of the JWT to say so. The conformance kit
      * checks the two against each other; an implementation that does not run it is bound by this sentence alone. An
-     * override signals a failure with {@link PushCryptoException}, the type {@link #publicKey()} already uses, so that
-     * one signer does not answer for one value in two exception types.
+     * override signals a failure exactly as {@link #publicKey()} does — a custodian that cannot serve the key now with
+     * {@link VapidSignerUnavailableException}, and everything that recurs with {@link PushCryptoException} — so that
+     * one signer's two answers about one value do not disagree about what kind of failure it was.
      *
      * <p>That is what an override may throw, not a promise that nothing else leaves this method. A signer returning
      * {@code null} from {@link #publicKey()} gets a {@link NullPointerException}: the method is declared to return
@@ -118,6 +145,8 @@ public interface VapidSigner {
      * as the same defect a send reports it as.
      *
      * @return this signer's public key as unpadded URL-safe base64
+     * @throws VapidSignerUnavailableException if a custodian holding the key cannot serve it now, exactly as
+     *     {@link #publicKey()} raises it
      * @throws PushCryptoException if the key cannot be produced, exactly as {@link #publicKey()} raises it, or if what
      *     it returned is not the 65-byte uncompressed point the contract requires — the same check, the same type and
      *     the same wording a send applies to the same value, so this method's verdict on the key's <em>shape</em> is
