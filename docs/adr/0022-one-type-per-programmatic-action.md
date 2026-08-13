@@ -1,4 +1,4 @@
-# ADR-022 — One exception type per remediation
+# ADR-022 — One exception type per programmatic action
 
 **Status:** Proposed
 
@@ -20,6 +20,15 @@ and a thread that was interrupted. `PushSender.send`'s published Javadoc then te
 this type means a key service *"unreachable or refuses the operation, which may be transient"*, so a
 durable retrier that believes the contract retries a wrong-typed Transit key forever.
 
+**This record owns the exception taxonomy, entirely**: which types exist, what each one carries,
+where each is declared, which type a seam raises for a failure it has classified, and what a caller
+or a supervisor catching one is promised. `PushOutcome` and its variants, the two status matrices,
+the surfacing of `Retry-After` and the line between an outcome and an exception are ADR-021's — and
+so is the classification itself, of which a type is only the channel. Where this record names an
+outcome or a classification it is naming that record's, and a decision that moves one of those
+supersedes it rather than this one. This is written down so that whoever supersedes either knows
+which half they are replacing.
+
 ## The decision
 
 **A site earns its own type only if a consumer would take a materially different action on it, and
@@ -35,8 +44,23 @@ signer that reads its key inside `build()`; and whoever reads a stack trace at t
 The criterion is judged against those. It is not weakened by that: the facade's `catch` clauses are
 an enumeration, so a distinction the facade does not act on still does not earn a type.
 
-**And the axis is remediation, not aetiology.** Two failures with different causes and one remedy
-are one type. The question every site is put to is *who fixes this, and with what*.
+**And the axis is what the catching code does, not what went wrong.** Two failures that arise from
+different causes and that one `catch` clause handles identically are one type. The question every
+site is put to is *what does the code that catches this do differently* — report an outcome, retry
+the boot with backoff, propagate a cancellation, fail the deployment and stop — and a site that
+cannot name a different answer earns no type.
+
+**This axis does not express who owns the fix, and does not try to.** One `PushCryptoException`
+covers a defect in this library, a third-party `VapidSigner` that broke its contract, a Vault mount
+that is not there, a token without the capability to use a key, and a key version Vault has trimmed
+— five conditions, three different owners between them, and no two of them fixed by the same act. It
+is one type because the code that catches them does one thing with all five: it stops the sender,
+retries none of them, and waits for a human. Which human, and what they change, is carried by the
+message and the cause chain, where it can be as specific as the site knows and as long as it needs
+to be — a type carries what a program branches on, and no program branches on ownership. This is a
+limit the record accepts rather than a gap it means to close later: sorting by owner would mint
+types that nothing catches, which answers the count of throw sites and leaves the complaint exactly
+where it was.
 
 ## What the axis produces
 
@@ -130,39 +154,64 @@ because only the second declared anything. That asymmetry is the case for two ty
 argued at length in a draft of this record. It does not survive the criterion this document adopts,
 and the reasoning is set out because the question will be asked again.
 
-The remedy is the same on both sides — wait, and look at the custodian — and it is the same human.
-The facade's action is the same: one `SignerUnavailable`, with a hint copied across if one arrived.
-Whether an answer arrived is a fact about how the failure happened, which is the aetiology this
-document's axis exists to stop ranking. And the shape argument proves too much: a field that is
-always absent on one side would equally justify splitting a timeout from a refused connection, and
-nothing in the criterion stops that regress once it is admitted.
+The action is the same on both sides. The facade does one thing with either: it reports a
+`SignerUnavailable`, with a hint and a status copied across if either arrived. What an operator then
+does is the same too — wait, and look at the custodian — and it is the same operator. Whether an
+answer arrived is a fact about how the failure happened, which is precisely what this document's
+axis exists to stop ranking. And the shape argument proves too much: a field that is always absent
+on one side would equally justify splitting a timeout from a refused connection, and nothing in the
+criterion stops that regress once it is admitted.
 
-The precedent runs the same way. ADR-021 weighed *these two types* and rejected them, and it
-accepted `RetryableFailure(413, empty)` — a representable pair that cannot occur — rather than pay a
-type for one dead combination. A record that reversed both while claiming to apply the same rule
-would be applying a different one.
+An implementer is the second reason, and it is the one a taxonomy is most often written without.
+Both halves produce one outcome and one decision, so a signer written over an HSM, a KMS or a smart
+card would be choosing between two types for nothing — and choosing at a boundary where this
+library's own two implementations are not the interesting sample. What an operator reads to tell an
+unroutable Vault from a sealed one is the message and the cause, which both halves carry. The retry
+hint, and the custodian's status beside it, are not second names for the answered half but values a
+caller acts on: carried by the one type across both halves and filled only where something was
+declared, which is to say on the answered one.
+
+`PushDeliveryException` is not reused for either half, though a refused connection to a custodian is
+the same shape of failure as a refused connection to a push service, and the same JDK client raises
+it. That type names delivery, and nothing was delivered; it is the vocabulary of the one operation
+this library performs that can duplicate a notification, and a signing call is the one that provably
+cannot. Reusing it would put the two operations under one word at exactly the point where ADR-021
+needs them told apart — an unanswered POST is `Indeterminate` and an unanswered signing call is
+`NotAttempted`, and that difference is a fact about which operation was interrupted rather than
+about how it broke.
+
+The precedent inside ADR-021 runs the same way: it accepted `RetryableFailure(413, empty)` — a
+representable pair that cannot occur — rather than pay a type for one dead combination. A record
+that minted a type here while quoting that one would be applying a different rule than the one it
+claims.
 
 What the two halves do differ in is the sentence an operator reads, and the criterion answers that
 directly: a different log line is not a different action. The message and the cause chain carry it,
 which is the half of `PushCryptoException`'s own reasoning that survives its narrowing.
 
-**`SignerUnavailable` carries the cause**, which ADR-021 leaves unanswered. The facade catches the
-signer's exception and reports a value; with nothing carried, the `IOException` under an unreachable
-custodian is destroyed and no one can say why a send was not attempted — and that loss falls hardest
-on exactly the distinction the paragraph above leaves to the message. It carries it under
-`Indeterminate`'s discipline and for `Indeterminate`'s reason, which means the same consequence:
-a variant carrying a cause is a class with a written `toString()` rather than a record, because a
-record's generated one prints its components.
+**What the outcome carries is ADR-021's and is not restated here** — that `SignerUnavailable`
+reports the cause, the custodian's status and the retry hint, and is therefore a class with a written
+`toString()` rather than a record, is decided there, under `Indeterminate`'s discipline and for
+`Indeterminate`'s reason. What this record owes that decision is the seam: none of the three reaches
+a caller unless the exception carries it across first, and the facade cannot invent what it was not
+given. With nothing carried, the `IOException` under an unreachable custodian is destroyed at the
+boundary and nobody can say why a send was not attempted — and that loss falls hardest on exactly
+the distinction the paragraphs above leave to the message.
 
-**And the exception that feeds it is pinned here too**, because a shape fixed on the outcome and left
-open on the seam that produces it is half a decision — the hint cannot reach a caller unless the
-exception carries it first. `VapidSignerUnavailableException` carries an `Optional<Duration>` retry
-hint and the cause; an interrupted custodian call carries the `InterruptedException` in its chain
-with the interrupt flag re-set, which is what lets the facade's disjunction recognise one; and a
-signer that reads its key inside `build()` raises the same type when its custodian is down at
-startup. That last clause is the whole of what the startup supervisor named above acts on: catching
-this type, it retries the boot with backoff, where catching `PushCryptoException` it should fail the
-deployment and stop. A record that names an audience owes that audience a contract.
+**So the exception is pinned here.** `VapidSignerUnavailableException` carries three things beside
+its message: the cause, whatever did not complete; an `Optional<Duration>` retry hint, empty unless
+the custodian declared when to come back; and an `OptionalInt` holding the status the custodian
+answered with, empty for a local key, for a PKCS#11 token, and for the whole half where nothing
+answered at all. Neither optional field obliges an implementer to speak HTTP — a signer over an HSM
+fills neither and is conformant — which is the arithmetic ADR-021 runs for the hint and now runs the
+same way for the status. It is declared in the core beside the other seam exceptions, because
+`VapidSigner` is a core SPI and a module implementing it over HTTP needs a core word for this. An
+interrupted custodian call carries the `InterruptedException` in its chain with the interrupt flag
+re-set, which is what lets the facade's disjunction recognise one; and a signer that reads its key
+inside `build()` raises the same type when its custodian is down at startup. That last clause is the
+whole of what the startup supervisor named above acts on: catching this type, it retries the boot
+with backoff, where catching `PushCryptoException` it should fail the deployment and stop. A record
+that names an audience owes that audience a contract.
 
 **And the contract begins with the interrupt, not with the type.** A boot interrupted while the key
 is being read raises the unavailable type as well, because the transport does not sort an incomplete
@@ -183,31 +232,67 @@ fact a caller must not get wrong is stated where a caller meets it, and it names
 a sender; this is the fourth, and the only one whose reader is a supervisor rather than a caller. The
 signer implementers a paragraph below get the same treatment for the same reason.
 
-**`PushInterruptedException` promises the interrupt flag.** The action it exists for — let the
-cancellation propagate — only works if a caller catching it finds the flag set or the
-`InterruptedException` in the chain, and every site that raises one today re-sets it. That is a habit
-inherited from three separate implementations rather than a contract, and an interruption swallowed
-without the flag is the oldest defect in the genre. It becomes the type's written promise.
+**`PushInterruptedException` promises the interrupt, and the promise is not the same on both
+paths.** The action it exists for — let the cancellation propagate — needs the caller to find the
+cancellation, and one draft of this record promised the flag outright. On `sendAsync` that promise
+cannot be kept by anybody: the thread that was interrupted is the executor's, the future may be read
+by another thread and by several of them, and an interrupt status does not travel through a
+`CompletableFuture`. So there are two contracts, written as two.
 
-## What ADR-021 takes, and what this costs
+*On `send`*, the full promise: the interrupt status is re-set on the calling thread before the
+exception is thrown, so a caller finds the thread interrupted whether or not it looks at the cause
+chain, and the `InterruptedException` is in that chain wherever one was raised. Every site that
+raises one today re-sets the flag; that is a habit inherited from three separate implementations
+rather than a contract, and an interruption swallowed without the flag is the oldest defect in the
+genre. It becomes the type's written promise.
 
-ADR-021 is unimplemented, so it is edited rather than superseded, and the edits are narrower than an
-earlier draft of this record claimed. Its *"a defect and a misconfiguration"*, in the two places it
-says that, **stands**: the misconfigurations it names beside the defects are the ones that reach a
-send, and this record keeps them in the same type for the reason set out above rather than moving
-them anywhere. Its signer decision **stands** too, and is confirmed rather than edited. What it takes
-is three edits, and they are made in that record rather than described here: `SignerUnavailable`
-becomes a cause-carrying class where its sketch had a record; the interrupted send, whose seam
-exception it deliberately does not convert to an outcome, leaves as a type of its own instead, for a
-send and not for a `build()`; and its enumeration of the types the facade converts, written before
-the signer had one, is completed — which matters more than it looks, because everything above turns
-on a type outside that list never reaching the facade at all.
+*On `sendAsync`*, the future completes exceptionally with this type, and the flag on whatever thread
+reads the future is **not** promised. That is said in as many words rather than left for a caller to
+discover in a `catch` block on a thread nobody interrupted. What travels is the type and
+its cause chain, which is all a `CompletableFuture` can carry. The worker's own flag is re-set on
+the worker, before the future is completed, and then dies with the task: it is owed to the executor
+and to whatever else that thread runs next, not to the caller.
 
-Every one of these is a breaking change for a consumer that catches by type. `0.x` was declared the
-window for revising names and constructor shapes once real integrations exist, and each transition
-is named in the release notes rather than described in the abstract. The one that bites hardest is
-the narrowing of `PushCryptoException`: a `catch` clause that today swallows an unreachable Vault
-compiles unchanged and silently stops catching it.
+**The future completes exceptionally; it is not cancelled.** `isCancelled()` is false, `join()`
+raises a `CompletionException` wrapping this type and `get()` an `ExecutionException` with the same
+cause, and `CancellationException` is deliberately not used for it. That type is the JDK's word for
+one thing — its own documentation defines it as indicating "that the result of a value-producing
+task, such as a `FutureTask`, cannot be retrieved because the task was cancelled", and
+`CompletableFuture` documents `cancel` as having "the same effect as `completeExceptionally(new
+CancellationException())`" — so borrowing it would deliver a caller's own cancellation and an
+interrupted worker into the same `catch` clause, indistinguishable. They are not the same event
+here, and ADR-021 records why: `CompletableFuture.cancel` does not interrupt a running task, so a
+cancelled future leaves the send running, and a send that was interrupted was cancelled by nobody's
+`cancel`. A caller that has to tell "I cancelled this" from "the sender was stopped mid-flight" is
+exactly the caller this taxonomy exists for.
+
+## Where the line with ADR-021 runs, and what this costs
+
+The two records were drafted together and decide one send between them, so the line is written out
+rather than left to be inferred. **Every exception type is this record's**: which ones exist, what
+each carries, where it is declared, which one a seam raises for a failure it has classified, the
+narrowing of `PushCryptoException`, the place of `IllegalArgumentException` and of the starters'
+`IllegalStateException`, and the interruption contract on both paths. **Every outcome and every
+classification is ADR-021's**: the shape of `PushOutcome` and its variants, what each variant means
+to a caller, both status matrices — the push service's and the custodian's — the surfacing of
+`Retry-After`, the line between an outcome and an exception, and which seam signal converts to which
+outcome. Neither record re-decides the other's half; where one names something on the far side of
+the line, it is naming and not deciding. An ADR that moves a type supersedes this one; an ADR that
+moves an outcome or a classification supersedes that one.
+
+Two readings of that line are worth closing off, because a draft of this record proposed both.
+ADR-021's *"a defect and a misconfiguration"*, in the two places it says it, is not narrowed here:
+the misconfigurations it names beside the defects are the ones that reach a send, and they stay in
+`PushCryptoException` for the reason set out above. And its reading of which custodian failures are
+operational is not reopened either — that reading is off Vault's own published table and off RFC
+9110's classes, which makes it a classification and therefore that record's. This one fixes the type
+that carries the answer across the seam; it does not re-take the answer.
+
+Every type named here is a breaking change for a consumer that catches by type. `0.x` was declared
+the window for revising names and constructor shapes once real integrations exist, and each
+transition is named in the release notes rather than described in the abstract. The one that bites
+hardest is the narrowing of `PushCryptoException`: a `catch` clause that today swallows an
+unreachable Vault compiles unchanged and silently stops catching it.
 
 **It breaks signer implementers the same way, one seam deeper, and that half is the one nobody
 would look for.** `VapidSigner`'s published contract instructs an implementation to raise
@@ -273,11 +358,41 @@ unhealthy. Both classes still answer `Health.down()`, and nothing here changes t
 ## What this rules out
 
 A type per throw site, which answers the count and not the complaint. A type whose only consumer
-difference is the sentence it puts in a log. A type for a configured value that the boundary
-accepting it should have refused. `IllegalArgumentException` as a base class for anything the
-library owns, which lets an existing `catch` keep swallowing both cases and so cancels the
-disambiguation it was minted for. A library exception that does not extend `RuntimeException`
-directly. Message-text matching as the supported way to tell two conditions apart — anywhere a
-consumer must do that, a type is missing. A cancellation reported by `send` as the type of whatever
-it interrupted, and equally a seam obliged to recognise one. And a taxonomy settled one exception at
-a time, in whichever ADR happens to touch a failure next.
+difference is the sentence it puts in a log. A type minted for who owns the fix, which is not
+something a program branches on, and equally a claim that this taxonomy expresses that ownership. A
+type for a configured value that the boundary accepting it should have refused.
+`IllegalArgumentException` as a base class for anything the library owns, which lets an existing
+`catch` keep swallowing both cases and so cancels the disambiguation it was minted for. A library
+exception that does not extend `RuntimeException` directly. Message-text matching as the supported
+way to tell two conditions apart — anywhere a consumer must do that, a type is missing. A
+cancellation reported by `send` as the type of whatever it interrupted, and equally a seam obliged
+to recognise one. A cancellation delivered as a `CancellationException`, or an interrupted send
+reported by a future that answers `isCancelled()`. An interrupt-flag promise on the asynchronous
+path, which no `CompletableFuture` can keep. And a taxonomy settled one exception at a time, in
+whichever ADR happens to touch a failure next.
+
+## The whole contract, in one table
+
+The rows below are what everything above amounts to, for the reader who needs the answer rather than
+the argument. The outcome column names ADR-021's variants and that record fixes what each one means
+to a caller; what this table adds is the type each seam raises and what the reader does with what
+arrives. A row that is hard to fill is a disagreement between two sections rather than a gap in the
+table, and the sections are what to fix.
+
+| The condition | What the seam signals | What `send` produces | What the reader does |
+|---|---|---|---|
+| The push service answered `2xx` | the response | `Accepted(statusCode)` | Nothing: the message was accepted for delivery, which is not a receipt |
+| It answered `404` or `410` | the response | `SubscriptionExpired(statusCode)` | Delete the subscription |
+| It answered `408`, `421`, `429`, a `413` carrying a parseable `Retry-After`, or a 5xx the matrix does not carve out | the response | `RetryableFailure(statusCode, retryAfter)` | Schedule a repeat, not before the hint where one arrived |
+| It answered anything else — `501`, `505`, `506`, `508`, `511`, a bare `413`, any other 4xx | the response | `NonRetryableFailure(statusCode)` | Record it; repeating the identical request buys nothing |
+| The POST went out and nothing answered — a timeout, a dropped connection | `PushHttpClient` throws `PushDeliveryException` | `Indeterminate` | Price a possible duplicate against a possible loss; the library will not price it for you |
+| The policy refused the endpoint | `EndpointPolicy` throws `EndpointRejectedException` | `EndpointRejected` | Record the row and keep the fan-out running |
+| The payload does not fit this sender's configuration | the pre-flight check, before any seam is reached | `PayloadRejected(payloadBytes, maximumPayloadBytes)` | Render the notification smaller |
+| The custodian cannot sign now — unreachable, sealed, not caught up, rate-limited | `VapidSigner` throws `VapidSignerUnavailableException`, carrying the cause and, where the custodian declared them, a hint and a status | `SignerUnavailable` | Stop submitting new sends and repeat when the custodian is back |
+| A cryptographic defect, an unusable provider, or a custodian misconfiguration that recurs | `VapidSigner`, the platform or the Vault transport throws `PushCryptoException` | throws `PushCryptoException` | Stop the sender; a human edits a property or files a bug |
+| The sending thread was interrupted | whichever seam was blocked; the facade's disjunction recognises it | throws `PushInterruptedException` — on `sendAsync`, the future completes exceptionally with it and is not cancelled | Propagate the cancellation; retry nothing, alert nobody |
+| An argument is not a legal value of its parameter | the constructor, factory or builder that took it | throws `IllegalArgumentException` | Fix the call site |
+
+One row has no `send` in it and is left out on purpose: a signer that reads its key inside `build()`
+is outside a send, so an interruption there arrives as `VapidSignerUnavailableException` and the
+supervisor tests the interrupt before it reads the type, as the section above requires.
