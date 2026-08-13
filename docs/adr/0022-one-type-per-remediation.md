@@ -234,6 +234,38 @@ core code, not a dependency, and every type named here lives in `push2u-core` be
 are there now, because the facade must catch them and a type the core cannot see cannot be caught
 there.
 
+## What this leaves ready
+
+Three open reports touch the failure surface without being about it. Where this record serves them
+and where it merely gets out of their way is worth stating, because it becomes immutable when it is
+implemented, and whoever picks those up afterwards should not have to re-derive whether the taxonomy
+hemmed them in.
+
+**A remote signer that is not up yet** — https://github.com/the13haven/push2u/issues/91 — needs no
+type this record does not already have. Reading the key lazily on first use instead of inside
+`build()` moves *when* the custodian is asked, not what happens when it does not answer: inside a
+send that is the `SignerUnavailable` outcome, whose repeat the caller already owns, and outside one —
+an explicit refresh, or an application asking for the key it publishes to browsers — it is
+`VapidSignerUnavailableException`, the same answer `build()` gives. The part of that report which
+made it sharp is settled here rather than deferred: a fetched-mode boot fails today with a type that
+cannot be told from a Transit key of the wrong sort, so failing the deployment is the only honest
+reaction available to a supervisor. After this record it can tell, which is the precondition for
+anything cleverer — and the cleverer thing is a lifecycle decision that belongs to that report, not
+to this one.
+
+**Telling a deliberate silence from a broken one** — https://github.com/the13haven/push2u/issues/88 —
+is outside this record entirely: no `PushSender` bean is not a failure and nothing throws. Nothing
+here forecloses an explicit switch, and the starters' `IllegalStateException` goes on meaning what it
+means, a context that could not be built from what was configured.
+
+**The health indicator** — https://github.com/the13haven/push2u/issues/89 — gains a distinction for
+nothing. It probes the signer, catches `RuntimeException` broadly, and reports the exception's class
+as a detail while deliberately keeping its message out of the payload. Today every signer failure
+reaches it as one class, so a DOWN says only that signing failed; after this record a custodian that
+is down and a custodian that is misconfigured arrive as different classes, which is the difference an
+operator reading a DOWN is trying to make and the one that report is about. The indicator needs no
+change to show it.
+
 ## What this rules out
 
 A type per throw site, which answers the count and not the complaint. A type whose only consumer
