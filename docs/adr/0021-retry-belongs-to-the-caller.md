@@ -10,7 +10,8 @@ one call, sleeping through every wait. A parseable `Retry-After` overrides the c
 clamped at the same ceiling, from code in `PushSender` rather than in the record. Only the middle of
 the three is configurable, and only in the numbers the record holds.
 
-Reported as https://github.com/the13haven/push2u/issues/86, from the deployment where that bites
+Reported as https://github.com/the13haven/push2u/issues/86, with the exception clauses below reviewed
+under https://github.com/the13haven/push2u/issues/128, from the deployment where that bites
 hardest: a sender whose retries are *durable*. There the next attempt is a job the engine
 reschedules minutes or hours later, across a process restart or a deploy, and a `Thread.sleep`
 inside `send` cannot participate in it — it holds a worker for the wait and its state dies with the
@@ -132,7 +133,9 @@ public sealed interface PushOutcome {
     /** No POST was made, so nothing can have been delivered and a repeat cannot duplicate. */
     sealed interface NotAttempted extends PushOutcome {}
 
-    record SignerUnavailable(Optional<Duration> retryAfter, ...) implements NotAttempted {}
+    /** Carries a cause, so a class rather than a record, for Indeterminate's reason. */
+    final class SignerUnavailable implements NotAttempted { /* retryAfter(), cause(), toString() */ }
+
     record PayloadRejected(int payloadBytes, int maximumPayloadBytes) implements NotAttempted {}
     record EndpointRejected(...) implements NotAttempted {}
 
@@ -285,7 +288,7 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   while every failure left through the exception channel and a human read all of them. It stops being
   one when the caller reads outcomes: a dropped connection is not a cryptographic failure, and
   filing it as one costs an operator the first thing they would have looked at. So it leaves as
-  `VapidSignerUnavailableException` too, carrying the `IOException` or the timeout as its cause,
+  `VapidSignerUnavailableException` too, carrying whatever did not complete as its cause,
   declared in the core beside the other seam exceptions because `VapidSigner` is a core SPI and a
   module implementing it over HTTP needs a core word for this.
 
@@ -304,8 +307,11 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   This half is the one place the axis is not settled by recurrence, and the reason is that recurrence
   is not on offer: nothing answered, so nothing states whether the condition will hold next time. A
   host name with a typo recurs identically forever and arrives here indistinguishable from a Vault
-  that is down for an hour — no test this library could run tells them apart, and the same move is
-  made on the answered side when the class decides a status the vendor's table does not name. It
+  that is down for an hour — no test this library could run tells the two apart, and the same move is
+  made on the answered side when the class decides a status the vendor's table does not name. The one
+  member of this half a test *does* reach is the interruption, and it is reached by the facade's
+  disjunction rather than by anything the seam decided, which is why it leaves as a cancellation
+  rather than as an unavailable custodian. For the rest, it
   falls to the honest side, where "cannot sign now" is true of both, and a permanent one surfaces
   where this decision has just put every other exhausted repeat: in the caller's retry budget and the
   dead-letter path at the end of it. The alternative is a guess, and a guess wrong in the likelier
@@ -410,11 +416,16 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
   may well have gone out, but the caller asked to stop, and handing back a value it is expected to act
   on answers the wrong question; reporting it as retryable would be worse, since the loop spins, every
-  attempt failing instantly on an interrupt status nobody cleared. The conversion is skipped, on both
-  the push and the signer paths, when the cause chain carries an `InterruptedException` **or** the
-  current thread's interrupt status is set. Neither test alone is sound: an interruption surfacing as
-  `ClosedByInterruptException` or `InterruptedIOException` carries no `InterruptedException` beneath
-  it, and a transport may attach a cause without re-setting the flag.
+  attempt failing instantly on an interrupt status nobody cleared. The conversion to an outcome is
+  refused, on both the push and the signer paths, when the cause chain carries an
+  `InterruptedException` **or** the current thread's interrupt status is set — and what leaves instead
+  is `PushInterruptedException`, so that a caller reads the cancellation from the type rather than
+  from whichever seam happened to be blocked when it arrived. Neither test alone is sound: an
+  interruption surfacing as `ClosedByInterruptException` or `InterruptedIOException` carries no
+  `InterruptedException` beneath it, and a transport may attach a cause without re-setting the flag.
+  This is a send's rule: a signer that reads its key inside `build()` is outside it, and what an
+  interruption there raises is the seam's own type, with the flag set for whoever is supervising the
+  boot to test first.
 
 What still throws is misuse and defect: a `null` where the contract forbids one, a builder
 configured with a value it rejects, a JCE provider that cannot do `AES/GCM/NoPadding`, an unexpected
@@ -424,9 +435,13 @@ does not interrupt a running task and so never reaches this path at all. None of
 per-send action, and each should reach a human rather than a retry queue.
 
 The seams keep signalling as they do now — `PushHttpClient` throws `PushDeliveryException`,
-`EndpointPolicy` throws `EndpointRejectedException` — and it is the facade that stops rethrowing.
-Only those types convert; any other `RuntimeException` from a consumer implementation stays a defect
-and propagates, which is the rule `EndpointPolicy` already states for its own seam.
+`EndpointPolicy` throws `EndpointRejectedException`, and a signer that cannot sign now throws
+`VapidSignerUnavailableException` — and it is the facade that stops rethrowing. **Those three types
+convert and no others**, which is the whole of the enumeration: any other `RuntimeException` from a
+consumer implementation stays a defect and propagates, which is the rule `EndpointPolicy` already
+states for its own seam. The list is written out because the interrupt discipline below depends on
+it — a type outside it never reaches the facade's test — and a two-item version of it, from before
+the signer had a type of its own, would silently strand both that type's outcome and that test.
 
 **No outcome discloses a capability URL unless the caller asks for it by name.** The `NotAttempted`
 leaves carry a redacted endpoint or a structured reason, never a raw one, and `Indeterminate` is a
@@ -475,16 +490,17 @@ seam's vocabulary changing on ADR-005's account — the Vault transport already 
 types, and ADR-005 separates the two transports over trust domains and response bodies, a reason
 this leaves untouched.
 
-**An interrupted exchange leaves as `VapidSignerUnavailableException` too**, carrying the
-`InterruptedException` in its chain with the flag re-set, and it is listed apart from the three
-because it is the one case where the type is chosen for what the facade must be able to reach rather
-than for what happened. It belongs there on its own terms — a call that did not complete cannot sign
-now, and no other reading of it is true — but the reason it cannot be left where it is today is
-mechanical. Only the convertible types reach the facade's interrupt test, and `PushCryptoException`
-is not one of them: an interrupted wait for Vault raised as that type would propagate untouched,
-land on a human as a cryptographic defect, and send someone to a page over a shutdown. Filed as an
-unavailable signer it reaches the disjunction, is recognised there, and stays an exception by the
-rule above rather than by escaping the rule.
+**An interrupted exchange is one of the three rather than a fourth case.** `HttpClient.send` answers
+an interruption with an `InterruptedException` and a timeout with an `HttpTimeoutException`, and both
+say the same thing about the exchange: it did not complete, and no answer exists. The transport wraps
+them alike, in `VapidSignerUnavailableException`, and re-sets the interrupt flag — which it owes
+anyway, as any code catching an `InterruptedException` does, and which every site that raises one
+here already does today. **It is not asked to recognise an interruption**, and that is the point: it
+sorts exchanges into completed and not, which it can see, and the facade's disjunction does the
+recognising, which is where this decision already put it. Today the same case is a
+`PushCryptoException`, a type nothing converts, so an interrupted wait for Vault propagates untouched
+and lands on a human as a cryptographic defect — a page over a shutdown, and a defect that is neither
+cryptographic nor a defect.
 
 The status codes are the other half and they stay where they already are, in the signer, because the
 transport hands back a response rather than raising on an error status — deliberately, and its
@@ -514,12 +530,16 @@ except what still throws.
 reported with no ceiling applied; that RFC 8030's `TTL` counts from receipt, so an attempt sent hours
 later re-bases the message's lifetime unless the caller decrements what it passes; and that a fan-out
 meeting `SignerUnavailable` should stop, because the alternative is a fan-out that hammers a custodian
-that is already down. Nothing throttles it any more, and the token cache cannot help: with signing
-failing it never fills, so every row makes its own round trip to the custodian. Sequentially that is
-one connect timeout per row, and asynchronously — the path recommended at volume — it is a burst of
+that is already down. The token cache cannot help: it publishes only after a signature succeeds, so
+with signing failing it never fills and every row makes its own round trip. Sequentially that is one
+connect timeout per row, and asynchronously — the path recommended at volume — it is a burst of
 concurrent connects against a dead host, which is the shape of a fan-out finishing a maintenance
-window off. Breaking on the first one is the caller's to do, and this decision is what made it
-theirs, so the sentence is owed at the same place the other two are.
+window off. The loop this decision deletes never throttled that path in any case, because the
+signature is taken before the loop begins; what changes is subtler and worse for a naive caller.
+A signer failure used to be an exception, so a `for` loop over a hundred thousand rows stopped at the
+first one whether or not its author had thought about it. Now it is a value, and a loop that does not
+read it walks the whole list at one round trip each. Breaking on the first one is the caller's to do,
+and this decision is what made it theirs, so the sentence is owed where the other two are.
 
 *The migration guide inverts and is the one document that is dangerous rather than stale.* It warns
 that an application retry loop on top of push2u multiplies and instructs the reader — in prose and
