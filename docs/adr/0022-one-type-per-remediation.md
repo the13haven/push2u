@@ -75,8 +75,14 @@ performed in every case. A platform without `AES/GCM/NoPadding`, `HmacSHA256` or
 parameters; a custodian or a `VapidSigner` implementation that answered something that is not a
 signature or not a key; a Transit key whose type VAPID cannot use, a mount or key name that is not
 there, a token without the capability, a pinned key version Vault no longer holds. `Endpoints`'s
-unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and is the same condition as
-the platform cases; it joins them. So the type loses two things and no more: the operational half
+unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and joins them — not because
+it is the same condition, which it is not: `Jca`'s failures go through a provider the deployment
+chose, where a missing algorithm is a real misconfiguration, while this one asks the platform for an
+algorithm every conforming JVM must ship, so its failure means a broken runtime. It joins them
+because an unusable cryptographic substrate is worth one channel rather than two, and because the
+site is unreachable on a conforming JVM, so the choice costs nothing either way.
+
+So the type loses two things and no more: the operational half
 ADR-021 moves to outcomes, and the send-path cancellation the section below gives a type of its own —
 the interrupted Vault wait, which leaves `send` as that type while a `build()`-time one still arrives
 as this one. The misconfigurations ADR-021 names beside the defects stay where that record puts them.
@@ -145,6 +151,22 @@ on exactly the distinction the paragraph above leaves to the message. It carries
 a variant carrying a cause is a class with a written `toString()` rather than a record, because a
 record's generated one prints its components.
 
+**And the exception that feeds it is pinned here too**, because a shape fixed on the outcome and left
+open on the seam that produces it is half a decision — the hint cannot reach a caller unless the
+exception carries it first. `VapidSignerUnavailableException` carries an `Optional<Duration>` retry
+hint and the cause; an interrupted custodian call carries the `InterruptedException` in its chain
+with the interrupt flag re-set, which is what lets the facade's disjunction recognise one; and a
+signer that reads its key inside `build()` raises the same type when its custodian is down at
+startup. That last clause is the whole of what the startup supervisor named above acts on: catching
+this type, it retries the boot with backoff, where catching `PushCryptoException` it should fail the
+deployment and stop. A record that names an audience owes that audience a contract.
+
+**`PushInterruptedException` promises the interrupt flag.** The action it exists for — let the
+cancellation propagate — only works if a caller catching it finds the flag set or the
+`InterruptedException` in the chain, and every site that raises one today re-sets it. That is a habit
+inherited from three separate implementations rather than a contract, and an interruption swallowed
+without the flag is the oldest defect in the genre. It becomes the type's written promise.
+
 ## What ADR-021 takes, and what this costs
 
 ADR-021 is unimplemented, so it is edited rather than superseded, and the edits are narrower than an
@@ -162,6 +184,25 @@ window for revising names and constructor shapes once real integrations exist, a
 is named in the release notes rather than described in the abstract. The one that bites hardest is
 the narrowing of `PushCryptoException`: a `catch` clause that today swallows an unreachable Vault
 compiles unchanged and silently stops catching it.
+
+**It breaks signer implementers the same way, one seam deeper, and that half is the one nobody
+would look for.** `VapidSigner`'s published contract instructs an implementation to raise
+`PushCryptoException` when a remote key service is unreachable, timed out or refused the operation.
+A KMS or HSM signer written against that sentence keeps compiling afterwards, and its outages then
+leave `send` as permanent defects instead of becoming `SignerUnavailable` — because the facade
+rightly refuses to sniff a cause chain to guess otherwise. Nothing catches this: the conformance kit
+asserts no exception types on purpose, so a stale implementation passes it. The release note
+therefore addresses signer implementers in their own paragraph rather than leaving them to read a
+consumer's.
+
+The name `PushCryptoException` is kept through that narrowing, and the asymmetry is worth one
+sentence because ADR-021 paid the opposite price next door: it renamed `PushResult` to `PushOutcome`
+for a smaller shift in meaning, arguing that the old name described something the type no longer
+meant. A rename here would turn the silent break above into a compile error at every affected site,
+which is a real gain. It is declined because the name is still accurate for what the type keeps — the
+cryptography is what could not be performed in every remaining case — and because the candidates that
+would describe the narrowing better describe the type worse. A name that has stopped being true is
+worth changing; a name that is true and merely covers less is not.
 
 **ADR-005's seams are untouched** — none added, none removed, and `PushHttpClient`'s contract in
 particular is left exactly where ADR-021 left it. **ADR-002 is untouched**: an exception class is
