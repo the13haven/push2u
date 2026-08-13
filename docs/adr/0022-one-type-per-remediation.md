@@ -75,17 +75,18 @@ performed in every case. A platform without `AES/GCM/NoPadding`, `HmacSHA256` or
 parameters; a custodian or a `VapidSigner` implementation that answered something that is not a
 signature or not a key; a Transit key whose type VAPID cannot use, a mount or key name that is not
 there, a token without the capability, a pinned key version Vault no longer holds. `Endpoints`'s
-unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and joins them — not because
-it is the same condition, which it is not: `Jca`'s failures go through a provider the deployment
-chose, where a missing algorithm is a real misconfiguration, while this one asks the platform for an
-algorithm every conforming JVM must ship, so its failure means a broken runtime. It joins them
-because an unusable cryptographic substrate is worth one channel rather than two, and because the
-site is unreachable on a conforming JVM, so the choice costs nothing either way.
+unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and joins them, on a stated
+ground rather than on a claim of sameness. It is not the same condition: the fingerprint hashes with
+the platform's own SHA-256 whatever provider is configured, deliberately, because it is diagnostics
+and not protocol — so its failure means a runtime that is not a Java SE implementation, where a
+missing `secp256r1` from a configured FIPS provider is an ordinary misconfiguration of a supported
+kind. It joins them because an unusable cryptographic substrate is worth one channel rather than two,
+and because the site is unreachable on a conforming JVM, so the choice costs nothing either way.
 
 So the type loses two things and no more: the operational half
-ADR-021 moves to outcomes, and the send-path cancellation the section below gives a type of its own —
-the interrupted Vault wait, which leaves `send` as that type while a `build()`-time one still arrives
-as this one. The misconfigurations ADR-021 names beside the defects stay where that record puts them.
+ADR-021 moves to outcomes, and the cancellation the section below gives a type of its own — the
+interrupted custodian wait, which is `PushCryptoException` today and is neither cryptographic nor a
+defect. The misconfigurations ADR-021 names beside the defects stay where that record puts them.
 
 **The starters keep `IllegalStateException`**, and this is stated so the inventory is complete rather
 than silently exempt. Their five conditions are a missing `push2u.vapid.subject`; a
@@ -104,11 +105,13 @@ the interrupt propagate — is shared with no other failure here. **The seams ar
 it.** ADR-021 put the recognition test on the facade, written as a disjunction over the cause chain
 and the thread's interrupt status, *"precisely so that no transport has to be obliged to anything"*,
 and that stands: `PushHttpClient`'s contract does not change, and the type is what `send` reports
-rather than what a seam must throw. The residue is named rather than papered over: a signer that
-reads its key inside `build()` is not inside a send, so an interrupt during that read still leaves as
-whatever the seam raised, and the startup supervisor this record names as an audience sees the seam's
-type there. Obliging the seams would close that at a price ADR-021 declined to pay for the send path,
-and it is not worth paying for one call that happens once.
+rather than what a seam must throw. The residue is named rather than papered over: a signer that reads
+its key inside `build()` is not inside a send, so an interruption during that read leaves as the
+seam's own type — `VapidSignerUnavailableException`, since an interrupted exchange is an incomplete
+one and the transport does not sort them — and the startup supervisor sees that type rather than this
+one. Obliging the seams to tell an interruption apart would close it at a price ADR-021 declined to
+pay for the send path, and it is not worth paying for one call that happens once. What it costs
+instead is a sentence in the supervisor's contract, which the section below owes it anyway.
 
 **`IllegalArgumentException` stays exactly what the JDK made it**: a value that is not a legal value
 of its parameter, carrying no library semantics, handled in a generic pool. `Subscription`'s 16-byte
@@ -161,6 +164,16 @@ startup. That last clause is the whole of what the startup supervisor named abov
 this type, it retries the boot with backoff, where catching `PushCryptoException` it should fail the
 deployment and stop. A record that names an audience owes that audience a contract.
 
+**And the contract begins with the interrupt, not with the type.** A boot interrupted while the key
+is being read raises the unavailable type as well, because the transport does not sort an incomplete
+exchange by what made it incomplete — so a supervisor that reads the type first answers a shutdown by
+looping the boot, and every backoff it sleeps fails instantly on a flag nobody cleared. That is the
+spin ADR-021 refuses on the send path, arriving at the one place there is no facade to refuse it. The
+order is therefore fixed here: test the interruption first — the flag, or an `InterruptedException`
+in the chain, the same disjunction and for the same reason — and only then read the type. A
+supervisor of anything that blocks owes that test in any case; what this record adds is that it comes
+first.
+
 **`PushInterruptedException` promises the interrupt flag.** The action it exists for — let the
 cancellation propagate — only works if a caller catching it finds the flag set or the
 `InterruptedException` in the chain, and every site that raises one today re-sets it. That is a habit
@@ -174,10 +187,12 @@ earlier draft of this record claimed. Its *"a defect and a misconfiguration"*, i
 says that, **stands**: the misconfigurations it names beside the defects are the ones that reach a
 send, and this record keeps them in the same type for the reason set out above rather than moving
 them anywhere. Its signer decision **stands** too, and is confirmed rather than edited. What it takes
-is two edits: it leaves `SignerUnavailable`'s shape open where this fixes it as a cause-carrying
-class rather than a record, and its interrupted send — whose seam exception it deliberately does not
-convert — becomes a conversion into a type of its own on the facade, for a send and not for a
-`build()`.
+is three edits, and they are made in that record rather than described here: `SignerUnavailable`
+becomes a cause-carrying class where its sketch had a record; the interrupted send, whose seam
+exception it deliberately does not convert to an outcome, leaves as a type of its own instead, for a
+send and not for a `build()`; and its enumeration of the types the facade converts, written before
+the signer had one, is completed — which matters more than it looks, because everything above turns
+on a type outside that list never reaching the facade at all.
 
 Every one of these is a breaking change for a consumer that catches by type. `0.x` was declared the
 window for revising names and constructor shapes once real integrations exist, and each transition
