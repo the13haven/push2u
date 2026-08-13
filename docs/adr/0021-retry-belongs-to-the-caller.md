@@ -475,6 +475,17 @@ seam's vocabulary changing on ADR-005's account — the Vault transport already 
 types, and ADR-005 separates the two transports over trust domains and response bodies, a reason
 this leaves untouched.
 
+**An interrupted exchange leaves as `VapidSignerUnavailableException` too**, carrying the
+`InterruptedException` in its chain with the flag re-set, and it is listed apart from the three
+because it is the one case where the type is chosen for what the facade must be able to reach rather
+than for what happened. It belongs there on its own terms — a call that did not complete cannot sign
+now, and no other reading of it is true — but the reason it cannot be left where it is today is
+mechanical. Only the convertible types reach the facade's interrupt test, and `PushCryptoException`
+is not one of them: an interrupted wait for Vault raised as that type would propagate untouched,
+land on a human as a cryptographic defect, and send someone to a page over a shutdown. Filed as an
+unavailable signer it reaches the disjunction, is recognised there, and stays an exception by the
+rule above rather than by escaping the rule.
+
 The status codes are the other half and they stay where they already are, in the signer, because the
 transport hands back a response rather than raising on an error status — deliberately, and its
 contract says so. It is `VaultTransitVapidSigner` that today turns every non-`200` into one
@@ -499,9 +510,16 @@ belongs to the implementation task, not to a record that cannot be corrected onc
 becomes variants, the failure row becomes three, and the transport and crypto rows lose everything
 except what still throws.
 
-*Two facts a caller must not get wrong are stated where a caller meets them*: that `Retry-After` is
-reported with no ceiling applied, and that RFC 8030's `TTL` counts from receipt, so an attempt sent
-hours later re-bases the message's lifetime unless the caller decrements what it passes.
+*Three facts a caller must not get wrong are stated where a caller meets them*: that `Retry-After` is
+reported with no ceiling applied; that RFC 8030's `TTL` counts from receipt, so an attempt sent hours
+later re-bases the message's lifetime unless the caller decrements what it passes; and that a fan-out
+meeting `SignerUnavailable` should stop, because the alternative is a fan-out that hammers a custodian
+that is already down. Nothing throttles it any more, and the token cache cannot help: with signing
+failing it never fills, so every row makes its own round trip to the custodian. Sequentially that is
+one connect timeout per row, and asynchronously — the path recommended at volume — it is a burst of
+concurrent connects against a dead host, which is the shape of a fan-out finishing a maintenance
+window off. Breaking on the first one is the caller's to do, and this decision is what made it
+theirs, so the sentence is owed at the same place the other two are.
 
 *The migration guide inverts and is the one document that is dangerous rather than stale.* It warns
 that an application retry loop on top of push2u multiplies and instructs the reader — in prose and
