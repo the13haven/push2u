@@ -377,24 +377,35 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   This is not ADR-011 moving. That decision is about where the limit is *configured* — on the
   encrypted body, so an operator raising it for a push service documented to accept more converts
   nothing by hand — and it already derives the plaintext maximum from the configured one, naming
-  3993 bytes at the 4096-byte default. What the outcome reports is that derivation, and the
-  pre-flight check's own message speaks in the same units today. Nothing an operator needs is lost
-  by collapsing the two bounds into one number: whoever configured `recordSize` and
-  `maxEncryptedBodyBytes` reads which of them bound from the maximum reported, and ADR-011 decided
-  deliberately that the two are independent and that raising one without the other rejects the
-  message rather than quietly re-framing it. The caller who only wants to fit never had that
-  question.
+  3993 bytes at the 4096-byte default. What the outcome reports is that derivation, which the
+  pre-flight check's own message already names beside the encrypted pair it leads with.
+
+  Something is lost by collapsing the two bounds, and it is not the caller's. Today each precondition
+  refuses in a sentence naming its own parameter and, for the record-size rule, the value to raise it
+  to; a pair of numbers names neither. But that sentence answers a question about the configuration
+  rather than about this message: an `rs` that binds before the body ceiling does so for every
+  payload this sender will ever be handed, so it is knowable the moment both values are set and needs
+  no per-send channel to be discovered. An operator holding the two configured numbers reads which
+  one bound from the maximum reported, and ADR-011 decided deliberately that the two stay
+  independent, so that raising one without the other rejects the message rather than quietly
+  re-framing it. What the caller wanted — how much fits — it now has without arithmetic.
 
   This decides https://github.com/the13haven/push2u/issues/87 rather than deferring to it. That
   report asks for the size refusal to be told apart from a malformed subscription, and proposes a
-  typed exception carrying the encrypted body's size against the configured ceiling; `PayloadRejected`
-  supersedes the proposed class, answers the same need through the outcome channel, and reports the
-  pair in the units the report's own account of the case calls for — it describes the failing side as
-  a healthy subscription and "a notification the application must render smaller", and what an
-  application renders is plaintext. The subscription's own refusals stay where they are, on a
-  different method. What remains open there is the separate question raised in
-  its thread — whether the refusal should also be answerable *before* a send — which needs no
-  decision here.
+  typed exception carrying the encrypted body's size against the configured ceiling.
+  `PayloadRejected` supersedes the proposed class and answers the same need through the outcome
+  channel, and the subscription's own refusals stay where they are, on a different method.
+
+  **On one point the report is overruled rather than followed.** It rules the plaintext length out in
+  terms — "reporting a plaintext number here would re-open" ADR-011's decision that the limit is
+  expressed on the encrypted body. It does not: ADR-011 settles where the limit is *configured*, and
+  reporting a number it already derives re-opens nothing, as the paragraphs above set out. The
+  report's own account of the case is what decides it — the failing side is a healthy subscription
+  and "a notification the application must render smaller", and what an application renders is
+  plaintext. A refusal reported in units the application cannot render leaves it to convert, which is
+  the work the report filed the issue to be spared. What remains open there is the separate question
+  raised in its thread — whether the refusal should also be answerable *before* a send — which needs
+  no decision here.
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
   may well have gone out, but the caller asked to stop, and handing back a value it is expected to act
   on answers the wrong question; reporting it as retryable would be worse, since the loop spins, every
