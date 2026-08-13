@@ -35,8 +35,13 @@ class VaultTransitVapidSignerErrorResponseTest {
     // ---- signing ---------------------------------------------------------------------------------
 
     @Test
-    void aNonSuccessStatusFromTheSignEndpointReportsBothTheCodeAndTheBody() {
-        for (int status : new int[] {400, 403, 404, 500, 503}) {
+    void aStatusAnsweringAboutTheRequestReportsBothTheCodeAndTheBody() {
+        // The recurring side of the custodian's status matrix: answers about the request — a
+        // malformed call, a denied token, a missing key, a wrong method — recur until the
+        // deployment changes what it supplied, so they stay PushCryptoException. The statuses
+        // naming a cluster state (sealed, standby, not caught up, rate-limited) are covered in
+        // VaultTransitVapidSignerCustodianStatusTest.
+        for (int status : new int[] {400, 403, 404, 405}) {
             assertThatThrownBy(
                             () -> explicitSigner(new VaultHttpResponse(status, "{\"errors\":[\"permission denied\"]}"))
                                     .sign("probe".getBytes(StandardCharsets.UTF_8)))
@@ -51,7 +56,7 @@ class VaultTransitVapidSignerErrorResponseTest {
     void anOversizedErrorBodyIsTruncatedBeforeItReachesTheMessage() {
         String hugeBody = "<html><body>" + "A".repeat(64_000) + "</body></html>";
 
-        assertThatThrownBy(() -> explicitSigner(new VaultHttpResponse(502, hugeBody))
+        assertThatThrownBy(() -> explicitSigner(new VaultHttpResponse(403, hugeBody))
                         .sign("probe".getBytes(StandardCharsets.UTF_8)))
                 .isInstanceOf(PushCryptoException.class)
                 .satisfies(thrown -> assertThat(thrown.getMessage().length())
@@ -62,9 +67,9 @@ class VaultTransitVapidSignerErrorResponseTest {
     @Test
     void anEmptyBodyOnAFailedSignStillProducesAReadableMessage() {
         assertThatThrownBy(() ->
-                        explicitSigner(new VaultHttpResponse(503, "")).sign("probe".getBytes(StandardCharsets.UTF_8)))
+                        explicitSigner(new VaultHttpResponse(400, "")).sign("probe".getBytes(StandardCharsets.UTF_8)))
                 .isInstanceOf(PushCryptoException.class)
-                .hasMessageContaining("HTTP 503");
+                .hasMessageContaining("HTTP 400");
     }
 
     // ---- key metadata ----------------------------------------------------------------------------
