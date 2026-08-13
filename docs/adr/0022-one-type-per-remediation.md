@@ -76,9 +76,10 @@ parameters; a custodian or a `VapidSigner` implementation that answered somethin
 signature or not a key; a Transit key whose type VAPID cannot use, a mount or key name that is not
 there, a token without the capability, a pinned key version Vault no longer holds. `Endpoints`'s
 unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and is the same condition as
-the platform cases; it joins them. So the type is narrowed by exactly one thing, the operational
-half ADR-021 moves to outcomes, and the misconfigurations that ADR-021 names beside the defects stay
-where that record puts them.
+the platform cases; it joins them. So the type loses two things and no more: the operational half
+ADR-021 moves to outcomes, and the send-path cancellation the section below gives a type of its own —
+the interrupted Vault wait, which leaves `send` as that type while a `build()`-time one still arrives
+as this one. The misconfigurations ADR-021 names beside the defects stay where that record puts them.
 
 **The starters keep `IllegalStateException`**, and this is stated so the inventory is complete rather
 than silently exempt. Their five conditions are a missing `push2u.vapid.subject`; a
