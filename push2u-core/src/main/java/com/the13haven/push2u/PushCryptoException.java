@@ -6,8 +6,8 @@
 package com.the13haven.push2u;
 
 /**
- * Thrown when the cryptography a send needs cannot be performed, and repeating the send would fail in exactly the same
- * way. Three kinds of failure, one remediation, so one type:
+ * Thrown when cryptography this library needs cannot be performed, and repeating the same call would fail in exactly
+ * the same way. Three kinds of failure, one remediation, so one type:
  *
  * <ul>
  *   <li><b>A substrate that cannot perform the cryptography</b> — a JCE provider without {@code AES/GCM/NoPadding},
@@ -25,6 +25,11 @@ package com.the13haven.push2u;
  * different, and that one is not this type. Everything here answers about the request, about what this deployment
  * supplied, or about this deployment's own substrate, and answers identically until a person changes something. "Until
  * a human acts" is not the line and would sort these wrongly: an operator unseals a custodian too.
+ *
+ * <p><b>Most of it arises inside a send and not all of it does</b>, which is why nothing above is phrased as a send's
+ * failure. {@link Endpoints}, which an application is invited to call at its own registration boundary, and a signer
+ * asked to publish the public key a frontend subscribes with are both outside any send, and this type means the same
+ * thing there: the substrate or the configuration, never this message.
  *
  * <p>A push service's verdict on a send is never this — that is a value the caller reads, not a failure.
  *

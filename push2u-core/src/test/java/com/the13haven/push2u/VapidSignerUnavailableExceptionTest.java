@@ -7,7 +7,11 @@ package com.the13haven.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
@@ -35,11 +39,27 @@ class VapidSignerUnavailableExceptionTest {
 
     @Test
     void unansweredHalfAcceptsNoCauseAtAll() {
-        VapidSignerUnavailableException e = new VapidSignerUnavailableException("no key custodian configured", null);
+        VapidSignerUnavailableException e = new VapidSignerUnavailableException("no key custodian configured");
 
         assertThat(e.getCause()).isNull();
         assertThat(e.status()).isEmpty();
         assertThat(e.retryAfter()).isEmpty();
+    }
+
+    /**
+     * A custodian can declare when to come back without answering in numbers — gRPC retry information, or an SDK
+     * surfacing a delay and no code. The delay is the value a caller schedules against, so it must be reportable
+     * without inventing a status to carry it.
+     */
+    @Test
+    void aDeclaredMomentTravelsWithoutAStatus() {
+        VapidSignerUnavailableException e =
+                new VapidSignerUnavailableException("kms is throttling", Duration.ofSeconds(5), null);
+
+        assertThat(e.retryAfter()).contains(Duration.ofSeconds(5));
+        assertThat(e.status())
+                .as("nothing answered a number, and none was invented")
+                .isEmpty();
     }
 
     @Test
@@ -116,6 +136,58 @@ class VapidSignerUnavailableExceptionTest {
 
         assertThat(e.status()).hasValue(-1);
         assertThat(e.retryAfter()).contains(Duration.ofSeconds(-1));
+    }
+
+    /**
+     * The one place this exception is read with nothing above it to convert it is a failed startup, where the stack
+     * trace is all an operator gets — so what the custodian declared has to be in the stack trace's first line.
+     */
+    @Test
+    void toStringCarriesWhateverTheCustodianDeclared() {
+        assertThat(new VapidSignerUnavailableException("vault is sealed", 503, null, null).toString())
+                .contains("vault is sealed")
+                .contains("custodian status 503")
+                .doesNotContain("retry after");
+
+        assertThat(new VapidSignerUnavailableException("rate-limited", 429, Duration.ofSeconds(30), null).toString())
+                .contains("custodian status 429")
+                .contains("retry after PT30S");
+
+        assertThat(new VapidSignerUnavailableException("kms is throttling", Duration.ofSeconds(5), null).toString())
+                .contains("retry after PT5S")
+                .doesNotContain("custodian status");
+    }
+
+    @Test
+    void toStringIsTheOrdinaryOneWhereNothingWasDeclared() {
+        VapidSignerUnavailableException e =
+                new VapidSignerUnavailableException("vault is unreachable", new IOException("refused"));
+
+        assertThat(e.toString()).isEqualTo(VapidSignerUnavailableException.class.getName() + ": vault is unreachable");
+    }
+
+    /**
+     * The type inherits {@code Serializable} from {@code Throwable} and is the first exception here with state of its
+     * own, so what crosses a stream is a decision: both declared values travel, since a report that arrived without
+     * them would say less than the one that was thrown.
+     */
+    @Test
+    void whatTheCustodianDeclaredSurvivesAStream() throws Exception {
+        VapidSignerUnavailableException original =
+                new VapidSignerUnavailableException("vault is sealed", 503, Duration.ofSeconds(30), null);
+
+        ByteArrayOutputStream written = new ByteArrayOutputStream();
+        try (ObjectOutputStream out = new ObjectOutputStream(written)) {
+            out.writeObject(original);
+        }
+        VapidSignerUnavailableException read;
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(written.toByteArray()))) {
+            read = (VapidSignerUnavailableException) in.readObject();
+        }
+
+        assertThat(read.getMessage()).isEqualTo("vault is sealed");
+        assertThat(read.status()).hasValue(503);
+        assertThat(read.retryAfter()).contains(Duration.ofSeconds(30));
     }
 
     /** ADR-022 rules out a library exception that does not extend {@code RuntimeException} directly. */

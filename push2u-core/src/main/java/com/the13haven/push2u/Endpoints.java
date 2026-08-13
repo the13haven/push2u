@@ -37,12 +37,19 @@ public final class Endpoints {
      * URL) are never included; the fingerprint lets log lines about the same subscription be correlated without
      * disclosing it.
      *
-     * <p>Never throws: it runs on error-handling and logging paths. A {@code null} endpoint renders as {@code <null
-     * endpoint>}; an unparseable string or a URI without scheme/host renders as {@code <opaque endpoint>#} plus the
-     * fingerprint of the raw string.
+     * <p><b>Nothing about the endpoint makes it throw</b>, which is what lets it run on error-handling and logging
+     * paths: a {@code null} endpoint renders as {@code <null endpoint>}, and an unparseable string or a URI without
+     * scheme/host renders as {@code <opaque endpoint>#} plus the fingerprint of the raw string.
+     *
+     * <p>One thing can still leave here, and it is about the platform rather than the argument: a runtime with no
+     * {@code SHA-256} raises {@link PushCryptoException}. It is allowed to escape rather than degraded into a
+     * fingerprint-less rendering, because the condition it reports is a runtime that is not a Java SE implementation —
+     * on which every other cryptographic step of a send has already failed for the same reason — and swallowing it here
+     * would buy a promise that holds only where nothing else in this library does.
      *
      * @param endpoint the endpoint URL to redact, possibly {@code null}
      * @return a representation containing only the origin and a fingerprint, never the full URL
+     * @throws PushCryptoException if the platform has no {@code SHA-256}, which no conforming Java runtime can be
      */
     public static String redact(@Nullable String endpoint) {
         if (endpoint == null) {

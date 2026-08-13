@@ -33,7 +33,13 @@ import org.jspecify.annotations.Nullable;
  * for a key held locally, for a PKCS#11 token, for a KMS refusing on quota, and for the whole half where nothing
  * answered at all. Neither optional obliges an implementation to speak HTTP: a signer over an HSM or a smart card fills
  * neither and is fully conformant. Both are diagnostics and a schedule, never a classification to be re-derived — the
- * signer has already classified by raising this type rather than {@link PushCryptoException}.
+ * signer has already classified by raising this type rather than {@link PushCryptoException} — and both are printed by
+ * {@link #toString()}, so a stack trace carries them where nothing called an accessor.
+ *
+ * <p>There is a constructor for each shape an answer takes: nothing at all, a declared moment without a number, a
+ * number, or both. A custodian that names a delay in something other than a status — retry information on a gRPC call,
+ * a client library that surfaces a delay and no code — therefore reports the delay rather than inventing a number to
+ * carry it or dropping the one value a caller can schedule against.
  *
  * <p><b>The custodian's status is never a push service's</b>, and reading the two as one number is a mistake worth
  * naming: a {@code 503} here is a sealed or overloaded custodian and no push message left this process, where a
@@ -63,11 +69,50 @@ import org.jspecify.annotations.Nullable;
  */
 public class VapidSignerUnavailableException extends RuntimeException {
 
+    /*
+     * Every exception here is Serializable because Throwable is, and this is the first of them
+     * holding state of its own, so what crosses a stream is decided rather than inherited by
+     * accident: both declared values travel with the exception. One that arrived without them would
+     * say less than the one that was thrown, and both are already serializable as they stand — a
+     * Duration and two primitives.
+     *
+     * No serialVersionUID, and that is the same decision the other exceptions here take by having
+     * no state to argue about: nothing in this library writes one of these to a stream, so the only
+     * stream that exists was written by somebody else's process. If that process ran a version whose
+     * fields differ, the computed identifier differs with them and the read fails loudly, which is
+     * the better of the two answers — the alternative is a pinned identifier letting a value be read
+     * back into a field that has moved underneath it.
+     */
+
+    /**
+     * Whether the custodian answered a status at all.
+     *
+     * @serial {@code false} for the half where nothing answered, where {@code status} then means nothing
+     */
     private final boolean hasStatus;
 
+    /**
+     * The status the custodian answered with.
+     *
+     * @serial meaningful only where {@code hasStatus} is set
+     */
     private final int status;
 
+    /**
+     * The delay the custodian declared before it can serve again.
+     *
+     * @serial {@code null} where the custodian declared no moment, which is the usual case
+     */
     private final @Nullable Duration retryAfter;
+
+    /**
+     * Creates an exception for a custodian that answered nothing and threw nothing worth carrying.
+     *
+     * @param message the detail message, which must not contain key material or a push endpoint
+     */
+    public VapidSignerUnavailableException(String message) {
+        this(message, false, 0, null, null);
+    }
 
     /**
      * Creates an exception for a custodian that answered nothing — a refused connection, a failed handshake, a timeout,
@@ -77,20 +122,30 @@ public class VapidSignerUnavailableException extends RuntimeException {
      * @param cause whatever did not complete, or {@code null} where nothing was thrown
      */
     public VapidSignerUnavailableException(String message, @Nullable Throwable cause) {
-        super(message, cause);
-        this.hasStatus = false;
-        this.status = 0;
-        this.retryAfter = null;
+        this(message, false, 0, null, cause);
     }
 
     /**
-     * Creates an exception for a custodian that answered it cannot serve this request now.
+     * Creates an exception for a custodian that declared when to come back without answering in numbers — a gRPC
+     * custodian's retry information, or a client library that surfaces a delay and no code. The declaration is what a
+     * caller schedules against, so it exists without a status rather than obliging an implementation to invent one.
      *
-     * <p>Both extra values are carried across unexamined, and reporting one that is not a value of the thing it names
-     * is an implementation defect this constructor deliberately does not turn into a second failure: whatever else is
-     * true, an outage report must not be replaced by a complaint about how it was written. So a custodian that declared
-     * no moment gets {@code null} rather than a zero duration, which would say "come back immediately", and a delay
-     * pointing into the past is not a declaration of anything and must not be passed here.
+     * @param message the detail message, which must not contain key material or a push endpoint
+     * @param retryAfter how long the custodian declared it would be before it can serve again
+     * @param cause whatever did not complete, or {@code null} where the answer itself was the failure
+     */
+    public VapidSignerUnavailableException(String message, Duration retryAfter, @Nullable Throwable cause) {
+        this(message, false, 0, retryAfter, cause);
+    }
+
+    /**
+     * Creates an exception for a custodian that answered, in numbers, that it cannot serve this request now.
+     *
+     * <p>Both declared values are carried across unexamined, and reporting one that is not a value of the thing it
+     * names is an implementation defect this constructor deliberately does not turn into a second failure: whatever
+     * else is true, an outage report must not be replaced by a complaint about how it was written. So a custodian that
+     * declared no moment gets {@code null} rather than a zero duration, which would say "come back immediately", and a
+     * delay pointing into the past is not a declaration of anything and must not be passed here.
      *
      * @param message the detail message, which must not contain key material or a push endpoint
      * @param status the status the custodian answered with
@@ -100,8 +155,13 @@ public class VapidSignerUnavailableException extends RuntimeException {
      */
     public VapidSignerUnavailableException(
             String message, int status, @Nullable Duration retryAfter, @Nullable Throwable cause) {
+        this(message, true, status, retryAfter, cause);
+    }
+
+    private VapidSignerUnavailableException(
+            String message, boolean hasStatus, int status, @Nullable Duration retryAfter, @Nullable Throwable cause) {
         super(message, cause);
-        this.hasStatus = true;
+        this.hasStatus = hasStatus;
         this.status = status;
         this.retryAfter = retryAfter;
     }
@@ -130,5 +190,42 @@ public class VapidSignerUnavailableException extends RuntimeException {
      */
     public Optional<Duration> retryAfter() {
         return Optional.ofNullable(retryAfter);
+    }
+
+    /**
+     * The standard rendering — the class name and the detail message — followed by whatever the custodian declared,
+     * where it declared anything: its status, the delay it named, or both.
+     *
+     * <p>Written rather than left to {@code Throwable} because the one place this exception is read with nothing above
+     * it to convert it is a startup that failed while fetching the key, and there an operator has the stack trace and
+     * nothing else. A value reachable only through an accessor is not in that stack trace.
+     *
+     * <p>It prints those two and nothing further, which is what makes it safe to print at all: an integer and a
+     * duration disclose no capability URL, where a rendering that reached for anything richer might.
+     *
+     * @return the standard rendering, plus the custodian's declarations where it made any
+     */
+    // OverrideThrowableToString: enriching getMessage() instead would be the usual advice, and it is
+    // the wrong half here. The message is what the signer wrote and stays exactly that, so anything
+    // logging it prints one sentence rather than a sentence with values appended twice; what these
+    // two values are owed to is the first line of a stack trace, which comes from this method. The
+    // standard rendering is kept whole and appended to, never replaced.
+    @SuppressWarnings("OverrideThrowableToString")
+    @Override
+    public String toString() {
+        if (!hasStatus && retryAfter == null) {
+            return super.toString();
+        }
+        StringBuilder rendered = new StringBuilder(super.toString()).append(" [");
+        if (hasStatus) {
+            rendered.append("custodian status ").append(status);
+            if (retryAfter != null) {
+                rendered.append(", ");
+            }
+        }
+        if (retryAfter != null) {
+            rendered.append("retry after ").append(retryAfter);
+        }
+        return rendered.append(']').toString();
     }
 }
