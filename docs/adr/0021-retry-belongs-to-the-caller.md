@@ -402,8 +402,9 @@ operation across `switch` and `catch`, and across `CompletionException` under `s
   reporting a number it already derives re-opens nothing, as the paragraphs above set out. The
   report's own account of the case is what decides it — the failing side is a healthy subscription
   and "a notification the application must render smaller", and what an application renders is
-  plaintext. A refusal reported in units the application cannot render leaves it to convert, which is
-  the work the report filed the issue to be spared. What remains open there is the separate question
+  plaintext. That the report proposed the encrypted pair regardless is not a preference it stated for
+  converting by hand; it is the ADR-011 reading, corrected above, deciding the question for it. What
+  remains open there is the separate question
   raised in its thread — whether the refusal should also be answerable *before* a send — which needs
   no decision here.
 - **An interrupted send stays an exception** — the one thing above that is not an outcome. A request
