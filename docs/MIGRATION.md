@@ -120,9 +120,9 @@ The key source, the contact and the endpoint policy are required, so they are pa
 factory method rather than builder steps — `build()` has no missing value left to refuse.
 Everything else (`httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`, `jwtRenewBefore`,
 `jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and
-lives on the builder. A `PushSender` is thread-safe once built,
-with final configuration and one internal cache of the VAPID tokens it has signed; build it once
-and share it, as you would a `PushService`.
+lives on the builder. A `PushSender` is thread-safe once built, with final configuration and one
+internal cache of the VAPID tokens it has signed; build it once and share it, as you would a
+`PushService`.
 
 The third parameter has no counterpart in `web-push`, and it is the one that will stop a
 mechanical port: see [`EndpointPolicy` — a decision you now have to
@@ -545,8 +545,7 @@ first send to an origin is the one that runs them, and it is the one a broken si
 What those checks cannot see is a signer whose output is well-formed but wrong — one signing with a
 key that does not match the public point it advertises, the mistake `builderWithSuppliedPublicKey`
 invites. That one still collects `401`/`403`, and it is why the conformance kit verifies the
-signature against the advertised key rather than only measuring it. Extend the kit in your own test
-suite instead:
+signature against the advertised key rather than only measuring it.
 
 **A signer over a network signals in two types**, and this is the half a migration is least likely
 to look for. A custodian that cannot sign *now* — unreachable, timed out, sealed, still catching up,
@@ -554,9 +553,12 @@ rate-limiting — raises `VapidSignerUnavailableException`, which the sender tur
 `SignerUnavailable` outcome and which may carry the status the custodian answered and any moment it
 declared for coming back. Everything that recurs until a person changes something — an unusable
 provider, an answer no custodian could have meant, a token without the capability — raises
-`PushCryptoException`, which `send` rethrows. Nothing checks which one you chose: the conformance kit
-asserts no exception types on purpose, so a signer that reports outages as cryptographic failures
-passes its whole suite while turning every outage into a permanent failure for its callers.
+`PushCryptoException`, which `send` rethrows. Nothing checks which one you chose either: the
+conformance kit asserts no exception types on purpose, so a signer that reports outages as
+cryptographic failures passes its whole suite while turning every outage into a permanent failure
+for its callers.
+
+Extend the kit in your own test suite instead:
 
 ```kotlin
 dependencies {

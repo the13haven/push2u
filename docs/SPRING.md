@@ -41,9 +41,8 @@ property. The endpoint policy is required in the same way, from one of its two s
 
 That is every key the sender itself takes — the health probe adds `push2u.health.*` below, and the
 Vault signer starter its own `push2u.signer.vault.*`. **There is no `push2u.retry.*` block**: the
-library
-performs one POST per send and schedules no repeat, so there is nothing under this prefix to
-configure — see [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
+library performs one POST per send and schedules no repeat, so there is nothing under this prefix
+to configure — see [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl`, `record-size` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,

@@ -359,12 +359,11 @@ The margin is an absolute duration rather than a fraction of `jwtExpiry`, becaus
 covers are absolute: clock skew against the push service, which checks `exp` against its own clock,
 and the tail of a send that picked a token up just before the boundary and still has to traverse an
 HTTP exchange whose timeouts this library does not own. Raise it if your transport timeouts allow a
-longer send. A negative
-value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the token is held to its
-last second, with the skew consequences of saying so — and a value at or above `jwtExpiry` means
-the margin has swallowed the token's whole life, so every send signs afresh. `jwtCacheSize(0)` is
-rejected rather than read as "cache nothing": the bound is not a second spelling of the switch
-below, and the two mean different things.
+longer send. A negative value is rejected; `Duration.ZERO` is legal and means the *most* reuse — the
+token is held to its last second, with the skew consequences of saying so — and a value at or above
+`jwtExpiry` means the margin has swallowed the token's whole life, so every send signs afresh.
+`jwtCacheSize(0)` is rejected rather than read as "cache nothing": the bound is not a second
+spelling of the switch below, and the two mean different things.
 
 **`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
 this library always did:

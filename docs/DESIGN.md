@@ -284,18 +284,19 @@ already makes. The refusal is an outcome rather than an exception because it is 
 message — the concrete case is a translated notification that fits in one language and not another —
 and killing a fan-out over it is the wrong behaviour.
 
-`checkRecordSize`, still the single implementation of the RFC 8291 §4 rule for the encryptor's own
-last-moment refusal, is expressed in terms of that same maximum, so one implementation decides both
-spellings. The maximum is clamped below at zero before it is narrowed back to `int`: the builder's
+**The RFC 8291 §4 rule still has a single implementation**, and it is now the one both spellings of
+it are expressed in terms of: `maxPlaintextForRecordSize`, which inverts the rule into the largest
+plaintext a given `rs` carries. The pre-flight above reaches it through `maxPlaintextBytes`, and
+`checkRecordSize` — the encryptor's own last-moment refusal, reachable directly and so not covered
+by the pre-flight — compares against it too. A second copy of the rule is a defect even where it
+agrees today. The maximum is clamped below at zero before it is narrowed back to `int`: the builder's
 minimums keep both operands non-negative on every real sender, but a negative `long` narrowed to
 `int` can wrap into a large positive bound, which is the one failure a size limit must never have.
 
 The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
 hard-coded, so the plaintext maximum tracks a configured body limit
-([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)). The RFC 8291 §4 rule has
-a single implementation (`WebPushEncryptor.checkRecordSize`), used both by this pre-flight check
-and by the encryptor itself.
+([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)).
 
 The arithmetic on both sides is `long`, and it is load-bearing rather than defensive: in `int`, a
 payload above `Integer.MAX_VALUE - 103` wraps to a negative size and passes any limit unnoticed,

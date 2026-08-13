@@ -115,8 +115,11 @@ Check against the clause, not against intuition:
   encryptor emits (86-byte header + 1 padding delimiter + 16 tag), not written as a constant, so the
   plaintext maximum tracks a configured limit. A newly hardcoded 3993 is a defect.
 - **Record size** — RFC 8291 §4 requires `rs > payload + 1 + 16`, RFC 8188 §2 requires `rs ≥ 18`.
-  There is one implementation of that rule, `WebPushEncryptor.checkRecordSize`, used by both the
-  pre-flight check and the encryptor. A second copy is a defect even if it is correct today.
+  There is one implementation of that rule, `WebPushEncryptor.maxPlaintextForRecordSize`, which
+  inverts it into the largest plaintext an `rs` carries; both spellings are expressed in terms of
+  it — `maxPlaintextBytes`, which the sender's pre-flight compares a payload against, and
+  `checkRecordSize`, the encryptor's own last-moment refusal. A second copy is a defect even if it
+  is correct today.
 - **VAPID** — `aud` is the RFC 6454 §6.1 Unicode serialization produced by `Origin.serialize`;
   `java.net.URI` performs none of that normalization, so a change that "simplifies" this by using
   URI accessors breaks the claim. `sub` is required and non-blank — a push2u contract stricter than
@@ -180,8 +183,11 @@ reasoning, explicitly.
   (mod p)` with both coordinates in `[0, p)`. None implies another, and the JCA validates neither —
   SunEC will happily import a "key" at `(1, 2)`. Dropping one is a must-fix.
 - Coordinates are never truncated or padded away to fit 32 bytes.
-- A fresh ephemeral key pair and salt per message, from `SecureRandom`. Note the deliberate
-  exception: the encrypted body and VAPID token *are* reused across retries of the same send.
+- A fresh ephemeral key pair and salt per message, from `SecureRandom`. There is no reuse inside a
+  send to except: one send is one POST, so a body encrypted under one ephemeral pair is used once
+  and a repeat is a second `send` that rebuilds everything. The one deliberate reuse is the VAPID
+  token, and it spans *different* sends to one origin (ADR-019). A change that carried an encrypted
+  body across attempts would be rebuilding the mechanism this library deleted.
 - **ES256**: native `SHA256withECDSAinP1363Format` preferred; the DER fallback takes
   `SHA256withECDSA` from the *same* provider and converts strictly. Provider lookup must never widen
   on the fallback path — that would silently change which implementation signs.

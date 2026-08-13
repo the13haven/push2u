@@ -220,7 +220,8 @@ starter is ordered before the core starter and outranks the local signer.
   computed (`isSupported()`, the token cache entry's `isFresh(...)`); an action or a two-argument
   relation keeps its verb (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived
   predicate wearing a component accessor's name, so that a judgement reads as one more stored value
-  — `fresh(...)` beside the three quantities the entry holds — and the pair that takes judgement is
+  — `VaultHttpResponse` carries `statusCode()`, `body()` and `retryAfter()`, so a question derived
+  from them is `isRateLimited()` and never `rateLimited()` — and the pair that takes judgement is
   predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
 - **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
   method, optional ones become builder steps — `PushMessage.builder(payload)`,
