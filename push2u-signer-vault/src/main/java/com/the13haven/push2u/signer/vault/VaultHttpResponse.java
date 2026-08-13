@@ -21,9 +21,9 @@ import java.util.Optional;
  * size bound is more surface than one value is worth. The signer copies the hint into the exception it raises for a
  * Vault that cannot serve the request now, which is the only route by which the one component able to act on it — the
  * caller's scheduler — ever sees it. Empty is the ordinary case, not a surprise: Vault fills the header on a
- * rate-limited answer alone, and only where an operator enabled the rate-limit response headers, which are off by
- * default (<a href="https://developer.hashicorp.com/vault/docs/configuration#enable_rate_limit_response_headers">Vault
- * configuration</a>).
+ * rate-limited answer alone, and only where an operator set {@code enable_rate_limit_response_headers} in the quota
+ * configuration — an API-managed setting on {@code sys/quotas/config} that defaults to false (<a
+ * href="https://developer.hashicorp.com/vault/api-docs/system/quotas-config">Vault quotas configuration API</a>).
  *
  * <p>A transport that does not read the header — or a response that carries none — uses the two-argument constructor,
  * which reports no hint. The hint must never be negative: a delay pointing into the past reads to whoever schedules the

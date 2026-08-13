@@ -222,14 +222,15 @@ public final class JdkVaultHttpTransport implements VaultHttpTransport {
 
     /**
      * The retry hint Vault declared, read from the {@code Retry-After} response header. Vault fills that header in
-     * delta-seconds alone — a plain run of ASCII digits — and only on a rate-limited answer where an operator enabled
-     * the rate-limit response headers, which are off by default (<a
-     * href="https://developer.hashicorp.com/vault/docs/configuration#enable_rate_limit_response_headers">Vault
-     * configuration</a>) — so empty is the ordinary result, not a surprise. Anything else in the header — an HTTP-date,
-     * a sign, non-digits — is not what Vault sends, and yields no hint rather than a guess; the digits-only parse also
-     * makes a negative hint unrepresentable, which is the floor {@link VaultHttpResponse} requires. The length bound
-     * exists to keep the arithmetic inside a {@code long}, not to cap the value: eighteen digits is some thirty billion
-     * years of seconds, and no ceiling is applied to anything that parses.
+     * delta-seconds alone — a plain run of ASCII digits, a "suggested time, in seconds" in its own words — and only on
+     * a rate-limited answer where an operator set {@code enable_rate_limit_response_headers} in the quota
+     * configuration, an API-managed setting on {@code sys/quotas/config} that defaults to false (<a
+     * href="https://developer.hashicorp.com/vault/api-docs/system/quotas-config">Vault quotas configuration API</a>) —
+     * so empty is the ordinary result, not a surprise. Anything else in the header — an HTTP-date, a sign, non-digits —
+     * is not what Vault sends, and yields no hint rather than a guess; the digits-only parse also makes a negative hint
+     * unrepresentable, which is the floor {@link VaultHttpResponse} requires. The length bound exists to keep the
+     * arithmetic inside a {@code long}, not to cap the value: eighteen digits is some thirty billion years of seconds,
+     * and no ceiling is applied to anything that parses.
      */
     private static Optional<Duration> retryAfterHint(HttpHeaders headers) {
         Optional<String> header = headers.firstValue("Retry-After");
