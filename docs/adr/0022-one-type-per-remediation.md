@@ -174,6 +174,15 @@ in the chain, the same disjunction and for the same reason — and only then rea
 supervisor of anything that blocks owes that test in any case; what this record adds is that it comes
 first.
 
+**And that order is written where a supervisor meets it**, which is the whole of what makes it worth
+deciding: the Javadoc of the `build()` that reads a key over a network, and of the exception itself.
+An obligation stated only in a record is one its audience never sees — the author of a supervisor
+reads a factory method's contract, not `docs/adr`, and the cost of missing this one is a deployment
+that loops its own boot through a shutdown. ADR-021 already carries the rule this follows, that a
+fact a caller must not get wrong is stated where a caller meets it, and it names three such facts for
+a sender; this is the fourth, and the only one whose reader is a supervisor rather than a caller. The
+signer implementers a paragraph below get the same treatment for the same reason.
+
 **`PushInterruptedException` promises the interrupt flag.** The action it exists for — let the
 cancellation propagate — only works if a caller catching it finds the flag set or the
 `InterruptedException` in the chain, and every site that raises one today re-sets it. That is a habit
