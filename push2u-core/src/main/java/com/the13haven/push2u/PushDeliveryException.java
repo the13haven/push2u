@@ -8,10 +8,12 @@ package com.the13haven.push2u;
 import java.io.Serial;
 
 /**
- * Thrown when a push message cannot be delivered for a transport-level reason that is not a normal HTTP outcome — a
- * connection failure, a timeout, an interrupted send. A push service <em>rejecting</em> the message (4xx) or reporting
- * a dead subscription (404/410) is NOT this: those are normal {@link PushResult}s. Exceptions are reserved for the
- * genuine I/O errors a caller cannot interpret as a push-service verdict.
+ * Thrown by a {@link PushHttpClient} whose exchange produced no response — a connection failure, a timeout, an
+ * interrupted send. A push service <em>answering</em>, whatever the status, is never this: an HTTP status is a
+ * {@link PushOutcome} for the sender to classify. This type is the transport seam's vocabulary rather than anything
+ * {@link PushSender#send} reports: the facade recognises exactly this type as the unanswered exchange and reports the
+ * send as {@link PushOutcome.Indeterminate} — whether the push service received the message is unknown — while any
+ * other {@code RuntimeException} out of a transport is a defect in that implementation and propagates unchanged.
  *
  * <p><b>The interrupted send in that list is what a transport signals, not what a caller reads.</b> A
  * {@link PushHttpClient} reports an interruption this way like any other exchange that produced no response, and its

@@ -56,9 +56,10 @@ public final class EndpointPolicies {
      * attacker-influenced wherever subscriptions arrive from clients, which is the ordinary integration: the browser's
      * {@code PushSubscription} JSON is accepted at a public registration endpoint, and nothing stops a client from
      * posting a hand-crafted subscription naming an address inside the application's own network. Every later send then
-     * POSTs there from inside that network, and the caller-visible outcome — {@link PushResult#statusCode()} versus
-     * {@link PushDeliveryException}, plus how long the attempt took — is a blind server-side request forgery oracle for
-     * internal host and port existence. {@link EndpointPolicy} carries the full threat model.
+     * POSTs there from inside that network, and the caller-visible {@link PushOutcome} — the status code an answered
+     * variant carries versus an unanswered {@link PushOutcome.Indeterminate}, plus how long the attempt took — is a
+     * blind server-side request forgery oracle for internal host and port existence. {@link EndpointPolicy} carries the
+     * full threat model.
      *
      * <p><b>When it is the right choice.</b> When subscriptions never arrive from untrusted clients: they are entered
      * by operators, imported from a system inside the trust boundary, or fixed in configuration. Also where egress is

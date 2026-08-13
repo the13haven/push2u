@@ -16,22 +16,24 @@ import java.io.IOException;
 import org.junit.jupiter.api.Test;
 
 /**
- * The two size preconditions of a send, checked before any cryptography or network I/O: the RFC 8030 §7.2 ceiling on
- * the encrypted entity body (default 4096 bytes, leaving 3993 bytes of plaintext) and the RFC 8291 §4 rule that
- * {@code rs} strictly exceed what one record holds. They are independent — raising one never adjusts the other — and
- * each has its own message.
+ * The size precondition of a send, checked before any cryptography or network I/O, and reported as the
+ * {@link PushOutcome.PayloadRejected} outcome in plaintext octets — {@code payloadBytes} against
+ * {@code maximumPayloadBytes}, the smaller of what the two preconditions permit: the RFC 8030 §7.2 ceiling on the
+ * encrypted entity body less the fixed 103-octet framing (default 4096, so 3993 octets of plaintext), and the RFC 8291
+ * §4 rule that {@code rs} strictly exceed the plaintext plus 17 (so {@code rs − 18}). The two configured values stay
+ * independent — raising one never adjusts the other — and which one bound is readable off the maximum reported.
  */
 class PushSenderPayloadSizeTest {
 
     private static final int MAX_DEFAULT_PAYLOAD = 3993;
 
     @Test
-    void theLargestPayloadThatFitsTheDefaultBodyLimitIsDelivered() throws IOException {
+    void theLargestPayloadThatFitsTheDefaultBodyLimitIsAccepted() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result =
+            PushOutcome outcome =
                     sender(builder()).send(subscription(receiver), PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD]));
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             assertThat(receiver.requests().getFirst().bodyLength())
                     .as("3993 bytes of plaintext fill the 4096-byte body exactly")
                     .isEqualTo(4096);
@@ -41,14 +43,12 @@ class PushSenderPayloadSizeTest {
     @Test
     void onePayloadByteOverTheBodyLimitIsRejectedBeforeAnyRequest() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender sender = sender(builder());
-            Subscription subscription = subscription(receiver);
-            PushMessage message = PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD + 1]);
+            PushOutcome outcome =
+                    sender(builder()).send(subscription(receiver), PushMessage.of(new byte[MAX_DEFAULT_PAYLOAD + 1]));
 
-            assertThatThrownBy(() -> sender.send(subscription, message))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Encrypted Web Push body would be 4097 bytes, exceeding the configured maximum of "
-                            + "4096 bytes; maximum plaintext payload is 3993 bytes");
+            assertThat(outcome)
+                    .as("both numbers are plaintext octets — the unit the caller can act in")
+                    .isEqualTo(new PushOutcome.PayloadRejected(MAX_DEFAULT_PAYLOAD + 1, MAX_DEFAULT_PAYLOAD));
             assertThat(receiver.requests())
                     .as("rejected before encrypting or contacting the service")
                     .isEmpty();
@@ -56,29 +56,26 @@ class PushSenderPayloadSizeTest {
     }
 
     @Test
-    void raisingTheBodyLimitAloneFailsOnRecordSizeWithItsOwnMessage() throws IOException {
+    void raisingTheBodyLimitAloneLeavesTheRecordSizeBoundDecidingTheMaximum() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushSender sender = sender(builder().maxEncryptedBodyBytes(8192));
-            Subscription subscription = subscription(receiver);
-            PushMessage message = PushMessage.of(new byte[5000]);
+            PushOutcome outcome = sender(builder().maxEncryptedBodyBytes(8192))
+                    .send(subscription(receiver), PushMessage.of(new byte[5000]));
 
-            assertThatThrownBy(() -> sender.send(subscription, message))
-                    .as("the body fits 8192, but rs is still the default 4096")
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("recordSize 4096 is too small for a 5000-byte payload")
-                    .hasMessageContaining("RFC 8291 §4")
-                    .hasMessageContaining("raise recordSize to at least 5018");
+            assertThat(outcome)
+                    .as("the body fits 8192, but rs stays 4096, so the maximum is rs − 18 = 4078 — an operator"
+                            + " holding both configured values reads which one bound from the maximum reported")
+                    .isEqualTo(new PushOutcome.PayloadRejected(5000, 4078));
             assertThat(receiver.requests()).isEmpty();
         }
     }
 
     @Test
-    void raisingBothTheBodyLimitAndTheRecordSizeDelivers() throws IOException {
+    void raisingBothTheBodyLimitAndTheRecordSizeAcceptsTheLargerPayload() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = sender(builder().maxEncryptedBodyBytes(8192).recordSize(8192))
+            PushOutcome outcome = sender(builder().maxEncryptedBodyBytes(8192).recordSize(8192))
                     .send(subscription(receiver), PushMessage.of(new byte[5000]));
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             assertThat(receiver.requests().getFirst().bodyLength()).isEqualTo(5000 + 103);
         }
     }
@@ -89,17 +86,14 @@ class PushSenderPayloadSizeTest {
             Subscription subscription = subscription(receiver);
             PushMessage message = PushMessage.of(new byte[100]);
 
-            PushSender tooSmall = sender(builder().recordSize(117));
-            assertThatThrownBy(() -> tooSmall.send(subscription, message))
-                    .as("rs == plaintext(100) + delimiter(1) + tag(16) is not *greater than* the sum")
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("recordSize 117 is too small");
+            assertThat(sender(builder().recordSize(117)).send(subscription, message))
+                    .as("rs == plaintext(100) + delimiter(1) + tag(16) is not *greater than* the sum, so the"
+                            + " maximum this configuration carries is 99")
+                    .isEqualTo(new PushOutcome.PayloadRejected(100, 99));
 
-            assertThat(sender(builder().recordSize(118))
-                            .send(subscription, message)
-                            .isDelivered())
-                    .as("one octet more is the smallest legal rs")
-                    .isTrue();
+            assertThat(sender(builder().recordSize(118)).send(subscription, message))
+                    .as("one octet more is the smallest legal rs for this payload")
+                    .isInstanceOf(PushOutcome.Accepted.class);
         }
     }
 
@@ -130,10 +124,10 @@ class PushSenderPayloadSizeTest {
     @Test
     void anEmptyPayloadFitsTheSmallestLegalBodyLimit() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = sender(builder().maxEncryptedBodyBytes(103))
+            PushOutcome outcome = sender(builder().maxEncryptedBodyBytes(103))
                     .send(subscription(receiver), PushMessage.of(new byte[0]));
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             assertThat(receiver.requests().getFirst().bodyLength())
                     .as("an empty payload encrypts to exactly the fixed overhead")
                     .isEqualTo(103);
@@ -141,29 +135,52 @@ class PushSenderPayloadSizeTest {
     }
 
     @Test
-    void theBodySizeSumDoesNotWrapNearIntegerMaxValue() {
-        // Driven through the length-taking checks so the boundary is covered without allocating a
-        // two-gigabyte payload. This is the one sum where int arithmetic would actually break:
-        // Integer.MAX_VALUE + 103 wraps to -2147483546, which is below any limit, so the payload
-        // would sail through the check.
-        assertThatThrownBy(() ->
-                        WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("body would be 2147483750 bytes");
+    void aOneBytePayloadAgainstTheSmallestLegalBodyLimitReportsAMaximumOfZero() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            PushOutcome outcome = sender(builder().maxEncryptedBodyBytes(103))
+                    .send(subscription(receiver), PushMessage.of(new byte[1]));
 
-        // The largest payload an Integer.MAX_VALUE body limit admits, with an rs to match: the
-        // body sum lands exactly on the limit rather than past it.
-        WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, Integer.MAX_VALUE, Integer.MAX_VALUE);
+            assertThat(outcome).isEqualTo(new PushOutcome.PayloadRejected(1, 0));
+            assertThat(receiver.requests()).isEmpty();
+        }
     }
 
     @Test
-    void theRecordSizeBranchNamesTheExactMinimumForAHugePayload() {
-        // Past the body check (its limit is raised out of the way), so only the RFC 8291 §4 rule
-        // speaks: 2147483544 + 17 + 1. Nothing here overflows — a payload big enough to wrap that
-        // sum cannot reach it, since the body check would already have failed.
-        assertThatThrownBy(() -> WebPushEncryptor.checkPayloadFits(Integer.MAX_VALUE - 103, 4096, Integer.MAX_VALUE))
+    void theMaximumComputationDoesNotWrapNearIntegerMaxValue() {
+        // Driven through the length-free computation so the boundary is covered without allocating
+        // multi-gigabyte arrays. int arithmetic would actually break here: Integer.MAX_VALUE + 103
+        // wraps negative, which is below any limit, so an oversized payload would sail through.
+        assertThat(WebPushEncryptor.maxPlaintextBytes(Integer.MAX_VALUE, Integer.MAX_VALUE))
+                .as("with both limits at Integer.MAX_VALUE the body ceiling binds: MAX − 103")
+                .isEqualTo(Integer.MAX_VALUE - 103);
+        assertThat(WebPushEncryptor.maxPlaintextBytes(4096, Integer.MAX_VALUE))
+                .as("an rs left at the default binds long before an enormous body ceiling")
+                .isEqualTo(4078);
+        assertThat(WebPushEncryptor.maxPlaintextBytes(Integer.MAX_VALUE, 4096))
+                .as("and the other way round")
+                .isEqualTo(3993);
+    }
+
+    @Test
+    void theEncryptorsOwnRecordSizeCheckStillRefusesWithTheExactMinimumNamed() {
+        // The direct-encryption path keeps its IllegalArgumentException: checkRecordSize guards
+        // encrypt() itself, which is reachable without the sender's pre-flight, and its message
+        // names the exact rs to raise to. Same rule, one implementation — the pre-flight's maximum
+        // is the same subtraction inverted.
+        assertThatThrownBy(() -> WebPushEncryptor.checkRecordSize(100, 117))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("recordSize 117 is too small for a 100-byte payload")
+                .hasMessageContaining("RFC 8291 §4")
+                .hasMessageContaining("raise recordSize to at least 118");
+
+        // Near the int extreme the sum in the message must not wrap either.
+        assertThatThrownBy(() -> WebPushEncryptor.checkRecordSize(Integer.MAX_VALUE - 103, 4096))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("raise recordSize to at least 2147483562");
+
+        // A plaintext that would overflow int arithmetic entirely still fails loudly.
+        assertThatThrownBy(() -> WebPushEncryptor.checkRecordSize(Integer.MAX_VALUE, Integer.MAX_VALUE))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     /** A builder pre-loaded with the required key source and contact — these tests exercise only optional steps. */

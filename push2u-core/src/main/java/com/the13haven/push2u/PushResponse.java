@@ -30,8 +30,9 @@ public record PushResponse(int statusCode, Map<String, String> headers) {
      *
      * <p>{@link PushHttpClient} is a public seam, so a custom transport could hand back a sentinel such as {@code -1}
      * for "no response". It is refused here, at the boundary that produced it, rather than allowed to travel into the
-     * {@link PushResult} the sender returns — where the same invariant holds and the offending transport would no
-     * longer be identifiable.
+     * {@link PushOutcome} the sender returns — where the same invariant holds and the offending transport would no
+     * longer be identifiable. A transport that obtained no response does not answer with a sentinel at all: it throws
+     * {@link PushDeliveryException}, which is its contract for exactly that case.
      *
      * @throws IllegalArgumentException if {@code statusCode} is negative
      */

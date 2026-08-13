@@ -22,12 +22,12 @@ import org.junit.jupiter.api.Test;
  * The full send pipeline — RFC 8291 encryption, VAPID ES256, HTTP POST — with BC-FIPS as the scoped
  * {@code .cryptoProvider(...)}, exercising the DER → P1363 signature fallback end to end against the in-process
  * {@link MockPushReceiver}. Runs in the fipsTest source set (bc-fips and stock bcprov cannot share a classpath); the
- * receiver and the subscription/key helpers are reused from the regular test source set's compiled output.
+ * receiver and the subscription/key helpers are reused from the shared test fixtures.
  */
 class BcFipsPushSenderTest {
 
     @Test
-    void deliversWithBcFipsCryptoProviderViaTheDerFallback() throws IOException {
+    void acceptsWithBcFipsCryptoProviderViaTheDerFallback() throws IOException {
         Provider bcFips = new BouncyCastleFipsProvider();
         // Guard the premise: BC-FIPS must actually lack raw-format ECDSA — this FAILS (not
         // skips) if a future version starts registering it, so the test cannot silently stop
@@ -42,19 +42,15 @@ class BcFipsPushSenderTest {
                     // only, and LoopbackTls itself is provider-free by the shared-plumbing rule.
                     .httpClient(trustingPushHttpClient())
                     .cryptoProvider(bcFips)
-                    // No-op sleeper: the happy path never retries, but if this scenario ever grows a
-                    // retry the test must not fall back to real wall-clock backoff.
-                    .sleeper(duration -> {})
                     .build();
 
-            PushResult result = pusher.send(
+            PushOutcome outcome = pusher.send(
                     subscription(receiver),
                     PushMessage.builder("hello".getBytes(StandardCharsets.UTF_8))
                             .ttl(Duration.ofHours(1))
                             .build());
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(result.attempts()).isEqualTo(1);
+            assertThat(outcome).isEqualTo(new PushOutcome.Accepted(201));
 
             assertThat(receiver.requests()).hasSize(1);
             MockPushReceiver.RecordedRequest request = receiver.requests().getFirst();

@@ -25,9 +25,9 @@ import com.the13haven.push2u.VapidSigner;
  * working since startup, not what was configured wrongly before it — and the signer is the only part of a
  * {@link PushSender} with anything to lose: it can reach a backend that goes down, holds a token that expires, names a
  * key that gets deleted. Everything else the sender carries is immutable configuration the builder already validated
- * ({@code EndpointPolicy}, {@code RetryPolicy}, sizes, TTLs), and the HTTP client has no address of its own to probe —
- * an endpoint belongs to a subscription, not to the sender. So the probe signs, and the indicator exists exactly when
- * there is a signer bean to sign with.
+ * ({@code EndpointPolicy}, sizes, TTLs), and the HTTP client has no address of its own to probe — an endpoint belongs
+ * to a subscription, not to the sender. So the probe signs, and the indicator exists exactly when there is a signer
+ * bean to sign with.
  *
  * <p>Missing configuration is not this indicator's business, and it does not have to be: an incomplete setup fails at
  * startup instead. While {@link Push2uAutoConfiguration} is active, {@code pushSender} is itself

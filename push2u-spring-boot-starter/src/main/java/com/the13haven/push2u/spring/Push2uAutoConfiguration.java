@@ -30,7 +30,6 @@ import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushSender;
-import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
 
@@ -139,11 +138,7 @@ public final class Push2uAutoConfiguration {
      * re-thrown with the property name prefixed, since the builder's own message names its camelCase parameter, not the
      * YAML property. {@code push2u.jwt-reuse} takes the same route although
      * {@link PushSender.Builder#jwtReuse(boolean)} has no value to reject: a boolean the binder accepted is always
-     * legal, and routing it with its siblings is what keeps a later constraint on it from arriving unnamed. All three
-     * {@code push2u.retry.*} keys get the same treatment ahead of {@link RetryPolicy}'s own constructor, which
-     * validates the attempt count and both backoff bounds together — and reports the two bounds through one shared
-     * message — so it cannot be blamed on a single property by its message alone; {@code retryPolicy(…)} below carries
-     * the reasoning.
+     * legal, and routing it with its siblings is what keeps a later constraint on it from arriving unnamed.
      *
      * <p>The {@link EndpointPolicy} comes from one of two sources, and exactly one of them: the allowlist properties,
      * {@code push2u.allowed-origins} and {@code push2u.allowed-domains}, or an application-supplied
@@ -178,11 +173,10 @@ public final class Push2uAutoConfiguration {
      *     {@code EndpointPolicy} bean; if neither property nor a bean is configured; or if neither property has an
      *     entry and no bean is configured
      * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.jwt-renew-before},
-     *     {@code push2u.jwt-cache-size}, {@code push2u.default-ttl}, {@code push2u.record-size},
-     *     {@code push2u.max-encrypted-body-bytes} or any {@code push2u.retry.*} key is set to a value the builder or
-     *     {@link RetryPolicy} rejects, or if an entry of {@code push2u.allowed-origins} or
-     *     {@code push2u.allowed-domains} is not a well-formed origin or domain — the failure names the property and the
-     *     index of the entry
+     *     {@code push2u.jwt-cache-size}, {@code push2u.default-ttl}, {@code push2u.record-size} or
+     *     {@code push2u.max-encrypted-body-bytes} is set to a value the builder rejects, or if an entry of
+     *     {@code push2u.allowed-origins} or {@code push2u.allowed-domains} is not a well-formed origin or domain — the
+     *     failure names the property and the index of the entry
      */
     @Bean
     @ConditionalOnMissingBean
@@ -203,9 +197,7 @@ public final class Push2uAutoConfiguration {
         }
         EndpointPolicy policy = resolveEndpointPolicy(
                 endpointPolicy, beanFactory, properties.allowedOrigins(), properties.allowedDomains());
-        PushSender.Builder builder = PushSender.builder(signer, subject, policy)
-                .httpClient(httpClient)
-                .retryPolicy(retryPolicy(properties.retry()));
+        PushSender.Builder builder = PushSender.builder(signer, subject, policy).httpClient(httpClient);
         // Every optional property is applied through the same translate-the-error helper, so a
         // rejected value fails naming the YAML key instead of the builder's camelCase parameter.
         applyIfPresent(properties.jwtExpiry(), builder::jwtExpiry, "push2u.jwt-expiry");
@@ -217,46 +209,6 @@ public final class Push2uAutoConfiguration {
         applyIfPresent(
                 properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
         return builder.build();
-    }
-
-    /**
-     * Builds the {@link RetryPolicy} from {@code push2u.retry.*}, naming whichever of the three keys is the reason a
-     * value is rejected. {@link RetryPolicy}'s compact constructor validates all three components together and reports
-     * both backoff bounds through one shared message, so the only way to attribute a failure to a key is to offer the
-     * constructor one real value at a time.
-     *
-     * <p>Each probe fills the two components it is <em>not</em> testing with {@code 1} and {@link Duration#ZERO} — the
-     * triple {@link RetryPolicy#none()} is built from. That is the invariant this rests on: those filler values must
-     * stay acceptable beside any value of the component being probed. It does <em>not</em> rest on the order of the
-     * checks inside the compact constructor; reordering them changes nothing here.
-     *
-     * <p>A constraint <em>between</em> components would make a probe blame the wrong key.
-     * {@code probeFillersStayAcceptableBesideARealValue} in the starter's tests samples that invariant at the point
-     * each probe depends on, so the cheap version of that mistake fails the build — but it samples rather than decides,
-     * and a constraint that only bites above some threshold would pass it. No black-box check can do better; changing
-     * {@code RetryPolicy}'s constructor means revisiting this method.
-     *
-     * <p>Probing rather than restating the bounds keeps the core the authority on what a legal value is: no {@code >=
-     * 1} or non-negative check is duplicated here, so none can drift.
-     */
-    private static RetryPolicy retryPolicy(Push2uProperties.Retry retry) {
-        requireValid(
-                "push2u.retry.max-attempts", () -> new RetryPolicy(retry.maxAttempts(), Duration.ZERO, Duration.ZERO));
-        requireValid("push2u.retry.initial-backoff", () -> new RetryPolicy(1, retry.initialBackoff(), Duration.ZERO));
-        requireValid("push2u.retry.max-backoff", () -> new RetryPolicy(1, Duration.ZERO, retry.maxBackoff()));
-        return new RetryPolicy(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
-    }
-
-    /**
-     * Runs one {@link #retryPolicy} probe, re-throwing its rejection with {@code property} prefixed. The probe's result
-     * is deliberately discarded — it is constructed to make the compact constructor speak, not to be used.
-     */
-    private static void requireValid(String property, Runnable probe) {
-        try {
-            probe.run();
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(property + ": " + e.getMessage(), e);
-        }
     }
 
     /**

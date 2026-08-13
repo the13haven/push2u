@@ -61,7 +61,6 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     the decision, startup rejection naming this property and the entry's index, exclusivity with an
  *     {@code EndpointPolicy} bean, and an explicitly empty value as the per-property escape hatch — with every set
  *     property empty and no bean failing the context on both keys at once
- * @param retry the retry policy
  * @param health the Actuator health probe settings; always present, defaults apply when unset
  */
 @ConfigurationProperties("push2u")
@@ -81,7 +80,6 @@ public record Push2uProperties(
         @Nullable Integer maxEncryptedBodyBytes,
         @Nullable List<String> allowedOrigins,
         @Nullable List<String> allowedDomains,
-        @DefaultValue Retry retry,
         @DefaultValue Health health) {
 
     /**
@@ -131,20 +129,6 @@ public record Push2uProperties(
                     + ", subject=" + subject + "]";
         }
     }
-
-    /**
-     * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
-     *
-     * @param maxAttempts the maximum number of POSTs including the first (≥ 1). Rejected at startup if below 1
-     * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry. Rejected at startup
-     *     if negative
-     * @param maxBackoff the ceiling for the backoff (and any honoured {@code Retry-After}). Rejected at startup if
-     *     negative
-     */
-    public record Retry(
-            @DefaultValue("3") int maxAttempts,
-            @DefaultValue("1s") Duration initialBackoff,
-            @DefaultValue("60s") Duration maxBackoff) {}
 
     /**
      * The Actuator health probe ({@link Push2uHealthIndicator}). The probe exercises the configured signer, which for a

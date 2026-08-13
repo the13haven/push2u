@@ -44,14 +44,15 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>All formatters are locale-independent ({@link Locale#ROOT}). A value matching none of the forms — including
  * delta-seconds too large for a {@code long} — yields {@link Optional#empty()}, never an exception, so a malformed
- * header degrades to the caller's computed backoff instead of failing the send.
+ * header is reported as no hint at all instead of failing the send, and whoever schedules a repeat falls back on its
+ * own schedule.
  *
  * <p>All three forms resolve under {@link ResolverStyle#STRICT}, not java.time's default {@code SMART}: the HTTP-date
  * grammar admits no date that does not exist, so {@code 29-Feb} of a non-leap year is rejected outright rather than
  * pulled back to the 28th. Under SMART such a header yielded a delay a day short of what it said whenever the stated
- * weekday happened to match the clamped date — a value the sender never wrote. Empty is the honest answer, and the
- * caller's computed backoff is a better estimate than a silently corrected date. STRICT keeps the weekday cross-check
- * the RFC 850 century logic depends on (see {@link #parseRfc850}).
+ * weekday happened to match the clamped date — a value the sender never wrote. Empty is the honest answer: no hint at
+ * all is a better report than a silently corrected date, since the scheduler reading the hint would trust a value
+ * nobody sent. STRICT keeps the weekday cross-check the RFC 850 century logic depends on (see {@link #parseRfc850}).
  */
 final class RetryAfter {
 
@@ -150,8 +151,9 @@ final class RetryAfter {
      * Parses a {@code Retry-After} value against a fixed "now".
      *
      * <p>A date at or before {@code now} — which clock skew or in-flight latency can produce — yields
-     * {@link Duration#ZERO}, i.e. retry immediately. That is what the header says, so it is honoured rather than
-     * quietly floored at the caller's backoff: the retry count already bounds how often it can happen.
+     * {@link Duration#ZERO}, i.e. the service names no wait at all. That is what the header says, so it is reported
+     * rather than quietly floored at some invented minimum: how often a zero hint is acted on is bounded by whoever
+     * schedules the repeats, which is the only place a bound can be right.
      *
      * @param headerValue the raw header value (surrounding whitespace is ignored)
      * @param now the instant HTTP-date forms are measured against

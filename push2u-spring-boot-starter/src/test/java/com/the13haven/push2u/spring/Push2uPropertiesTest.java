@@ -38,7 +38,6 @@ class Push2uPropertiesTest {
                 // carries the values.
                 null,
                 null,
-                new Push2uProperties.Retry(3, null, null),
                 // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
                 new Push2uProperties.Health(true, Duration.ofSeconds(30)));
 
