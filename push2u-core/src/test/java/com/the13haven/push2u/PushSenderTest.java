@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,26 +33,23 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end send-pipeline tests: a real {@link PushSender} (real RFC 8291 encryption + RFC 8292 VAPID + the JDK HTTP
  * client) against an in-process {@link MockPushReceiver}, asserting the request shape, the VAPID claims of a real
- * request, the {@code Retry-After} handling and the async execution contract. A
- * {@link PushTestSupport.RecordingSleeper} runs the retry loop without real backoff delays. The full status-code →
- * {@link PushResult} classification table (ranges and their edges) lives in {@link PushSenderStatusClassificationTest}.
+ * request, the {@code Retry-After} reporting and the async execution contract. The full status-code →
+ * {@link PushOutcome} classification table (the per-status matrix and its edges) lives in
+ * {@link PushSenderStatusClassificationTest}; the seam-signal conversions and the interruption discipline in
+ * {@link PushSenderSeamConversionTest}.
  */
 class PushSenderTest {
 
-    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
-
     @Test
-    void deliversOn201AndSendsAWellFormedRequest() throws IOException {
+    void acceptsOn201AndSendsAWellFormedRequest() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = pusher().send(
+            PushOutcome outcome = pusher().send(
                             subscription(receiver),
                             PushMessage.builder(bytes("hello"))
                                     .ttl(Duration.ofHours(1))
                                     .build());
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(result.statusCode()).isEqualTo(201);
-            assertThat(result.attempts()).isEqualTo(1);
+            assertThat(outcome).isEqualTo(new PushOutcome.Accepted(201));
 
             assertThat(receiver.requests()).hasSize(1);
             MockPushReceiver.RecordedRequest request = receiver.requests().getFirst();
@@ -77,13 +75,13 @@ class PushSenderTest {
         Subscription subscription = new Subscription(
                 "HTTPS://PUSH.Example:443/subscriber-token", b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
 
-        PushResult result = PushSender.builder(
+        PushOutcome outcome = PushSender.builder(
                         generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                 .httpClient(capturingClient)
                 .build()
                 .send(subscription, PushMessage.of(bytes("x")));
 
-        assertThat(result.isDelivered()).isTrue();
+        assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
         String claims = claimsOf(captured.get().get("Authorization"));
         assertThat(claims)
                 .as("aud is the RFC 6454 §6.1 origin: lowercase scheme+host, default port dropped (RFC 8292 §2)")
@@ -104,14 +102,13 @@ class PushSenderTest {
             PushSender pusher = PushSender.builder(
                             generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .jwtExpiry(Duration.ofHours(24))
                     .build();
 
-            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
+            PushOutcome outcome = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
             assertThat(claims)
                     .as("exp is exactly now + 24h, the RFC 8292 §2 maximum (the trailing comma pins"
@@ -129,110 +126,102 @@ class PushSenderTest {
             PushSender pusher = PushSender.builder(
                             generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .clock(Clock.fixed(now, ZoneOffset.UTC))
                     .build();
 
-            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
+            PushOutcome outcome = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             String claims = claimsOf(receiver.requests().getFirst().headers().get("authorization"));
             assertThat(claims)
                     .contains("\"exp\":" + now.plus(Duration.ofHours(12)).getEpochSecond() + ",");
         }
     }
 
-    @Test
-    void honoursRetryAfterOn429() throws IOException {
-        try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(429, "2");
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+    // ---- what the outcome reports of Retry-After -----------------------------------------------
+    //
+    // The value is parsed by the sender and published on the retryable variant for the caller's
+    // scheduler; the send itself makes exactly one POST whatever the header says. The parser's own
+    // conformance vectors live in RetryAfterTest — these tests pin that its output reaches the
+    // outcome, unclamped.
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(result.attempts()).isEqualTo(2);
-            assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(2));
+    @Test
+    void reportsDeltaSecondsRetryAfterOnThe429Outcome() throws IOException {
+        try (MockPushReceiver receiver = new MockPushReceiver()) {
+            receiver.respondWith(429, "2");
+
+            PushOutcome outcome = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(outcome).isEqualTo(new PushOutcome.RetryableFailure(429, Optional.of(Duration.ofSeconds(2))));
+            assertThat(receiver.requests())
+                    .as("the hint is reported, never acted on: one POST only")
+                    .hasSize(1);
         }
     }
 
     @Test
-    void honoursRetryAfterOn503() throws IOException {
+    void reportsHttpDateRetryAfterAgainstThePinnedClock() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(503, "3");
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
-
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(result.attempts()).isEqualTo(2);
-            assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(3));
-        }
-    }
-
-    @Test
-    void honoursHttpDateRetryAfterAgainstThePinnedClock() throws IOException {
-        try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(429, "Tue, 01 Jan 2030 00:00:30 GMT");
-            receiver.enqueue(201);
+            receiver.respondWith(503, "Tue, 01 Jan 2030 00:00:30 GMT");
             PushSender pusher = PushSender.builder(
                             generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .clock(Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC))
                     .build();
-            PushResult result = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(sleeper.sleeps).containsExactly(Duration.ofSeconds(30));
+            PushOutcome outcome = pusher.send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(outcome).isEqualTo(new PushOutcome.RetryableFailure(503, Optional.of(Duration.ofSeconds(30))));
         }
     }
 
     @Test
-    void unparseableRetryAfterFallsBackToTheExponentialBackoff() throws IOException {
+    void anUnparseableRetryAfterIsReportedAsNoHintAtAll() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(429, "soon");
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            receiver.respondWith(429, "soon");
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(sleeper.sleeps)
-                    .as("the first retry waits exactly RetryPolicy.defaults().initialBackoff()")
-                    .containsExactly(RetryPolicy.defaults().initialBackoff());
+            PushOutcome outcome = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(outcome)
+                    .as("a header the grammar rejects degrades to an empty hint, never to a failed send")
+                    .isEqualTo(new PushOutcome.RetryableFailure(429, Optional.empty()));
         }
     }
 
     @Test
-    void overflowingRetryAfterDoesNotFailTheSend() throws IOException {
+    void anOverflowingRetryAfterIsReportedAsNoHintAtAll() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(429, "99999999999999999999");
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            receiver.respondWith(429, "99999999999999999999");
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(result.attempts()).isEqualTo(2);
-            assertThat(sleeper.sleeps)
-                    .as("overflow is treated as unparseable, not propagated")
-                    .containsExactly(RetryPolicy.defaults().initialBackoff());
+            PushOutcome outcome = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(outcome)
+                    .as("delta-seconds beyond a long are treated as unparseable, not propagated")
+                    .isEqualTo(new PushOutcome.RetryableFailure(429, Optional.empty()));
         }
     }
 
     @Test
-    void capsRetryAfterAtMaxBackoff() throws IOException {
+    void aLargeRetryAfterIsReportedWithNoCeilingApplied() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            receiver.enqueue(429, "3600");
-            receiver.enqueue(201);
-            PushResult result = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+            receiver.respondWith(429, "3600");
 
-            assertThat(result.isDelivered()).isTrue();
-            assertThat(sleeper.sleeps).containsExactly(RetryPolicy.defaults().maxBackoff());
+            PushOutcome outcome = pusher().send(subscription(receiver), PushMessage.of(bytes("x")));
+
+            assertThat(outcome)
+                    .as("the value that arrived is the value reported — the caller's ceiling is the only one")
+                    .isEqualTo(new PushOutcome.RetryableFailure(429, Optional.of(Duration.ofSeconds(3600))));
         }
     }
 
+    // ---- the async execution contract ----------------------------------------------------------
+
     @Test
-    void sendAsyncCompletesWithTheResult() throws Exception {
+    void sendAsyncCompletesWithTheOutcome() throws Exception {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = pusher().sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
+            PushOutcome outcome = pusher().sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
         }
     }
 
@@ -244,14 +233,14 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder(
+            PushOutcome outcome = PushSender.builder(
                             generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(capturingClient)
                     .build()
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             Thread thread = sendThread.get();
             assertThat(thread.isVirtual())
                     .as("the default async executor runs each send on a virtual thread")
@@ -276,7 +265,7 @@ class PushSenderTest {
             return PushResponse.of(201);
         };
         try (MockPushReceiver receiver = new MockPushReceiver()) {
-            PushResult result = PushSender.builder(
+            PushOutcome outcome = PushSender.builder(
                             generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(capturingClient)
                     .executor(executor)
@@ -284,7 +273,7 @@ class PushSenderTest {
                     .sendAsync(subscription(receiver), PushMessage.of(bytes("x")))
                     .get(5, TimeUnit.SECONDS);
 
-            assertThat(result.isDelivered()).isTrue();
+            assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
             assertThat(sendThread.get())
                     .as("the send runs on the single thread of the executor passed to .executor(...)")
                     .isSameAs(executorThread.get());
@@ -322,12 +311,10 @@ class PushSenderTest {
             PushSender pusher = PushSender.builder(
                             externalSigner, "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .build();
 
-            assertThat(pusher.send(subscription(receiver), PushMessage.of(bytes("x")))
-                            .isDelivered())
-                    .isTrue();
+            assertThat(pusher.send(subscription(receiver), PushMessage.of(bytes("x"))))
+                    .isInstanceOf(PushOutcome.Accepted.class);
         }
     }
 
@@ -379,8 +366,9 @@ class PushSenderTest {
     @Test
     void bothFactoryOverloadsRunThePolicyTheyWereGiven() {
         // The two entry points differ only in the key source; neither may lose the policy on the
-        // way to the sender. Proven by rejection, not by a getter: a policy that refuses everything
-        // must stop a send through either overload.
+        // way to the sender. Proven by refusal, not by a getter: a policy that refuses everything
+        // must stop a send through either overload — as the EndpointRejected outcome, since a
+        // policy refusal is a value the fan-out records rather than an exception that aborts it.
         VapidKeys keys = generateVapidKeys();
         EndpointPolicy refuseEverything = endpoint -> {
             throw new EndpointRejectedException("refused by test policy");
@@ -399,12 +387,12 @@ class PushSenderTest {
                 .httpClient((endpoint, headers, body) -> PushResponse.of(201))
                 .build();
 
-        assertThatThrownBy(() -> fromKeys.send(subscription, message))
+        assertThat(fromKeys.send(subscription, message))
                 .as("keys overload")
-                .isInstanceOf(EndpointRejectedException.class);
-        assertThatThrownBy(() -> fromSigner.send(subscription, message))
+                .isInstanceOf(PushOutcome.EndpointRejected.class);
+        assertThat(fromSigner.send(subscription, message))
                 .as("signer overload")
-                .isInstanceOf(EndpointRejectedException.class);
+                .isInstanceOf(PushOutcome.EndpointRejected.class);
     }
 
     private PushSender pusher() {
@@ -412,7 +400,6 @@ class PushSenderTest {
                 // The real JdkPushHttpClient, trusting the receiver's per-JVM TLS certificate —
                 // the sends here traverse an actual https handshake, same as production.
                 .httpClient(trustingPushHttpClient())
-                .sleeper(sleeper)
                 .build();
     }
 

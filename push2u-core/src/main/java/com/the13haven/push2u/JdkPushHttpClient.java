@@ -29,7 +29,7 @@ import java.util.Objects;
  * {@code Location} names, an address the policy never saw, and the redirect target's answer would be reported as the
  * delivery result. A supplied client whose {@link HttpClient#followRedirects()} is not
  * {@link HttpClient.Redirect#NEVER} is rejected; the default client is built that way. A {@code 3xx} therefore reaches
- * the caller as an ordinary status, which {@link PushSender} classifies as a failed {@link PushResult}.
+ * the caller as an ordinary status, which {@link PushSender} classifies as a non-retryable failure outcome.
  */
 public final class JdkPushHttpClient implements PushHttpClient {
 

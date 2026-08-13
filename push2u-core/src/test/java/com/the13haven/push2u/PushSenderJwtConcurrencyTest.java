@@ -58,26 +58,26 @@ class PushSenderJwtConcurrencyTest {
         // can be smaller than that on a small machine, deadlocking the rendezvous until its bounded waits time out.
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             signer.blockNextSign();
-            CompletableFuture<PushResult> blockedMint = CompletableFuture.supplyAsync(
+            CompletableFuture<PushOutcome> blockedMint = CompletableFuture.supplyAsync(
                     () -> sender.send(subscriptionAt(AUDIENCE_B_ENDPOINT), message()), executor);
             assertThat(signer.awaitSignEntered(5, TimeUnit.SECONDS))
                     .as("the miss on audience B reached the signer")
                     .isTrue();
 
             try {
-                PushResult hit = CompletableFuture.supplyAsync(
+                PushOutcome hit = CompletableFuture.supplyAsync(
                                 () -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()), executor)
                         .get(5, TimeUnit.SECONDS);
-                assertThat(hit.isDelivered())
+                assertThat(hit)
                         .as("the hit on audience A completed while B's signature was still in flight")
-                        .isTrue();
+                        .isInstanceOf(PushOutcome.Accepted.class);
                 assertThat(blockedMint.isDone())
                         .as("B's mint really was still in flight when A's hit completed")
                         .isFalse();
             } finally {
                 signer.releaseSign();
             }
-            assertThat(blockedMint.get(5, TimeUnit.SECONDS).isDelivered()).isTrue();
+            assertThat(blockedMint.get(5, TimeUnit.SECONDS)).isInstanceOf(PushOutcome.Accepted.class);
         }
     }
 
@@ -122,14 +122,14 @@ class PushSenderJwtConcurrencyTest {
         // An explicit pool with one worker per barrier party, never the common pool: its parallelism is
         // availableProcessors() - 1, so on a 4-vCPU CI runner only three of the four tasks start and a barrier
         // that needs all four can never trip — the waiters deadlock until the await times out.
-        List<CompletableFuture<PushResult>> sends = new ArrayList<>();
+        List<CompletableFuture<PushOutcome>> sends = new ArrayList<>();
         try (ExecutorService executor = Executors.newFixedThreadPool(threads)) {
             for (int i = 0; i < threads; i++) {
                 sends.add(CompletableFuture.supplyAsync(
                         () -> sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()), executor));
             }
-            for (CompletableFuture<PushResult> send : sends) {
-                assertThat(send.get(10, TimeUnit.SECONDS).isDelivered()).isTrue();
+            for (CompletableFuture<PushOutcome> send : sends) {
+                assertThat(send.get(10, TimeUnit.SECONDS)).isInstanceOf(PushOutcome.Accepted.class);
             }
         }
 
@@ -143,7 +143,7 @@ class PushSenderJwtConcurrencyTest {
                     .isTrue();
         }
 
-        assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()).isDelivered())
+        assertThat(sender.send(subscriptionAt(AUDIENCE_A_ENDPOINT), message()) instanceof PushOutcome.Accepted)
                 .isTrue();
         assertThat(signCalls.get())
                 .as("one of the racing tokens was published and now serves the audience")

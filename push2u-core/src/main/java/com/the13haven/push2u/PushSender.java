@@ -11,10 +11,13 @@ import java.security.Provider;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -23,8 +26,17 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The send facade: encrypts a {@link PushMessage} for a {@link Subscription} (RFC 8291), signs the VAPID JWT (RFC
- * 8292), POSTs the {@code aes128gcm} body to the endpoint (RFC 8030), and interprets the HTTP status into a
- * {@link PushResult} with retries.
+ * 8292), POSTs the {@code aes128gcm} body to the endpoint (RFC 8030), and reports what became of the requested send as
+ * a {@link PushOutcome}.
+ *
+ * <p><b>One send is one POST at most, and the library does not retry.</b> Every deployment sending push at volume
+ * already owns a retrier — a job engine, a queue with redelivery, a resilience library — and a loop inside this method
+ * could see none of what that retrier knows: the deployment's retry budget, its dead-letter path, what survives a
+ * restart. So the classification a repeat decision needs is published on the outcome instead, together with what the
+ * push service's {@code Retry-After} said, and the schedule is the caller's. A send holds nothing across attempts that
+ * a second call would not rebuild: the endpoint policy re-runs, the VAPID token is re-minted or served from its cache,
+ * and the body is re-encrypted under a fresh ephemeral key and salt, which RFC 8291 §2 has the application server
+ * generate per message in any case.
  *
  * <p>Build it with {@link #builder(VapidKeys, String, EndpointPolicy)} (the default in-JVM signer) or
  * {@link #builder(VapidSigner, String, EndpointPolicy)} (an external signer, which supplies the VAPID public key
@@ -32,8 +44,10 @@ import org.jspecify.annotations.Nullable;
  * factory method's parameters — the overload chooses the key source, and an incomplete sender cannot be expressed;
  * everything on the {@link Builder} is optional.
  *
- * <p>A dead subscription (404/410) is a normal {@link PushResult}, not an exception: pruning a store on expiry is
- * expected control flow, not an error.
+ * <p>Everything a fan-out meets in normal running arrives as a value of {@link PushOutcome}, a dead subscription and a
+ * refused endpoint included: pruning a store on {@link PushOutcome.SubscriptionExpired} is expected control flow, not
+ * an error. What still throws is using the API wrongly, a defect the caller cannot act on per send, and cancellation —
+ * see {@link #send} for the enumeration.
  *
  * <p><b>A built sender is thread-safe: built once and shared across every sending thread</b> — {@link #sendAsync} makes
  * concurrent sends the normal case rather than an edge one. Its configuration is immutable; the one thing it holds
@@ -42,23 +56,23 @@ import org.jspecify.annotations.Nullable;
  * signing again — losing it costs one signature, never a delivery. The same thread-safety obligation falls on the three
  * SPIs the sender calls ({@link VapidSigner}, {@link PushHttpClient}, {@link EndpointPolicy}), each of which states it.
  */
-// CouplingBetweenObjects: this is the facade over the whole send pipeline — the size preconditions,
-// the endpoint policy, the encryption, the VAPID signature with its token cache, the transport and
-// the retry schedule are its collaborators by design, and carving the coordinator into pieces to
-// satisfy the metric would scatter one pipeline across classes that mean nothing on their own.
-@SuppressWarnings("PMD.CouplingBetweenObjects")
+// CouplingBetweenObjects and GodClass: this is the facade over the whole send pipeline — the size
+// precondition, the endpoint policy, the encryption, the VAPID signature with its token cache, the
+// transport, the status classification and the seam-signal conversions are its collaborators by
+// design. Both metrics fire on that coordinator shape; carving it into pieces to satisfy them
+// would scatter one pipeline — and the one enumeration of what converts to an outcome — across
+// classes that mean nothing on their own.
+@SuppressWarnings({"PMD.CouplingBetweenObjects", "PMD.GodClass"})
 public final class PushSender {
 
     private final VapidSigner signer;
     private final String contact;
     private final WebPushEncryptor encryptor;
     private final PushHttpClient httpClient;
-    private final RetryPolicy retryPolicy;
     private final Duration jwtExpiry;
     private final Duration defaultTtl;
     private final int recordSize;
     private final int maxEncryptedBodyBytes;
-    private final Sleeper sleeper;
     private final Clock clock;
     private final Ticker ticker;
     private final boolean jwtReuse;
@@ -90,12 +104,10 @@ public final class PushSender {
         this.contact = builder.contact;
         this.encryptor = new WebPushEncryptor(jca);
         this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkPushHttpClient();
-        this.retryPolicy = builder.retryPolicy;
         this.jwtExpiry = builder.jwtExpiry;
         this.defaultTtl = builder.defaultTtl;
         this.recordSize = builder.recordSize;
         this.maxEncryptedBodyBytes = builder.maxEncryptedBodyBytes;
-        this.sleeper = builder.sleeper;
         this.clock = builder.clock;
         this.ticker = builder.ticker;
         this.jwtReuse = builder.jwtReuse;
@@ -168,36 +180,61 @@ public final class PushSender {
     }
 
     /**
-     * Encrypt, sign, POST (with retries), and interpret the result. Blocks until done.
+     * Encrypt, sign, POST once, and report what became of the requested send. Blocks until done.
      *
      * <p>The payload is size-checked first, before any cryptography or network I/O, against both
-     * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; an oversized payload throws
-     * {@link IllegalArgumentException} rather than being sent for the push service to reject with {@code 413}. The
-     * {@link EndpointPolicy} the sender was built with runs next, on every send without exception — still ahead of the
-     * encryption, the VAPID signature (which under an external {@link VapidSigner} is a remote Vault/KMS operation) and
-     * the HTTP request, so a rejected endpoint costs none of them.
+     * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; a payload that does not fit is
+     * reported as {@link PushOutcome.PayloadRejected}, in plaintext octets, rather than sent for the push service to
+     * refuse with {@code 413}. The {@link EndpointPolicy} the sender was built with runs next, on every send without
+     * exception — still ahead of the encryption, the VAPID signature (which under an external {@link VapidSigner} is a
+     * remote Vault/KMS operation) and the HTTP request, so a rejected endpoint costs none of them and is reported as
+     * {@link PushOutcome.EndpointRejected}.
+     *
+     * <p><b>Three seam signals convert to outcomes, and no others.</b> An {@link EndpointRejectedException} from the
+     * policy becomes {@link PushOutcome.EndpointRejected}; a {@link VapidSignerUnavailableException} from the signer
+     * becomes {@link PushOutcome.SignerUnavailable}; a {@link PushDeliveryException} from the transport becomes
+     * {@link PushOutcome.Indeterminate}. Any other {@code RuntimeException} out of a consumer-written seam is a defect
+     * in that implementation, not an operational condition, and propagates unchanged. What this method itself throws:
+     *
+     * <ul>
+     *   <li>{@link PushCryptoException} — the encryption or the signature cannot be produced for a reason that recurs:
+     *       a cryptographic defect, an unusable provider, or a key-service misconfiguration. Not a custodian that
+     *       cannot sign <em>now</em>, which is the {@link PushOutcome.SignerUnavailable} outcome;
+     *   <li>{@link PushInterruptedException} — the sending thread was interrupted. The conversion above is refused, on
+     *       the transport and signer paths alike, whenever the seam's exception carries an {@link InterruptedException}
+     *       in its cause chain <em>or</em> the current thread's interrupt status is set — neither test alone is sound,
+     *       since an interruption can surface as an {@link java.io.InterruptedIOException} with no
+     *       {@code InterruptedException} beneath it, and a transport can attach a cause without re-setting the flag.
+     *       The interrupt status is re-set on the calling thread before the throw, as that type promises;
+     *   <li>{@link IllegalArgumentException} / {@link NullPointerException} — an argument that is not a legal value of
+     *       its parameter.
+     * </ul>
+     *
+     * <p><b>Repeating a send is the caller's decision, and a repeated send re-bases the message's lifetime</b>: RFC
+     * 8030 §5.2 counts {@code TTL} from the moment the push service receives the message, so an attempt scheduled hours
+     * after this one carries a fresh lifetime unless the caller decrements the {@code TTL} it passes by the time
+     * already spent.
      *
      * @param subscription the target subscription
      * @param message the message to send
-     * @return the send result
-     * @throws IllegalArgumentException if the payload does not fit the configured body limit, or if the configured
-     *     record size is too small for it
-     * @throws EndpointRejectedException if this sender's endpoint policy rejects the subscription's endpoint
-     * @throws PushCryptoException if the encryption or the VAPID signature cannot be produced — including a
-     *     {@link VapidSigner} whose remote key service is unreachable or refuses the operation, which may be transient
-     * @throws PushDeliveryException if the transport fails to complete the request; an HTTP error status is not this
-     *     but a {@link PushResult}
+     * @return what became of the requested send
+     * @throws PushCryptoException if the encryption or the VAPID signature cannot be produced for a reason that recurs
+     * @throws PushInterruptedException if the sending thread was interrupted, with the interrupt status re-set before
+     *     the throw
      */
     // PreserveStackTrace / AvoidThrowingNewInstanceOfSameException: URI.create's own
     // IllegalArgumentException carries the raw capability URL, so it is replaced by one built from
     // the redacted endpoint and the cause is deliberately not attached (see Endpoints.redact).
     @SuppressWarnings({"PMD.PreserveStackTrace", "PMD.AvoidThrowingNewInstanceOfSameException"})
-    public PushResult send(Subscription subscription, PushMessage message) {
+    public PushOutcome send(Subscription subscription, PushMessage message) {
         Objects.requireNonNull(subscription, "subscription");
         Objects.requireNonNull(message, "message");
 
         byte[] payload = message.payload();
-        WebPushEncryptor.checkPayloadFits(payload.length, recordSize, maxEncryptedBodyBytes);
+        int maximumPayloadBytes = WebPushEncryptor.maxPlaintextBytes(recordSize, maxEncryptedBodyBytes);
+        if (payload.length > maximumPayloadBytes) {
+            return new PushOutcome.PayloadRejected(payload.length, maximumPayloadBytes);
+        }
 
         URI endpoint;
         try {
@@ -214,60 +251,154 @@ public final class PushSender {
         // for — any per-send cryptography. The policy also runs before the token cache is
         // consulted, and that cache is the sender's only mutable state, so a policy that throws
         // (a rejection or its own defect) leaves nothing to corrupt for later sends.
-        endpointPolicy.validate(endpoint);
+        try {
+            endpointPolicy.validate(endpoint);
+        } catch (EndpointRejectedException e) {
+            // The policy's contract keeps the raw endpoint out of its message; the redacted form
+            // beside it is this library's own rendering, safe whatever the policy wrote.
+            return new PushOutcome.EndpointRejected(
+                    Endpoints.redact(subscription.endpoint()), Objects.requireNonNullElse(e.getMessage(), ""));
+        }
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
-        String authorization = authorization(Origin.serialize(endpoint));
+        String authorization;
+        try {
+            authorization = authorization(Origin.serialize(endpoint));
+        } catch (VapidSignerUnavailableException e) {
+            // A signing call has no effect on the push service, so whatever became of it, no
+            // notification exists to be duplicated — which is what lets an unanswered signing
+            // exchange be NotAttempted where the unanswered POST below is Indeterminate.
+            if (isInterruption(e)) {
+                throw interrupted("send interrupted while obtaining the VAPID signature", e);
+            }
+            return new PushOutcome.SignerUnavailable(e);
+        }
         Map<String, String> headers = requestHeaders(authorization, message);
 
-        for (int attempt = 1; attempt <= retryPolicy.maxAttempts(); attempt++) {
-            PushResponse response = httpClient.post(endpoint, headers, body);
-            int code = response.statusCode();
-            if (isDelivered(code)) {
-                return new PushResult(PushResult.Status.DELIVERED, code, attempt);
+        PushResponse response;
+        try {
+            response = httpClient.post(endpoint, headers, body);
+        } catch (PushDeliveryException e) {
+            if (isInterruption(e)) {
+                throw interrupted(
+                        "send interrupted during the POST to " + Endpoints.redact(subscription.endpoint()), e);
             }
-            if (isExpired(code)) {
-                return new PushResult(PushResult.Status.SUBSCRIPTION_EXPIRED, code, attempt);
-            }
-            if (!isRetryable(code) || attempt == retryPolicy.maxAttempts()) {
-                return new PushResult(PushResult.Status.FAILED, code, attempt);
-            }
-            sleeper.sleep(backoff(attempt, response));
+            return new PushOutcome.Indeterminate(e);
         }
-        // Unreachable: RetryPolicy enforces maxAttempts >= 1, so the loop body runs at least once
-        // and every path through it returns. Fabricating a PushResult here instead would have to
-        // invent a status code for a POST that never happened.
-        throw new AssertionError("retry loop exited without a result — maxAttempts was " + retryPolicy.maxAttempts());
+        return classify(response);
+    }
+
+    /**
+     * The status classification, taken per status rather than per class; each carve-out's ground is on the Javadoc of
+     * the variant that carries it. The {@code Retry-After} header is parsed once for any answered failure, because it
+     * classifies a {@code 413} (RFC 9110 §15.5.14 has a server generate it there only if the condition is temporary)
+     * and travels on the retryable variant as the value the caller schedules against.
+     */
+    private PushOutcome classify(PushResponse response) {
+        int code = response.statusCode();
+        if (code >= 200 && code < 300) {
+            return new PushOutcome.Accepted(code);
+        }
+        if (code == 404 || code == 410) {
+            return new PushOutcome.SubscriptionExpired(code);
+        }
+        Optional<Duration> retryAfter =
+                response.header("Retry-After").flatMap(value -> RetryAfter.parse(value, clock.instant()));
+        if (isRetryable(code, retryAfter.isPresent())) {
+            return new PushOutcome.RetryableFailure(code, retryAfter);
+        }
+        return new PushOutcome.NonRetryableFailure(code);
+    }
+
+    /**
+     * Which answered failures a repeat may be useful for. The named statuses and the five carve-outs each rest on their
+     * defining specification's own words — the grounds are spelled out on {@link PushOutcome.RetryableFailure} and
+     * {@link PushOutcome.NonRetryableFailure}, where a caller reads them. A 5xx neither list names falls to the class
+     * (RFC 9110 §15.6: a statement about the server, not the request), chosen so that an unregistered or
+     * later-registered 5xx is never permanent by omission.
+     */
+    private static boolean isRetryable(int code, boolean parseableRetryAfter) {
+        return switch (code) {
+            case 408, 421, 429 -> true;
+            // RFC 9110 §15.5.14: a Retry-After on a 413 is the server saying it refused this
+            // moment, not this request — the header, not the number, classifies here.
+            case 413 -> parseableRetryAfter;
+            // RFC 9110 §15.6.2 (501) and §15.6.6 (505): a byte-identical POST is answered
+            // identically. RFC 2295 §8.1 (506): a configuration error, ended by an edit, not by
+            // time. RFC 5842 §7.2 (508): a statement about the resource graph the request named.
+            // RFC 6585 §6 (511): an intercepting proxy reporting the sending host has no network
+            // access, which no repeat obtains.
+            case 501, 505, 506, 508, 511 -> false;
+            default -> code >= 500 && code < 600;
+        };
+    }
+
+    /**
+     * The facade's interruption test — a disjunction, because neither half is sound alone: an interruption can surface
+     * as a {@link java.nio.channels.ClosedByInterruptException} or an {@link java.io.InterruptedIOException} with no
+     * {@link InterruptedException} beneath it (the flag half catches those), and a transport can attach a cause without
+     * re-setting the flag (the chain half catches that). Kept here rather than obliged onto the seams, so that no
+     * transport has to recognise a cancellation.
+     */
+    private static boolean isInterruption(RuntimeException failure) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        // The walk guards against a cyclic chain — constructible by a defective seam overriding
+        // getCause() — because a send must not spin over someone else's broken diagnostics.
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Builds the cancellation a send reports, re-setting the interrupt status on the current thread first — the
+     * synchronous promise, unconditionally kept even where only the cause chain carried the interruption. On the
+     * asynchronous path this runs on the worker, so the worker's flag is re-set before the future completes, which is
+     * owed to the executor and to whatever that thread runs next.
+     */
+    private static PushInterruptedException interrupted(String description, RuntimeException cause) {
+        Thread.currentThread().interrupt();
+        return new PushInterruptedException(description, cause);
     }
 
     /**
      * {@link #send} on the executor configured via {@link Builder#executor(Executor)} — by default a library-owned
      * virtual-thread-per-task executor, never the common ForkJoinPool. Each async send blocks its thread for the whole
-     * exchange (synchronous HTTP plus the backoff sleeps between retries), which a virtual thread absorbs by parking
-     * without pinning a carrier thread.
+     * exchange, which a virtual thread absorbs by parking without pinning a carrier thread.
      *
      * <p>This governs the send itself. Async continuations the caller chains onto the returned future
      * ({@code thenApplyAsync} and friends without an explicit executor) still use {@link CompletableFuture}'s default —
      * the common ForkJoinPool; pass an executor there too if a continuation blocks.
      *
      * <p>If a caller-supplied executor rejects the task, its {@link java.util.concurrent.RejectedExecutionException}
-     * propagates from this call rather than completing the returned future exceptionally. The preconditions
-     * {@link #send} checks go the other way: they run inside the queued task, so an oversized payload — or an endpoint
-     * this sender's {@link EndpointPolicy} rejects — completes the returned future exceptionally
-     * ({@link IllegalArgumentException}, {@link EndpointRejectedException}) instead of throwing from this call. The
-     * async path runs through the same {@link #send} pipeline, so the policy guards it identically: no send through
-     * this sender reaches the network without passing the policy.
+     * propagates from this call rather than completing the returned future exceptionally. Everything else runs inside
+     * the queued task, through the same {@link #send} pipeline: every outcome — {@link PushOutcome.PayloadRejected} and
+     * {@link PushOutcome.EndpointRejected} included — completes the returned future <em>normally</em>, and no send
+     * through this sender reaches the network without passing the policy. What {@link #send} throws — a
+     * {@link PushCryptoException}, a defect out of a consumer seam — completes the future exceptionally instead, and
+     * reaches the caller wrapped in a {@link java.util.concurrent.CompletionException} on {@code join} or an
+     * {@link java.util.concurrent.ExecutionException} on {@code get}.
      *
-     * <p>The same holds for the rest of what {@link #send} throws: a {@link PushCryptoException} or a
-     * {@link PushDeliveryException} completes the returned future exceptionally rather than propagating from this call,
-     * and reaches the caller wrapped in a {@link java.util.concurrent.CompletionException} on {@code join} or an
-     * {@link java.util.concurrent.ExecutionException} on {@code get}. An HTTP error status is not among them — it is a
-     * {@link PushResult}, and the future completes normally with it.
+     * <p><b>An interrupted send completes the future exceptionally with {@link PushInterruptedException}, and the
+     * future is not cancelled</b>: {@code isCancelled()} answers {@code false}, so a caller's own {@code cancel} stays
+     * distinguishable from a worker stopped mid-flight. The interrupt status on whatever thread reads the future is not
+     * promised — that thread was never interrupted — and the worker's own flag is re-set on the worker before the
+     * future completes. What travels is the type and its cause chain.
+     *
+     * <p>A fan-out on this path that meets {@link PushOutcome.SignerUnavailable} should stop <em>submitting</em>, which
+     * takes more than reacting to the outcome: by the time the first outcome is read, a caller that already handed the
+     * whole list to the executor has had its burst against the dead custodian decided. That variant's documentation
+     * carries the shape that works — bounded concurrency, rows fed in as outcomes come back.
      *
      * @param subscription the target subscription
      * @param message the message to send
-     * @return a future completing with the send result
+     * @return a future completing with what became of the requested send
      */
-    public CompletableFuture<PushResult> sendAsync(Subscription subscription, PushMessage message) {
+    public CompletableFuture<PushOutcome> sendAsync(Subscription subscription, PushMessage message) {
         Executor target = executor != null ? executor : DefaultAsyncExecutor.INSTANCE;
         return CompletableFuture.supplyAsync(() -> send(subscription, message), target);
     }
@@ -275,10 +406,9 @@ public final class PushSender {
     /**
      * The default {@code sendAsync} executor, created lazily via the holder-class idiom: building a sender that only
      * ever calls the synchronous {@link #send} never touches this class, so no executor is created. A
-     * virtual-thread-per-task executor is the right default for a workload of blocking HTTP calls and backoff sleeps —
-     * virtual threads park without pinning a carrier thread, and the executor holds no OS threads when idle. The
-     * library never shuts it down, which is safe: idle it holds no resources, and its threads are daemons, so it cannot
-     * keep the JVM alive.
+     * virtual-thread-per-task executor is the right default for a workload of blocking HTTP calls — virtual threads
+     * park without pinning a carrier thread, and the executor holds no OS threads when idle. The library never shuts it
+     * down, which is safe: idle it holds no resources, and its threads are daemons, so it cannot keep the JVM alive.
      */
     private static final class DefaultAsyncExecutor {
         static final Executor INSTANCE = Executors.newVirtualThreadPerTaskExecutor();
@@ -347,7 +477,7 @@ public final class PushSender {
             // clock having run for (effective exp − the wall reading it was computed from) −
             // jwtRenewBefore. Equal spans are the point — a monotonic bound of the whole jwtExpiry
             // would hand a backwards wall step up to jwtRenewBefore of extra life, presenting the
-            // token right up to exp with nothing left for the retry window or clock skew.
+            // token right up to exp with nothing left for clock skew.
             Duration span = tokenLife.minus(jwtRenewBefore);
             CachedJwt minted = new CachedJwt(
                     signed.headerValue(), anchorNanos, span.toNanos(), effectiveExpiry.minus(jwtRenewBefore));
@@ -448,35 +578,6 @@ public final class PushSender {
     }
 
     /**
-     * Backoff before the retry that follows {@code attempt}. Only called for retryable statuses (429, 5xx) — RFC 9110
-     * §10.2.3 allows {@code Retry-After} on any of them, so an intelligible header always wins over the computed
-     * backoff, capped at {@link RetryPolicy#maxBackoff()}; an absent or unparseable header falls back to the
-     * exponential schedule.
-     */
-    private Duration backoff(int attempt, PushResponse response) {
-        Optional<Duration> retryAfter =
-                response.header("Retry-After").flatMap(value -> RetryAfter.parse(value, clock.instant()));
-        if (retryAfter.isPresent()) {
-            Duration delay = retryAfter.get();
-            return delay.compareTo(retryPolicy.maxBackoff()) > 0 ? retryPolicy.maxBackoff() : delay;
-        }
-        return retryPolicy.backoffFor(attempt);
-    }
-
-    /** Any 2xx counts as accepted — see {@link PushResult.Status#DELIVERED} for why, not just 201. */
-    private static boolean isDelivered(int code) {
-        return code >= 200 && code < 300;
-    }
-
-    private static boolean isExpired(int code) {
-        return code == 404 || code == 410;
-    }
-
-    private static boolean isRetryable(int code) {
-        return code == 429 || (code >= 500 && code < 600);
-    }
-
-    /**
      * Configures and builds a {@link PushSender}. Everything required — the key source, the contact and the
      * {@link EndpointPolicy} — is a parameter of {@link PushSender#builder(VapidKeys, String, EndpointPolicy)} /
      * {@link PushSender#builder(VapidSigner, String, EndpointPolicy)}, so every step here is optional with a sensible
@@ -501,7 +602,6 @@ public final class PushSender {
         @Nullable
         private Provider cryptoProvider;
 
-        private RetryPolicy retryPolicy = RetryPolicy.defaults();
         private Duration jwtExpiry = Duration.ofHours(12);
         private Duration defaultTtl = Duration.ofDays(1);
         private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
@@ -509,7 +609,6 @@ public final class PushSender {
         private Duration jwtRenewBefore = Duration.ofMinutes(5);
         private boolean jwtReuse = true;
         private int jwtCacheSize = 64;
-        private Sleeper sleeper = Sleeper.REAL;
         private Clock clock = Clock.systemUTC();
         private Ticker ticker = Ticker.REAL;
 
@@ -556,17 +655,6 @@ public final class PushSender {
         }
 
         /**
-         * The retry policy; defaults to {@link RetryPolicy#defaults()}.
-         *
-         * @param retryPolicy the retry policy
-         * @return this builder
-         */
-        public Builder retryPolicy(RetryPolicy retryPolicy) {
-            this.retryPolicy = Objects.requireNonNull(retryPolicy, "retryPolicy");
-            return this;
-        }
-
-        /**
          * How far ahead the VAPID {@code exp} is set; must be > 0 and ≤ 24h (RFC 8292 §2).
          *
          * @param jwtExpiry the expiry offset
@@ -608,13 +696,12 @@ public final class PushSender {
 
         /**
          * The safety margin: how long before a cached token's {@code exp} it stops being served and a fresh one is
-         * signed; default 5 minutes, never negative. The margin is what keeps a send that picks a token up just before
-         * the boundary still presenting a valid one at its last retry — with {@code Retry-After} honoured up to
-         * {@link RetryPolicy#maxBackoff()}, a send can legitimately outlive its token's final minutes — and what covers
-         * clock skew against the push service, which checks {@code exp} on its own clock. Both are absolute quantities,
-         * which is why this is an absolute duration and not a fraction of {@link #jwtExpiry(Duration)}. A deployment
-         * whose retry policy or {@code Retry-After} tolerance allows a much longer send raises it; the library does not
-         * derive one knob from the other, because a send's duration also includes HTTP timeouts it does not own.
+         * signed; default 5 minutes, never negative. The margin covers clock skew against the push service, which
+         * checks {@code exp} on its own clock — skew is minutes whatever the token's lifetime is — and the tail of a
+         * send that picks a token up just before the renewal boundary and still has to traverse an HTTP exchange whose
+         * timeouts this library does not own. Both are absolute quantities, which is why this is an absolute duration
+         * and not a fraction of {@link #jwtExpiry(Duration)}; a deployment whose sends can legitimately run much longer
+         * — a generous transport timeout, say — raises it, and the library does not derive one knob from the other.
          *
          * <p>{@link Duration#ZERO} is legal and is <em>not</em> an off switch — zero margin is the most reuse, holding
          * the token to its last second, with the skew consequences of saying so; {@link #jwtReuse(boolean)} is the
@@ -679,12 +766,12 @@ public final class PushSender {
         /**
          * The {@code aes128gcm} record size advertised in the body header (RFC 8188 {@code rs}); default 4096. The
          * library emits a single record, so {@code rs} must be strictly greater than the plaintext plus the padding
-         * delimiter (1 octet) plus the authentication tag (16 octets) — RFC 8291 §4 — otherwise the send is rejected
-         * with the payload length it would need.
+         * delimiter (1 octet) plus the authentication tag (16 octets) — RFC 8291 §4 — otherwise the send reports
+         * {@link PushOutcome.PayloadRejected} with the largest plaintext the configuration carries.
          *
          * <p>This is a separate protocol parameter from {@link #maxEncryptedBodyBytes(int)} and is never adjusted to
-         * follow it: raising the body limit alone leaves {@code rs} where it was and a payload that outgrows it is
-         * rejected on the record-size ground instead. Raise both when sending larger payloads.
+         * follow it: raising the body limit alone leaves {@code rs} where it was, and the record-size bound then
+         * decides the maximum payload instead. Raise both when sending larger payloads.
          *
          * @param recordSize the record size; must be at least 18 (RFC 8188 §2)
          * @return this builder
@@ -707,13 +794,13 @@ public final class PushSender {
          * body rather than on the plaintext. The single-record {@code aes128gcm} format this library emits adds a fixed
          * 103 octets — an 86-octet RFC 8188 header (salt 16, {@code rs} 4, {@code idlen} 1, {@code keyid} 65), the
          * padding delimiter (1) and the AEAD_AES_128_GCM tag (16) — so the default admits 3993 octets of plaintext, the
-         * figure RFC 8291 §4 derives. {@link PushSender#send} rejects anything larger before encrypting or contacting
-         * the push service.
+         * figure RFC 8291 §4 derives. {@link PushSender#send} reports anything larger as
+         * {@link PushOutcome.PayloadRejected} before encrypting or contacting the push service.
          *
          * <p>Raise it only for an endpoint known to accept more (some push services document a larger limit; a
          * self-hosted or intra-organisation service may be configured for one). Doing so does <em>not</em> touch
-         * {@link #recordSize(int)}, which stays at whatever it was configured to — raise that too, or the larger
-         * payload is rejected for not fitting the record.
+         * {@link #recordSize(int)}, which stays at whatever it was configured to — raise that too, or the record-size
+         * bound keeps the maximum payload where it was.
          *
          * @param maxEncryptedBodyBytes the maximum encrypted body size in bytes; must be at least the fixed 103-octet
          *     overhead, which is exactly the body an empty payload produces
@@ -733,22 +820,15 @@ public final class PushSender {
 
         /**
          * The executor {@link PushSender#sendAsync} runs sends on. Each queued send blocks its thread for the whole
-         * exchange — the synchronous HTTP call plus any backoff sleeps between retries (up to
-         * {@link RetryPolicy#maxBackoff()} each) — so the executor must tolerate long-blocking tasks. Defaults to a
-         * library-owned virtual-thread-per-task executor, created lazily on the first async send; a caller-supplied
-         * executor stays caller-owned — the library never shuts it down.
+         * exchange — a synchronous HTTP call bounded by the transport's per-request timeout — so the executor must
+         * tolerate long-blocking tasks. Defaults to a library-owned virtual-thread-per-task executor, created lazily on
+         * the first async send; a caller-supplied executor stays caller-owned — the library never shuts it down.
          *
          * @param executor the executor for async sends
          * @return this builder
          */
         public Builder executor(Executor executor) {
             this.executor = Objects.requireNonNull(executor, "executor");
-            return this;
-        }
-
-        // Package-private test seam: run the retry loop without real backoff sleeps.
-        Builder sleeper(Sleeper sleeper) {
-            this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
             return this;
         }
 

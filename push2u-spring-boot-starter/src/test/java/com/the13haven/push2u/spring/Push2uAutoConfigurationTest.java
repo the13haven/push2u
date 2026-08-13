@@ -6,8 +6,6 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.net.URI;
@@ -16,7 +14,6 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
-import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -51,10 +48,9 @@ import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
+import com.the13haven.push2u.PushOutcome;
 import com.the13haven.push2u.PushResponse;
-import com.the13haven.push2u.PushResult;
 import com.the13haven.push2u.PushSender;
-import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.Subscription;
 import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
@@ -252,24 +248,23 @@ class Push2uAutoConfigurationTest {
                     // 4096 plaintext bytes: rejected by the PushSender defaults (rs=4096, body cap
                     // 4096 -> 3993 max plaintext) but accepted once record-size/max-encrypted-body-bytes
                     // are raised, proving the properties actually reached the builder.
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription(), PushMessage.builder(new byte[4096]).build());
-                    assertThat(result.isDelivered()).isTrue();
+                    assertThat(result).isInstanceOf(PushOutcome.Accepted.class);
                 });
     }
 
     @Test
     void defaultLimitsRejectAPayloadThatOnlyFitsUnderTheRaisedOnes() {
         // Control for the previous test: without raising the properties, the same 4096-byte
-        // payload must be rejected by PushSender's own default limits, before any network call.
-        // At the defaults the body-size precondition (rs=4096, body cap 4096) fires first, ahead
-        // of the record-size one — hence the assertion on that particular message.
+        // payload must be rejected by PushSender's own default limits, before any network call —
+        // reported as the PayloadRejected outcome in plaintext octets, with the maximum the
+        // default configuration carries.
         keyedRunner().run(context -> {
             PushSender sender = context.getBean(PushSender.class);
-            assertThatThrownBy(() -> sender.send(
-                            subscription(), PushMessage.builder(new byte[4096]).build()))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("exceeding the configured maximum");
+            PushOutcome outcome = sender.send(
+                    subscription(), PushMessage.builder(new byte[4096]).build());
+            assertThat(outcome).isEqualTo(new PushOutcome.PayloadRejected(4096, 3993));
         });
     }
 
@@ -570,119 +565,28 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void invalidRetryMaxAttemptsFailsTheContextNamingTheProperty() {
-        // The worst offender before this fix: RetryPolicy's own message ("maxAttempts must be >=
-        // 1") does not even mention "retry", let alone the YAML property — an operator reading it
-        // has nothing to go on.
-        keyedRunner().withPropertyValues("push2u.retry.max-attempts=0").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-attempts:"))
-                    .hasMessageContaining("push2u.retry.max-attempts:")
-                    .hasMessageContaining("maxAttempts must be >= 1");
-        });
-    }
-
-    @Test
-    void invalidRetryInitialBackoffFailsTheContextNamingTheProperty() {
-        // RetryPolicy reports both backoff bounds through one message, so without the per-key probe
-        // an operator cannot tell which of the two durations it is complaining about.
-        keyedRunner().withPropertyValues("push2u.retry.initial-backoff=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(),
-                            IllegalArgumentException.class,
-                            "push2u.retry.initial-backoff:"))
-                    .hasMessageContaining("push2u.retry.initial-backoff:")
-                    .hasMessageContaining("backoff durations must not be negative");
-        });
-    }
-
-    @Test
-    void invalidRetryMaxBackoffFailsTheContextNamingTheProperty() {
-        keyedRunner().withPropertyValues("push2u.retry.max-backoff=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-backoff:"))
-                    .hasMessageContaining("push2u.retry.max-backoff:")
-                    .hasMessageContaining("backoff durations must not be negative");
-        });
-    }
-
-    /**
-     * The tripwire for the probes in {@code Push2uAutoConfiguration.retryPolicy}. Each of them fills the components it
-     * is not testing with {@code 1} and {@code Duration.ZERO}, and attributes any rejection to the one real value it
-     * passed. That attribution is only sound while those filler values stay acceptable beside an arbitrary value of the
-     * component under test — which {@link RetryPolicy#none()} alone does not witness, since it fixes all three. A
-     * constraint <em>between</em> components would otherwise leave the probes blaming the wrong YAML key with every
-     * other test still green.
-     *
-     * <p>Four assertions: the {@link RetryPolicy#none()} baseline, then one per probe pairing that probe's filler with
-     * a non-trivial value of its own component — the shape a cross-component constraint would break. <b>This samples
-     * the invariant, it does not decide it:</b> a constraint that only bites above some threshold would survive these
-     * points. What it buys is that the cheap and likely versions of that mistake fail here rather than in an operator's
-     * log, and that the invariant is written down as something executable rather than as a comment nobody re-checks.
-     */
-    @Test
-    void probeFillersStayAcceptableBesideARealValue() {
-        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ZERO))
-                .as("the triple RetryPolicy.none() is built from")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(Integer.MAX_VALUE, Duration.ZERO, Duration.ZERO))
-                .as("zero backoffs stay legal for any attempt count — what the max-attempts probe assumes")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(1, Duration.ofSeconds(1), Duration.ZERO))
-                .as("a zero max-backoff stays legal beside a real initial-backoff")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ofSeconds(1)))
-                .as("a zero initial-backoff stays legal beside a real max-backoff — the max-backoff probe's own"
-                        + " assumption, and the one the other three assertions do not cover")
-                .doesNotThrowAnyException();
-    }
-
-    /**
-     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be {@code RetryPolicy.defaults()}
-     * restated in YAML terms — that equality is what lets README.md and docs/SPRING.md describe an unset retry block as
-     * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
-     * either side would make both documents quietly wrong.
-     */
-    @Test
-    void theStarterRetryDefaultsAreTheCoreRetryDefaults() {
-        // Read back what Spring actually bound with no push2u.retry.* set, rather than restating
-        // the @DefaultValue literals here — restating them would pin this test to itself.
-        keyedRunner().run(context -> {
-            Push2uProperties.Retry bound =
-                    context.getBean(Push2uProperties.class).retry();
-
-            assertThat(new RetryPolicy(bound.maxAttempts(), bound.initialBackoff(), bound.maxBackoff()))
-                    .as("the @DefaultValue triple Spring binds for push2u.retry.*")
-                    .isEqualTo(RetryPolicy.defaults());
-        });
-    }
-
-    @Test
     void allowedOriginsPropertyEnforcesThePolicyOnTheWiredSender() {
-        // Positive and negative halves of the same property: the allowlisted origin delivers
-        // (through the stub transport), a foreign one is rejected before any transport call —
+        // Positive and negative halves of the same property: the allowlisted origin is accepted
+        // (through the stub transport), a foreign one is refused before any transport call —
         // proving push2u.allowed-origins actually reached the builder rather than being dropped.
         keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription(), PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered()).isTrue();
+                    assertThat(result).isInstanceOf(PushOutcome.Accepted.class);
                 });
         keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://other.example")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription(),
                                     PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class);
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -695,12 +599,12 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription("https://wns2-ln2p.notify.windows.com/w/?token=abc"),
                             PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered())
+                    assertThat(result)
                             .as("a domain rule admits every subdomain at any depth, which is why it exists")
-                            .isTrue();
+                            .isInstanceOf(PushOutcome.Accepted.class);
                 });
         // ...while a host that merely ends with the configured text, with no label boundary in
         // front of it, is not. That single missing dot is the vulnerability class this feature
@@ -711,10 +615,10 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription("https://evilnotify.windows.com/w/?token=abc"),
                                     PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class);
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -755,17 +659,16 @@ class Push2uAutoConfigurationTest {
                         "https://wns2-ln2p.notify.windows.com/w/?token=abc"
                     }) {
                         assertThat(sender.send(
-                                                subscription(endpoint),
-                                                PushMessage.builder(new byte[1]).build())
-                                        .isDelivered())
+                                        subscription(endpoint),
+                                        PushMessage.builder(new byte[1]).build()))
                                 .as(endpoint)
-                                .isTrue();
+                                .isInstanceOf(PushOutcome.Accepted.class);
                     }
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription("https://other.example/send/abc"),
                                     PushMessage.builder(new byte[1]).build()))
                             .as("the union is still an allowlist")
-                            .isInstanceOf(EndpointRejectedException.class);
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -812,11 +715,11 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -926,12 +829,13 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome)
                             .as("the bean's policy is in force, not no-policy")
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -945,12 +849,13 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome)
                             .as("the bean's policy is in force, not no-policy")
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -1046,12 +951,12 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription("https://169.254.169.254/latest/meta-data"),
                             PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered())
+                    assertThat(result)
                             .as("a cloud-metadata address is exactly what the opt-out lets through")
-                            .isTrue();
+                            .isInstanceOf(PushOutcome.Accepted.class);
                 });
     }
 
@@ -1280,10 +1185,8 @@ class Push2uAutoConfigurationTest {
     private static void sendTwice(PushSender sender) {
         for (int i = 0; i < 2; i++) {
             assertThat(sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build())
-                            .isDelivered())
-                    .isTrue();
+                            subscription(), PushMessage.builder(new byte[1]).build()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
         }
     }
 
@@ -1293,10 +1196,9 @@ class Push2uAutoConfigurationTest {
             for (String endpoint :
                     List.of("https://push.example.test/send/abc", "https://other.push.example.test/send/abc")) {
                 assertThat(sender.send(
-                                        subscription(endpoint),
-                                        PushMessage.builder(new byte[1]).build())
-                                .isDelivered())
-                        .isTrue();
+                                subscription(endpoint),
+                                PushMessage.builder(new byte[1]).build()))
+                        .isInstanceOf(PushOutcome.Accepted.class);
             }
         }
     }
