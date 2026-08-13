@@ -5,6 +5,8 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
+
 /**
  * Thrown when a send is stopped because the thread carrying it was interrupted. Nothing failed: the caller asked to
  * stop. So the action is to let the cancellation propagate — clear nothing, repeat nothing, and page nobody, because an
@@ -48,6 +50,12 @@ package com.the13haven.push2u;
  * <p>Unchecked, like every exception this library owns, and extending {@code RuntimeException} directly.
  */
 public class PushInterruptedException extends RuntimeException {
+
+    // Declared rather than computed. A computed identifier is derived from every non-private
+    // constructor and method as well as from the fields, so adding either would move it and make an
+    // instance already written to a stream unreadable after an otherwise compatible release.
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception reporting the interruption, where nothing was thrown to carry along.

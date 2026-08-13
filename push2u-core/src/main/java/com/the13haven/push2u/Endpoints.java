@@ -85,6 +85,9 @@ public final class Endpoints {
      *
      * @param endpoint the endpoint URL to validate
      * @throws IllegalArgumentException if the endpoint is not an absolute https URL with a host
+     * @throws PushCryptoException if the platform has no {@code SHA-256}, which no conforming Java runtime can be — the
+     *     refusal above renders the endpoint with {@link #redact} to say which one it refused, so it inherits that
+     *     method's one platform condition
      */
     // PreserveStackTrace: the cause is dropped on purpose — URISyntaxException's message embeds the
     // raw endpoint, which is a capability URL and must not travel in an exception the caller logs.

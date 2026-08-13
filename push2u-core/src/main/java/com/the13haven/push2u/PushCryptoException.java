@@ -5,6 +5,8 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
+
 /**
  * Thrown when cryptography this library needs cannot be performed, and repeating the same call would fail in exactly
  * the same way. Three kinds of failure, one remediation, so one type:
@@ -43,6 +45,12 @@ package com.the13haven.push2u;
  * is what could not be performed.
  */
 public class PushCryptoException extends RuntimeException {
+
+    // Declared rather than computed. A computed identifier is derived from every non-private
+    // constructor and method as well as from the fields, so adding either would move it and make an
+    // instance already written to a stream unreadable after an otherwise compatible release.
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception describing the crypto failure.

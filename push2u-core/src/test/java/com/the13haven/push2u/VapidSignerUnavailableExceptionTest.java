@@ -173,21 +173,37 @@ class VapidSignerUnavailableExceptionTest {
      */
     @Test
     void whatTheCustodianDeclaredSurvivesAStream() throws Exception {
-        VapidSignerUnavailableException original =
-                new VapidSignerUnavailableException("vault is sealed", 503, Duration.ofSeconds(30), null);
-
-        ByteArrayOutputStream written = new ByteArrayOutputStream();
-        try (ObjectOutputStream out = new ObjectOutputStream(written)) {
-            out.writeObject(original);
-        }
-        VapidSignerUnavailableException read;
-        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(written.toByteArray()))) {
-            read = (VapidSignerUnavailableException) in.readObject();
-        }
+        VapidSignerUnavailableException read =
+                roundTrip(new VapidSignerUnavailableException("vault is sealed", 503, Duration.ofSeconds(30), null));
 
         assertThat(read.getMessage()).isEqualTo("vault is sealed");
         assertThat(read.status()).hasValue(503);
         assertThat(read.retryAfter()).contains(Duration.ofSeconds(30));
+    }
+
+    /**
+     * And the empty form crosses empty. This is the property the absent status is a flag for rather than a sentinel
+     * number: read back, "nothing answered" must not become "answered zero".
+     */
+    @Test
+    void anEmptyFormSurvivesAStreamEmpty() throws Exception {
+        VapidSignerUnavailableException read =
+                roundTrip(new VapidSignerUnavailableException("vault is unreachable", new IOException("refused")));
+
+        assertThat(read.status()).isEmpty();
+        assertThat(read.retryAfter()).isEmpty();
+        assertThat(read.getCause()).isInstanceOf(IOException.class);
+    }
+
+    private static VapidSignerUnavailableException roundTrip(VapidSignerUnavailableException original)
+            throws Exception {
+        ByteArrayOutputStream written = new ByteArrayOutputStream();
+        try (ObjectOutputStream out = new ObjectOutputStream(written)) {
+            out.writeObject(original);
+        }
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(written.toByteArray()))) {
+            return (VapidSignerUnavailableException) in.readObject();
+        }
     }
 
     /** ADR-022 rules out a library exception that does not extend {@code RuntimeException} directly. */

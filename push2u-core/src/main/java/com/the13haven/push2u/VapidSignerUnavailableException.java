@@ -5,6 +5,7 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -70,19 +71,28 @@ import org.jspecify.annotations.Nullable;
 public class VapidSignerUnavailableException extends RuntimeException {
 
     /*
-     * Every exception here is Serializable because Throwable is, and this is the first of them
-     * holding state of its own, so what crosses a stream is decided rather than inherited by
-     * accident: both declared values travel with the exception. One that arrived without them would
-     * say less than the one that was thrown, and both are already serializable as they stand — a
-     * Duration and two primitives.
+     * Serializable because Throwable is, and the first exception here carrying state of its own, so
+     * what crosses a stream is decided rather than inherited by accident: both declared values
+     * travel with the exception, since one that arrived without them would say less than the one
+     * that was thrown, and a Duration beside two primitives is already serializable as it stands.
      *
-     * No serialVersionUID, and that is the same decision the other exceptions here take by having
-     * no state to argue about: nothing in this library writes one of these to a stream, so the only
-     * stream that exists was written by somebody else's process. If that process ran a version whose
-     * fields differ, the computed identifier differs with them and the read fails loudly, which is
-     * the better of the two answers — the alternative is a pinned identifier letting a value be read
-     * back into a field that has moved underneath it.
+     * The identifier is declared rather than left to be computed, because a computed one is not a
+     * fingerprint of what gets written. The serialization specification derives it from the class
+     * name, its modifiers, its interfaces, its fields AND every non-private constructor and method,
+     * so adding a constructor or writing a toString() moves it without changing a single byte of
+     * the serialized state. The setting where this type reaches a stream at all is a work queue
+     * across a rolling deploy, and there a moved identifier turns an ordinary compatible release
+     * into a poison message: the node on the new version reads a task written by a node on the old
+     * one and gets an InvalidClassException where it expected the reason a send never happened.
+     *
+     * A declared identifier is bumped deliberately, when a field keeps its name and type and
+     * changes its meaning, which is the one case the runtime cannot catch on its own — fields are
+     * matched by name and type, a changed type is refused whatever the identifier says, a removed
+     * one is dropped and a new one arrives at its default.
      */
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Whether the custodian answered a status at all.

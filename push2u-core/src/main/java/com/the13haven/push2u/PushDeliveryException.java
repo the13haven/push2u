@@ -5,6 +5,8 @@
  */
 package com.the13haven.push2u;
 
+import java.io.Serial;
+
 /**
  * Thrown when a push message cannot be delivered for a transport-level reason that is not a normal HTTP outcome — a
  * connection failure, a timeout, an interrupted send. A push service <em>rejecting</em> the message (4xx) or reporting
@@ -19,6 +21,12 @@ package com.the13haven.push2u;
  * catching a cancellation reads the other type.
  */
 public class PushDeliveryException extends RuntimeException {
+
+    // Declared rather than computed. A computed identifier is derived from every non-private
+    // constructor and method as well as from the fields, so adding either would move it and make an
+    // instance already written to a stream unreadable after an otherwise compatible release.
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception describing the delivery failure.
