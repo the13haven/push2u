@@ -206,7 +206,7 @@ switch (sender.send(subscription, message)) {
     case PushOutcome.Accepted a -> { }                                   // 2xx — accepted for delivery
     case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);   // 404 / 410
     case PushOutcome.RetryableFailure f ->   // a 507 that a user action produced waits for a fresh one
-        retrier.scheduleIfADuplicateIsAcceptable(subscription, message, f.retryAfter());
+        retrier.scheduleIfAllowed(subscription, message, f);
     case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
     case PushOutcome.NotAttempted n -> log.warn("Not sent: {}", n);      // nothing left this process
     case PushOutcome.Indeterminate i -> retrier.scheduleIfADuplicateIsAcceptable(subscription, message);
@@ -217,13 +217,17 @@ switch (sender.send(subscription, message)) {
 the push service answered; three more — grouped under the `NotAttempted` marker used above, and
 separable into `SignerUnavailable`, `PayloadRejected` and `EndpointRejected` when you want the
 detail — report that no POST was made at all, so no repeat of one can duplicate a notification; and
-`Indeterminate` reports a POST that went out and was never answered. Both rescheduling branches
-price the duplicate, deliberately in the same words: `RetryableFailure` says a repeat may be
-*useful* — the service answered about its own moment — and says nothing about whether it is *safe*,
-since a `502` or `504` is an intermediary that got no answer from an upstream which may still have
-applied the POST. The comment on that branch is RFC 4918 §11.5's own condition on a `507`: a
-request it refused, where a user action produced that request, is not repeated until a separate
-user action asks for it — and which of your sends those are is a fact only your application holds.
+`Indeterminate` reports a POST that went out and was never answered. Neither rescheduling branch
+is an unconditional repeat, and the retryable one hands over the whole outcome because it has one
+more rule to apply than `Indeterminate` does. Both price a possible duplicate: `RetryableFailure`
+says a repeat may be *useful* — the service answered about its own moment — and says nothing about
+whether it is *safe*, since a `502` or `504` is an intermediary that got no answer from an upstream
+which may still have applied the POST. The retryable branch alone also reads the status, which is
+why `f` travels whole rather than as its hint: the comment on it is RFC 4918 §11.5's own condition
+on a `507` — a request it refused, where a user action produced that request, is not repeated until
+a separate user action asks for it — and only `f.statusCode()` beside your own record of what
+produced the send can apply that. `Indeterminate` carries no status, so its branch has nothing to
+pass but the decision.
 
 The exception channel is narrower than the five checked exceptions on `PushService.send`, and none
 of them has a counterpart: a `try`/`catch` written for them will not compile. What `send` still
@@ -608,10 +612,11 @@ signer in [`VAULT.md`](VAULT.md).
    `PushInterruptedException` — a transport failure and a policy refusal are outcomes now, not
    exceptions.
 6. **Keep your retry loop.** push2u makes one POST per `send` and schedules nothing, exactly as
-   `web-push` did. Feed it `RetryableFailure` and the `Retry-After` that variant carries — a repeat
-   there is *useful*, not promised *safe*, so it shares `Indeterminate`'s duplicate pricing, and a
-   `507` that answered a user action waits for a fresh one — decide for yourself what to do with
-   `Indeterminate`, and stop the fan-out on `SignerUnavailable`.
+   `web-push` did. Feed it `RetryableFailure` whole: the `Retry-After` it carries is the schedule,
+   and its `statusCode()` is what lets the loop hold a `507` that answered a user action until a
+   fresh one asks — a repeat there is *useful*, not promised *safe*, so it shares `Indeterminate`'s
+   duplicate pricing. Decide for yourself what to do with `Indeterminate`, and stop the fan-out on
+   `SignerUnavailable`.
 7. Set `defaultTtl` explicitly if you were relying on the old 28-day default.
 8. Check that every endpoint you send to — test fixtures included — is `https`.
 9. Check payload sizes against the 3993-byte plaintext default, and topics against the

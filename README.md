@@ -109,7 +109,7 @@ switch (sender.send(subscription, message)) {
     case PushOutcome.Accepted a -> log.debug("Accepted for delivery: HTTP {}", a.statusCode());
     case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);
     case PushOutcome.RetryableFailure f ->   // a 507 that a user action produced waits for a fresh one
-        retrier.scheduleIfADuplicateIsAcceptable(subscription, message, f.retryAfter());
+        retrier.scheduleIfAllowed(subscription, message, f);
     case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
     case PushOutcome.SignerUnavailable s -> stopSending(s);          // nothing was sent
     case PushOutcome.PayloadRejected p ->
@@ -123,10 +123,14 @@ switch (sender.send(subscription, message)) {
 `PushOutcome` is a sealed hierarchy, so that `switch` needs no `default` and a variant added in a
 later release fails your compilation instead of falling into a branch that was written for
 something else. `retrier` above is yours: the library performs one POST per `send` and never
-repeats one. The two branches that reschedule share their spelling on purpose — `RetryableFailure`
-says a repeat may be *useful*, never that it is *safe*, so the duplicate is priced on both — and
-[What a send reports](#what-a-send-reports-and-what-it-still-throws) is the whole of what it hands
-you to decide with, the `507` condition in the comment included.
+repeats one. Neither rescheduling branch is an unconditional repeat — `RetryableFailure` says a
+repeat may be *useful*, never that it is *safe* — and the retryable branch hands over the whole
+outcome because it has one more rule to apply than `Indeterminate` does: both price a possible
+duplicate, and only here can `f.statusCode()` name a `507`, whose repeat waits for a fresh user
+action where a user action produced the send — the condition in the comment. `Indeterminate`
+carries no status, so its branch has nothing to pass but the decision.
+[What a send reports](#what-a-send-reports-and-what-it-still-throws) is the whole of what `send`
+hands you to decide with.
 
 `VapidKeys.fromBase64` expects a 65-byte uncompressed P-256 public key and a 32-byte private
 scalar, both encoded as unpadded base64url — [VAPID keys](#vapid-keys) covers where that pair comes
