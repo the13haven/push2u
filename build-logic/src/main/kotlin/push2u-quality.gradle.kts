@@ -1,6 +1,7 @@
 import com.github.spotbugs.snom.SpotBugsTask
 import java.util.concurrent.Callable
 import net.ltgt.gradle.errorprone.errorprone
+import org.gradle.external.javadoc.StandardJavadocDocletOptions
 
 // Convention plugin bundling every static-analysis tool push2u runs: Spotless (formatting),
 // Checkstyle (style beyond formatting), PMD, SpotBugs, Error Prone + NullAway (compiler checks)
@@ -8,7 +9,8 @@ import net.ltgt.gradle.errorprone.errorprone
 //
 // The quality tools stay OUT of the plain `build` / `check` path — they are wired to the
 // `qualityCheck` (local, auto-formats) and `qualityCheckCi` (CI, verifies formatting) lifecycle
-// tasks instead, so an ordinary `./gradlew build` remains compile + test only.
+// tasks instead, so an ordinary `./gradlew build` remains compile + test only. Javadoc strictness
+// is the one exception: see the section below for why it applies regardless of that gate.
 
 plugins {
     id("checkstyle")
@@ -261,6 +263,37 @@ tasks.named<JacocoReport>("jacocoTestReport") {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Javadoc — every module publishes a -javadoc jar (push2u-publish.gradle.kts's withJavadocJar()),
+// so the `javadoc` task the java plugin creates already builds on every release, and on a plain
+// `./gradlew build` too: `assemble` pulls in the jar task, which pulls in this one. A warning from
+// it produced no failure anywhere along that path, which is what let three undocumented fields on
+// a new exception type reach the Serialized Form page unnoticed.
+//
+// Unlike Checkstyle/PMD/SpotBugs/Error Prone below, `-Xwerror` is therefore NOT gated behind the
+// quality lifecycle tasks being in the task graph. Gating only the strictness would buy back none
+// of the speed the gate exists for, because the task itself keeps running either way — the gate
+// would only decide whether its warnings are enforced, not whether it runs. And the one path that
+// gating would leave unwatched is a plain `./gradlew build`, nothing more: a release is not left
+// ungated by it, because the release workflow runs `qualityCheckCi` — which would already carry a
+// gated `-Xwerror` — against the same tree immediately before the tag is cut. Applying it
+// unconditionally also means `./gradlew javadoc` on its own does the same thing `qualityCheck`
+// does, rather than a laxer version of it.
+//
+// Main only, the same scope Checkstyle/PMD/SpotBugs use: `javadoc` sources from main by default and
+// nothing here widens that.
+//
+// No explicit doclint configuration beyond `-Xwerror`: the JDK's default doclint groups are already
+// what this tree passes cleanly, and this task is a gate, not the start of a documentation cleanup.
+//
+// `-Xwerror` fails on any javadoc warning, not only a doclint one — a toolchain bump can surface a
+// fresh one on unchanged sources (a new javadoc release's diagnostics for the two explicit JPMS
+// modules are a plausible source), and when that happens the fix belongs at the finding, the same
+// as any other analyser's, not in loosening this option.
+tasks.withType<Javadoc>().configureEach {
+    (options as StandardJavadocDocletOptions).addBooleanOption("Xwerror", true)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Error Prone + NullAway — compiler-attached checks. Only active when a quality lifecycle task is
 // in the graph, so a plain `./gradlew build` compiles at full speed.
 //
@@ -363,6 +396,11 @@ tasks.register("qualityCheck") {
     dependsOn("spotlessApply")
     dependsOn(analysisTasks)
     dependsOn("jacocoTestReport")
+    // Explicit, not left to ride along on `build` pulling `assemble` -> `javadocJar` -> `javadoc`:
+    // that chain runs the task but says nothing about why, and it would silently stop covering
+    // this gate the day withJavadocJar() or the archives wiring changes. No asymmetry with
+    // qualityCheckCi below — there is no equivalent here to Spotless's apply/verify split.
+    dependsOn("javadoc")
 }
 
 tasks.register("qualityCheckCi") {
@@ -372,12 +410,16 @@ tasks.register("qualityCheckCi") {
     dependsOn("spotlessCheck")
     dependsOn(analysisTasks)
     dependsOn("jacocoTestReport")
+    dependsOn("javadoc")
 }
 
 // Ordering: cheapest failure first. Formatting is checked before anything is compiled, the
 // analysers run before the test suites, and within the analysers it goes Checkstyle -> PMD ->
-// SpotBugs. Without this, Gradle is free to schedule the whole build-and-test cycle ahead of
-// spotlessCheck, and a misplaced brace surfaces minutes after the compiler already had the answer.
+// SpotBugs. Javadoc runs after them and still ahead of the test suites — its own dependency on
+// `classes` already keeps it after compilation, but nothing else would order it before a
+// Testcontainers-backed suite, and a doclint failure is cheaper to surface first than that is.
+// Without this, Gradle is free to schedule the whole build-and-test cycle ahead of spotlessCheck,
+// and a misplaced brace surfaces minutes after the compiler already had the answer.
 //
 // Locally the same ordering is what makes spotlessApply rewrite the sources before javac reads
 // them, rather than racing it.
@@ -391,7 +433,8 @@ checkstyleReferences.configure { mustRunAfter(formattingTasks, checkstyleLicense
 tasks.named("checkstyleMain") { mustRunAfter(formattingTasks, checkstyleLicenseHeader, checkstyleReferences) }
 tasks.named("pmdMain") { mustRunAfter("checkstyleMain") }
 tasks.named("spotbugsMain") { mustRunAfter("pmdMain") }
-tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks) }
+tasks.withType<Javadoc>().configureEach { mustRunAfter("spotbugsMain") }
+tasks.withType<Test>().configureEach { mustRunAfter(analysisTasks, "javadoc") }
 
 // Quality tasks are disabled unless a quality lifecycle task is in the graph. That keeps
 // `./gradlew build` (and the `check` task the tool plugins hook into) compile + test only, and it

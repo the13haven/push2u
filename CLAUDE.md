@@ -109,6 +109,13 @@ Notes that matter in practice:
 - **`build` will not catch quality violations.** Checkstyle, PMD, SpotBugs, Spotless, Error Prone
   and NullAway are disabled unless `qualityCheck`/`qualityCheckCi` is in the task graph (or the tool
   task is named explicitly on the command line). Run `qualityCheck` before considering a change done.
+  This was already incomplete before `-Xwerror` existed: `javadoc` sits in `build`'s graph regardless
+  of that discipline — `assemble` pulls in `javadocJar`, which pulls in `javadoc` — because it is not
+  a quality tool hooked to `check` but the task that produces a published artifact, and the
+  discipline above disables only what rides along with `check`; there is nothing about `javadoc` for
+  it to disable. A doclint error has therefore always failed a plain `build`; `-Xwerror` only widens
+  what a plain `build` catches from doclint errors to any javadoc warning, on the same always-on
+  task.
 - Checkstyle/PMD/SpotBugs analyse `main` sources only. Error Prone also covers test compilations
   (defects, not style); NullAway covers `main` and `testFixtures`.
 - Aggregated JaCoCo threshold is 80 % of instructions, enforced by `testCodeCoverageVerification`,
