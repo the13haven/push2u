@@ -44,36 +44,51 @@ are one type. The question every site is put to is *who fixes this, and with wha
 suggests.** Its outcome-versus-exception decision moves every operational failure out of the
 exception channel, and that is the transient-versus-permanent distinction issue #87 was filed about —
 the one whose absence lets a durable retrier repeat a wrong key type forever. What is left on the
-exception channel afterwards is a defect, a misuse, or a cancellation.
+exception channel afterwards is a defect, a misconfiguration that recurs, a misuse, or a
+cancellation.
 
-**No configuration type is added, and the reason is a finding rather than a preference.** The
-obvious candidate for one — a value the deployment supplied that cannot be used — turns out to have
-no shipped path that reaches a send. The Vault token carrying a YAML block scalar's newline is
-refused by `VaultToken`'s own constructor, whose message names that exact case; an address that
-would yield an unusable request URI is refused at the builder factory; a supplied public key that is
-not on P-256 is refused by the factory that takes it. That is this repository's builder convention
-working as ADR-016 and `CONTRIBUTING.md` describe it — a required value is validated where it is
-supplied, and `build()` cannot refuse over one. So a configured value that is wrong is already an
-`IllegalArgumentException` at the boundary that accepted it, and what reaches the send path is by
-construction not a configured-value problem. The two transport sites that look like counterexamples
-— an illegal request header, an unusable URI — are backstops for a caller wiring the seam directly,
-and a backstop does not earn a type.
+**No configuration type is added, and the reason is the criterion rather than a shortage of cases.**
+Half of the obvious candidates never reach a send, because the boundary that takes a required value
+refuses it there: the Vault token carrying a YAML block scalar's newline is refused by `VaultToken`'s
+own constructor, whose message names that exact case; an address that would yield an unusable request
+URI is refused at the builder factory; a supplied public key that is not on P-256 is refused by the
+factory that takes it. That is `CONTRIBUTING.md`'s builder convention working — a required value is
+validated where it is supplied, and `build()` cannot refuse over one — and it makes those an
+`IllegalArgumentException` at the boundary rather than anything a send reports.
 
-**`PushCryptoException` narrows to a defect**, which is what its name says: the cryptography could
-not be performed. A platform without `AES/GCM/NoPadding`, `HmacSHA256` or the `secp256r1`
+The other half does reach a send, and saying otherwise would be false. Those checks are checks of
+*form*: a mount that names no engine, a key name Vault does not hold, a token whose character set is
+legal but whose capability or lifetime is not, a pinned key version Vault has trimmed — every one of
+them is well-formed, passes every boundary, and comes back as a Vault error status. They are a
+deployment's own to fix, and they are exactly what ADR-021's recurring list already names.
+
+They still earn no type, and the criterion is what decides it. A consumer takes no different
+programmatic action on "your token cannot read that key" than on "your platform has no `AES/GCM`":
+both stop the sender until a human intervenes, and neither is retried. The difference is the sentence
+in the log — and a different log line is not a different action, which is the same answer this record
+gives the signer split below. A type would be minted for a distinction only a human reads, and the
+message and the cause chain already carry it.
+
+**`PushCryptoException` therefore covers what recurs until a human acts**, whether the human edits a
+property or files a bug, and it keeps its name because the cryptography is what could not be
+performed in every case. A platform without `AES/GCM/NoPadding`, `HmacSHA256` or the `secp256r1`
 parameters; a custodian or a `VapidSigner` implementation that answered something that is not a
-signature or not a key; a Transit key whose type VAPID cannot use, or a pinned key version Vault no
-longer holds — both of which arrive as a custodian's answer about the request and recur until
-someone changes the key or the pin, with the message naming which. `Endpoints`'s unavailable
-`SHA-256 MessageDigest` is an `IllegalStateException` today and is the same condition as the
-platform cases; it joins them.
+signature or not a key; a Transit key whose type VAPID cannot use, a mount or key name that is not
+there, a token without the capability, a pinned key version Vault no longer holds. `Endpoints`'s
+unavailable `SHA-256 MessageDigest` is an `IllegalStateException` today and is the same condition as
+the platform cases; it joins them. So the type is narrowed by exactly one thing, the operational
+half ADR-021 moves to outcomes, and the misconfigurations that ADR-021 names beside the defects stay
+where that record puts them.
 
-**The starters keep `IllegalStateException`**, and this is stated so the inventory is complete
-rather than silently exempt. Their five conditions — both signer sources configured, no decision
-expressed, an allowlist configured empty — are startup failures of a Spring context, where a failed
-context is what an `IllegalStateException` idiomatically means, and where the library's own rule is
-already that the message names the YAML property rather than the builder's camelCase parameter. A
-library type would say less than the message does and would be caught by nothing.
+**The starters keep `IllegalStateException`**, and this is stated so the inventory is complete rather
+than silently exempt. Their five conditions are a missing `push2u.vapid.subject`; a
+`push2u.signer.vault.key-version` without a `push2u.signer.vault.public-key`; the allowlist
+properties and an `EndpointPolicy` bean both present; no egress decision expressed at all; and every
+configured allowlist present but empty. All five are startup failures of a Spring context, where a
+failed context is what an `IllegalStateException` idiomatically means, where nothing catches by type,
+and where the library's own rule is already that the message names the YAML property rather than the
+builder's camelCase parameter. A library type would say less than the message does and would be
+caught by nothing.
 
 **Cancellation gets its own type**, `PushInterruptedException`, raised by the facade. It rides
 `PushDeliveryException` in two places and `PushCryptoException` in a third today, and it is none of
@@ -82,7 +97,11 @@ the interrupt propagate — is shared with no other failure here. **The seams ar
 it.** ADR-021 put the recognition test on the facade, written as a disjunction over the cause chain
 and the thread's interrupt status, *"precisely so that no transport has to be obliged to anything"*,
 and that stands: `PushHttpClient`'s contract does not change, and the type is what `send` reports
-rather than what a seam must throw.
+rather than what a seam must throw. The residue is named rather than papered over: a signer that
+reads its key inside `build()` is not inside a send, so an interrupt during that read still leaves as
+whatever the seam raised, and the startup supervisor this record names as an audience sees the seam's
+type there. Obliging the seams would close that at a price ADR-021 declined to pay for the send path,
+and it is not worth paying for one call that happens once.
 
 **`IllegalArgumentException` stays exactly what the JDK made it**: a value that is not a legal value
 of its parameter, carrying no library semantics, handled in a generic pool. `Subscription`'s 16-byte
@@ -127,13 +146,15 @@ record's generated one prints its components.
 
 ## What ADR-021 takes, and what this costs
 
-ADR-021 is unimplemented, so it is edited rather than superseded — and the edits are more than
-incidental, which is the point of settling this first. It narrows `PushCryptoException` to *"a
-defect and a misconfiguration"* in three places, and the misconfiguration half leaves under the
-finding above. It leaves `SignerUnavailable`'s shape open where this fixes it as a cause-carrying
-class rather than a record. And its interrupted send, whose seam exception it deliberately does not
-convert, becomes a conversion into a type of its own on the facade. Its signer decision is *not*
-edited: this record confirms it.
+ADR-021 is unimplemented, so it is edited rather than superseded, and the edits are narrower than an
+earlier draft of this record claimed. Its *"a defect and a misconfiguration"*, in the two places it
+says that, **stands**: the misconfigurations it names beside the defects are the ones that reach a
+send, and this record keeps them in the same type for the reason set out above rather than moving
+them anywhere. Its signer decision **stands** too, and is confirmed rather than edited. What it takes
+is two edits: it leaves `SignerUnavailable`'s shape open where this fixes it as a cause-carrying
+class rather than a record, and its interrupted send — whose seam exception it deliberately does not
+convert — becomes a conversion into a type of its own on the facade, for a send and not for a
+`build()`.
 
 Every one of these is a breaking change for a consumer that catches by type. `0.x` was declared the
 window for revising names and constructor shapes once real integrations exist, and each transition
