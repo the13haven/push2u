@@ -122,14 +122,18 @@ no network access — which no repeat of this POST obtains, and which no push se
 of the class.** RFC 4918 §11.5 settles it in terms: the server "is unable to store the
 representation needed to successfully complete the request", and "this condition is considered to be
 temporary". Storage that has run out is a state of the server that an operator or an expiry ends,
-which is the whole of what the retryable side means here. The same section's "MUST NOT be repeated
-until it is requested by a separate user action" does not bind this caller: it governs a user agent
-replaying a user's action, and an application server delivering a notification is not replaying one
-— the party that owns the repeat here is a scheduler. **`510` is deliberately not named.** The IANA
-registry carries it as "Not Extended (OBSOLETED)" against RFC 2774, a document the IETF has
-reclassified Historic, and this library does not read a classification off a specification with no
-standing. It falls to the rule below, which is the honest place for a number no push service is
-expected to send.
+which is the whole of what the retryable side means here. That classification says a later attempt
+may be *useful*, and it overrides nothing else the same section requires: "If the request that
+received this status code was the result of a user action, the request MUST NOT be repeated until
+it is requested by a separate user action." The condition there is what produced the request, not
+what executes the repeat, so a scheduler is no exemption from it — where the send was the result of
+a user action, the caller does not repeat it until a separate user action asks for the repeat. Which
+sends those are is a fact about the application, and the caller is the only party holding it.
+
+**`510` is deliberately not named.** The IANA registry carries it as "Not Extended (OBSOLETED)"
+against RFC 2774, a document the IETF has reclassified Historic, and this library does not read a
+classification off a specification with no standing. It falls to the rule below, which is the honest
+place for a number no push service is expected to send.
 
 **A 5xx the matrix does not name is retryable, and that direction is chosen rather than defaulted
 into.** The ground is the class's own definition, the same one this record reads at the custodian's
