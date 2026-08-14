@@ -207,13 +207,15 @@ documentation states the fork rather than implying that nothing was given up.
 direction too.** What deferring removes is a dependency of *context refresh* on Vault: the
 application starts. It does not by itself make the process healthy, because the indicator is an
 ordinary contributor of the primary group and the root `/actuator/health` always contains every
-registered contributor. So a deployment whose container check curls that path — the shape the report
-behind this record runs — still goes unhealthy on the first probe against an unreachable Vault, and
-everything gated on that container waits behind it exactly as before. The cascade moves from "will
-not start" to "starts, then reports unhealthy", which is a real improvement and not the whole of the
-one the reporter is after. The rest of it is a deployment decision about group membership, taken
-where that decision belongs, and the documentation for this mode points at the recipe rather than
-restating it.
+registered contributor. So a deployment whose container check curls that path still goes unhealthy
+on the first probe against an unreachable Vault, and everything gated on that container waits behind
+it exactly as before: the cascade moves from "will not start" to "starts, then reports unhealthy",
+which is a real improvement and not the whole of one. The report behind this record says the
+container never becomes healthy without saying what its check probes, so whether it is that
+deployment is not something this record knows — a separate report against the health indicator
+carries a container check on exactly that path, and the two describe the same integration. The rest
+of it is a deployment decision about group membership, taken where that decision belongs, and the
+documentation for this mode points at the recipe rather than restating it.
 
 The second cost is paid by whoever waits. A caller that arrives during a flight blocks on *another
 caller's* Vault call, bounded by that flight's own connect and request timeouts and by nothing this

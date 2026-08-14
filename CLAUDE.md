@@ -224,14 +224,14 @@ starter is ordered before the core starter and outranks the local signer.
 - **Boolean naming** (CONTRIBUTING.md carries the full form, nothing enforces it): a record's
   component accessor keeps the component's name (`record Feature(boolean enabled)` → `enabled()`)
   because the language says so, and the example is a made-up record rather than one of ours so the
-  rule outlives the type that used to illustrate it;
-  a question about state is `is…`/`has…`/`can…` regardless of whether the answer is stored or
-  computed (`isSupported()`, the token cache entry's `isFresh(...)`); an action or a two-argument
-  relation keeps its verb (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived
-  predicate wearing a component accessor's name, so that a judgement reads as one more stored value
-  — `VaultHttpResponse` carries `statusCode()`, `body()` and `retryAfter()`, so a question derived
-  from them is `isRateLimited()` and never `rateLimited()` — and the pair that takes judgement is
-  predicate against verb. A name an interface fixes (`getBody()`, from the JDK) is not ours.
+  rule outlives the type that used to illustrate it; a question about state is `is…`/`has…`/`can…`
+  regardless of whether the answer is stored or computed (`isSupported()`, the token cache entry's
+  `isFresh(...)`); an action or a two-argument relation keeps its verb (`verify(...)`,
+  `sameCurve(a, b)`). The failure it prevents is a derived predicate wearing a component accessor's
+  name, so that a judgement reads as one more stored value — `VaultHttpResponse` carries
+  `statusCode()`, `body()` and `retryAfter()`, so a question derived from them is `isRateLimited()`
+  and never `rateLimited()` — and the pair that takes judgement is predicate against verb. A name an
+  interface fixes (`getBody()`, from the JDK) is not ours.
 - **Builders** (CONTRIBUTING.md carries the full form): required parameters go into the factory
   method, optional ones become builder steps — `PushMessage.builder(payload)`,
   `PushSender.builder(keys, contact, endpointPolicy)`. The firm rule is that `build()` must not be

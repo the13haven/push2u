@@ -60,12 +60,12 @@ the health indicator, which lives in its own auto-configuration so the starter s
 Actuator on the classpath, honours the same condition and is gone too; and every signer starter
 honours it, so the Vault signer is never constructed — which in its fetched mode means a read from
 Vault during startup, a call no deployment that has declared the custodian unused should pay for.
-The delivery path is not only what a starter contributes: a signer starter's own diagnostic is
-gated with it, for the reason the table further down gives. A
-signer starter that does not honour it contributes its signer anyway, and the refusal below is then
-correctly silent: that starter is outside this one's reach in the same way an excluded
-auto-configuration is. The switch does not remove an application's own `PushSender`, which is not
-this starter's to withdraw, and it does not reach the endpoint policy.
+The delivery path is not only what a starter contributes: a signer starter's own diagnostic is gated
+with it too, for the reason the table further down gives. A signer starter that does not honour the
+condition contributes its signer anyway, and the refusal below is then correctly silent: that
+starter is outside this one's reach in the same way an excluded auto-configuration is. The switch
+does not remove an application's own `PushSender`, which is not this starter's to withdraw, and it
+does not reach the endpoint policy.
 
 **A signer starter therefore reads a key another module owns, and that is not the coupling this
 record forbids elsewhere.** Naming another module's prefixes inside a message copies that module's
@@ -111,9 +111,13 @@ changes is one line of that deployment's configuration.
 
 ## Which startup checks the switch reaches
 
-The section above settles the endpoint policy. It is one row of a table, and leaving the other rows
-to be decided by where each check happens to be implemented is how a deployment that stated it does
-not send ends up refused over a property nothing reads. So the whole of it is stated here:
+The section above settles one question of this kind, the endpoint policy's. It is a row or two of a
+table, and leaving the other rows to be decided by where each check happens to be implemented is how
+a deployment that stated it does not send ends up refused over a property nothing reads. So every
+check this starter family raises is
+listed, and the list is exhaustive rather than illustrative. Its rows are not in running order —
+that is the section *One declared order over every startup check* below, and it sorts them
+differently:
 
 | Startup check | `push2u.enabled: false` | `true`, or unset |
 |---|---|---|
@@ -123,22 +127,30 @@ not send ends up refused over a property nothing reads. So the whole of it is st
 | A signer starter's partial-configuration diagnostic | skipped | runs |
 | `push2u.signer.vault.public-key-fetch` and its readings | skipped | runs |
 | The general refusal over a missing signer | skipped | runs |
+| The sender's own refusals: `push2u.vapid.subject`, an unstated allowlist | skipped | runs |
 | A tombstone over a property a release removed | runs, while the tombstone lives | the same |
 
 **What decides a row is what the check is about, never where it is implemented.** The first three
 are about a *value*: an allowlist entry that is not an origin is not an origin in a context that
 sends nothing either, and a stated allowlist beside a bean is a contradiction whoever ends up
-reading it. Those are ADR-024's, and this record narrows none of them. The next three are about the
+reading it. Those are ADR-024's, and this record narrows none of them. The next four are about the
 *delivery path*: each asks, in its own words, whether this deployment can sign — and a deployment
-that has said it does not send has answered that already.
+that has said it does not send has answered that already. The last of those four is a row rather
+than a single check: it holds what `pushSender` refuses on its own — a missing contact address, and
+ADR-016's obligation to state an egress decision. Both are listed for completeness rather than
+because anything here moves them, and with the switch off there is no sender to raise either, which
+is the answer ADR-016 would give.
 
 **A signer starter's diagnostic is therefore gated by the switch although it is not a
 contribution.** Its stand-down is over an existing `VapidSigner` or `PushSender` bean, and the
 switch is precisely what keeps those from existing, so the stand-down cannot reach the case: a
 deployment that switched delivery off with half a `push2u.signer.vault.*` block left over would be
 refused over configuration nothing reads. That is the mistake the stand-down exists to prevent, with
-the sign reversed. The `public-key-fetch` readings are gated for the same reason and by the same
-means — they are decided where that signer is built, and with the switch off it is not built.
+the sign reversed. **The `public-key-fetch` readings are in the same column for the table's own
+reason and not for that one** — they have no stand-down to lose; they are about the delivery path,
+and a deployment that answered that question is owed no opinion about when a read it will never
+perform would have happened. That their natural home is the signer's own construction, which the
+switch already removes, is a convenience of the implementation and not what puts them there.
 
 The tombstone row is not an exception to that line but sits outside it: a removed key names a
 setting that exists in neither state, and the refusal is about what the operator believes is in
@@ -234,20 +246,22 @@ the same mistake in the opposite direction. That stand-down is not the only one:
 these diagnostics as well, because with delivery off there is no bean for the stand-down to find and
 the very case it exists for would go unanswered — the table above is where that is settled.
 
-**A specific finding outranks the general one, and neither is aggregated.** Those two are not the
-whole list — the section *One declared order over every startup check* below carries it, and what
-follows here is the reasoning that list is built on. Two different orders
+**A specific finding outranks the general one, and neither is aggregated.** Two different orders
 carry that, and conflating them is how it gets lost. One is the order of the auto-configurations,
 which decides what each check's condition can see, and it is the order the starters already declare
 between themselves. The other is the order in which the raised checks run, and it is not the first
-one restated: the framework runs post-processors that declare a precedence ahead of those that do
-not, and orders what remains by a registration sequence it promises only as far as it can. So the
+one restated: the framework sorts post-processors into buckets by the kind of precedence they
+declare and orders what remains by a registration sequence it promises only as far as it can. So the
 running order is declared on both checks, and a test pins the result. Testing an undeclared order is
 not the same answer and does not substitute for it — a green test over a sequence nothing guarantees
 records what this version happens to do, and the next one is free to do otherwise without failing
 anything. Declaring it on one check and not on the other is refused for a different reason: which of
 the two then runs first depends on which of them declared, and a reader who has to work that out
 from the buckets a framework sorts into is a reader this record has failed.
+
+These two checks are not the whole of it. By the time this record is implemented six of them declare
+a position, and the reasoning just given applies to every one; the section *One declared order over
+every startup check* below is where they are put in one line.
 
 What is refused is the step after that: a mechanism by which one module's finding is collected into
 another module's message. That is a cross-module contract, published for the life of the API, in
@@ -301,14 +315,14 @@ this record did.
 
 ## One declared order over every startup check
 
-The rule above was stated for two checks, and by the time this record is implemented there are
-several. ADR-023 leaves a tombstone behind a removed property; ADR-024 raises two refusals about the
+The rule above was stated for two checks, and by the time this record is implemented there are six.
+ADR-023 leaves a tombstone behind a removed property; ADR-024 raises two refusals about the
 allowlist; this record adds three of its own. They are not alternatives — one context can earn
 several at once, and the operator reads whichever arrives first. So there is one list, and this is
 it:
 
-1. **the value of `push2u.enabled`**, because until it has been read nothing below knows which
-   column of the table above it is standing in;
+1. **the value of `push2u.enabled`**, because a deployment that mistyped the one key deciding
+   whether any of this applies is owed that sentence and not a consequence of it;
 2. **a tombstone over a removed property**, because a key that no longer exists makes every reading
    under it a reading of something the operator did not mean to write;
 3. **a malformed allowlist entry**;
@@ -321,26 +335,56 @@ it:
 
 Steps 3 through 6 are the rule above generalised: specific before general, a value before the path.
 Steps 1 and 2 sit ahead of all of it because they decide whether the configuration underneath them
-can be read at face value at all.
+can be read at face value at all. The order is about which message an operator holding several
+faults reads first; it is not a claim that a later step's *condition* is decided by an earlier
+step's outcome, and no such claim would be true — a condition on an auto-configuration is evaluated
+while the configuration classes are parsed, long before any of these checks runs.
 
-**Each of 1 to 6 declares its position, and none of them is left as validation inside a bean's
-factory method.** That is the half that is easy to get wrong and invisible afterwards: a `@Bean`
-method runs at singleton pre-instantiation, which is step 7, so a refusal left there loses to every
-post-processor above it however specific it is. ADR-024 has the malformed-entry refusal raised
-inside the policy's factory method together with the construction of the rules; under this order it
-is raised at step 3 by a check that performs that same construction and discards it, while the
-factory goes on building through the one implementation of the rule. Constructing a handful of rules
-twice at startup is what buys the operator a message naming the entry rather than one about a signer
-they had not reached yet.
+**Each of 1 to 6 declares its position, and none of them is left as validation inside an ordinary
+bean's factory method.** That is the half that is easy to get wrong and invisible afterwards: an
+ordinary `@Bean` is created at singleton pre-instantiation, which is step 7, so a refusal left there
+loses to every post-processor above it however specific it is. (A `@Bean` method whose *product* is a
+post-processor is not that case — the framework fetches those in the earlier phase — which is
+precisely how these six are declared from an auto-configuration at all.) The refusal ADR-024 raises
+over a malformed entry is the worked example: it went with the construction of the rules, inside the
+policy's factory method, and this order is what made that position unreachable. It is now raised at
+step 3 by a check that performs the same construction and discards it, while the factory goes on
+building through the one implementation of the rule — an amendment that record carries in its own
+words. Constructing a handful of rules twice at startup is what buys the operator a message naming
+the entry rather than one about a signer they had not reached yet.
+
+**Every check in the "runs" column of the table above is declared outside the auto-configuration
+that carries the switch's condition.** That constraint was stated there for ADR-024's policy bean;
+it is the same constraint and it reaches the tombstone too, whose natural home would otherwise be
+the core starter's own auto-configuration — the one the switch turns off. A row that says it runs
+with delivery off, raised from a class the switch removes, is a row that does not hold.
+
+**One mechanism, or the numbers do not compare.** The framework sorts post-processors of the bean
+factory into buckets by the *kind* of precedence they declare and orders only within each bucket, so
+two checks in different buckets run in bucket order whatever integers they carry — and a check that
+runs in an altogether earlier phase, over the environment as it is being prepared, precedes all of
+them however it is annotated. So the six are one kind: post-processors of the bean factory,
+declaring the ordinary precedence rather than the priority one, reading the environment at refresh
+as ADR-023 already asks of the tombstone. A check that cannot be built that way has left this list
+rather than taken a position in it, and the list is the thing that has to be revisited.
 
 **The numbers cannot live in one place, and this list is what keeps them in step.** A signer starter
 deliberately does not depend on the core starter — the Vault one orders itself against it by name —
-so no constant is visible to both, and step 5 is declared in a different module from steps 1, 2, 4
-and 6. Each module keeps its own positions as package-private constants in a single class, reads
-them against this list, and pins them with a test of its own. A position taken from the registration
-sequence rather than declared is refused here for the reason it is refused above: the framework
-promises that sequence only as far as it can, and a green test over it records what this version
-happens to do.
+so no constant is visible to both, and step 5 is declared in a different module from steps 1, 2, 3,
+4 and 6. Each module keeps its own positions as package-private constants in a single class and
+reads them against this list. A position taken from the registration sequence rather than declared
+is refused here for the reason it is refused above: the framework promises that sequence only as far
+as it can, and a green test over it records what this version happens to do.
+
+**What pins the order is the message that arrives, not the value of a constant.** A test asserting
+that a constant equals the number written here proves that someone typed the number twice, and stays
+green while the module next door moves its own — which is the failure the split into two modules
+introduces and the only one worth testing for. So the order is pinned by a context holding *every*
+starter that declares a position, configured to earn several refusals at once, asserting which
+message the operator gets. That context exists in exactly one place: the Vault starter's suite,
+which is the only one with both starters on a classpath. A per-module test can pin the positions
+that module owns; it cannot pin the thing this section exists to guarantee, and must not be offered
+as though it had.
 
 ## What this does not touch
 
@@ -417,8 +461,15 @@ it.
 - A precedence declared on some of these checks and not on the others, which leaves which one runs
   first depending on which one declared; and any check of this family without a position in the one
   list, whichever module raises it.
-- A refusal ordered below another by being left inside a bean's factory method, where singleton
-  pre-instantiation puts it behind every post-processor however specific it is.
+- A refusal ordered below another by being left inside an ordinary bean's factory method, where
+  singleton pre-instantiation puts it behind every post-processor however specific it is.
+- A check of this family built on a mechanism that sorts into a different bucket, or that runs in an
+  earlier phase than the rest, so that its declared number does not compare with theirs.
+- A check the table has running with delivery off, declared inside an auto-configuration that
+  carries the switch's condition — the row and the declaration site then say opposite things.
+- The order pinned by asserting a constant's value, or by a test that can see only one module's
+  checks: what has to be pinned is the message that arrives in a context holding every starter that
+  declares a position.
 - A tombstone over a removed property with no end to it, and equally an end written as a version
   number that does not exist yet.
 - A starter's diagnostic sharing an auto-configuration with its contribution, and so deciding

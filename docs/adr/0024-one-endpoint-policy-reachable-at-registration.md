@@ -128,10 +128,11 @@ ordinary parameter:
 EndpointPolicy push2uEndpointPolicy(Push2uProperties properties) { … }
 ```
 
-`ENDPOINT_POLICY_BEAN_NAME` is not published. It is a name two places in this starter have to spell
-the same way, and nothing else; publishing it would offer an application a constant to match on,
-which is the identification this record refuses two paragraphs below — a bean is the starter's
-because of the definition it came from, not because of the string it was registered under.
+`ENDPOINT_POLICY_BEAN_NAME` is not published. It is a spelling this starter has to keep consistent
+with itself and nothing more; publishing it would offer an application a constant to match on, which
+is the identification *Which bean is whose is answered by where its definition came from* refuses
+below — a bean is the starter's because of the definition it came from, never because of the string
+it was registered under.
 
 **The condition is the allowlist, not the signer.** Gating the bean on `VapidSigner` was the first
 form of this decision, and it is wrong in the direction that matters most: a service that accepts
