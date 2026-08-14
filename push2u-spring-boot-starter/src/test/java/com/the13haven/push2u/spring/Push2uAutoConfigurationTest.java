@@ -822,7 +822,7 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void blankAllowedOriginsIsAnEntryRatherThanTheEscapeHatch() {
-        // The hatch above works on an explicitly EMPTY value. A blank one is not the same input:
+        // The escape hatch works on an explicitly EMPTY value. A blank one is not the same input:
         // bound from a single delimited string, only a zero-length value yields no entries, while a
         // space yields one that trims to nothing. So the property counts as expressing an allowlist
         // and its entry is refused — and what makes that survivable is the index, since an entry
@@ -858,7 +858,12 @@ class Push2uAutoConfigurationTest {
                     assertThat(context).hasFailed();
                     assertThat(firstOfTypeContaining(
                                     context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
-                            .hasMessageContaining("EndpointPolicy bean")
+                            // All three of this starter's IllegalStateExceptions name the property
+                            // and mention an EndpointPolicy bean, and none of them carries an
+                            // index — so neither of those separates them, and the assertion has to
+                            // pin a string only the two-sources refusal has.
+                            .hasMessageContaining("Configure exactly one")
+                            .hasMessageContaining("'rejectingPolicy'")
                             .as("no index is named here — addRules is never reached")
                             .hasMessageNotContaining("push2u.allowed-origins[");
                 });
@@ -1256,6 +1261,13 @@ class Push2uAutoConfigurationTest {
     }
 
     /** Keys and subject only — for the cases that supply the endpoint policy themselves, or deliberately omit it. */
+    private ApplicationContextRunner keyedRunnerWithoutEndpointPolicy() {
+        return runner.withPropertyValues(
+                "push2u.vapid.public-key=" + publicKeyB64,
+                "push2u.vapid.private-key=" + privateKeyB64,
+                "push2u.vapid.subject=mailto:admin@example.com");
+    }
+
     /**
      * Puts {@code push2u.allowed-origins} into the environment as a single blank string, which is what an operator
      * writes when they mean to empty an inherited property. It cannot go through {@code withPropertyValues}, which
@@ -1265,13 +1277,6 @@ class Push2uAutoConfigurationTest {
         return context -> context.getEnvironment()
                 .getPropertySources()
                 .addFirst(new MapPropertySource("blank-allowlist", Map.of("push2u.allowed-origins", " ")));
-    }
-
-    private ApplicationContextRunner keyedRunnerWithoutEndpointPolicy() {
-        return runner.withPropertyValues(
-                "push2u.vapid.public-key=" + publicKeyB64,
-                "push2u.vapid.private-key=" + privateKeyB64,
-                "push2u.vapid.subject=mailto:admin@example.com");
     }
 
     /** A well-formed subscription unrelated to the VAPID key pair under test. */
