@@ -222,12 +222,12 @@ Concurrent health evaluations are collapsed into a single signing operation. `ca
 disables caching entirely; negative values fail startup naming the property. The cache is
 per-process by design — probes ask about the pod they run in.
 
-The indicator participates in the health endpoint's primary group, and nothing takes it out of that
-one: `management.endpoint.health` has no top-level `include`/`exclude` — those exist only under
-`group.<name>.*` — so the root `/actuator/health` holds every registered contributor. Spring Boot's
-`liveness` and `readiness` groups are assembled separately and hold only the application's own
-availability state, so a signer outage can never restart pods — an unreachable Vault is not
-something a container restart fixes.
+The indicator participates in the health endpoint's primary group, and no configuration takes it out
+of that one: `management.endpoint.health` has no top-level `include`/`exclude` — those exist only
+under `group.<name>.*` — so the root `/actuator/health` holds every registered contributor. Spring
+Boot's `liveness` and `readiness` groups are assembled separately and hold, by default, only the
+application's own availability state, so a signer outage can never restart pods — an unreachable
+Vault is not something a container restart fixes.
 
 The indicator is registered when a `VapidSigner` bean exists, and asks about nothing else: the
 signer is the only part of a send that can stop working while the application runs — it reaches a
@@ -255,13 +255,18 @@ dependency-availability check, so a container `HEALTHCHECK` on `/actuator/health
 container unhealthy for as long as the signer's backend is unreachable, and everything gated on
 `depends_on: service_healthy` waits behind a notification channel. A deployment for which push
 delivery *is* the product may want precisely that; one for which it is a secondary channel points
-the check at a group instead. Four ways to do that, in the order to try them.
+the check at a group instead. Three ways to do that, in the order to try them, and a fourth setting
+that is not one of them.
+
+**Whichever you pick, the YAML alone changes nothing.** A group is a second endpoint beside the root
+one, so the container check has to be pointed at it explicitly; the `healthcheck` line is part of
+each recipe below and not an afterthought.
 
 **1. Spring Boot's own `readiness` group, where its meaning fits.**
 
 ```yaml
 healthcheck:
-  test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health/readiness"]
+  test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
 ```
 
 It is there by default (`management.endpoint.health.probes.enabled` defaults to on) and, unless you
@@ -278,20 +283,38 @@ management:
     health:
       group:
         container:
-          include: db,diskspace     # names this deployment guarantees are registered
+          include: db,diskSpace     # contributors this deployment guarantees
           additional-path: "server:/healthz"
 ```
 
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+```
+
 It never mentions push2u, so no way of removing the indicator can break it, and `additional-path`
-puts it on the application's own port so the check need not know Actuator's paths. The price is a
-closed list: a contributor added later does not join it, and every name in it carries the presence
-requirement below.
+puts it on the application's own port so the check need not know Actuator's paths. Two prices. It is
+a closed list, so a contributor added later does not join it. And every name in it carries the
+presence requirement below — including the part of it that catches people out: **a contributor's
+name is its bean name minus a `HealthIndicator`/`HealthContributor` suffix, which is not always how
+its property is spelled.** Disk space registers as `diskSpace` while its switch is
+`management.health.diskspace.enabled`; names are matched exactly, case included, so the property
+spelling in a group is the failure below.
 
 **3. `exclude: push2u`, where the indicator's presence is guaranteed.**
 
 ```yaml
+management:
+  endpoint:
+    health:
+      group:
         container:
           exclude: push2u
+```
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/container"]
 ```
 
 Membership is "included and not excluded", and an empty `include` includes everything, so this reads
@@ -300,14 +323,13 @@ added later. It is also a claim about push2u, which is what the next paragraph i
 machinery in reverse gives the monitoring side a group that *does* watch the probe:
 
 ```yaml
+management:
+  endpoint:
+    health:
+      group:
         push:
           include: push2u           # /actuator/health/push
 ```
-
-**4. `management.endpoint.health.validate-group-membership: false`, last.**
-
-It switches the check described below off for every group and every name, so it also stops catching
-a mistyped contributor name anywhere in the configuration. There is no per-name form of it.
 
 **A name in a group's `include` or `exclude` is a claim that the contributor exists.** Spring Boot
 4.1 validates both sides while the context starts, and fails it with
@@ -323,3 +345,9 @@ framework's validator rather than anything done to push2u, which is why it is wo
 advance: a group that names this contributor is edited in the same change that removes it. The edit
 is the same one in every case, and it is the right one on its own terms — the exclusion was there to
 keep a signer probe out of the check, and there is no probe left to keep out.
+
+**`management.endpoint.health.validate-group-membership: false` is the escape hatch from that
+validation, and not a fourth recipe.** It points no check anywhere and moves no contributor between
+groups; it stops the paragraph above from failing a context, for every group and every name at once,
+and with it goes the check that catches a name misspelled the way `diskspace` is. There is no
+per-name form of it.

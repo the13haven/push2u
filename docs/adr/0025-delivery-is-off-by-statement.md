@@ -83,11 +83,12 @@ switch does only the first.** The framework validates the membership of every he
 in properties, on the `exclude` side as well as the `include` side, and refuses a context that names
 a contributor which does not exist. A deployment whose group names `push2u` — most often to keep a
 signer probe out of a container health check — therefore edits that group in the same change that
-removes the indicator, by whichever route it removes it: this switch is one of several and not the
-first of them, since the indicator's own key removes it too, and so does the absence of a signer
-bean that predates both. The trap is the framework's, it is reported at
-https://github.com/the13haven/push2u/issues/89 against a key that already exists, and none of the
-answers to it are this library's to take. It does not register a contributor that reports delivery
+removes the indicator, by whichever route it removes it: the indicator's own key removes it, so does
+the absence of a signer bean, and both of those reach a released version before this switch does, so
+the switch is one route of several rather than the one that introduces the problem. The trap is the
+framework's, the deployment that meets it is the one
+https://github.com/the13haven/push2u/issues/89 is about, and none of the answers to it are this
+library's to take. It does not register a contributor that reports delivery
 being off, which would put a new observable state into every deployment that does not send in order
 to keep a name registered for a check performed on the operator's own configuration; and it does not
 switch that validation off on the deployment's behalf, which is global and would stop catching a
