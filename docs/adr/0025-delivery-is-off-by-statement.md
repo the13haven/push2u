@@ -388,10 +388,11 @@ whatever integers they carry. Three ways to fall out of the intended bucket, all
   same reason.
 
 So a check of this family declares its position **on its class**, and the `@Bean` method that
-contributes it declares **that class** as its return type; the method is `static`, as the framework
-requires of one producing a post-processor, so contributing it does not drag its auto-configuration
-into existence early. A check that cannot be built that way has left this list rather than taken a
-position in it, and then the list is what has to be revisited.
+contributes it declares **that class** as its return type; and the method is `static`, which the
+framework instructs for one producing a post-processor without enforcing — a non-static one is
+noted in the log and otherwise tolerated, while it instantiates the auto-configuration that declares
+it before the phase these checks run in. A check that cannot be built that way has left this list
+rather than taken a position in it, and then the list is what has to be revisited.
 
 **The numbers cannot live in one place, and this list is what keeps them in step.** A signer starter
 deliberately does not depend on the core starter — the Vault one orders itself against it by name —
