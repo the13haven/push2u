@@ -274,8 +274,15 @@ healthcheck:
 It is there by default (`management.endpoint.health.probes.enabled` defaults to on) and, unless you
 declare a group of that name yourself, is assembled by the framework rather than from
 `management.endpoint.health.group.*` — so it names no contributor, and nothing done to this
-indicator can break it. The price is that it asserts only the application's own readiness state —
-not the database, not whatever else the root endpoint was asserting for you.
+indicator can break it. The short `/readyz` path is a separate switch and is *not* on by default:
+without `management.endpoint.health.probes.add-additional-paths`, the group answers on
+`/actuator/health/readiness` only.
+
+The price is that it asserts only the application's own readiness state — not the database, not
+whatever else the root endpoint was asserting for you. **Answering that price is what ends the
+immunity**: the moment you write `management.endpoint.health.group.readiness.include`, the group
+comes from properties like any other, the membership check below applies to every name in it, and
+this has become the second recipe with the first recipe's name on it.
 
 **2. A group naming what the check is meant to assert.**
 
@@ -321,17 +328,24 @@ healthcheck:
 
 Membership is "included and not excluded", and an empty `include` includes everything, so this reads
 "everything but push2u" — the shortest form, and the only one that keeps picking up contributors
-added later. It is also a claim about push2u, which is what the next paragraph is about. The same
-machinery in reverse gives the monitoring side a group that *does* watch the probe:
+added later. It is also a claim about push2u, which is what the presence requirement below is about.
+The same machinery in reverse gives the monitoring side a group that *does* watch the probe:
 
 ```yaml
 management:
   endpoint:
     health:
       group:
-        push:
+        push:                       # not push2u — see below
           include: push2u           # /actuator/health/push
 ```
+
+**Excluding this probe is not the same as keeping its backend out of the verdict.** The exclusion
+removes one contributor from one group. A deployment that also carries some other contributor
+reaching the same backend — a Vault health indicator from another starter, say — still has that
+backend in the group, and an outage still marks the container unhealthy through the other entry. If
+that is what the exclusion was for, the contributors actually in the group are what to check, not
+this one.
 
 **A name in a group's `include` or `exclude` is a claim that the contributor exists.** Spring Boot
 4.1 validates both sides while the context starts, and fails it with
@@ -348,6 +362,18 @@ advance: a group that names this contributor is edited in the same change that r
 is the same one in every case, and it is the right one on its own terms — the exclusion was there to
 keep a signer probe out of the check, and there is no probe left to keep out.
 
+**That assumes one party owns both, and an application distributing push2u is where it stops being
+true.** A health group shipped inside an image is a build artifact; the deployment that switches the
+probe off has properties and environment variables and no way to edit it. So the rule for anyone
+*shipping* a group is the stronger one: **do not name `push2u` in a group you distribute** — you are
+writing a claim that someone else will be refused for, in a message naming neither you nor them. The
+deployment left holding such an image is often not stuck: the group's key can be overridden from the
+environment like any other, and an explicitly empty value clears the list and passes the check
+(`MANAGEMENT_ENDPOINT_HEALTH_GROUP_CONTAINER_EXCLUDE=`). Often, because that spelling works for a
+single-word group name — an environment variable is read on its `_` boundaries, so a group named
+`container-check` is not reachable this way and a variable naming it lands on a different key
+entirely. It is a repair, and one the deployment did not choose the conditions of.
+
 **A `*` in the same list switches that check off for everything written after it.** The validator
 walks a group's names in the order they were written and stops at the first `*`, leaving the rest of
 that list unchecked — and since `*` already means every contributor, a name after it changes nothing
@@ -355,8 +381,16 @@ at run time either, so it is inert and unverified at once. `include` and `exclud
 separately, so a `*` on one side says nothing about the other. This is why the second recipe above
 spells its list out: an explicit list is the one the framework actually checks for you.
 
-**`management.endpoint.health.validate-group-membership: false` is the escape hatch from that
-validation, and not a fourth recipe.** It points no check anywhere and moves no contributor between
-groups; it stops the paragraphs above from failing a context, for every group and every name at
-once, and with it goes the check that catches a name misspelled the way `diskspace` is. There is no
-per-name form of it.
+**Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
+thing to want here, and it does not start. A *second* validator, beside the membership one, refuses
+a contributor whose name equals a group's, and the registration fails with `HealthContributor with
+name "push2u" clashes with group`. This one is not raised through the framework's failure-analysis
+machinery, so it arrives without a line telling you what to do about it. Name the group after the
+question it answers, as the `push` group above does.
+
+**`management.endpoint.health.validate-group-membership: false` is the escape hatch from the
+membership check, and not a fourth recipe.** It points no check anywhere and moves no contributor
+between groups; it stops that one check from failing a context, for every group and every name at
+once, and with it goes the catch for a name misspelled the way `diskspace` is. There is no per-name
+form of it — and it does not reach the name clash just above, which has no switch at all. The group
+whose name collides has to be renamed.

@@ -61,6 +61,11 @@ import com.the13haven.push2u.VapidSigner;
  * restart pods — an unreachable Vault is not something a container restart fixes. An operator who declares a group of
  * that name including this contributor gets what they declared, so the property that keeps the two apart is the
  * deployment's rather than this class's.
+ *
+ * <p>What this asserts that a probe of the signer's backend cannot: it signs, so it fails on a credential that no
+ * longer authorises signing — an expired or revoked token, a key renamed or deleted, a permission withdrawn — where a
+ * probe asking the backend whether it is up and unsealed answers yes to all of them. A deployment carrying such a
+ * backend probe beside this one is not carrying the same question twice.
  */
 public final class Push2uHealthIndicator implements HealthIndicator {
 
