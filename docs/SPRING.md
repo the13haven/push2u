@@ -145,6 +145,19 @@ beside the other property, that property carries the allowlist alone. Every set 
 no bean still fails the context, with a message naming both keys: emptying them is a statement
 about the pair, and no single entry is left to refuse on its own terms.
 
+**Empty means empty, and a blank is not one.** Where the value arrives as one delimited string —
+an environment variable, `PUSH2U_ALLOWED_ORIGINS=`, is the case this hatch exists for — only a
+zero-length value is no entries at all. A single space is one entry; a lone comma is two, one either
+side of it. None of them is a name, but the property now *expresses* an allowlist, which is the
+opposite of what was meant by typing it.
+
+What that costs depends on what else is configured, and it is worst beside a bean — which is where
+an inherited allowlist is emptied in the first place. Beside an `EndpointPolicy` bean, an expressed
+allowlist is the contradiction above: the context
+fails naming the property and the bean, not the blank that made it look expressed. On its own, or
+beside the other property, the blank entry is refused as the malformed entry it is — which is the
+next paragraph, and the better of the two failures to be holding.
+
 A malformed entry fails the context named exactly — the property it came from and its index in that
 property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from one
 entry of one named property. The entry appears in the message the way an endpoint appears in a
@@ -390,8 +403,9 @@ So the wildcard's position, and nothing else, decides whether a mistake beside i
 `include: "*,diskspace"` starts cleanly while `include: "diskspace,*"` refuses over `diskspace` —
 the misspelling from the second recipe — although the two are the same list and do the same thing
 once running, since a name written beside a `*` is already matched by the `*`, wherever it sits.
-Such a name is therefore always inert, and checked only where it stands before the wildcard. This is why the second recipe above spells its list out: an explicit list is the one the
-framework actually checks for you.
+Such a name is therefore always inert, and checked only where it stands before the wildcard. This
+is why the second recipe above spells its list out: an explicit list is the one the framework
+actually checks for you.
 
 **Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
 thing to want here, and it does not start. A *second* validator, beside the membership one, refuses
