@@ -61,10 +61,9 @@ sender is able to use.** Across the range, including both ends the builder admit
 | 8192 | 8089 | 8107 |
 | 2147483647 (the maximum an `int` carries) | 2147483544 | 2147483562 |
 
-The last row is the one that has to be checked rather than read: the derived `rs` is
-`maxEncryptedBodyBytes − 85` for every configuration, so it stays below `Integer.MAX_VALUE` by
-construction and the addition cannot wrap. That is the same boundary the surrounding code already
-computes in `long` for, and the derivation follows it.
+The last row is the one to check rather than read: the derived `rs` is `maxEncryptedBodyBytes − 85`
+for every configuration, so it stays below `Integer.MAX_VALUE` by construction and cannot wrap —
+the same boundary the surrounding code computes in `long` for.
 
 The second addend is written as the record overhead plus the one octet by which RFC 8291 §4
 requires `rs` to exceed it — not as `MIN_RECORD_SIZE`, whose value is the same 18 for a different
@@ -74,24 +73,17 @@ the derivation is its inverse: it belongs beside it, as `recordSizeForMaxPlainte
 still decides the rule in both directions.
 
 **The pre-flight maximum becomes a single subtraction, and its `min` goes with the parameter.**
-`maxPlaintextBytes(recordSize, maxEncryptedBodyBytes)` takes the smaller of what each precondition
-permits. Under this derivation its two operands are not merely ordered but *equal* —
-`maxPlaintextForRecordSize((body − 103) + 18)` is `body − 103` identically — so the `min` is
-degenerate on every configuration, and a branch that no input can select is worse than no branch:
-it reads as a live guard. The maximum is the body ceiling less the fixed overhead, clamped at zero,
-and `recordSizeForMaxPlaintext` is its inverse. `MIN_RECORD_SIZE` loses its only production caller
-with the builder's validation: nothing in `main` names it afterwards, because `checkRecordSize`
-enforces the same floor implicitly — an `rs` below 18 fails it even for an empty plaintext. It
-survives as the documented statement of RFC 8188 §2's minimum, pinned by the tests rather than read
-by the code.
+`maxPlaintextBytes` takes the smaller of what each precondition permits; under this derivation its
+two operands are *equal* on every configuration — `maxPlaintextForRecordSize((body − 103) + 18)` is
+`body − 103` identically — so the `min` is degenerate, and a branch no input can select is worse
+than no branch, because it reads as a live guard. The maximum is the body ceiling less the fixed
+overhead, clamped at zero.
 
-`DEFAULT_RECORD_SIZE` disappears from the production configuration with the parameter. As an `rs`,
-4096 survives only where it is part of a specific example — the RFC 8291 §5 worked vector, whose
-`rs` is fixed by the vector rather than chosen by this library. (4096 remains the *body* default,
-which is a different constant and untouched.) `WebPushEncryptor.encrypt` keeps its `rs` parameter
-because production passes the derived value to it on every send; the vector needs it too. And
-`checkRecordSize` keeps guarding: reachable directly, `encrypt` must still refuse an `rs` too small
-for the plaintext it is handed.
+`DEFAULT_RECORD_SIZE` disappears with the parameter; as an `rs`, 4096 survives only in the RFC 8291
+§5 worked vector, which fixes its own. (4096 remains the *body* default, a different constant.)
+`WebPushEncryptor.encrypt` keeps its `rs` parameter — production passes the derived value on every
+send — and `checkRecordSize` keeps guarding it, since a direct caller can still hand it an `rs` too
+small for its plaintext.
 
 ### No floor at 4096
 
@@ -119,28 +111,36 @@ different headers for different notifications, and what a deployment advertises 
 read off what it configured. The budget is untouched by this — under `rs = payload + 18` the
 record-size precondition is vacuous by construction, leaving `maxEncryptedBodyBytes − 103`, the
 same maximum the per-sender form produces — so the pre-flight would work either way, and the
-objection is about the header rather than about the bound. And the per-message form is structurally
-incompatible with padding, rather than merely leaving it unimplemented: a record padded to hide its
-length is by definition not sized to its payload. The per-sender form keeps that door open; see
-below.
+objection is about the header rather than about the bound. And the form as written is incompatible
+with padding — a record padded to hide its length is by definition not sized to its payload — where
+the per-sender derivation already admits it, as the section below works out. That second count is
+weaker than the first and is stated as what it is: a padding feature would redefine the derivation
+in either case, so this is a reason to prefer the form that needs no redefinition, not a claim that
+the per-message one could never be revisited.
 
 The disclosure argument does not separate them: the plaintext length is already derivable from the
 body length, so a varying `rs` reveals nothing a length-counting observer did not have.
 
-### What this gives up: the padding knob
+### What this does not give up: padding
 
-`rs` as a configurable parameter is the knob a length-hiding feature would need. The `aes128gcm`
-format allows padding beyond the delimiter, and a sender that padded every record to a fixed `rs`
-would make its messages indistinguishable by length on the wire — which is a genuine privacy
-property for a push service that sees every body a deployment sends.
+The `aes128gcm` format allows padding beyond the delimiter, and a sender that padded its records to
+a fixed width would make its messages indistinguishable by length to a push service that sees every
+body a deployment sends. That is a genuine privacy property, and the obvious worry about removing
+`recordSize` is that it is the knob such a feature would need. It is not, and the arithmetic says
+so.
 
-This library emits no padding, so the knob as it exists today configures nothing but a refusal
-threshold, and that is what is being removed: a threshold derivable from the other parameter. **If
-padding is ever added, `rs` returns as a parameter in that role** — as the width every record is
-padded to, chosen deliberately and paid for in bandwidth on every message — and the ruled-out list
-below is about `rs` as a refusal threshold, not about that. The two are the same field on the wire
-and different decisions: one is derivable from the body ceiling, the other is not derivable from
-anything, because only the deployment can price uniform-length records against the bytes they cost.
+RFC 8291 §4 requires `rs` to be strictly greater than the plaintext plus the padding delimiter plus
+the authentication tag, so a conforming single record is at most `rs − 1` octets. Under this
+derivation `rs = maxEncryptedBodyBytes − 85`, which puts that ceiling at
+`maxEncryptedBodyBytes − 86`, and adding the 86-octet header gives a body of exactly
+`maxEncryptedBodyBytes`. **The derived `rs` already admits padding up to the configured body
+ceiling** — the unpadded maximum this sender accepts produces a record of precisely `rs − 1`, so
+the room padding would consume is room the declaration already covers.
+
+What a padding feature would need is a parameter naming the *intent*: the body size every message
+is padded to, or a policy that chooses one. `rs` stays derivable from that, as it is derivable from
+the body ceiling now. So nothing here forecloses the feature, and the rule-out below is about `rs`
+as a refusal threshold rather than about any future length-hiding knob.
 
 ### What this does to ADR-011 and how ADR-021 reads afterwards
 
@@ -150,8 +150,10 @@ documented to accept more converts nothing by hand — is untouched and is the r
 `maxEncryptedBodyBytes` is the parameter that survives. Its third paragraph, that `recordSize`
 stays an independent parameter and is never adjusted to follow the body limit, does not: the
 parameter is removed rather than quietly re-aimed, which is the distinction that decides this. When
-this ADR is implemented, ADR-011's status line takes the narrow form,
-`Accepted; one clause superseded by ADR-023`, and the index cell follows.
+this ADR is implemented, ADR-011's status line takes the narrow form —
+`**Status:** Accepted; one clause superseded by [ADR-023](0023-one-size-limit-answerable-before-a-send.md)`
+— and the index cell follows in the index's own link spelling,
+`Accepted; one clause superseded by [023](0023-one-size-limit-answerable-before-a-send.md)`.
 
 ADR-021 is not edited, and one of its sentences has to be read with this record beside it. It says
 `PayloadRejected` covers both size preconditions — the configured body ceiling and the RFC 8291 §4
@@ -183,41 +185,53 @@ than a `PushMessage`, so a payload that will not fit costs no message constructi
 holding a built message asks through `payload()`, which copies — accepted, because the reference
 flow serializes, asks, and only then builds.
 
-`WithinLimit` carries no components and is a singleton constant: a payload that fits needs no
-number to act on, since the action is to send it. The alternative considered,
+**`WithinLimit` carries no components, and that is settled here rather than deferred.** A payload
+that fits needs no number to act on: the action is to send it. The alternative,
 `WithinLimit(payloadBytes, maximumPayloadBytes)`, is symmetric and would serve an application
-packing a notification to fill the budget — digest lines, list items — which under this shape has
-to overshoot deliberately to learn how much room there was. That case is speculative here and the
-addition is compatible, so it is left for a report that demonstrates it rather than taken on
-spec.
+packing a notification to fill its budget — digest lines, list items — which under the chosen shape
+has to overshoot deliberately to learn how much room there was. That case is not one this project
+has been shown, and it is decided against now because it cannot be decided later cheaply: adding a
+component to a record changes its canonical constructor, its accessors and the record patterns
+written against it, so the addition is a breaking change and not a compatible one. A record with no
+components is also not a singleton — its canonical constructor is public and a caller may create as
+many instances as it likes — and nothing here depends on it being one; all instances are equal, and
+that is the whole of what the variant carries.
 
 Both numbers on `ExceedsLimit` earn their place: `payloadBytes` is what the caller handed over, and
 `maximumPayloadBytes` is the budget for the next render — the same pair, in the same unit
-(plaintext octets), that `PayloadRejected` reports, for the same reason ADR-021 gives.
+(plaintext octets), that `PayloadRejected` reports, for the same reason ADR-021 gives. Its
+compact constructor enforces what its name asserts, in the style `PayloadRejected`'s already does:
+neither number is negative, and `payloadBytes` is strictly greater than `maximumPayloadBytes` —
+a variant that says a payload exceeds a limit may not be constructed to say the opposite.
 
 **A bare `int maximumPayloadBytes()` on the sender is deliberately not published**, and this is the
 part that took two revisions to settle. The obvious minimal answer is a number the caller compares
 against, and it exposes two failure modes this library cannot detect afterwards:
 
-- **Units.** `notificationString.length() <= sender.maximumPayloadBytes()` compiles and reads
-  correctly, and compares characters against octets. Any non-ASCII notification then passes a check
-  it should have failed.
-- **Direction.** `>` against `>=` is a one-octet error at exactly the boundary where RFC 8291 §4's
-  strictly-greater requirement already proved how easy that is to get wrong.
+- **Units, and this is the argument that carries the decision.**
+  `notificationString.length() <= sender.maximumPayloadBytes()` compiles and reads correctly, and
+  compares UTF-16 code units against serialized octets. Any non-ASCII notification then passes a
+  check it should have failed, and nothing downstream detects it — the send simply reports
+  `PayloadRejected` for a payload the application believed it had verified.
+- **Direction, which is the weaker half and is stated as such.** The strictly-greater rule of RFC
+  8291 §4 is already folded into the computed maximum, so the caller's comparison is the ordinary
+  inclusive one and an inverted boundary costs one octet of unnecessary compaction rather than an
+  oversized send.
 
-**What the chosen shape achieves is narrower than removing those mistakes, and the difference is
-worth stating precisely.** `ExceedsLimit.maximumPayloadBytes()` is a published `int`, so from the
-second iteration onward a caller can compare against it by hand and make either mistake. What the
-absence of an accessor on the sender changes is that the number cannot be obtained *before* one
-guarded comparison has happened: the first question about a payload is always answered by the
-library, and a caller reaches the budget only by asking. A number published beside the assessment
-would remove that, leaving the right path next to an equally reachable wrong one, which is why it is
-not published.
+**What the chosen shape achieves is narrower than removing those mistakes.**
+`ExceedsLimit.maximumPayloadBytes()` is a published `int`, so from the second iteration onward a
+caller can compare against it by hand and make either mistake. What the absence of an accessor on
+the sender changes is that the number cannot be obtained *before* one guarded comparison has
+happened: the first question about a payload is always answered by the library.
 
-The cost is real and accepted: the budget cannot be learnt without a serialized payload to ask
-about, so an application discovers it by asking once and rendering again rather than by consulting a
-configuration value before it renders anything. The reference case works that way in any case — a
-notification is rendered, then shortened when it does not fit.
+**The price is a one-pass budget-aware renderer, and it is a real capability rather than a
+hypothetical one.** With no accessor, an application cannot ask for its budget and render to fit in
+a single pass; it must render, serialize, be told it does not fit, and render again. The judgement
+this record makes is that a mandatory first guarded comparison is worth more than that pass, because
+the mistake it prevents is silent while the extra pass is merely wasteful. The reference case
+renders and shortens in any case. If a deployment shows that one-pass rendering matters more, the
+accessor is a compatible addition later — unlike the record components above, adding a method
+breaks nothing — and that asymmetry is why the two questions are settled differently.
 
 For a related reason `PushMessage.payloadBytes()` is not public: it publishes the other operand of
 the same unguarded comparison, and the length is available inside the package where the pipeline
@@ -242,21 +256,19 @@ needs it.
   defined it, and `send` keeps checking. Asking is optional; being told is not. A caller that never
   asks is where it was, and a caller that asks and then mutates its payload is caught anyway.
 
-## The message's array is read without a copy inside the package
+## A note on the copy this removes, which is not part of the decision
 
-`PushMessage` keeps its defensive snapshot at construction and its copying public `payload()`. It
-gains a package-private reader that returns the array itself, and the pipeline uses that.
+Recorded here because it arose with the pre-flight and would otherwise be reconstructed from a
+diff, **not as a constraint this ADR imposes**: nothing above depends on it, and it can be dropped
+or reversed without a superseding record.
 
-The reason is the fan-out: `send` is called per subscription, so a message reused across a hundred
-thousand of them is copied a hundred thousand times, inside the library's own code, which only
-reads it. The saving is modest — the ciphertext array of the same order is allocated per send in
-any case, and ECDH dominates both — but it is a copy that protects nothing.
-
-The immutability it relaxes is not merely documented, it is tested: a send must leave the message's
-payload byte-for-byte unchanged. That is what keeps the relaxation from becoming a defect the day
-some later step wants to pad, zero or otherwise touch the buffer it was handed. The reader is named
-so the call site says what it is (`payloadNoCopy`), and the analyser suppression it needs states the
-reason in place.
+`send` is called per subscription, so a message reused across a fan-out is copied once per
+subscription inside the library's own code, which only reads it. `PushMessage` keeps its defensive
+snapshot at construction and its copying public `payload()`, and the pipeline reads the array
+through a package-private accessor instead. The saving is modest — a ciphertext array of the same
+order is allocated per send in any case — but it is a copy that protects nothing. The immutability
+it relaxes is tested rather than merely documented: a send must leave the message's payload
+byte-for-byte unchanged.
 
 ## Migration
 
@@ -264,33 +276,29 @@ Removing a builder step and a Spring property is a breaking change, in the windo
 declared for. The release note names the transition; `README.md`, `docs/SPRING.md`,
 `docs/DESIGN.md` and `docs/MIGRATION.md` lose the parameter with it.
 
-The parameter is also load-bearing as an *example* in places that are not about it. The
-implementation procedure in `.claude/skills/push2u-implement/SKILL.md` uses `recordSize` /
-`push2u.record-size` as the worked example of both the one-rule-one-implementation convention and
-the recipe for adding a configuration option; the Spring starter and its tests cite the property as
-the naming precedent for others. A recipe that teaches a parameter which no longer exists is
+The parameter is also load-bearing as an *example*: `.claude/skills/push2u-implement/SKILL.md` uses
+`recordSize` / `push2u.record-size` as the worked case for both the one-rule-one-implementation
+convention and the recipe for adding a configuration option, and the Spring starter and its tests
+cite the property as a naming precedent. A recipe teaching a parameter that no longer exists is
 wrong in a way nothing fails on, so those examples move to a parameter that survives.
 
 `push2u.record-size` left in a YAML file after the upgrade must fail the context at startup, naming
-the property and where its effect went. Binding ignores an unknown key silently, which would leave
-an operator believing a setting applies; the starter's existing habit is to reject a configuration
-it cannot honour and to name the YAML spelling when it does.
-
-**The refusal must not be built from a retained property component.** `Push2uProperties` is a public
-record, so a component kept only to be rejected also keeps a public accessor on the starter's API —
-a published member that configures nothing, frozen there until someone removes it, which is a worse
-outcome than the silence it fixes. The check belongs on the bound environment instead, at context
-refresh, in the spellings relaxed binding accepts: it fails just as loudly, names the property, and
-publishes nothing. `ignoreUnknownFields = false` is the other tempting mechanism and is refused —
-its blast radius is every unrelated typo under `push2u.`, which is a different decision about a
-different failure.
+the property and where its effect went: binding ignores an unknown key silently, which would leave
+an operator believing a setting applies. **The refusal must not be built from a retained property
+component** — `Push2uProperties` is a public record, so a component kept only to be rejected freezes
+a public accessor that configures nothing into the starter's API. The check belongs on the bound
+environment at context refresh, in the spellings relaxed binding accepts; it publishes nothing.
+`ignoreUnknownFields = false` is refused for its blast radius over every unrelated typo under
+`push2u.`.
 
 ## What this rules out
 
 - Two configurable size parameters, or any second knob whose value is derivable from the first.
 - `recordSize` as public API **in its role as a refusal threshold** — a builder step, a Spring
-  property, or a properties component retained so that a removed key can be refused. A padding
-  width, if that feature is ever added, is a different decision this one does not foreclose.
+  property, or a properties component retained so that a removed key can be refused. A length-hiding
+  feature would configure a padded body size rather than `rs`, and is not what this forbids.
+- Data on the assessment's fitting branch: `WithinLimit` carries no components, and adding them
+  later is a breaking change rather than a compatible one.
 - `rs` derived per message rather than per sender.
 - A floor, default or historical constant applied to the derived `rs`.
 - A degenerate `min` left in the pre-flight after its second operand became derivable — a branch no
