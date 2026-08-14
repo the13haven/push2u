@@ -1011,8 +1011,9 @@ signer whose bytes do not verify reports `DOWN` instead of failing every real se
 backend round-trip — against Vault Transit, one operation written to every audit device, counted
 against rate-limit quotas and possibly billed — the result is cached per process, with a failed
 result held far more briefly than a successful one so that recovery is still noticed quickly. The
-indicator stays out of the `liveness` group: an unreachable Vault is not something a container
-restart fixes.
+indicator stays out of both availability groups unless the operator declares one that includes it —
+Spring Boot builds `liveness` and `readiness` from the application's own state, and the starter
+registers no group customization: an unreachable Vault is not something a container restart fixes.
 
 `push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
 configured, the Vault signer takes precedence over the local signer unless the application
