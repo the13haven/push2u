@@ -269,6 +269,11 @@ lifetime.
 - **ADR-016, ADR-021, ADR-022.** The endpoint policy still runs on every send ahead of everything;
   no retry is introduced anywhere; and the exception taxonomy is applied rather than extended — this
   record adds no type and re-labels none.
+- **ADR-025, whose text is not edited by this decision.** It describes the fetched mode's read as
+  happening at startup, which is what that mode was when it was written and remains the context that
+  record states. An ADR fixes its context at the time of the decision; what the signer does *now*
+  belongs to `docs/DESIGN.md`, which is the document that may be rewritten. So the sentence stays as
+  it is, and nothing here asks a future reader to reconcile the two.
 
 ## Rejected alternatives
 
@@ -345,11 +350,6 @@ fetched mode reads Vault once at startup and never again — true of one of the 
 lands, and that document deletes a sentence that no longer holds rather than letting it age. The
 startup-supervisor contract is stated in three places that must stop reading as though it applied to
 every fetched builder — the builder's Javadoc, `docs/VAULT.md` and `docs/DESIGN.md`.
-
-ADR-025 describes the fetched mode's read as happening at startup in three places — its body, its
-rules-out clause and its index cell. Both records are drafts as this is written, so this change makes
-that wording general rather than leaving an instruction whose window closes: once ADR-025's decision
-is implemented, none of the three can be edited.
 
 ## What this rules out
 
