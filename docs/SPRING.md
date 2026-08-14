@@ -328,8 +328,8 @@ healthcheck:
 
 Membership is "included and not excluded", and an empty `include` includes everything, so this reads
 "everything but push2u" — the shortest form, and the only one that keeps picking up contributors
-added later. It is also a claim about push2u, which is what the next paragraph is about. The same
-machinery in reverse gives the monitoring side a group that *does* watch the probe:
+added later. It is also a claim about push2u, which is what the presence requirement below is about.
+The same machinery in reverse gives the monitoring side a group that *does* watch the probe:
 
 ```yaml
 management:
@@ -339,12 +339,6 @@ management:
         push:                       # not push2u — see below
           include: push2u           # /actuator/health/push
 ```
-
-**Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
-thing to want here, and it does not start: a second validator refuses a contributor whose name
-equals a group's, and the registration fails with `HealthContributor with name "push2u" clashes with
-group`. That one is not raised through the framework's failure-analysis machinery, so it arrives
-without a line telling you what to do about it. Name the group after the question it answers.
 
 **Excluding this probe is not the same as keeping its backend out of the verdict.** The exclusion
 removes one contributor from one group. A deployment that also carries some other contributor
@@ -373,9 +367,12 @@ true.** A health group shipped inside an image is a build artifact; the deployme
 probe off has properties and environment variables and no way to edit it. So the rule for anyone
 *shipping* a group is the stronger one: **do not name `push2u` in a group you distribute** — you are
 writing a claim that someone else will be refused for, in a message naming neither you nor them. The
-deployment left holding such an image is not stuck: the group's key can be overridden from the
+deployment left holding such an image is often not stuck: the group's key can be overridden from the
 environment like any other, and an explicitly empty value clears the list and passes the check
-(`MANAGEMENT_ENDPOINT_HEALTH_GROUP_CONTAINER_EXCLUDE=`). That is a repair, not a design.
+(`MANAGEMENT_ENDPOINT_HEALTH_GROUP_CONTAINER_EXCLUDE=`). Often, because that spelling works for a
+single-word group name — an environment variable is read on its `_` boundaries, so a group named
+`container-check` is not reachable this way and a variable naming it lands on a different key
+entirely. It is a repair, and one the deployment did not choose the conditions of.
 
 **A `*` in the same list switches that check off for everything written after it.** The validator
 walks a group's names in the order they were written and stops at the first `*`, leaving the rest of
@@ -384,8 +381,16 @@ at run time either, so it is inert and unverified at once. `include` and `exclud
 separately, so a `*` on one side says nothing about the other. This is why the second recipe above
 spells its list out: an explicit list is the one the framework actually checks for you.
 
-**`management.endpoint.health.validate-group-membership: false` is the escape hatch from that
-validation, and not a fourth recipe.** It points no check anywhere and moves no contributor between
-groups; it stops the paragraphs above from failing a context, for every group and every name at
-once, and with it goes the check that catches a name misspelled the way `diskspace` is. There is no
-per-name form of it.
+**Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
+thing to want here, and it does not start. A *second* validator, beside the membership one, refuses
+a contributor whose name equals a group's, and the registration fails with `HealthContributor with
+name "push2u" clashes with group`. This one is not raised through the framework's failure-analysis
+machinery, so it arrives without a line telling you what to do about it. Name the group after the
+question it answers, as the `push` group above does.
+
+**`management.endpoint.health.validate-group-membership: false` is the escape hatch from the
+membership check, and not a fourth recipe.** It points no check anywhere and moves no contributor
+between groups; it stops that one check from failing a context, for every group and every name at
+once, and with it goes the catch for a name misspelled the way `diskspace` is. There is no per-name
+form of it — and it does not reach the name clash just above, which has no switch at all. The group
+whose name collides has to be renamed.
