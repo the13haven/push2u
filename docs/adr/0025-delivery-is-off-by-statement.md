@@ -47,6 +47,13 @@ that excludes the auto-configuration, or supplies its own `PushSender`, or does 
 starter at all, has left this decision outside the starter's reach, and a record that claimed
 otherwise would be claiming something the starter cannot enforce.
 
+**Only `true` and `false` are values of it.** This is the one key where a typo would be free to mean
+the opposite of what was typed, so a value that is neither fails the context naming the property
+instead of being read as one of them. The framework's own reading of an `enabled` key — anything not
+literally `false` is on — is the safer of the two directions and still not good enough here: it turns
+`flase` into a deployment that sends although it said not to, which is this record's subject with the
+sign reversed. Absent is not a value: it is the default, and the default is on.
+
 **The switch is a condition every contributing auto-configuration honours, and not a master switch
 over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender; the
 health indicator, which lives in its own auto-configuration so the starter stays usable without
@@ -63,9 +70,11 @@ record forbids elsewhere.** Naming another module's prefixes inside a message co
 activation rules and goes stale when they change. Honouring a switch copies nothing: it is one fact
 about the namespace, stated once, whose meaning cannot drift — and the Vault starter already orders
 itself against the core starter by name without depending on it, so the condition costs no
-dependency either. `push2u.health.enabled` stays exactly what it is, the indicator's own opt-out;
-this switch sits upstream of it, and a deployment that has turned delivery off has no indicator left
-to opt out of.
+dependency either. The health indicator keeps an opt-out of its own, whatever that key comes to be
+called: this switch sits upstream of it and the two stay independent, since a deployment that has
+turned delivery off has no indicator left to opt out of, while one that is sending may still decline
+to have its health tied to a signer. Which key spells that second decision is not this record's to
+fix.
 
 ## What the switch does not reach, and why
 
@@ -95,8 +104,7 @@ that; an artifact anyone can depend on may not.
 holds a policy and sends nothing, so the statement this record asks of everything that does not send
 is one it can make truthfully — and what it keeps by making it is the policy its allowlist states.
 ADR-024, written before this switch existed, has that deployment holding the rule as a value whether
-or not it sends; after this record it holds it and says so. A context that states nothing and sends
-nothing makes the same statement, for the same reason. Neither record revises the other: what
+or not it sends; after this record it holds it and says so. Neither record revises the other: what
 changes is one line of that deployment's configuration.
 
 ## Why the default is on, and why the third state is fatal
@@ -161,24 +169,42 @@ that cannot be edited afterwards.
 
 So the diagnostic is split the way ownership is. Each starter that contributes a signer answers for
 its own properties — a partially stated set is its finding, in its words, naming its keys — and the
-general refusal answers only for the fact that no signer bean exists, listing the ways to supply
-one: the switch, an application `VapidSigner` or `PushSender` bean, the two key properties the
-module raising it owns, any signer starter's own configuration, and the framework's condition report
-for the rest. A future signer starter is named by the clause about
+general refusal answers only for the fact that no signer bean exists, listing what the deployment may
+do about it: the switch, an application `VapidSigner` or `PushSender` bean, the two key properties
+the module raising it owns, any signer starter's own configuration, and the framework's condition
+report for the rest. Two of those supply no signer and are on the list all the same — the refusal is
+about an unanswered question, not about a missing bean. A future signer starter is named by the clause about
 signer starters rather than by anything this module had to learn about it, and it names its own keys
 itself.
 
-**A specific finding outranks the general one, and neither is aggregated.** Both are raised the same
-way and from the same point in a context's startup, so what orders them is the ordering the starters
-already declare between themselves — declared, rather than inherited from whatever a sorter's
-fallback happens to produce. What is refused is the next step: a mechanism by which one module's
-finding is collected into another module's message. That is a cross-module contract, published for
-the life of the API, in exchange for one better sentence in a failure that already names both.
+**A starter's diagnostic is not its contribution, and the two cannot sit at the same point.** A
+signer starter is ordered ahead of the sender's auto-configuration so that the signer it contributes
+is there to be found; a diagnostic has to be ordered behind *every* contribution, the local signer's
+included, or it cannot see whether any signer was contributed at all. One class cannot be in both
+places, so a signer starter that carries a diagnostic carries two auto-configurations: the
+contribution before, the diagnostic after, and both ahead of the general refusal. Without that split
+the stand-down below is unreachable — a deployment sending through the local signer with a forgotten
+`push2u.signer.vault.address` would be refused by a check that could not yet see the signer it was
+about to be told to stand down for.
 
-Each such diagnostic also stands down when a `VapidSigner` or a `PushSender` bean exists, from
-anywhere. A deployment sending through its local signer with a forgotten half-written Vault block
-has a stale property, not a broken deployment, and a startup failure over configuration nothing
-reads would be the same mistake in the opposite direction.
+**Each diagnostic stands down when a `VapidSigner` or a `PushSender` bean exists, from anywhere.** A
+deployment sending through its local signer with a half-written Vault block left over has a stale
+property, not a broken deployment, and a startup failure over configuration nothing reads would be
+the same mistake in the opposite direction.
+
+**A specific finding outranks the general one, and neither is aggregated.** Two different orders
+carry that, and conflating them is how it gets lost. One is the order of the auto-configurations,
+which decides what each check's condition can see, and it is the order the starters already declare
+between themselves. The other is the order in which the raised checks run, which has its own
+mechanism, and about it this record requires only that it be declared and pinned by a test rather
+than inherited: the framework promises the registration sequence of unordered post-processors as far
+as it can and no further, and a sequence nothing fails over is not an order. An explicit precedence
+on both checks answers it as well as declaring neither and testing the result does. Declaring it on
+one and not the other is the answer that reads as an order and produces the opposite one.
+
+What is refused is the step after that: a mechanism by which one module's finding is collected into
+another module's message. That is a cross-module contract, published for the life of the API, in
+exchange for one better sentence in a failure that already names both.
 
 ## Where the refusal is raised, and what it may point at
 
@@ -273,11 +299,14 @@ signer are the ones that already exist.
   equally a mechanism for one module to contribute its finding to another module's message.
 - A partial-configuration diagnostic that fires while a `VapidSigner` or `PushSender` bean exists,
   and so refuses a deployment over configuration nothing reads.
-- A general refusal that outranks a starter's specific finding, or an order between the two left to
-  a sorter's fallback.
-- An order the two post-processors take from a precedence each declares for itself rather than from
-  the order their starters declare — which satisfies raising them the same way and inverts the
-  result.
+- A general refusal that outranks a starter's specific finding, or an order between the two that
+  nothing declares and no test pins — a registration sequence the framework promises only as far as
+  it can is not an order.
+- A precedence declared on one of the two checks and not on the other, which reads as an order and
+  produces the opposite one.
+- A starter's diagnostic sharing an auto-configuration with its contribution, and so deciding
+  whether a signer exists from a point before the local one is registered.
+- A value of `push2u.enabled` that is neither `true` nor `false` read as either of them.
 - A refusal an application's own missing-bean failure can precede.
 - A signer starter whose contribution the refusal's condition is assumed to see although that
   starter declares no order — the price is stated rather than designed away.
