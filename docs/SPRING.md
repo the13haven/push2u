@@ -226,8 +226,10 @@ The indicator participates in the health endpoint's primary group, and no config
 of that one: `management.endpoint.health` has no top-level `include`/`exclude` — those exist only
 under `group.<name>.*` — so the root `/actuator/health` holds every registered contributor. Spring
 Boot's `liveness` and `readiness` groups are assembled separately and hold, by default, only the
-application's own availability state, so a signer outage can never restart pods — an unreachable
-Vault is not something a container restart fixes.
+application's own availability state, so a signer outage does not restart pods — an unreachable
+Vault is not something a container restart fixes. That default is what keeps them apart, not a rule:
+declare a group of either name including `push2u` and it lands there, so `liveness` in particular is
+a group to leave alone.
 
 The indicator is registered when a `VapidSigner` bean exists, and asks about nothing else: the
 signer is the only part of a send that can stop working while the application runs — it reaches a

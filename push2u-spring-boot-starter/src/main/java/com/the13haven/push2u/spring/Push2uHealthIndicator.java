@@ -56,9 +56,11 @@ import com.the13haven.push2u.VapidSigner;
  * <p>Registered whenever the {@link VapidSigner} it probes with is a bean (see {@link Push2uHealthAutoConfiguration}),
  * because the signer is the only part of a send that can stop working while the application runs — the rest of a
  * {@link com.the13haven.push2u.PushSender} is immutable configuration validated at build time, and an incomplete
- * configuration fails startup rather than surfacing here. It participates in readiness-style checks only: Spring Boot's
- * {@code liveness} group contains just the application's own {@code LivenessState}, so a signer outage can never
- * restart pods — an unreachable Vault is not something a container restart fixes.
+ * configuration fails startup rather than surfacing here. Left alone it stays a readiness-style check: Spring Boot
+ * builds its {@code liveness} group from the application's own {@code LivenessState} alone, so a signer outage does not
+ * restart pods — an unreachable Vault is not something a container restart fixes. An operator who declares a group of
+ * that name including this contributor gets what they declared, so the property that keeps the two apart is the
+ * deployment's rather than this class's.
  */
 public final class Push2uHealthIndicator implements HealthIndicator {
 
