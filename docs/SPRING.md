@@ -145,6 +145,13 @@ beside the other property, that property carries the allowlist alone. Every set 
 no bean still fails the context, with a message naming both keys: emptying them is a statement
 about the pair, and no single entry is left to refuse on its own terms.
 
+**Empty means empty, and a blank is not one.** Where the value arrives as one delimited string —
+an environment variable, `PUSH2U_ALLOWED_ORIGINS=`, is the case this hatch exists for — only a
+zero-length value is no entries at all. A single space, or a lone comma, is *one* entry rather than
+none, so the property counts as expressing an allowlist and that entry is then refused as the
+malformed one it is. The refusal names it by position, which is what saves it: an entry that shows
+nothing of itself is still `push2u.allowed-origins[0]`.
+
 A malformed entry fails the context named exactly — the property it came from and its index in that
 property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from one
 entry of one named property. The entry appears in the message the way an endpoint appears in a
