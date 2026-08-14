@@ -80,7 +80,10 @@ permits. Under this derivation its two operands are not merely ordered but *equa
 degenerate on every configuration, and a branch that no input can select is worse than no branch:
 it reads as a live guard. The maximum is the body ceiling less the fixed overhead, clamped at zero,
 and `recordSizeForMaxPlaintext` is its inverse. `MIN_RECORD_SIZE` loses its only production caller
-with the builder's validation and stays as the encryptor's own floor.
+with the builder's validation: nothing in `main` names it afterwards, because `checkRecordSize`
+enforces the same floor implicitly — an `rs` below 18 fails it even for an empty plaintext. It
+survives as the documented statement of RFC 8188 §2's minimum, pinned by the tests rather than read
+by the code.
 
 `DEFAULT_RECORD_SIZE` disappears from the production configuration with the parameter. As an `rs`,
 4096 survives only where it is part of a specific example — the RFC 8291 §5 worked vector, whose
@@ -111,11 +114,15 @@ this record needs rather than what the sender's configuration allows, which for 
 notification under a large ceiling is a real difference.
 
 It loses on two counts. It makes `rs` a function of the message rather than of the sender, so the
-header stops being a property of the configuration and two identical senders emit different bytes
-for different notifications — a size bound that is no longer knowable the moment the configuration
-is set, which is the property the pre-flight below depends on. And it forecloses padding
-permanently rather than merely leaving it unimplemented, since a record padded to hide its length
-is by definition not sized to its payload. The per-sender form keeps that door open; see below.
+*declared record length* stops being a property of the configuration: two identical senders emit
+different headers for different notifications, and what a deployment advertises can no longer be
+read off what it configured. The budget is untouched by this — under `rs = payload + 18` the
+record-size precondition is vacuous by construction, leaving `maxEncryptedBodyBytes − 103`, the
+same maximum the per-sender form produces — so the pre-flight would work either way, and the
+objection is about the header rather than about the bound. And the per-message form is structurally
+incompatible with padding, rather than merely leaving it unimplemented: a record padded to hide its
+length is by definition not sized to its payload. The per-sender form keeps that door open; see
+below.
 
 The disclosure argument does not separate them: the plaintext length is already derivable from the
 body length, so a varying `rs` reveals nothing a length-counting observer did not have.
@@ -212,8 +219,8 @@ about, so an application discovers it by asking once and rendering again rather 
 configuration value before it renders anything. The reference case works that way in any case — a
 notification is rendered, then shortened when it does not fit.
 
-For the same reason `PushMessage.payloadBytes()` is not public: it is the third spelling of the
-same unguarded first comparison, and the length is available inside the package where the pipeline
+For a related reason `PushMessage.payloadBytes()` is not public: it publishes the other operand of
+the same unguarded comparison, and the length is available inside the package where the pipeline
 needs it.
 
 ### What the assessment is not
@@ -222,8 +229,10 @@ needs it.
   send, and a question sends nothing. Reusing the variant would put a `NotAttempted` value in the
   hands of a caller who attempted nothing, and would make the pre-flight's answer switchable
   against branches — `Accepted`, `Indeterminate` — that cannot occur.
-- **Not a `boolean`.** It would answer whether the payload fits without saying what it must fit
-  into, forcing a second call for the number that makes the answer actionable.
+- **Not a `boolean`.** On the fitting branch it would say as much as `WithinLimit` does, and the
+  objection is to the other one: `false` leaves the budget unobtainable rather than one call away,
+  since no accessor publishes it. A caller told only that its notification does not fit has nothing
+  to render against.
 - **No `excessBytes()`.** It is a subtraction of two published numbers, and it suggests a model
   that does not hold: shortening the source text by the difference does not reduce the serialized
   payload by it, since JSON and UTF-8 make the relation non-linear. The action is to render again
@@ -265,18 +274,23 @@ wrong in a way nothing fails on, so those examples move to a parameter that surv
 `push2u.record-size` left in a YAML file after the upgrade must fail the context at startup, naming
 the property and where its effect went. Binding ignores an unknown key silently, which would leave
 an operator believing a setting applies; the starter's existing habit is to reject a configuration
-it cannot honour and to name the YAML spelling when it does. That needs the key to still reach the
-binder, so the properties record keeps a component whose only purpose is to be rejected — which is
-what the rule-out below means by "as a configuration option", and is not the same thing as
-`ignoreUnknownFields = false`, whose blast radius is every unrelated typo under `push2u.`.
+it cannot honour and to name the YAML spelling when it does.
+
+**The refusal must not be built from a retained property component.** `Push2uProperties` is a public
+record, so a component kept only to be rejected also keeps a public accessor on the starter's API —
+a published member that configures nothing, frozen there until someone removes it, which is a worse
+outcome than the silence it fixes. The check belongs on the bound environment instead, at context
+refresh, in the spellings relaxed binding accepts: it fails just as loudly, names the property, and
+publishes nothing. `ignoreUnknownFields = false` is the other tempting mechanism and is refused —
+its blast radius is every unrelated typo under `push2u.`, which is a different decision about a
+different failure.
 
 ## What this rules out
 
 - Two configurable size parameters, or any second knob whose value is derivable from the first.
-- `recordSize` as public API **in its role as a refusal threshold** — a builder step, or a Spring
-  property that configures anything. A retained property component that exists only to be refused
-  at startup is the migration mechanism above, not a configuration option; and a padding width, if
-  that feature is ever added, is a different decision this one does not foreclose.
+- `recordSize` as public API **in its role as a refusal threshold** — a builder step, a Spring
+  property, or a properties component retained so that a removed key can be refused. A padding
+  width, if that feature is ever added, is a different decision this one does not foreclose.
 - `rs` derived per message rather than per sender.
 - A floor, default or historical constant applied to the derived `rs`.
 - A degenerate `min` left in the pre-flight after its second operand became derivable — a branch no
