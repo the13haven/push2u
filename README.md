@@ -883,8 +883,8 @@ Four things this library will not do, whatever it is configured with:
 - A VAPID JWT valid for longer than 24 hours (RFC 8292 §2).
 - Anything with the subscription after the send: the library stores none, and persisting or
   deleting one belongs to the application.
-- A body over the configured limits — see [Payload size limits](#payload-size-limits) for the two
-  that are raisable and how they interact.
+- A body over the configured limit — see [Payload size limits](#payload-size-limits) for the one
+  parameter that raises it and the record size derived from it.
 
 ## Nullness
 

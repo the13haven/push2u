@@ -87,9 +87,10 @@ public final class Push2uRemovedPropertiesAutoConfiguration {
                 throw new IllegalStateException(
                         "push2u.record-size was removed and no longer configures anything — delete the key. The"
                                 + " aes128gcm record size (RFC 8188 rs) is now derived from the one size property,"
-                                + " push2u.max-encrypted-body-bytes: the largest payload that ceiling admits, plus the"
-                                + " fixed record overhead. If record-size was raised to carry larger payloads, raise"
-                                + " push2u.max-encrypted-body-bytes instead; the derived record size follows it.");
+                                + " push2u.max-encrypted-body-bytes: that ceiling less 85, which declares exactly the"
+                                + " plaintext capacity the ceiling admits. If record-size was raised to carry larger"
+                                + " payloads, raise push2u.max-encrypted-body-bytes instead; the derived record size"
+                                + " follows it.");
             }
         }
 
