@@ -30,7 +30,7 @@ of what the vendors publish rather than anything this repository verifies; it sa
 names the two rows whose vendor page carries the host but not the last step to Web Push — those
 clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…022) with
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…023) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
 the environment the numbers were taken on — a snapshot someone took, not an output the build
