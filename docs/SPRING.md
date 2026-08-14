@@ -274,8 +274,15 @@ healthcheck:
 It is there by default (`management.endpoint.health.probes.enabled` defaults to on) and, unless you
 declare a group of that name yourself, is assembled by the framework rather than from
 `management.endpoint.health.group.*` — so it names no contributor, and nothing done to this
-indicator can break it. The price is that it asserts only the application's own readiness state —
-not the database, not whatever else the root endpoint was asserting for you.
+indicator can break it. The short `/readyz` path is a separate switch and is *not* on by default:
+without `management.endpoint.health.probes.add-additional-paths`, the group answers on
+`/actuator/health/readiness` only.
+
+The price is that it asserts only the application's own readiness state — not the database, not
+whatever else the root endpoint was asserting for you. **Answering that price is what ends the
+immunity**: the moment you write `management.endpoint.health.group.readiness.include`, the group
+comes from properties like any other, the membership check below applies to every name in it, and
+this has become the second recipe with the first recipe's name on it.
 
 **2. A group naming what the check is meant to assert.**
 
@@ -329,9 +336,22 @@ management:
   endpoint:
     health:
       group:
-        push:
+        push:                       # not push2u — see below
           include: push2u           # /actuator/health/push
 ```
+
+**Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
+thing to want here, and it does not start: a second validator refuses a contributor whose name
+equals a group's, and the registration fails with `HealthContributor with name "push2u" clashes with
+group`. That one is not raised through the framework's failure-analysis machinery, so it arrives
+without a line telling you what to do about it. Name the group after the question it answers.
+
+**Excluding this probe is not the same as keeping its backend out of the verdict.** The exclusion
+removes one contributor from one group. A deployment that also carries some other contributor
+reaching the same backend — a Vault health indicator from another starter, say — still has that
+backend in the group, and an outage still marks the container unhealthy through the other entry. If
+that is what the exclusion was for, the contributors actually in the group are what to check, not
+this one.
 
 **A name in a group's `include` or `exclude` is a claim that the contributor exists.** Spring Boot
 4.1 validates both sides while the context starts, and fails it with
@@ -347,6 +367,15 @@ framework's validator rather than anything done to push2u, which is why it is wo
 advance: a group that names this contributor is edited in the same change that removes it. The edit
 is the same one in every case, and it is the right one on its own terms — the exclusion was there to
 keep a signer probe out of the check, and there is no probe left to keep out.
+
+**That assumes one party owns both, and an application distributing push2u is where it stops being
+true.** A health group shipped inside an image is a build artifact; the deployment that switches the
+probe off has properties and environment variables and no way to edit it. So the rule for anyone
+*shipping* a group is the stronger one: **do not name `push2u` in a group you distribute** — you are
+writing a claim that someone else will be refused for, in a message naming neither you nor them. The
+deployment left holding such an image is not stuck: the group's key can be overridden from the
+environment like any other, and an explicitly empty value clears the list and passes the check
+(`MANAGEMENT_ENDPOINT_HEALTH_GROUP_CONTAINER_EXCLUDE=`). That is a repair, not a design.
 
 **A `*` in the same list switches that check off for everything written after it.** The validator
 walks a group's names in the order they were written and stops at the first `*`, leaving the rest of

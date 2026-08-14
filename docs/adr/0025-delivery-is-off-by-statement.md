@@ -463,7 +463,10 @@ own: what a signer starter owes is one condition and one diagnostic, and the ope
 it is the same sentence in `docs/SPRING.md`. The release notes name the transition — a context that
 boots without web push today fails after this, `push2u.enabled: false` is the line that answers it,
 and a health group naming `push2u` is edited in the same change, because the switch withdraws the
-contributor that name refers to.
+contributor that name refers to. That instruction reaches only a deployment that owns the file naming
+it, so the note carries the other half as well: an application that distributes push2u inside an
+image ships no health group naming the contributor, since the deployment stating the switch has
+properties and an environment and no way to edit what the image carries.
 
 ## What this rules out
 
