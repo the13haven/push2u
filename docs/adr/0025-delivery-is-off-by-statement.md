@@ -78,6 +78,22 @@ turned delivery off has no indicator left to opt out of, while one that is sendi
 to have its health tied to a signer. Which key spells that second decision is not this record's to
 fix.
 
+**Withdrawing the contributor is not the same as rewriting the operator's health groups, and the
+switch does only the first.** The framework validates the membership of every health group declared
+in properties, on the `exclude` side as well as the `include` side, and refuses a context that names
+a contributor which does not exist. A deployment whose group names `push2u` — most often to keep a
+signer probe out of a container health check — therefore edits that group in the same change that
+removes the indicator, by whichever route it removes it: this switch is one of several and not the
+first of them, since the indicator's own key removes it too, and so does the absence of a signer
+bean that predates both. The trap is the framework's, it is reported at
+https://github.com/the13haven/push2u/issues/89 against a key that already exists, and none of the
+answers to it are this library's to take. It does not register a contributor that reports delivery
+being off, which would put a new observable state into every deployment that does not send in order
+to keep a name registered for a check performed on the operator's own configuration; and it does not
+switch that validation off on the deployment's behalf, which is global and would stop catching a
+mistyped contributor name anywhere in it. What it owes is the recipe, in the Spring guide, given
+with the presence requirement attached rather than as a bare `exclude`.
+
 ## What the switch does not reach, and why
 
 ADR-024 makes the endpoint policy a value the deployment owns and the starter publishes, precisely
@@ -444,8 +460,9 @@ for the startup contract, since the table and the order above describe how the s
 that description belongs in the document that may be rewritten. `docs/VAULT.md` gains nothing of its
 own: what a signer starter owes is one condition and one diagnostic, and the operator-facing half of
 it is the same sentence in `docs/SPRING.md`. The release notes name the transition — a context that
-boots without web push today fails after this, and `push2u.enabled: false` is the line that answers
-it.
+boots without web push today fails after this, `push2u.enabled: false` is the line that answers it,
+and a health group naming `push2u` is edited in the same change, because the switch withdraws the
+contributor that name refers to.
 
 ## What this rules out
 
@@ -463,6 +480,11 @@ it.
 - That policy declared where the switch's condition is applied — and equally the claim that being
   outside the auto-configuration carrying the sender is the test, when the health indicator is
   outside it and gated all the same.
+- A placeholder health contributor registered in a deployment that does not send, so that a group
+  naming `push2u` goes on validating; and equally that validation switched off on the deployment's
+  behalf, which is global and reaches every other group and every other name in it.
+- A group recipe published by this project that names `push2u` in an `include` or an `exclude`
+  without saying that the name is a claim the contributor is registered.
 - A released version carrying the switch while the allowlist is still read only inside the sender's
   own auto-configuration, which carries the switch's condition: the two arrive in one release or
   neither does.
