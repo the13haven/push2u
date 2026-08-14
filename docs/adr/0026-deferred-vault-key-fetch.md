@@ -203,6 +203,18 @@ includes push2u in readiness, or polls the health endpoint, learns within second
 that does neither may not learn until the first send. `eager` therefore stays the default, and the
 documentation states the fork rather than implying that nothing was given up.
 
+**The same sentence bounds what this mode buys, and the documentation has to say so in that
+direction too.** What deferring removes is a dependency of *context refresh* on Vault: the
+application starts. It does not by itself make the process healthy, because the indicator is an
+ordinary contributor of the primary group and the root `/actuator/health` always contains every
+registered contributor. So a deployment whose container check curls that path — the shape the report
+behind this record runs — still goes unhealthy on the first probe against an unreachable Vault, and
+everything gated on that container waits behind it exactly as before. The cascade moves from "will
+not start" to "starts, then reports unhealthy", which is a real improvement and not the whole of the
+one the reporter is after. The rest of it is a deployment decision about group membership, taken
+where that decision belongs, and the documentation for this mode points at the recipe rather than
+restating it.
+
 The second cost is paid by whoever waits. A caller that arrives during a flight blocks on *another
 caller's* Vault call, bounded by that flight's own connect and request timeouts and by nothing this
 library adds — and a custom transport that sets no request timeout holds every waiter rather than
@@ -359,6 +371,13 @@ lands, and that document deletes a sentence that no longer holds rather than let
 startup-supervisor contract is stated in three places that must stop reading as though it applied to
 every fetched builder — the builder's Javadoc, `docs/VAULT.md` and `docs/DESIGN.md`.
 
+**`docs/VAULT.md`'s deferred section links to the health section of `docs/SPRING.md` rather than
+answering for it.** That section is where a container check pointed at a group excluding push2u is
+written out, and a deployment choosing this mode over a Vault that is brought up beside it is
+exactly the one that needs it — it has removed Vault from context refresh and will meet the same
+outage again through the primary health group, seconds later, if the check stays where it is. One
+sentence in each direction: what this mode does not reach, and where the rest of it is decided.
+
 ## What this rules out
 
 A deferred mode that reads the key again after a successful read, retains anything but a successful
@@ -375,7 +394,9 @@ rather than by the disjunction that recognises it; a failure of neither contract
 one of them; one exception instance thrown by several threads, an exception's declared values read
 once per observer rather than once per flight, and a promise about the concrete class of a
 reconstructed failure; a signature taken while the initialization guard is held; a claim that the
-health indicator makes the deferred mode fail-fast; and, on the other half, any published operation
+health indicator makes the deferred mode fail-fast, and equally documentation of this mode that
+leaves a reader expecting a healthy container from a check still pointed at the primary health
+group; and, on the other half, any published operation
 that re-reads a key the signer has already read successfully — a `refresh()`, a TTL, a scheduled
 refresher — a key-version accessor published without a consumer, and a rotation recipe that omits the
 routing of subscriptions created under the previous key.

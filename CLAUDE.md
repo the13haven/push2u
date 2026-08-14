@@ -222,7 +222,9 @@ starter is ordered before the core starter and outranks the local signer.
   grouping).
   Checkstyle requires Javadoc on the public API.
 - **Boolean naming** (CONTRIBUTING.md carries the full form, nothing enforces it): a record's
-  component accessor keeps the component's name (`Health.enabled()`) because the language says so;
+  component accessor keeps the component's name (`record Feature(boolean enabled)` → `enabled()`)
+  because the language says so, and the example is a made-up record rather than one of ours so the
+  rule outlives the type that used to illustrate it;
   a question about state is `is…`/`has…`/`can…` regardless of whether the answer is stored or
   computed (`isSupported()`, the token cache entry's `isFresh(...)`); an action or a two-argument
   relation keeps its verb (`verify(...)`, `sameCurve(a, b)`). The failure it prevents is a derived

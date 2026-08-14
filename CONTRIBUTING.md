@@ -186,9 +186,11 @@ contract. Practical consequences:
 - **Boolean methods are named by what they are, in three kinds.** Checkstyle does not enforce this
   and cannot; the point of writing it down is that one type should not end up with two habits.
 
-  1. **A record's component accessor** keeps the component's name — `Push2uProperties.Health`
-     holds a `boolean enabled`, so its accessor is `enabled()`. That is the language, not a
-     preference: the component names the method, and there is nothing to decide.
+  1. **A record's component accessor** keeps the component's name — a `record Feature(boolean
+     enabled)` has an accessor called `enabled()`. That is the language, not a preference: the
+     component names the method, and there is nothing to decide. The example is deliberately not a
+     type from this tree: a rule illustrated by one is wrong the day that type's component is
+     renamed or removed, and the rule itself never was.
   2. **A question about state** is a predicate: `is…` for what something *is*
      (`Es256Verifier.isSupported()`, and the cached VAPID token entry answering `isFresh(...)`),
      `has…` for what it holds, `can…` for what it is able to do. Whether the answer is stored,

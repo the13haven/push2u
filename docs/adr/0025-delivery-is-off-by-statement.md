@@ -54,12 +54,14 @@ literally `false` is on — is the safer of the two directions and still not goo
 `flase` into a deployment that sends although it said not to, which is this record's subject with the
 sign reversed. Absent is not a value: it is the default, and the default is on.
 
-**The switch is a condition every contributing auto-configuration honours, and not a master switch
-over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender; the
-health indicator, which lives in its own auto-configuration so the starter stays usable without
+**The switch is a condition every auto-configuration on the delivery path honours, and not a master
+switch over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender;
+the health indicator, which lives in its own auto-configuration so the starter stays usable without
 Actuator on the classpath, honours the same condition and is gone too; and every signer starter
 honours it, so the Vault signer is never constructed — which in its fetched mode means a read from
-Vault during startup, a call no deployment that has declared the custodian unused should pay for. A
+Vault during startup, a call no deployment that has declared the custodian unused should pay for.
+The delivery path is not only what a starter contributes: a signer starter's own diagnostic is
+gated with it, for the reason the table further down gives. A
 signer starter that does not honour it contributes its signer anyway, and the refusal below is then
 correctly silent: that starter is outside this one's reach in the same way an excluded
 auto-configuration is. The switch does not remove an application's own `PushSender`, which is not
@@ -106,6 +108,44 @@ is one it can make truthfully — and what it keeps by making it is the policy i
 ADR-024, written before this switch existed, has that deployment holding the rule as a value whether
 or not it sends; after this record it holds it and says so. Neither record revises the other: what
 changes is one line of that deployment's configuration.
+
+## Which startup checks the switch reaches
+
+The section above settles the endpoint policy. It is one row of a table, and leaving the other rows
+to be decided by where each check happens to be implemented is how a deployment that stated it does
+not send ends up refused over a property nothing reads. So the whole of it is stated here:
+
+| Startup check | `push2u.enabled: false` | `true`, or unset |
+|---|---|---|
+| The value of `push2u.enabled` itself | runs | runs |
+| A malformed allowlist entry | runs | runs |
+| An allowlist stated beside an application policy bean | runs | runs |
+| A signer starter's partial-configuration diagnostic | skipped | runs |
+| `push2u.signer.vault.public-key-fetch` and its readings | skipped | runs |
+| The general refusal over a missing signer | skipped | runs |
+| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
+
+**What decides a row is what the check is about, never where it is implemented.** The first three
+are about a *value*: an allowlist entry that is not an origin is not an origin in a context that
+sends nothing either, and a stated allowlist beside a bean is a contradiction whoever ends up
+reading it. Those are ADR-024's, and this record narrows none of them. The next three are about the
+*delivery path*: each asks, in its own words, whether this deployment can sign — and a deployment
+that has said it does not send has answered that already.
+
+**A signer starter's diagnostic is therefore gated by the switch although it is not a
+contribution.** Its stand-down is over an existing `VapidSigner` or `PushSender` bean, and the
+switch is precisely what keeps those from existing, so the stand-down cannot reach the case: a
+deployment that switched delivery off with half a `push2u.signer.vault.*` block left over would be
+refused over configuration nothing reads. That is the mistake the stand-down exists to prevent, with
+the sign reversed. The `public-key-fetch` readings are gated for the same reason and by the same
+means — they are decided where that signer is built, and with the switch off it is not built.
+
+The tombstone row is not an exception to that line but sits outside it: a removed key names a
+setting that exists in neither state, and the refusal is about what the operator believes is in
+force rather than about what this deployment does. It is also the one row with an end date — the
+tombstone is carried for one minor release after the one that removed the property, and the release
+that adds it opens the work item that removes it. Naming that release here would be naming a version
+that does not exist yet, which is the one thing this repository refuses to write down in advance.
 
 ## Why the default is on, and why the third state is fatal
 
@@ -190,9 +230,13 @@ about to be told to stand down for.
 **Each diagnostic stands down when a `VapidSigner` or a `PushSender` bean exists, from anywhere.** A
 deployment sending through its local signer with a half-written Vault block left over has a stale
 property, not a broken deployment, and a startup failure over configuration nothing reads would be
-the same mistake in the opposite direction.
+the same mistake in the opposite direction. That stand-down is not the only one: the switch gates
+these diagnostics as well, because with delivery off there is no bean for the stand-down to find and
+the very case it exists for would go unanswered — the table above is where that is settled.
 
-**A specific finding outranks the general one, and neither is aggregated.** Two different orders
+**A specific finding outranks the general one, and neither is aggregated.** Those two are not the
+whole list — the section *One declared order over every startup check* below carries it, and what
+follows here is the reasoning that list is built on. Two different orders
 carry that, and conflating them is how it gets lost. One is the order of the auto-configurations,
 which decides what each check's condition can see, and it is the order the starters already declare
 between themselves. The other is the order in which the raised checks run, and it is not the first
@@ -255,6 +299,49 @@ give it, and a test pins that its text is the one that arrives. Losing that race
 startup output is still correct, still generic, and looks exactly like the output that existed before
 this record did.
 
+## One declared order over every startup check
+
+The rule above was stated for two checks, and by the time this record is implemented there are
+several. ADR-023 leaves a tombstone behind a removed property; ADR-024 raises two refusals about the
+allowlist; this record adds three of its own. They are not alternatives — one context can earn
+several at once, and the operator reads whichever arrives first. So there is one list, and this is
+it:
+
+1. **the value of `push2u.enabled`**, because until it has been read nothing below knows which
+   column of the table above it is standing in;
+2. **a tombstone over a removed property**, because a key that no longer exists makes every reading
+   under it a reading of something the operator did not mean to write;
+3. **a malformed allowlist entry**;
+4. **an allowlist stated beside an application policy bean**;
+5. **a signer starter's partial-configuration diagnostic**;
+6. **the general refusal over a missing signer**;
+7. everything else, which is ordinary bean creation — including the `public-key-fetch` readings,
+   which are reachable there precisely because every check above stands down once the signer's own
+   definition exists.
+
+Steps 3 through 6 are the rule above generalised: specific before general, a value before the path.
+Steps 1 and 2 sit ahead of all of it because they decide whether the configuration underneath them
+can be read at face value at all.
+
+**Each of 1 to 6 declares its position, and none of them is left as validation inside a bean's
+factory method.** That is the half that is easy to get wrong and invisible afterwards: a `@Bean`
+method runs at singleton pre-instantiation, which is step 7, so a refusal left there loses to every
+post-processor above it however specific it is. ADR-024 has the malformed-entry refusal raised
+inside the policy's factory method together with the construction of the rules; under this order it
+is raised at step 3 by a check that performs that same construction and discards it, while the
+factory goes on building through the one implementation of the rule. Constructing a handful of rules
+twice at startup is what buys the operator a message naming the entry rather than one about a signer
+they had not reached yet.
+
+**The numbers cannot live in one place, and this list is what keeps them in step.** A signer starter
+deliberately does not depend on the core starter — the Vault one orders itself against it by name —
+so no constant is visible to both, and step 5 is declared in a different module from steps 1, 2, 4
+and 6. Each module keeps its own positions as package-private constants in a single class, reads
+them against this list, and pins them with a test of its own. A position taken from the registration
+sequence rather than declared is refused here for the reason it is refused above: the framework
+promises that sequence only as far as it can, and a green test over it records what this version
+happens to do.
+
 ## What this does not touch
 
 The core is untouched: no type, no method, no behaviour of `PushSender` changes, and a deployment
@@ -279,6 +366,16 @@ hold them.
 ADR-005 is not engaged: nothing here is a seam. The switch is a property, the diagnostics are
 startup checks inside the modules that own the configuration they read, and the ways to supply a
 signer are the ones that already exist.
+
+## Documents
+
+`README.md` and `docs/SPRING.md` for the switch and for what the refusal says; `docs/DESIGN.md` §8
+for the startup contract, since the table and the order above describe how the starters behave and
+that description belongs in the document that may be rewritten. `docs/VAULT.md` gains nothing of its
+own: what a signer starter owes is one condition and one diagnostic, and the operator-facing half of
+it is the same sentence in `docs/SPRING.md`. The release notes name the transition — a context that
+boots without web push today fails after this, and `push2u.enabled: false` is the line that answers
+it.
 
 ## What this rules out
 
@@ -308,12 +405,22 @@ signer are the ones that already exist.
 - One module's failure message naming another module's property prefixes or counting its keys, and
   equally a mechanism for one module to contribute its finding to another module's message.
 - A partial-configuration diagnostic that fires while a `VapidSigner` or `PushSender` bean exists,
-  and so refuses a deployment over configuration nothing reads.
+  and so refuses a deployment over configuration nothing reads — and equally one that fires in a
+  deployment which switched delivery off, where the same configuration is read by nothing and the
+  stand-down over a bean cannot reach the case because the switch is what removed the bean.
+- A startup check whose side of the switch is decided by where it was implemented rather than by
+  what it is about, in either direction: a value refusal suspended along with the delivery path, or
+  a question about the delivery path asked of a deployment that has answered it.
 - A general refusal that outranks a starter's specific finding; an order between the two taken from
   the registration sequence the framework promises only as far as it can; and a test over that
   sequence offered as the thing that pins it.
-- A precedence declared on one of the two checks and not on the other, which leaves which one runs
-  first depending on which one declared.
+- A precedence declared on some of these checks and not on the others, which leaves which one runs
+  first depending on which one declared; and any check of this family without a position in the one
+  list, whichever module raises it.
+- A refusal ordered below another by being left inside a bean's factory method, where singleton
+  pre-instantiation puts it behind every post-processor however specific it is.
+- A tombstone over a removed property with no end to it, and equally an end written as a version
+  number that does not exist yet.
 - A starter's diagnostic sharing an auto-configuration with its contribution, and so deciding
   whether a signer exists from a point before the local one is registered.
 - A value of `push2u.enabled` that is neither `true` nor `false` read as either of them.
