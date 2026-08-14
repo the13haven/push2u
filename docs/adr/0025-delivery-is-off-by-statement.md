@@ -88,9 +88,9 @@ the absence of a signer bean, and both of those reach a released version before 
 the switch is one route of several rather than the one that introduces the problem. The trap is the
 framework's, the deployment that meets it is the one
 https://github.com/the13haven/push2u/issues/89 is about, and none of the answers to it are this
-library's to take. It does not register a contributor that reports delivery
-being off, which would put a new observable state into every deployment that does not send in order
-to keep a name registered for a check performed on the operator's own configuration; and it does not
+library's to take. It does not register a contributor that reports delivery being off, which would
+put a new observable state into every deployment that does not send in order to keep a name
+registered for a check performed on the operator's own configuration; and it does not
 switch that validation off on the deployment's behalf, which is global and would stop catching a
 mistyped contributor name anywhere in it. What it owes is the recipe, in the Spring guide, given
 with the presence requirement attached rather than as a bare `exclude`.
