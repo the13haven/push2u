@@ -48,7 +48,7 @@ Trace the changed code rather than reading it. Most real bugs here live in one o
 **Byte and index arithmetic.** This library does a lot of it — the RFC 8188 header layout, DER
 parsing, base64url, key coordinates. Check offsets and lengths against the format, check that a
 length taken from input is validated before it is used to allocate or slice, and check for
-overflow: both size sums in the send path are computed in `long` precisely because a payload above
+overflow: the size sums in the send path are computed in `long` precisely because a payload above
 `Integer.MAX_VALUE - 103` wraps negative in `int` and sails past any limit.
 
 **Concurrency.** `PushSender` is stateless and meant to be shared across threads, and `sendAsync`
@@ -115,11 +115,14 @@ Check against the clause, not against intuition:
   encryptor emits (86-byte header + 1 padding delimiter + 16 tag), not written as a constant, so the
   plaintext maximum tracks a configured limit. A newly hardcoded 3993 is a defect.
 - **Record size** — RFC 8291 §4 requires `rs > payload + 1 + 16`, RFC 8188 §2 requires `rs ≥ 18`.
-  There is one implementation of that rule, `WebPushEncryptor.maxPlaintextForRecordSize`, which
-  inverts it into the largest plaintext an `rs` carries; both spellings are expressed in terms of
-  it — `maxPlaintextBytes`, which the sender's pre-flight compares a payload against, and
-  `checkRecordSize`, the encryptor's own last-moment refusal. A second copy is a defect even if it
-  is correct today.
+  There is one implementation of that rule, the inverse pair
+  `WebPushEncryptor.maxPlaintextForRecordSize` / `recordSizeForMaxPlaintext`: `checkRecordSize`,
+  the encryptor's own last-moment refusal, reads the first, and the sender derives its `rs` from
+  the second — once, at `build()`, as the body ceiling less 103 plus 18, exact rather than floored.
+  A second copy of the rule is a defect even if it is correct today, and so is `rs` reappearing as
+  configuration in any form — a builder step, a Spring property, a floor or historical constant
+  (4096 has no special status) applied to the derived value, or a derivation per message rather
+  than per sender.
 - **VAPID** — `aud` is the RFC 6454 §6.1 Unicode serialization produced by `Origin.serialize`;
   `java.net.URI` performs none of that normalization, so a change that "simplifies" this by using
   URI accessors breaks the claim. `sub` is required and non-blank — a push2u contract stricter than

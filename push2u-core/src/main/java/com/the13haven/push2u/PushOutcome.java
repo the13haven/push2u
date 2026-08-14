@@ -315,16 +315,18 @@ public sealed interface PushOutcome {
      * one language and not another — so it is a value the fan-out records, never a failure that stops it; the remedy is
      * to render the notification smaller.
      *
-     * <p>Both numbers are plaintext octets, the unit the caller can act in. One outcome covers both size preconditions
-     * — the configured ceiling on the encrypted body, and RFC 8291 §4's rule that the record size strictly exceed the
-     * plaintext plus its 17 octets of padding delimiter and authentication tag — because both say the same thing, that
-     * this payload does not fit this sender, and a caller should not have to ask which bound it hit before it can
-     * shorten anything. An operator holding the two configured values reads which one bound from the maximum reported:
-     * the body ceiling less the fixed 103 octets of {@code aes128gcm} framing, against the record size less 18.
+     * <p>Both numbers are plaintext octets, the unit the caller can act in. Through {@link PushSender} one rule decides
+     * the maximum: the configured ceiling on the encrypted body, less the fixed 103 octets of {@code aes128gcm}
+     * framing. The record size the sender advertises is derived from that maximum — RFC 8291 §4's rule that {@code rs}
+     * strictly exceed the plaintext plus its 17 octets of padding delimiter and authentication tag, applied in reverse
+     * — so the record-size rule can never be the bound that binds on a send; it stays enforced inside the encryptor,
+     * where a direct caller can still violate it. The same question is answerable <em>before</em> a send through
+     * {@link PushSender#assessPayloadSize(byte[])}, whose refusing branch carries this same pair; this outcome is what
+     * a caller that did not ask — or asked and then grew the payload — receives anyway.
      *
      * @param payloadBytes the plaintext the caller handed over, in octets; never negative
-     * @param maximumPayloadBytes the largest plaintext this sender's configuration would have carried, in octets — the
-     *     smaller of what the two preconditions each permit; never negative
+     * @param maximumPayloadBytes the largest plaintext this sender's configuration would have carried, in octets; never
+     *     negative
      */
     record PayloadRejected(int payloadBytes, int maximumPayloadBytes) implements NotAttempted {
 

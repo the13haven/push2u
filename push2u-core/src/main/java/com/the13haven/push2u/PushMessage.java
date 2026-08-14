@@ -142,6 +142,21 @@ public record PushMessage(
         return payload.clone();
     }
 
+    /**
+     * The snapshot itself, uncopied — the send pipeline's read. The constructor took its defensive copy and the
+     * pipeline only reads, so a per-send copy of an array of ciphertext order would protect nothing; the immutability
+     * this relaxes is tested rather than documented — a send must leave the payload byte-for-byte unchanged. Callers of
+     * this accessor own that obligation; anything that might write, or that hands the array beyond this package, goes
+     * through {@link #payload()}.
+     */
+    // MethodReturnsInternalArray: exposing the internal array is this accessor's whole purpose — a
+    // package-private read-only view for the send pipeline, whose contract (a send leaves the
+    // payload byte-for-byte unchanged) is pinned by test. The public payload() keeps its copy.
+    @SuppressWarnings("PMD.MethodReturnsInternalArray")
+    byte[] uncopiedPayload() {
+        return payload;
+    }
+
     @Override
     public boolean equals(@Nullable Object other) {
         if (this == other) {

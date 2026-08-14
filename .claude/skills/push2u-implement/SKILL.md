@@ -86,9 +86,12 @@ still working; the second passes for reasons that have nothing to do with your c
 
 Two habits particular to this code:
 
-- **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, in
-  `WebPushEncryptor.checkRecordSize`, and both the pre-flight check and the encryptor call it. When
-  you find yourself writing a second copy of a protocol rule, put it where the first one lives.
+- **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, as the inverse
+  pair `WebPushEncryptor.maxPlaintextForRecordSize` / `recordSizeForMaxPlaintext`: the encryptor's
+  `checkRecordSize` refusal reads one direction, and the sender's `build()`-time derivation of `rs`
+  from the body ceiling reads the other — one place decides the rule whichever way it is asked.
+  When you find yourself writing a second copy of a protocol rule, put it where the first one
+  lives.
 - **Size arithmetic in `long`.** A payload above `Integer.MAX_VALUE - 103` wraps negative in `int`
   and passes any limit check. If you touch the size path, keep the sums wide and keep the boundary
   test.
@@ -99,12 +102,12 @@ This is the procedure most often left half-finished, because the useful part wor
 
 1. **Core builder.** Add the setter on `PushSender.Builder`, validate the value where it is set (not
    at send time), and document the unit and the default in Javadoc. Validation belongs here because
-   this is where the constraint is known — the builder rejects a `recordSize` below the RFC 8188 §2
-   floor of 18 regardless of who is calling.
+   this is where the constraint is known — the builder rejects a `maxEncryptedBodyBytes` below the
+   fixed 103-octet `aes128gcm` overhead regardless of who is calling.
 
 2. **Starter property.** Add the component to `Push2uProperties`. Leave it nullable and let `null`
-   mean "keep the builder default" — that is the pattern `jwt-expiry`, `default-ttl`,
-   `record-size` and `max-encrypted-body-bytes` all follow, and it keeps the default in one place
+   mean "keep the builder default" — that is the pattern `jwt-expiry`, `default-ttl` and
+   `max-encrypted-body-bytes` all follow, and it keeps the default in one place
    instead of two.
 
 3. **Wire it, and translate the error.** In `Push2uAutoConfiguration`, forward the value through
@@ -112,7 +115,7 @@ This is the procedure most often left half-finished, because the useful part wor
    front:
 
    ```java
-   applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
+   applyIfPresent(properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
    ```
 
    The builder's own message names its camelCase parameter, which is not what the operator wrote in

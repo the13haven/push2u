@@ -71,8 +71,15 @@ public final class PushSender {
     private final PushHttpClient httpClient;
     private final Duration jwtExpiry;
     private final Duration defaultTtl;
+    /** Derived once from the configured body ceiling: the ceiling less the fixed 103-octet overhead. */
+    private final int maximumPayloadBytes;
+    /**
+     * Derived once from {@link #maximumPayloadBytes}, never configured: the smallest {@code rs} whose record carries
+     * exactly that plaintext, so the advertised record size declares exactly the capacity this sender is able to use
+     * and the record-size rule can never be the bound that binds on a send.
+     */
     private final int recordSize;
-    private final int maxEncryptedBodyBytes;
+
     private final Clock clock;
     private final Ticker ticker;
     private final boolean jwtReuse;
@@ -106,8 +113,11 @@ public final class PushSender {
         this.httpClient = builder.httpClient != null ? builder.httpClient : new JdkPushHttpClient();
         this.jwtExpiry = builder.jwtExpiry;
         this.defaultTtl = builder.defaultTtl;
-        this.recordSize = builder.recordSize;
-        this.maxEncryptedBodyBytes = builder.maxEncryptedBodyBytes;
+        this.maximumPayloadBytes = WebPushEncryptor.maxPlaintextBytes(builder.maxEncryptedBodyBytes);
+        // Exact narrowing: the maximum above is at most Integer.MAX_VALUE - 103, so the derived rs
+        // is at most Integer.MAX_VALUE - 85 and toIntExact cannot throw on any builder-accepted
+        // configuration — it is here so a wrap would fail loudly rather than mint a negative rs.
+        this.recordSize = Math.toIntExact(WebPushEncryptor.recordSizeForMaxPlaintext(maximumPayloadBytes));
         this.clock = builder.clock;
         this.ticker = builder.ticker;
         this.jwtReuse = builder.jwtReuse;
@@ -182,13 +192,15 @@ public final class PushSender {
     /**
      * Encrypt, sign, POST once, and report what became of the requested send. Blocks until done.
      *
-     * <p>The payload is size-checked first, before any cryptography or network I/O, against both
-     * {@link Builder#maxEncryptedBodyBytes(int)} and {@link Builder#recordSize(int)}; a payload that does not fit is
-     * reported as {@link PushOutcome.PayloadRejected}, in plaintext octets, rather than sent for the push service to
-     * refuse with {@code 413}. The {@link EndpointPolicy} the sender was built with runs next, on every send without
-     * exception — still ahead of the encryption, the VAPID signature (which under an external {@link VapidSigner} is a
-     * remote Vault/KMS operation) and the HTTP request, so a rejected endpoint costs none of them and is reported as
-     * {@link PushOutcome.EndpointRejected}.
+     * <p>The payload is size-checked first, before any cryptography or network I/O, against the largest plaintext
+     * {@link Builder#maxEncryptedBodyBytes(int)} admits — the ceiling less the fixed 103-octet {@code aes128gcm}
+     * overhead; a payload that does not fit is reported as {@link PushOutcome.PayloadRejected}, in plaintext octets,
+     * rather than sent for the push service to refuse with {@code 413}. The same question is answerable before a send
+     * through {@link #assessPayloadSize(byte[])}, and this check runs whether or not it was asked: an earlier
+     * assessment is never trusted in its place. The {@link EndpointPolicy} the sender was built with runs next, on
+     * every send without exception — still ahead of the encryption, the VAPID signature (which under an external
+     * {@link VapidSigner} is a remote Vault/KMS operation) and the HTTP request, so a rejected endpoint costs none of
+     * them and is reported as {@link PushOutcome.EndpointRejected}.
      *
      * <p><b>Three seam signals convert to outcomes, and no others.</b> An {@link EndpointRejectedException} from the
      * policy becomes {@link PushOutcome.EndpointRejected}; a {@link VapidSignerUnavailableException} from the signer
@@ -230,8 +242,9 @@ public final class PushSender {
         Objects.requireNonNull(subscription, "subscription");
         Objects.requireNonNull(message, "message");
 
-        byte[] payload = message.payload();
-        int maximumPayloadBytes = WebPushEncryptor.maxPlaintextBytes(recordSize, maxEncryptedBodyBytes);
+        // The uncopied snapshot: the pipeline only reads it — the pre-flight reads the length, the
+        // encryptor copies before padding — and a send leaves it byte-for-byte unchanged.
+        byte[] payload = message.uncopiedPayload();
         if (payload.length > maximumPayloadBytes) {
             return new PushOutcome.PayloadRejected(payload.length, maximumPayloadBytes);
         }
@@ -285,6 +298,35 @@ public final class PushSender {
             return new PushOutcome.Indeterminate(e);
         }
         return classify(response);
+    }
+
+    /**
+     * Whether {@code payload} fits this sender's configuration, answered before any send so that an application
+     * rendering a notification can shorten it rather than discover the limit by outcome — the concrete case is
+     * translation, where the same notification fits in one language and not in another. The answer is
+     * {@link PayloadSizeAssessment.WithinLimit} or {@link PayloadSizeAssessment.ExceedsLimit}, the latter carrying the
+     * payload's size and the budget for the next render, both in plaintext octets — the same pair
+     * {@link PushOutcome.PayloadRejected} reports when a send is refused for size.
+     *
+     * <p>This method reads the array's length, copies nothing and retains nothing. It takes the serialized octets
+     * rather than a length so the unit is never something the caller converts to — a hand-written comparison of a
+     * string length against a byte budget passes for every non-ASCII notification it should fail — and it takes them
+     * rather than a {@link PushMessage} so a payload that will not fit costs no message construction; the reference
+     * flow serializes, asks, and only then builds. A caller holding a built message asks through
+     * {@link PushMessage#payload()}, which copies.
+     *
+     * <p>Asking is optional, and being told is not: {@link #send} checks the payload again and reports an oversized one
+     * as {@link PushOutcome.PayloadRejected} whether or not it was assessed first.
+     *
+     * @param payload the serialized payload, exactly as it would be handed to {@link PushMessage}
+     * @return whether the payload fits, and if not, the budget to render against
+     */
+    public PayloadSizeAssessment assessPayloadSize(byte[] payload) {
+        Objects.requireNonNull(payload, "payload");
+        if (payload.length > maximumPayloadBytes) {
+            return new PayloadSizeAssessment.ExceedsLimit(payload.length, maximumPayloadBytes);
+        }
+        return new PayloadSizeAssessment.WithinLimit();
     }
 
     /**
@@ -604,7 +646,6 @@ public final class PushSender {
 
         private Duration jwtExpiry = Duration.ofHours(12);
         private Duration defaultTtl = Duration.ofDays(1);
-        private int recordSize = WebPushEncryptor.DEFAULT_RECORD_SIZE;
         private int maxEncryptedBodyBytes = WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES;
         private Duration jwtRenewBefore = Duration.ofMinutes(5);
         private boolean jwtReuse = true;
@@ -764,43 +805,26 @@ public final class PushSender {
         }
 
         /**
-         * The {@code aes128gcm} record size advertised in the body header (RFC 8188 {@code rs}); default 4096. The
-         * library emits a single record, so {@code rs} must be strictly greater than the plaintext plus the padding
-         * delimiter (1 octet) plus the authentication tag (16 octets) — RFC 8291 §4 — otherwise the send reports
-         * {@link PushOutcome.PayloadRejected} with the largest plaintext the configuration carries.
-         *
-         * <p>This is a separate protocol parameter from {@link #maxEncryptedBodyBytes(int)} and is never adjusted to
-         * follow it: raising the body limit alone leaves {@code rs} where it was, and the record-size bound then
-         * decides the maximum payload instead. Raise both when sending larger payloads.
-         *
-         * @param recordSize the record size; must be at least 18 (RFC 8188 §2)
-         * @return this builder
-         * @throws IllegalArgumentException if {@code recordSize} is less than 18
-         */
-        public Builder recordSize(int recordSize) {
-            if (recordSize < WebPushEncryptor.MIN_RECORD_SIZE) {
-                throw new IllegalArgumentException("recordSize must be at least "
-                        + WebPushEncryptor.MIN_RECORD_SIZE + " — RFC 8188 §2 declares smaller values invalid, was "
-                        + recordSize);
-            }
-            this.recordSize = recordSize;
-            return this;
-        }
-
-        /**
-         * The ceiling on the encrypted HTTP entity body, in bytes; default 4096.
+         * The ceiling on the encrypted HTTP entity body, in bytes; default 4096. This is the sender's one size
+         * parameter.
          *
          * <p>RFC 8030 §7.2 lets a push service refuse a body larger than 4096 octets, so the limit is expressed on the
          * body rather than on the plaintext. The single-record {@code aes128gcm} format this library emits adds a fixed
          * 103 octets — an 86-octet RFC 8188 header (salt 16, {@code rs} 4, {@code idlen} 1, {@code keyid} 65), the
          * padding delimiter (1) and the AEAD_AES_128_GCM tag (16) — so the default admits 3993 octets of plaintext, the
          * figure RFC 8291 §4 derives. {@link PushSender#send} reports anything larger as
-         * {@link PushOutcome.PayloadRejected} before encrypting or contacting the push service.
+         * {@link PushOutcome.PayloadRejected} before encrypting or contacting the push service, and
+         * {@link PushSender#assessPayloadSize(byte[])} answers the same question before a send.
+         *
+         * <p>The record size the RFC 8188 header advertises is derived from this value at {@link #build()} — the
+         * largest plaintext the ceiling admits, plus the delimiter, the tag and the one octet RFC 8291 §4 requires
+         * {@code rs} to exceed that sum by, which is the ceiling less 85 — so {@code rs} declares exactly the plaintext
+         * capacity this sender is able to use and is never configured on its own. Raising this ceiling is therefore the
+         * whole of raising the limit.
          *
          * <p>Raise it only for an endpoint known to accept more (some push services document a larger limit; a
-         * self-hosted or intra-organisation service may be configured for one). Doing so does <em>not</em> touch
-         * {@link #recordSize(int)}, which stays at whatever it was configured to — raise that too, or the record-size
-         * bound keeps the maximum payload where it was.
+         * self-hosted or intra-organisation service may be configured for one). RFC 8030 §7.2 obliges a push service to
+         * accept only 4096 octets; beyond that it may answer {@code 413}.
          *
          * @param maxEncryptedBodyBytes the maximum encrypted body size in bytes; must be at least the fixed 103-octet
          *     overhead, which is exactly the body an empty payload produces

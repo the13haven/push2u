@@ -20,7 +20,6 @@ push2u:
   jwt-reuse: true
   jwt-cache-size: 64
   default-ttl: 24h
-  record-size: 4096                 # defaults, shown for reference
   max-encrypted-body-bytes: 4096    # defaults, shown for reference
   allowed-origins:                  # one of the two is required, unless an EndpointPolicy bean
     - "https://fcm.googleapis.com"  # supplies the allowlist instead
@@ -50,17 +49,27 @@ and its siblings starts cleanly and then sends without a single retry — nothin
 time will tell you that the block stopped meaning anything, and it goes on reading like configuration
 that is in force.
 
-`jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl`, `record-size` and
+`jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
-5m, `true`, 64 entries, 24h, 4096 bytes and 4096 bytes respectively — see
-[`README.md` → Payload size limits](../README.md#payload-size-limits) for the two size
-properties).
+5m, `true`, 64 entries, 24h and 4096 bytes respectively — see
+[`README.md` → Payload size limits](../README.md#payload-size-limits) for the size property).
+`max-encrypted-body-bytes` is the one size key: the `aes128gcm` record size (`rs`) is derived from
+it, so raising the ceiling is the whole of raising the limit.
 
 Setting any of them to a value the builder rejects (`jwt-expiry` not strictly positive or over 24h,
-`jwt-renew-before` negative, `jwt-cache-size` below 1, `default-ttl` negative, `record-size` below
-18, or `max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead) fails the context
+`jwt-renew-before` negative, `jwt-cache-size` below 1, `default-ttl` negative, or
+`max-encrypted-body-bytes` below the fixed 103-byte `aes128gcm` overhead) fails the context
 with the builder's own message, prefixed by the YAML property name — the builder names only its
 Java parameter, and the operator wrote the property.
+
+**`push2u.record-size` no longer exists, and leaving it in your YAML fails the context at
+startup** — in any spelling relaxed binding accepts (`push2u.record-size`, `push2u.recordSize`,
+`PUSH2U_RECORD_SIZE`), with a message naming the key and where its effect went. Unlike the retry
+block above, this key is refused rather than ignored: it named a limit, and a limit silently out of
+force is exactly what an operator must not go on believing in. Delete the key; if it was raised to
+carry larger payloads, raise `max-encrypted-body-bytes` instead, which the derived record size now
+follows. The refusal is a transition aid, carried for one minor release after the release that
+removed the property, and then removed itself.
 
 **The three `jwt-*` reuse properties are the ones to know about before something surprises you.**
 With `jwt-reuse` at its default, an autoconfigured sender signs one VAPID token per push-service

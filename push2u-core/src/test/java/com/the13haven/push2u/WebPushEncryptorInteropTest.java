@@ -63,7 +63,9 @@ class WebPushEncryptorInteropTest {
             plaintext[i] = (byte) i;
         }
 
-        byte[] body = encryptor.encrypt(uaPublic, authSecret, plaintext, WebPushEncryptor.DEFAULT_RECORD_SIZE);
+        // Any legal rs decodes the same way — the receiver below reads and ignores it, as RFC 8291
+        // §4 permits — so the historical 4096 serves as well as a derived value here.
+        byte[] body = encryptor.encrypt(uaPublic, authSecret, plaintext, 4096);
 
         // Decrypted with no AAD: RFC 8188 §2 feeds AES-GCM the record alone, so any additional
         // authenticated data on the sender side would fail this call in every user agent.

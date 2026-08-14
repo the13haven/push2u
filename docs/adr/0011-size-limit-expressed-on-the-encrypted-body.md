@@ -1,6 +1,6 @@
 # ADR-011 — Size limit expressed on the encrypted body
 
-**Status:** Accepted
+**Status:** Accepted; one clause superseded by [ADR-023](0023-one-size-limit-answerable-before-a-send.md)
 
 RFC 8030 §7.2 constrains what a push service must accept: the *entity body*, at least 4096 bytes.
 A limit expressed on the plaintext would be a restatement of that clause with the `aes128gcm`
