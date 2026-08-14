@@ -49,12 +49,14 @@ otherwise would be claiming something the starter cannot enforce.
 
 **The switch is a condition every contributing auto-configuration honours, and not a master switch
 over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender; the
-health indicator, which lives in its own auto-configuration precisely so that it survives the main
-one being excluded, honours the same condition and is gone too; and every signer starter honours it,
-so the Vault signer is never constructed — which in its fetched mode means a read from Vault during
-startup, a call no deployment that has declared the custodian unused should pay for. It does not
-remove an application's own `PushSender`, which is not this starter's to withdraw, and it does not
-reach the endpoint policy.
+health indicator, which lives in its own auto-configuration so the starter stays usable without
+Actuator on the classpath, honours the same condition and is gone too; and every signer starter
+honours it, so the Vault signer is never constructed — which in its fetched mode means a read from
+Vault during startup, a call no deployment that has declared the custodian unused should pay for. A
+signer starter that does not honour it contributes its signer anyway, and the refusal below is then
+correctly silent: that starter is outside this one's reach in the same way an excluded
+auto-configuration is. The switch does not remove an application's own `PushSender`, which is not
+this starter's to withdraw, and it does not reach the endpoint policy.
 
 **A signer starter therefore reads a key another module owns, and that is not the coupling this
 record forbids elsewhere.** Naming another module's prefixes inside a message copies that module's
@@ -92,9 +94,10 @@ that; an artifact anyone can depend on may not.
 **The deployment ADR-024 exists for states `push2u.enabled: false`.** It accepts subscriptions,
 holds a policy and sends nothing, so the statement this record asks of everything that does not send
 is one it can make truthfully — and what it keeps by making it is the policy its allowlist states.
-ADR-024, written before this switch existed, says that such a context "starts exactly as it does
-today"; after this record it starts because it said so. Both are drafts and neither is superseded by
-the other: what changes is one line of that deployment's configuration.
+ADR-024, written before this switch existed, has that deployment holding the rule as a value whether
+or not it sends; after this record it holds it and says so. A context that states nothing and sends
+nothing makes the same statement, for the same reason. Neither record revises the other: what
+changes is one line of that deployment's configuration.
 
 ## Why the default is on, and why the third state is fatal
 
@@ -133,15 +136,16 @@ revisable under `0.x` as the shape of a constructor.
 
 ## Blank is unset, for the properties that activate a signer
 
-`@ConditionalOnProperty` treats an empty value as present, so
-`public-key: ${PUSH2U_VAPID_PUBLIC_KEY:}` activates the local signer and is then refused — not for
-its encoding, since an empty string is valid base64url and decodes to nothing, but for the length of
-the point it did not carry. The Vault token is activated the same way and refused as empty. Each
+`@ConditionalOnProperty` treats an empty value as present, and the local signer's condition is over
+the pair of keys, so `public-key: ${PUSH2U_VAPID_PUBLIC_KEY:}` beside a private key defaulted the
+same way activates the signer and is then refused — not for its encoding, since an empty string is
+valid base64url and decodes to nothing, but for the length of the point it did not carry. The Vault
+token is activated the same way and refused as empty. Each
 failure describes a shape rather than what the operator did, which is why the trap is written down
 in the reporting consumer's own YAML: nothing else writes it down anywhere.
 
-For the properties that *activate* a signer — the two local keys, the three Vault values — a blank
-value counts as unset. Nothing is lost: no blank value of any of them could have produced a signer,
+For the properties that *activate* a signer — the two keys this starter owns, and each signer
+starter's own activating set — a blank value counts as unset. Nothing is lost: no blank value of any of them could have produced a signer,
 so the only outcomes traded are two failures, and the one this chooses names the missing
 configuration instead of the shape of an empty string. It is a deliberate divergence from the
 framework's own reading of "set", and it belongs to activation only: it says nothing about the
@@ -159,8 +163,8 @@ So the diagnostic is split the way ownership is. Each starter that contributes a
 its own properties — a partially stated set is its finding, in its words, naming its keys — and the
 general refusal answers only for the fact that no signer bean exists, listing the ways to supply
 one: the switch, an application `VapidSigner` or `PushSender` bean, the two key properties the
-module raising it owns, any signer starter's own configuration in that starter's own words, and the
-framework's condition report for the rest. A future signer starter is named by the clause about
+module raising it owns, any signer starter's own configuration, and the framework's condition report
+for the rest. A future signer starter is named by the clause about
 signer starters rather than by anything this module had to learn about it, and it names its own keys
 itself.
 
@@ -183,8 +187,8 @@ instantiated before any ordinary bean an auto-configuration contributes, so a re
 would lose the race, and the operator would read the framework's "required a bean that could not be
 found" instead. Raising it from a post-processor of the bean factory puts it ahead of every
 application singleton while leaving the condition that decides whether to raise it where it belongs:
-evaluated against bean definitions rather than instances, so nothing is forced into existence to
-answer it.
+decided while the auto-configurations are being processed, against the bean definitions registered
+by then rather than against instances, so nothing is forced into existence to answer it.
 
 **One price is paid knowingly, and it is the price ADR-024 pays in the other direction.** That
 condition sees the application's own configuration, which is processed first, and every signer
@@ -194,7 +198,7 @@ condition would not see it either. A signer starter that declares no order is pl
 and where that puts it after the refusal has been decided, the context fails demanding a signer it
 holds. The alternative is a refusal raised late enough to see everything, which is a refusal raised
 after the application beans it exists to precede. The order is one line to declare, and a starter
-that omits it is already broken for the sender.
+that omits it is relying on the same fallback for the sender's own condition.
 
 **The message may not send the operator somewhere a failed context cannot serve.** The condition
 report is the right place to look and `/actuator/conditions` is the wrong way to name it here: there
@@ -225,14 +229,16 @@ ADR-016 stands whole. The obligation to state an egress decision still belongs t
 deployment that sends without stating one still fails. This record adds an obligation *before* that
 one, and removes none of it.
 
-ADR-024 stands whole, and is not superseded in any clause. This record settles only which
+ADR-024 stands whole: no clause of its decision is displaced here. This record settles only which
 auto-configuration may carry its bean, so that a switch introduced afterwards cannot take the policy
 away from the deployment ADR-024 wrote it for.
 
-ADR-022 is not reopened. The refusals added here are the starters' own coherence checks — a required
-decision left unstated, a property set stated in half — and they take the `IllegalStateException`
-that record assigns to exactly that category. No type is minted for them: what ADR-022 states is a
-rule, not a list this record has to be added to.
+ADR-022 is not reopened, and it saw this coming. That record names this very question as lying
+outside itself, says nothing in it forecloses an explicit switch, and leaves the starters'
+`IllegalStateException` meaning what it means — a context that could not be built from what was
+configured. The refusals added here are exactly that: a required decision left unstated, a property
+set stated in half. No type is minted for them, and no list in that record has to be reopened to
+hold them.
 
 ADR-005 is not engaged: nothing here is a seam. The switch is a property, the diagnostics are
 startup checks inside the modules that own the configuration they read, and the ways to supply a
@@ -254,8 +260,9 @@ signer are the ones that already exist.
 - That policy declared where the switch's condition is applied — and equally the claim that being
   outside the auto-configuration carrying the sender is the test, when the health indicator is
   outside it and gated all the same.
-- A released version carrying the switch while the allowlist is still read only inside the
-  auto-configuration the switch gates: the two arrive in one release or neither does.
+- A released version carrying the switch while the allowlist is still read only inside the sender's
+  own auto-configuration, which carries the switch's condition: the two arrive in one release or
+  neither does.
 - A Vault signer constructed, and its fetched mode's startup read performed, in a deployment that
   switched delivery off.
 - A claim that a missing sender proves the deployment said no — the invariant holds under an active,
@@ -268,6 +275,9 @@ signer are the ones that already exist.
   and so refuses a deployment over configuration nothing reads.
 - A general refusal that outranks a starter's specific finding, or an order between the two left to
   a sorter's fallback.
+- An order the two post-processors take from a precedence each declares for itself rather than from
+  the order their starters declare — which satisfies raising them the same way and inverts the
+  result.
 - A refusal an application's own missing-bean failure can precede.
 - A signer starter whose contribution the refusal's condition is assumed to see although that
   starter declares no order — the price is stated rather than designed away.
