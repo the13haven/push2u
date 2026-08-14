@@ -22,19 +22,22 @@ does send and meets a Vault that is not ready yet.
 
 ## The decision, part one: the read is deferrable, by a builder of its own
 
-**`builderWithDeferredPublicKey(address, keyName, token)` is a third factory**, beside the two that
-exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring.
+**`builderWithDeferredPublicKeyFetch(address, keyName, token)` is a third factory**, beside the two
+that exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring.
 
 - **A factory rather than an optional step**, because the convention here gives one
   `builderWith<what exactly>()` to each way of assembling a type that differs in *contract*, and the
   three contracts are distinct: the eager fetched builder reads Vault inside `build()` and pins what
-  it read; the supplied builder takes the key and the version from the caller and contacts nothing,
-  ever; this one takes them from Vault, at first use rather than at construction. The axis is
-  therefore *where the published key comes from and what `build()` promises*, and not merely whether
-  `build()` performs I/O — on that narrower question the deferred and the supplied builders answer
-  alike. A `fetchOnFirstUse()` step on the fetched builder would instead make one `build()` sometimes
-  perform I/O and sometimes not, which is the ambiguity the split exists to prevent. The name keeps
-  the form of the two shipped factories, which name the key rather than the call. The price is a
+  it read; the supplied builder takes the public key from the caller, with an optional version pin,
+  and contacts nothing, ever; this one takes both from Vault, at first use rather than at
+  construction. The axis is therefore *where the published key comes from and what `build()`
+  promises*, and not merely whether `build()` performs I/O — on that narrower question the deferred
+  and the supplied builders answer alike. A `fetchOnFirstUse()` step on the fetched builder would
+  instead make one `build()` sometimes perform I/O and sometimes not, which is the ambiguity the
+  split exists to prevent. The name says what is deferred, which is the *call* and not the key: the
+  two shipped factories name the key because for them the key is what differs, while here the key is
+  the same fetched key and only its moment moves — and the property that selects the mode is named
+  for the same call. The price is a
   third builder repeating `mount`, `namespace`, `transport` and `allowInsecureHttp()`; that
   duplication already exists between the two shipped builders, and it is cheaper than a terminal
   operation whose contract a reader has to reconstruct from another step.
@@ -97,7 +100,9 @@ exist.
 
 ### The initialization contract
 
-> Deferred initialization permits at most one active metadata fetch per signer. Callers already
+> Deferred initialization permits at most one flight the signer records as active per signer, which
+> is what bounds the reads it starts rather than the I/O an abandoned one may still be finishing.
+> Callers already
 > attached to that fetch share its successful metadata, or a fresh exception reconstructed from its
 > failure description — where that failure was one of the two contract types and was not an
 > interruption. They never share one thrown exception instance, and the caller that performed the
@@ -161,12 +166,14 @@ exists to prevent. Five consequences are contract rather than implementation adv
 - **A failure is never shared as one thrown instance.** One exception thrown from several threads
   carries the fetching caller's stack, leaves each waiter without its own, and gives them all one
   mutable suppressed-exception list. A flight therefore records an immutable description of what
-  failed — the message, the cause it carried, and for an unavailability the status and the declared
+  failed — the message, the failure itself, and for an unavailability the status and the declared
   delay — and each waiter throws its own exception built from that: its own stack from its own throw
-  site, and the recorded cause beneath it. The failing instance itself is not retained past the
-  flight. The description does hold a `Throwable`, so what is ruled out is one instance *thrown* by
-  several threads rather than one instance reached from several cause chains; a cause is diagnostics,
-  and nothing in this library writes into one.
+  site, and **the fetch's own failure, whole, as its cause**. Not that failure's cause: Vault
+  answering `503` produces an unavailability with no cause at all, so a waiter reconstructed from the
+  cause alone would carry a stack beginning where it woke up and nothing whatever about the read that
+  failed. The description therefore holds a `Throwable`, and what is ruled out is one instance
+  *thrown* by several threads rather than one instance reached from several cause chains; a cause is
+  diagnostics, and nothing in this library writes into one.
   Two details of the reconstruction are decided here. The promise is the **contract type** —
   `VapidSignerUnavailableException` or `PushCryptoException` — and not the runtime class: both are
   extensible, a subclass a custom transport raised cannot be reconstructed without reflection, and
@@ -264,8 +271,9 @@ lifetime.
   of many, keyed by an audience an untrusted party can influence, while the pair is one published
   identity per signer that is contractually forbidden to change. Nothing about the token cache's
   bound is relaxed, and no second entry can ever exist here to bound.
-- **ADR-005 and ADR-010.** No SPI gains a member, and the seam count stays three. What changes is one
-  implementation's construction, behind the interface both records draw.
+- **ADR-005 and ADR-010.** The three core SPIs are unchanged; the Vault module's fourth seam,
+  `VaultHttpTransport`, gains no member; and no new seam is introduced. What changes is one
+  implementation's construction, behind the interfaces both records draw.
 - **ADR-016, ADR-021, ADR-022.** The endpoint policy still runs on every send ahead of everything;
   no retry is introduced anywhere; and the exception taxonomy is applied rather than extended — this
   record adds no type and re-labels none.
@@ -314,8 +322,8 @@ still failing the boot:
 - a concurrent cold wave performs one read and every caller gets the same pair;
 - a concurrent failing wave performs one read; every caller gets the contract type the fetch failed
   with — carrying the same status and declared delay where that type was the unavailability, which is
-  the only one of the two that reports either — as distinct exception instances each with the
-  recorded cause beneath it;
+  the only one of the two that reports either — as distinct exception instances, each carrying the
+  fetch's own failure as its cause, including where that failure had no cause of its own;
 - a later caller, after a failed wave, starts a new read;
 - an interrupted fetching caller keeps its own exception, and no waiter is handed a cancellation: one
   of them starts the next read, and none of their sends reports an interruption. Both halves of the
