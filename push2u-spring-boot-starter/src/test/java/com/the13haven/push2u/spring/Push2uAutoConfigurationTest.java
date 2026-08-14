@@ -39,8 +39,11 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.health.registry.HealthContributorRegistry;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.MapPropertySource;
 
 import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
@@ -818,6 +821,50 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void blankAllowedOriginsIsAnEntryRatherThanTheEscapeHatch() {
+        // The hatch above works on an explicitly EMPTY value. A blank one is not the same input:
+        // bound from a single delimited string, only a zero-length value yields no entries, while a
+        // space yields one that trims to nothing. So the property counts as expressing an allowlist
+        // and its entry is refused — and what makes that survivable is the index, since an entry
+        // that shows nothing of itself is still push2u.allowed-origins[0]. The guide states this,
+        // and the position it promises is ours rather than the framework's, so it is pinned here.
+        //
+        // The property goes in as a property source rather than through withPropertyValues, which
+        // trims what it is given: a blank cannot be expressed that way at all, and a test written
+        // with it would silently assert the empty case while reading as though it covered this one.
+        keyedRunnerWithoutEndpointPolicy()
+                .withInitializer(blankAllowedOrigins())
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "push2u.allowed-origins[0]:"))
+                            .as("a blank entry is refused by position, not read as an empty property")
+                            .hasMessageContaining("push2u.allowed-origins[0]:");
+                });
+    }
+
+    @Test
+    void blankAllowedOriginsBesideAPolicyBeanFailsAsTheContradictionInstead() {
+        // The blank costs most in the case the hatch exists for: beside a bean, an expressed
+        // allowlist is the two-sources contradiction, so the operator is told about the property
+        // and the bean and never about the blank that made the property look expressed. Pinning it
+        // because the guide says so, and because it is the failure a reader of the hatch will meet.
+        keyedRunnerWithoutEndpointPolicy()
+                .withInitializer(blankAllowedOrigins())
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
+                            .hasMessageContaining("EndpointPolicy bean")
+                            .as("no index is named here — addRules is never reached")
+                            .hasMessageNotContaining("push2u.allowed-origins[");
+                });
+    }
+
+    @Test
     void emptyAllowedOriginsBesideAPolicyBeanCedesToTheBean() {
         // The escape hatch for inherited configuration: a service getting push2u.allowed-origins
         // from a shared application.yml it does not own cannot unset the property, so explicitly
@@ -1209,6 +1256,17 @@ class Push2uAutoConfigurationTest {
     }
 
     /** Keys and subject only — for the cases that supply the endpoint policy themselves, or deliberately omit it. */
+    /**
+     * Puts {@code push2u.allowed-origins} into the environment as a single blank string, which is what an operator
+     * writes when they mean to empty an inherited property. It cannot go through {@code withPropertyValues}, which
+     * trims the value it is handed.
+     */
+    private static ApplicationContextInitializer<ConfigurableApplicationContext> blankAllowedOrigins() {
+        return context -> context.getEnvironment()
+                .getPropertySources()
+                .addFirst(new MapPropertySource("blank-allowlist", Map.of("push2u.allowed-origins", " ")));
+    }
+
     private ApplicationContextRunner keyedRunnerWithoutEndpointPolicy() {
         return runner.withPropertyValues(
                 "push2u.vapid.public-key=" + publicKeyB64,

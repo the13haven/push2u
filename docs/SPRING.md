@@ -147,10 +147,15 @@ about the pair, and no single entry is left to refuse on its own terms.
 
 **Empty means empty, and a blank is not one.** Where the value arrives as one delimited string —
 an environment variable, `PUSH2U_ALLOWED_ORIGINS=`, is the case this hatch exists for — only a
-zero-length value is no entries at all. A single space, or a lone comma, is *one* entry rather than
-none, so the property counts as expressing an allowlist and that entry is then refused as the
-malformed one it is. The refusal names it by position, which is what saves it: an entry that shows
-nothing of itself is still `push2u.allowed-origins[0]`.
+zero-length value is no entries at all. A single space is one entry; a lone comma is two, one either
+side of it. None of them is a name, but the property now *expresses* an allowlist, which is the
+opposite of what was meant by typing it.
+
+What that costs depends on what else is configured, and it is worst in the case the hatch is for.
+Beside an `EndpointPolicy` bean, an expressed allowlist is the contradiction above: the context
+fails naming the property and the bean, not the blank that made it look expressed. On its own, or
+beside the other property, the blank entry is refused as the malformed entry it is — which is the
+next paragraph, and the better of the two failures to be holding.
 
 A malformed entry fails the context named exactly — the property it came from and its index in that
 property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from one
