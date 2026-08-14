@@ -79,14 +79,15 @@ not what makes it safe**: the health indicator is outside it too and is gated al
 makes it safe is that the policy's own auto-configuration does not carry the condition, and that is
 the constraint this record places on ADR-024's bean.
 
-**Before that bean exists there is nothing for the switch to spare, and this record does not pretend
-otherwise.** Today the allowlist is parsed inside the sender's factory method and has no reader
-outside it, so a deployment that switches delivery off suspends the validation of two properties
-nothing else reads — the same suspension every other delivery value gets, and no more. Once the bean
-exists, the consequences are ADR-024's own: a deployment with the switch off and a stated allowlist
-still holds its policy, a malformed entry still fails at startup, and an allowlist stated beside an
-application-supplied policy bean still fails as the contradiction it is. Those three belong to the
-bean that produces them, and are not claimed for a state that has none.
+**The switch and that bean reach a consumer together, so the constraint is on the release and not on
+the order of the work.** Today the allowlist is parsed inside the sender's factory method and has no
+reader outside it, so a switch shipped over that arrangement would suspend the allowlist's own
+validation along with the delivery path it currently sits in — which is exactly why no released
+version carries one without the other. What a deployment receives is the whole of it: with the
+switch off and a stated allowlist it still holds its policy, a malformed entry in that allowlist
+still fails at startup, and an allowlist stated beside an application-supplied policy bean still
+fails as the contradiction it is. Between two merges on the way there the tree may hold less than
+that; an artifact anyone can depend on may not.
 
 **The deployment ADR-024 exists for states `push2u.enabled: false`.** It accepts subscriptions,
 holds a policy and sends nothing, so the statement this record asks of everything that does not send
@@ -247,13 +248,14 @@ signer are the ones that already exist.
   one is enforced.
 - A `PushSender` that exists and declines to send — a disabled channel is the application's type to
   write, at its own boundary.
-- `push2u.enabled` reaching the endpoint policy: once ADR-024's bean exists, the policy of a
-  deployment that states an allowlist and does not send survives the switch, as do the refusal of a
-  malformed allowlist and of an allowlist stated beside a policy bean.
+- `push2u.enabled` reaching the endpoint policy: the policy of a deployment that states an allowlist
+  and does not send survives the switch, as do the refusal of a malformed allowlist and of an
+  allowlist stated beside a policy bean.
 - That policy declared where the switch's condition is applied — and equally the claim that being
   outside the auto-configuration carrying the sender is the test, when the health indicator is
   outside it and gated all the same.
-- The three consequences above claimed for a state that has no policy bean to produce them.
+- A released version carrying the switch while the allowlist is still read only inside the
+  auto-configuration the switch gates: the two arrive in one release or neither does.
 - A Vault signer constructed, and its fetched mode's startup read performed, in a deployment that
   switched delivery off.
 - A claim that a missing sender proves the deployment said no — the invariant holds under an active,
