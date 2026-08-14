@@ -113,11 +113,17 @@ changes is one line of that deployment's configuration.
 
 The section above settles one question of this kind, the endpoint policy's. It is a row or two of a
 table, and leaving the other rows to be decided by where each check happens to be implemented is how
-a deployment that stated it does not send ends up refused over a property nothing reads. So every
-check this starter family raises is
-listed, and the list is exhaustive rather than illustrative. Its rows are not in running order —
-that is the section *One declared order over every startup check* below, and it sorts them
-differently:
+a deployment that stated it does not send ends up refused over a property nothing reads.
+
+**Most of this starter family's refusals need no row, and saying which is what makes the table
+exhaustive rather than illustrative.** A refusal raised *while a bean the switch withdraws is being
+constructed* is on the delivery-path side by construction and cannot be anywhere else: with that
+bean unbuilt it is unreachable, and nothing about its position was ever a choice. That covers the
+signer's own key material, every builder value the sender translates from a property, and every
+per-property translation in a signer starter. What needs deciding is the rest — the checks raised
+outside any such construction, which is exactly the six that take a declared position below, and
+they are the whole of this table. Its rows are not in running order; that is the section *One
+declared order over every startup check*, and it sorts them differently.
 
 | Startup check | `push2u.enabled: false` | `true`, or unset |
 |---|---|---|
@@ -125,32 +131,28 @@ differently:
 | A malformed allowlist entry | runs | runs |
 | An allowlist stated beside an application policy bean | runs | runs |
 | A signer starter's partial-configuration diagnostic | skipped | runs |
-| `push2u.signer.vault.public-key-fetch` and its readings | skipped | runs |
 | The general refusal over a missing signer | skipped | runs |
-| The sender's own refusals: `push2u.vapid.subject`, an unstated allowlist | skipped | runs |
 | A tombstone over a property a release removed | runs, while the tombstone lives | the same |
 
 **What decides a row is what the check is about, never where it is implemented.** The first three
 are about a *value*: an allowlist entry that is not an origin is not an origin in a context that
 sends nothing either, and a stated allowlist beside a bean is a contradiction whoever ends up
-reading it. Those are ADR-024's, and this record narrows none of them. The next four are about the
+reading it. Those are ADR-024's, and this record narrows none of them. The next two are about the
 *delivery path*: each asks, in its own words, whether this deployment can sign — and a deployment
-that has said it does not send has answered that already. The last of those four is a row rather
-than a single check: it holds what `pushSender` refuses on its own — a missing contact address, and
-ADR-016's obligation to state an egress decision. Both are listed for completeness rather than
-because anything here moves them, and with the switch off there is no sender to raise either, which
-is the answer ADR-016 would give.
+that has said it does not send has answered that already.
 
 **A signer starter's diagnostic is therefore gated by the switch although it is not a
 contribution.** Its stand-down is over an existing `VapidSigner` or `PushSender` bean, and the
 switch is precisely what keeps those from existing, so the stand-down cannot reach the case: a
 deployment that switched delivery off with half a `push2u.signer.vault.*` block left over would be
 refused over configuration nothing reads. That is the mistake the stand-down exists to prevent, with
-the sign reversed. **The `public-key-fetch` readings are in the same column for the table's own
-reason and not for that one** — they have no stand-down to lose; they are about the delivery path,
-and a deployment that answered that question is owed no opinion about when a read it will never
-perform would have happened. That their natural home is the signer's own construction, which the
-switch already removes, is a convenience of the implementation and not what puts them there.
+the sign reversed.
+
+**`push2u.signer.vault.public-key-fetch` is the case worth naming out of the unrowed ones**, because
+ADR-026 asks the question directly and a reader will look for it here. Its readings are decided
+while the Vault signer is built, so the switch removes them with the signer, and that is the right
+answer for the right reason: they are about the delivery path, and a deployment that has answered
+that question is owed no opinion about when a read it will never perform would have happened.
 
 The tombstone row is not an exception to that line but sits outside it: a removed key names a
 setting that exists in neither state, and the refusal is about what the operator believes is in
@@ -329,9 +331,11 @@ it:
 4. **an allowlist stated beside an application policy bean**;
 5. **a signer starter's partial-configuration diagnostic**;
 6. **the general refusal over a missing signer**;
-7. everything else, which is ordinary bean creation — including the `public-key-fetch` readings,
-   which are reachable there precisely because every check above stands down once the signer's own
-   definition exists.
+7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+   built, including the `public-key-fetch` readings and what `pushSender` refuses on its own. They
+   are reachable there because steps 5 and 6, the two that are about whether a signer exists, stand
+   down once its definition does. Steps 1 to 4 have no such stand-down and must not grow one: none
+   of them is about a signer.
 
 Steps 3 through 6 are the rule above generalised: specific before general, a value before the path.
 Steps 1 and 2 sit ahead of all of it because they decide whether the configuration underneath them
@@ -343,30 +347,51 @@ while the configuration classes are parsed, long before any of these checks runs
 **Each of 1 to 6 declares its position, and none of them is left as validation inside an ordinary
 bean's factory method.** That is the half that is easy to get wrong and invisible afterwards: an
 ordinary `@Bean` is created at singleton pre-instantiation, which is step 7, so a refusal left there
-loses to every post-processor above it however specific it is. (A `@Bean` method whose *product* is a
-post-processor is not that case — the framework fetches those in the earlier phase — which is
-precisely how these six are declared from an auto-configuration at all.) The refusal ADR-024 raises
-over a malformed entry is the worked example: it went with the construction of the rules, inside the
-policy's factory method, and this order is what made that position unreachable. It is now raised at
-step 3 by a check that performs the same construction and discards it, while the factory goes on
-building through the one implementation of the rule — an amendment that record carries in its own
-words. Constructing a handful of rules twice at startup is what buys the operator a message naming
-the entry rather than one about a signer they had not reached yet.
+loses to every post-processor above it however specific it is. (A `@Bean` method whose *product* is
+a post-processor is not that case — the framework fetches those in the earlier phase, which is
+precisely how these six are contributed from an auto-configuration at all. What that method has to
+look like is *One mechanism, or the numbers do not compare* below, and it is not obvious.) The
+refusal ADR-024 raises over a malformed entry is the worked example: it went with the construction
+of the rules, inside the policy's factory method, and this order is what made that position
+unreachable. It is now raised at step 3 by a check that performs the same construction and discards
+it, while the factory goes on building through the one implementation of the rule — an amendment
+that record carries in its own words. Constructing a handful of rules twice at startup is what buys
+the operator a message naming the entry rather than one about a signer they had not reached yet.
 
-**Every check in the "runs" column of the table above is declared outside the auto-configuration
-that carries the switch's condition.** That constraint was stated there for ADR-024's policy bean;
-it is the same constraint and it reaches the tombstone too, whose natural home would otherwise be
-the core starter's own auto-configuration — the one the switch turns off. A row that says it runs
-with delivery off, raised from a class the switch removes, is a row that does not hold.
+**A check runs when its row says it runs, and nothing the row does not mention may suppress it.**
+Stated for ADR-024's policy bean as "declared where the switch's condition is not applied", and that
+is necessary rather than sufficient: a class-level condition on Actuator's presence, a condition on
+a bean, an allowlist condition hoisted from a method to the class that ends up hosting the check —
+each of them silently narrows a row without going anywhere near the switch. Issue #89 records that
+exact trap for this exact tombstone mechanism, where gating the refusal on the health classes being
+present would let a dead key through in a context that dropped Actuator. So the constraint is about
+the whole of what stands between the check and the context, not about the one suppressor that
+prompted it. The tombstone is where it bites hardest: its natural home is the core starter's own
+auto-configuration, which is the one the switch turns off.
 
-**One mechanism, or the numbers do not compare.** The framework sorts post-processors of the bean
-factory into buckets by the *kind* of precedence they declare and orders only within each bucket, so
-two checks in different buckets run in bucket order whatever integers they carry — and a check that
-runs in an altogether earlier phase, over the environment as it is being prepared, precedes all of
-them however it is annotated. So the six are one kind: post-processors of the bean factory,
-declaring the ordinary precedence rather than the priority one, reading the environment at refresh
-as ADR-023 already asks of the tombstone. A check that cannot be built that way has left this list
-rather than taken a position in it, and the list is the thing that has to be revisited.
+**One mechanism, or the numbers do not compare — and the mechanism is narrower than it sounds.** The
+framework sorts post-processors of the bean factory into buckets by the *kind* of precedence they
+declare and orders only within each bucket, so two checks in different buckets run in bucket order
+whatever integers they carry. Three ways to fall out of the intended bucket, all silent:
+
+- **A post-processor of the bean definition registry is a different phase**, and the whole of it
+  completes before any plain bucket. Such a check precedes every position in this list whatever it
+  declares.
+- **A check over the environment as it is being prepared precedes the context itself**, so it
+  precedes all of them too. This is why the tombstone reads the environment *at refresh*, which is
+  what ADR-023 asks for in any case.
+- **The bucket is chosen from the declared return type of the `@Bean` method, not from the object
+  it returns.** The framework must not instantiate a candidate to find out where it belongs, so it
+  asks the definition, and a factory method declaring the post-processor *interface* as its return
+  type lands in the bucket that is never sorted — carrying an order the framework will not look at.
+  A position declared by an annotation on the method rather than on the class is invisible for the
+  same reason.
+
+So a check of this family declares its position **on its class**, and the `@Bean` method that
+contributes it declares **that class** as its return type; the method is `static`, as the framework
+requires of one producing a post-processor, so contributing it does not drag its auto-configuration
+into existence early. A check that cannot be built that way has left this list rather than taken a
+position in it, and then the list is what has to be revisited.
 
 **The numbers cannot live in one place, and this list is what keeps them in step.** A signer starter
 deliberately does not depend on the core starter — the Vault one orders itself against it by name —
@@ -464,9 +489,16 @@ it.
 - A refusal ordered below another by being left inside an ordinary bean's factory method, where
   singleton pre-instantiation puts it behind every post-processor however specific it is.
 - A check of this family built on a mechanism that sorts into a different bucket, or that runs in an
-  earlier phase than the rest, so that its declared number does not compare with theirs.
-- A check the table has running with delivery off, declared inside an auto-configuration that
-  carries the switch's condition — the row and the declaration site then say opposite things.
+  earlier phase than the rest — a post-processor of the bean definition registry, or one over the
+  environment as it is being prepared — so that its declared number does not compare with theirs.
+- A position declared where the framework will not read it: on the factory method rather than on
+  the class, or behind a factory method whose declared return type is the post-processor interface,
+  either of which puts the check in the bucket that is never sorted while it carries a number.
+- A check the table has running with delivery off, suppressed by anything the row does not mention:
+  the switch's condition, a condition on the presence of a class or a bean, or a condition hoisted
+  to whatever class ends up hosting it.
+- A table of what the switch reaches that claims to be exhaustive without saying which refusals need
+  no row, and why they cannot be anywhere but where they are.
 - The order pinned by asserting a constant's value, or by a test that can see only one module's
   checks: what has to be pinned is the message that arrives in a context holding every starter that
   declares a position.
