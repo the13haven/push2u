@@ -64,8 +64,10 @@ import com.the13haven.push2u.VapidSigner;
  *
  * <p>What this asserts that a probe of the signer's backend cannot: it signs, so it fails on a credential that no
  * longer authorises signing — an expired or revoked token, a key renamed or deleted, a permission withdrawn — where a
- * probe asking the backend whether it is up and unsealed answers yes to all of them. A deployment carrying such a
- * backend probe beside this one is not carrying the same question twice.
+ * probe asking the backend whether it is up and unsealed answers yes to all of them. It then verifies what came back
+ * against the signer's own advertised public key, which reaches the case no credential check does either: bytes
+ * returned successfully that do not verify. A deployment carrying such a backend probe beside this one is not carrying
+ * the same question twice.
  */
 public final class Push2uHealthIndicator implements HealthIndicator {
 

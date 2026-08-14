@@ -374,12 +374,24 @@ single-word group name — an environment variable is read on its `_` boundaries
 `container-check` is not reachable this way and a variable naming it lands on a different key
 entirely. It is a repair, and one the deployment did not choose the conditions of.
 
+**Empty there means empty, not blank.** A single space, or a lone comma, is not an empty list: the
+conversion from a delimited string counts only a zero-length value as nothing, so a space arrives as
+one element and is then trimmed to `""`, and the check goes looking for a contributor named `''`.
+The context fails exactly as it was failing before, this time naming an empty string, which carries
+nothing at all to reason from. "I cleared it" and "I blanked it" are the same intention, and only
+one of them starts.
+
 **A `*` in the same list switches that check off for everything written after it.** The validator
 walks a group's names in the order they were written and stops at the first `*`, leaving the rest of
-that list unchecked — and since `*` already means every contributor, a name after it changes nothing
-at run time either, so it is inert and unverified at once. `include` and `exclude` are walked
-separately, so a `*` on one side says nothing about the other. This is why the second recipe above
-spells its list out: an explicit list is the one the framework actually checks for you.
+that list unchecked. `include` and `exclude` are walked separately, so a `*` on one side says
+nothing about the other.
+
+So the wildcard's position, and nothing else, decides whether a mistake beside it is caught:
+`include: "*,diskspace"` starts cleanly while `include: "diskspace,*"` refuses, although the two are
+the same list and do the same thing once running — a name written beside a `*` is already matched by
+the `*`, wherever it sits. Such a name is therefore always inert, and caught only when it happens to
+come first. This is why the second recipe above spells its list out: an explicit list is the one the
+framework actually checks for you.
 
 **Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
 thing to want here, and it does not start. A *second* validator, beside the membership one, refuses
