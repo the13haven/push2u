@@ -387,10 +387,10 @@ that list unchecked. `include` and `exclude` are walked separately, so a `*` on 
 nothing about the other.
 
 So the wildcard's position, and nothing else, decides whether a mistake beside it is caught:
-`include: "*,diskspace"` starts cleanly while `include: "diskspace,*"` refuses, although the two are
-the same list and do the same thing once running — a name written beside a `*` is already matched by
-the `*`, wherever it sits. Such a name is therefore always inert, and caught only when it happens to
-come first. This is why the second recipe above spells its list out: an explicit list is the one the
+`include: "*,diskspace"` starts cleanly while `include: "diskspace,*"` refuses over `diskspace` —
+the misspelling from the second recipe — although the two are the same list and do the same thing
+once running, since a name written beside a `*` is already matched by the `*`, wherever it sits.
+Such a name is therefore always inert, and checked only where it stands before the wildcard. This is why the second recipe above spells its list out: an explicit list is the one the
 framework actually checks for you.
 
 **Do not name a group after a contributor.** A dedicated `/actuator/health/push2u` is the obvious
