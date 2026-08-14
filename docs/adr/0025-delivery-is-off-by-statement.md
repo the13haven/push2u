@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 
-Under the Spring starter a `PushSender` bean exists when a `VapidSigner` bean exists, and a signer
+Under the Spring starter a `PushSender` bean exists when a `VapidSigner` bean does, and a signer
 exists when one of two property sets is complete: `push2u.vapid.public-key` with `.private-key` for
 the in-JVM signer, `push2u.signer.vault.address`, `.key-name` and `.token` for the Vault Transit
 one. With none of them the context starts, holds no sender, logs nothing, and fails nothing.
@@ -37,8 +37,8 @@ enter.
 ## The decision
 
 **A deployment states that it does not send, or the autoconfigured delivery path is present and
-usable.** `push2u.enabled` is that statement, it defaults to on, and the third state — on, with no
-signer resolvable from anything — fails the context at startup.
+usable.** `push2u.enabled` is that statement, it defaults to on, and the third state — on, with
+neither a sender nor a signer in the context — fails the context at startup.
 
 The invariant is one sentence, and it is the point of the record: *under an active
 auto-configuration, the absence of a sender is incompatible with `push2u.enabled` other than
@@ -47,12 +47,23 @@ that excludes the auto-configuration, or supplies its own `PushSender`, or does 
 starter at all, has left this decision outside the starter's reach, and a record that claimed
 otherwise would be claiming something the starter cannot enforce.
 
-**The switch is an activation switch for delivery, not a master switch over `push2u.*`.** Off, it
-removes the signer, the transport, the sender, the health indicator and every diagnostic this record
-adds — including the Vault signer, whose construction reads from Vault, so that "off" costs no
-network call to a custodian a deployment has decided not to use. It does not remove an
-application's own `PushSender`, which is not this starter's to withdraw, and it does not reach the
-endpoint policy.
+**The switch is a condition every contributing auto-configuration honours, and not a master switch
+over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender; the
+health indicator, which lives in its own auto-configuration precisely so that it survives the main
+one being excluded, honours the same condition and is gone too; and every signer starter honours it,
+so the Vault signer is never constructed — which in its fetched mode means a read from Vault during
+startup, a call no deployment that has declared the custodian unused should pay for. It does not
+remove an application's own `PushSender`, which is not this starter's to withdraw, and it does not
+reach the endpoint policy.
+
+**A signer starter therefore reads a key another module owns, and that is not the coupling this
+record forbids elsewhere.** Naming another module's prefixes inside a message copies that module's
+activation rules and goes stale when they change. Honouring a switch copies nothing: it is one fact
+about the namespace, stated once, whose meaning cannot drift — and the Vault starter already orders
+itself against the core starter by name without depending on it, so the condition costs no
+dependency either. `push2u.health.enabled` stays exactly what it is, the indicator's own opt-out;
+this switch sits upstream of it, and a deployment that has turned delivery off has no indicator left
+to opt out of.
 
 ## What the switch does not reach, and why
 
@@ -62,17 +73,27 @@ registration. That deployment has no signer and wants none. Gating the policy on
 withhold it from exactly the deployment ADR-024 exists for, which that record already rules out —
 and it would do so through a property whose name says nothing about endpoint policies.
 
-So the reach of `push2u.enabled` stops at the delivery path. A deployment with the switch off and a
-stated allowlist still gets its policy; a malformed entry in that allowlist still fails at startup;
-an allowlist stated beside an application-supplied policy bean still fails as the contradiction it
-is. What the switch suspends is the validation of *delivery and signer* configuration, because
-those are the values it declares unused.
+So the reach of `push2u.enabled` stops at the delivery path, and the policy is declared where the
+switch's condition is not applied. **Being outside the auto-configuration that carries the sender is
+not what makes it safe**: the health indicator is outside it too and is gated all the same. What
+makes it safe is that the policy's own auto-configuration does not carry the condition, and that is
+the constraint this record places on ADR-024's bean.
 
-Two orders of implementation are possible and the boundary holds under both. Today the policy is
-built inside the sender's factory method and is unreachable without a sender, so the switch gates
-what exists. When ADR-024's bean arrives it must arrive outside the switch's reach — which means
-outside the auto-configuration the switch gates — rather than inside it with an exception carved
-for it later.
+**Before that bean exists there is nothing for the switch to spare, and this record does not pretend
+otherwise.** Today the allowlist is parsed inside the sender's factory method and has no reader
+outside it, so a deployment that switches delivery off suspends the validation of two properties
+nothing else reads — the same suspension every other delivery value gets, and no more. Once the bean
+exists, the consequences are ADR-024's own: a deployment with the switch off and a stated allowlist
+still holds its policy, a malformed entry still fails at startup, and an allowlist stated beside an
+application-supplied policy bean still fails as the contradiction it is. Those three belong to the
+bean that produces them, and are not claimed for a state that has none.
+
+**The deployment ADR-024 exists for states `push2u.enabled: false`.** It accepts subscriptions,
+holds a policy and sends nothing, so the statement this record asks of everything that does not send
+is one it can make truthfully — and what it keeps by making it is the policy its allowlist states.
+ADR-024, written before this switch existed, says that such a context "starts exactly as it does
+today"; after this record it starts because it said so. Both are drafts and neither is superseded by
+the other: what changes is one line of that deployment's configuration.
 
 ## Why the default is on, and why the third state is fatal
 
@@ -101,15 +122,22 @@ own boundary, where it can decide what a disabled channel means to a caller. Tha
 and stays theirs.
 
 The refusal breaks deployments that boot without web push today and do not know it, which is the
-population this record is about. `0.x` was declared, when the first release was cut, as the window
-in which this kind of revision is honest rather than breaking, and this is the revision it was
-declared for.
+population this record is about. The remedy is one line, `push2u.enabled: false`, and the
+deployments that need it are precisely the ones that could not tell, before it existed, whether they
+were sending at all. The first release's note declared `0.x` the window for revisiting names and
+constructor shapes once real integrations existed; this revision is behavioural rather than one of
+those, so that sentence does not cover it by its own words. It is taken under the same reasoning:
+one release old, nothing promised beyond it, and a starter's activation behaviour is at least as
+revisable under `0.x` as the shape of a constructor.
 
 ## Blank is unset, for the properties that activate a signer
 
-`@ConditionalOnProperty` treats an empty value as present, so `public-key: ${PUSH2U_VAPID_PUBLIC_KEY:}`
-activates the local signer and fails on a base64url decode — the trap the reporting consumer
-documented in their own YAML because nothing else documents it. The same holds for the Vault token.
+`@ConditionalOnProperty` treats an empty value as present, so
+`public-key: ${PUSH2U_VAPID_PUBLIC_KEY:}` activates the local signer and is then refused — not for
+its encoding, since an empty string is valid base64url and decodes to nothing, but for the length of
+the point it did not carry. The Vault token is activated the same way and refused as empty. Each
+failure describes a shape rather than what the operator did, which is why the trap is written down
+in the reporting consumer's own YAML: nothing else writes it down anywhere.
 
 For the properties that *activate* a signer — the two local keys, the three Vault values — a blank
 value counts as unset. Nothing is lost: no blank value of any of them could have produced a signer,
@@ -123,23 +151,24 @@ allowlist properties, where explicitly empty is a statement with a meaning of it
 The reported issue asks for a message naming which half of which property set was found, and it is
 right that no consumer can produce that message. It is equally true that no single module can: a
 starter that named another module's prefixes would have rebuilt, inside the library, the copy the
-consumer was asked to delete.
+consumer was asked to delete — and would have frozen another module's activation set into a document
+that cannot be edited afterwards.
 
 So the diagnostic is split the way ownership is. Each starter that contributes a signer answers for
 its own properties — a partially stated set is its finding, in its words, naming its keys — and the
-general refusal answers only for the fact that no signer bean exists, listing the ways to supply one
-in terms of the seam rather than of anyone's prefixes: the switch, an application `VapidSigner` or
-`PushSender` bean, this starter's two key properties, the Vault starter's three, and the framework's
-own condition report for the rest. A future signer starter is covered by the seam-level clause
-without this module learning anything about it, and covers itself by owning its own diagnostic.
+general refusal answers only for the fact that no signer bean exists, listing the ways to supply
+one: the switch, an application `VapidSigner` or `PushSender` bean, the two key properties the
+module raising it owns, any signer starter's own configuration in that starter's own words, and the
+framework's condition report for the rest. A future signer starter is named by the clause about
+signer starters rather than by anything this module had to learn about it, and it names its own keys
+itself.
 
-**A specific finding outranks the general one, and neither is aggregated.** When a starter has a
-partially stated set, its message is what the operator sees; the general refusal is what remains
-when no starter has anything specific to say. Ordering the two is enough to guarantee that, and it
-is bought with the ordering the starters already declare between themselves. What is refused is the
-next step: a mechanism by which one module's finding is collected into another module's message.
-That is a cross-module contract, published for the life of the API, in exchange for one better
-sentence in a failure that already names both.
+**A specific finding outranks the general one, and neither is aggregated.** Both are raised the same
+way and from the same point in a context's startup, so what orders them is the ordering the starters
+already declare between themselves — declared, rather than inherited from whatever a sorter's
+fallback happens to produce. What is refused is the next step: a mechanism by which one module's
+finding is collected into another module's message. That is a cross-module contract, published for
+the life of the API, in exchange for one better sentence in a failure that already names both.
 
 Each such diagnostic also stands down when a `VapidSigner` or a `PushSender` bean exists, from
 anywhere. A deployment sending through its local signer with a forgotten half-written Vault block
@@ -148,13 +177,23 @@ reads would be the same mistake in the opposite direction.
 
 ## Where the refusal is raised, and what it may point at
 
-**The refusal must precede the consumer's own failure.** An application bean that requires a
-`PushSender` is instantiated before anything an auto-configuration contributes, so a refusal raised
-as an ordinary bean would lose the race and the operator would read the framework's "required a bean
-that could not be found" instead. Raising it from a post-processor of the bean factory puts it ahead
-of every application singleton while leaving the condition that decides whether to raise it where it
-belongs — evaluated against the bean definitions, after every signer contributor has registered
-theirs.
+**The refusal must precede the application's own failure.** A bean that requires a `PushSender` is
+instantiated before any ordinary bean an auto-configuration contributes, so a refusal raised as one
+would lose the race, and the operator would read the framework's "required a bean that could not be
+found" instead. Raising it from a post-processor of the bean factory puts it ahead of every
+application singleton while leaving the condition that decides whether to raise it where it belongs:
+evaluated against bean definitions rather than instances, so nothing is forced into existence to
+answer it.
+
+**One price is paid knowingly, and it is the price ADR-024 pays in the other direction.** That
+condition sees the application's own configuration, which is processed first, and every signer
+starter ordered ahead of the one raising the refusal — which is the order the Vault starter already
+declares, and the order any signer starter has to declare in any case, since the sender's own
+condition would not see it either. A signer starter that declares no order is placed by a fallback,
+and where that puts it after the refusal has been decided, the context fails demanding a signer it
+holds. The alternative is a refusal raised late enough to see everything, which is a refusal raised
+after the application beans it exists to precede. The order is one line to declare, and a starter
+that omits it is already broken for the sender.
 
 **The message may not send the operator somewhere a failed context cannot serve.** The condition
 report is the right place to look and `/actuator/conditions` is the wrong way to name it here: there
@@ -189,6 +228,11 @@ ADR-024 stands whole, and is not superseded in any clause. This record settles o
 auto-configuration may carry its bean, so that a switch introduced afterwards cannot take the policy
 away from the deployment ADR-024 wrote it for.
 
+ADR-022 is not reopened. The refusals added here are the starters' own coherence checks — a required
+decision left unstated, a property set stated in half — and they take the `IllegalStateException`
+that record assigns to exactly that category. No type is minted for them: what ADR-022 states is a
+rule, not a list this record has to be added to.
+
 ADR-005 is not engaged: nothing here is a seam. The switch is a property, the diagnostics are
 startup checks inside the modules that own the configuration they read, and the ways to supply a
 signer are the ones that already exist.
@@ -203,21 +247,28 @@ signer are the ones that already exist.
   one is enforced.
 - A `PushSender` that exists and declines to send — a disabled channel is the application's type to
   write, at its own boundary.
-- `push2u.enabled` reaching the endpoint policy: the policy of a deployment that states an allowlist
-  and does not send survives the switch, as does the refusal of a malformed allowlist and of an
-  allowlist stated beside a policy bean.
-- The endpoint policy bean declared inside an auto-configuration the delivery switch gates.
+- `push2u.enabled` reaching the endpoint policy: once ADR-024's bean exists, the policy of a
+  deployment that states an allowlist and does not send survives the switch, as do the refusal of a
+  malformed allowlist and of an allowlist stated beside a policy bean.
+- That policy declared where the switch's condition is applied — and equally the claim that being
+  outside the auto-configuration carrying the sender is the test, when the health indicator is
+  outside it and gated all the same.
+- The three consequences above claimed for a state that has no policy bean to produce them.
+- A Vault signer constructed, and its fetched mode's startup read performed, in a deployment that
+  switched delivery off.
 - A claim that a missing sender proves the deployment said no — the invariant holds under an active,
   non-excluded auto-configuration, and nowhere else.
 - A blank activating property read as a configured one; and equally that reading applied to the
   allowlist properties, where explicitly empty carries a meaning of its own.
-- One module's failure message naming another module's property prefixes, and equally a mechanism
-  for one module to contribute its finding to another module's message.
+- One module's failure message naming another module's property prefixes or counting its keys, and
+  equally a mechanism for one module to contribute its finding to another module's message.
 - A partial-configuration diagnostic that fires while a `VapidSigner` or `PushSender` bean exists,
   and so refuses a deployment over configuration nothing reads.
 - A general refusal that outranks a starter's specific finding, or an order between the two left to
-  chance.
+  a sorter's fallback.
 - A refusal an application's own missing-bean failure can precede.
+- A signer starter whose contribution the refusal's condition is assumed to see although that
+  starter declares no order — the price is stated rather than designed away.
 - A startup failure pointing at an Actuator endpoint the failed context does not serve.
 - A diagnostic assembled by reading the framework's condition report — its keys and its wording are
   diagnostics, not a contract.
