@@ -233,9 +233,9 @@ renders and shortens in any case. If a deployment shows that one-pass rendering 
 accessor is a compatible addition later — unlike the record components above, adding a method
 breaks nothing — and that asymmetry is why the two questions are settled differently.
 
-For a related reason `PushMessage.payloadBytes()` is not public: it publishes the other operand of
-the same unguarded comparison, and the length is available inside the package where the pipeline
-needs it.
+For a related reason no public `PushMessage.payloadBytes()` is added — the accessor does not exist
+today and this record does not mint it: it would publish the other operand of the same unguarded
+comparison, while the length the pipeline needs is reachable inside the package.
 
 ### What the assessment is not
 
@@ -291,6 +291,15 @@ environment at context refresh, in the spellings relaxed binding accepts; it pub
 `ignoreUnknownFields = false` is refused for its blast radius over every unrelated typo under
 `push2u.`.
 
+**A tombstone like that has an end, and the release that adds one opens the work item that removes
+it.** It exists to catch a configuration written against the previous release, not to be carried
+for the life of the library, and this one is the first of a family — the same mechanism answers for
+every property a release removes afterwards, so without an end date they accumulate as permanent
+code that refuses keys nobody has written in years. The window is one minor release after the one
+that removed the property. It is stated that way rather than as a number because the version this
+work ships in does not exist until the release cuts its tag, and the removal issue names it
+afterwards, when it does.
+
 ## What this rules out
 
 - Two configurable size parameters, or any second knob whose value is derivable from the first.
@@ -311,3 +320,5 @@ environment at context refresh, in the spellings relaxed binding accepts; it pub
   that sent nothing.
 - A derived component published on an assessment because it shortens a log line.
 - A pre-flight that replaces the refusal, or a `send` that trusts an earlier assessment.
+- A tombstone over the removed property carried without an end, or one whose end is written as a
+  version number that does not exist yet.

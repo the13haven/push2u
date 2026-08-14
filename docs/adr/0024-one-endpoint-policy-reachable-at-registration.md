@@ -128,6 +128,12 @@ ordinary parameter:
 EndpointPolicy push2uEndpointPolicy(Push2uProperties properties) { … }
 ```
 
+`ENDPOINT_POLICY_BEAN_NAME` is not published. It is a spelling this starter has to keep consistent
+with itself and nothing more; publishing it would offer an application a constant to match on, which
+is the identification *Which bean is whose is answered by where its definition came from* refuses
+below — a bean is the starter's because of the definition it came from, never because of the string
+it was registered under.
+
 **The condition is the allowlist, not the signer.** Gating the bean on `VapidSigner` was the first
 form of this decision, and it is wrong in the direction that matters most: a service that accepts
 subscriptions and leaves the sending to another service has no signer, and it is exactly the
@@ -147,8 +153,20 @@ the message it fails with now.
 Two are about an *obligation*: both properties unset with no bean, and every set property empty with
 no bean. The obligation is the sender's — ADR-016 asks the question of a deployment that sends — so
 those two stay in `pushSender`, which keeps resolving the policy through an `ObjectProvider` exactly
-as it does now, and keeps saying what it says. One is about a *malformed value* and moves into the
-policy's factory with the construction of the rules, naming the entry by property and index.
+as it does now, and keeps saying what it says. One is about a *malformed value*, and it goes with
+the construction of the rules, naming the entry by property and index.
+
+**That third one is raised by a startup check rather than by the factory method that builds the
+policy**, and the reason is about ordering rather than about the check itself. A `@Bean` method runs
+at singleton pre-instantiation, behind every bean-factory post-processor in the context, so a
+malformed entry left there is reported only after any post-processor that refuses the context for a
+broader reason — and a deployment holding both reads the broader message about a value it has not
+corrected yet. So the check performs the same rule construction, discards it, and refuses at its own
+declared position; the factory method goes on building through the one implementation of the rule,
+and constructing a handful of rules twice at startup is the whole of the price. The positions of
+this and every neighbouring startup refusal are one list, and it is
+[ADR-025](0025-delivery-is-off-by-statement.md)'s to carry, since that record is where the general
+refusal they are ordered against is introduced.
 
 The fourth is about a *contradiction* — a non-empty allowlist property beside an application-supplied
 bean — and a contradiction does not become acceptable because this context happens not to send. Left
@@ -209,6 +227,16 @@ decision applies and how it is represented, to a decision that stays exactly as 
 For a deployment that builds its sender by hand, nothing changes at all — it holds its policy today,
 and the second call site was available to it before this record existed.
 
+## Documents
+
+`docs/SPRING.md` carries the bean, its condition and the registration recipe a consumer writes
+against it — the `Subscription` first, the policy second, the row third, and what each refusal
+answers to a client. `README.md` gains the second application point in the sentence that introduces
+the endpoint policy, since a plain-Java deployment has it available already and does not know.
+`docs/DESIGN.md` §5 and §8 describe where the policy is applied and where it now lives in the
+context. `EndpointPolicy`'s own Javadoc states both application points, in its own words: it ships in
+a `sources.jar` to readers who have neither this record nor that document.
+
 ## What this rules out
 
 - An endpoint policy a deployment cannot reach at the boundary where it accepts subscriptions.
@@ -231,7 +259,10 @@ and the second call site was available to it before this record existed.
   guarantee is one interpretation of the same properties, and the values are configuration delivery,
   which this record does not undertake.
 - The starter's own bean recognised by its name, which an application is equally free to choose,
-  rather than by the definition it came from.
+  rather than by the definition it came from — and that name published as a constant, which offers
+  the identification this record refuses.
+- The malformed-entry refusal left in the policy's factory method, where singleton
+  pre-instantiation puts it behind every broader refusal in the context.
 - A startup failure demanding an allowlist from a deployment that configured no sender.
 - A registration check a later send trusts, or one offered as a replacement for the send's check.
 - A boundary applying the policy to an endpoint the `Subscription` contract has not vetted first —
