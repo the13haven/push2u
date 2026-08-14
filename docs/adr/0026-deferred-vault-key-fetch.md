@@ -38,9 +38,11 @@ exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring.
   third builder repeating `mount`, `namespace`, `transport` and `allowInsecureHttp()`; that
   duplication already exists between the two shipped builders, and it is cheaper than a terminal
   operation whose contract a reader has to reconstruct from another step.
-- **`build()` still performs every local check**, in the same order and with the same types —
-  including the refusal of plain `http` to a host that is not a literal loopback, which is decided in
-  `build()` because the opt-in is a builder step. What it no longer does is contact Vault, so in this
+- **`build()` still performs every check that does not depend on a Vault response**, with the same
+  types — including the refusal of plain `http` to a host that is not a literal loopback, which is
+  decided in `build()` because the opt-in is a builder step. The checks that move are exactly the
+  three that read the response: the Transit `type`, the domain parameters and the point on the
+  curve. What `build()` no longer does is contact Vault, so in this
   mode it raises neither `VapidSignerUnavailableException` nor the `PushCryptoException` that reports
   a key Vault could not have meant. The startup-supervisor contract the fetched builder documents —
   test the interruption, then the type — belongs to the eager builder alone, and the deferred one
@@ -62,13 +64,17 @@ exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring.
 
 ### The property
 
-`public-key-fetch` takes `eager` and `deferred`, and nothing else. Three readings are fixed here
+`public-key-fetch` takes `eager` and `deferred`, and nothing else. Four readings are fixed here
 rather than left to the implementation, because the record next door fixes the same kind of question
 for its own switch:
 
 - **Unset is distinguishable from a written value**, so the property is bound without a default.
   Absent, the mode is the one the other properties already imply: eager where no `public-key` is
   set, and no metadata read at all where one is.
+- **A blank value is not a written one.** Spring binds an empty property to the empty string rather
+  than to nothing, so the `${VAR:}` shape that ADR-025's own context is about would otherwise land
+  between "unset" and "a value that is neither". It reads as unset, which is how this starter
+  already reads a blank `public-key`.
 - **Any written value beside a `public-key` fails the context**, naming both keys. The supplied mode
   performs no metadata read, so a deployment stating when that read happens has stated something
   about a call that does not exist — and `deferred` there would otherwise read as a promise the
@@ -84,7 +90,8 @@ that read is a field clone: measured at 7 ns on the Vault signer, which is the o
 plausibly have been a round trip, and the same shape on the local one. A deferred mode implemented
 as "go to Vault when someone asks for the key" would therefore put a `GET` on the path of every send,
 hit or miss — the signer ADR-019 describes as keeping a round trip per send by its own construction,
-and says nothing in the sender can take off the path. So caching after the first success is not a
+and says nothing in the sender can take that round trip off the path. So caching after a success is
+not a
 tuning choice in this decision; it is the condition under which the deferred mode is allowed to
 exist.
 
@@ -92,11 +99,15 @@ exist.
 
 > Deferred initialization permits at most one active metadata fetch per signer. Callers already
 > attached to that fetch share its successful metadata, or a fresh exception reconstructed from its
-> non-interruption failure description. They never share one thrown exception instance. A
-> cancellation belongs only to the thread that was interrupted: cancellation of the fetching caller
-> abandons that flight and lets one remaining caller begin another, while cancellation of a waiting
-> caller leaves the active flight untouched. After a shared failure, later callers may begin a new
-> fetch; only successful metadata is retained for the signer's lifetime.
+> failure description — where that failure was one of the two contract types and was not an
+> interruption. They never share one thrown exception instance, and the caller that performed the
+> fetch keeps the exception it was given rather than a reconstruction of its own failure. A failure
+> of neither contract type is never shared: it reaches its own caller unchanged and abandons the
+> flight, as a cancellation does. A cancellation belongs only to the thread that was interrupted:
+> cancellation of the fetching caller abandons that flight and lets one remaining caller begin
+> another, while cancellation of a waiting caller leaves the active flight untouched. After a shared
+> failure, later callers may begin a new fetch; only successful metadata is retained for the signer's
+> lifetime.
 
 That paragraph is the contract, and the state machine it implies has four transitions out of a
 flight rather than two:
@@ -136,7 +147,10 @@ exists to prevent. Five consequences are contract rather than implementation adv
   reported with an interrupt flag nothing set. The fetching caller therefore keeps its own exception,
   its flight is abandoned rather than failed, and the waiters retry. Symmetrically, a waiter that is
   interrupted while waiting takes its own cancellation and leaves the flight running for everyone
-  else — it did not start the fetch and must not end it.
+  else — it did not start the fetch and must not end it. A waiter has no transport failure to keep,
+  so its cancellation takes the shape the transport would have produced: a
+  `VapidSignerUnavailableException` with the `InterruptedException` beneath it and the interrupt flag
+  re-set, which is what the facade's disjunction converts into the cancellation the caller asked for.
   **A flight applies that disjunction to every failure it is about to share, before classifying it by
   type**, so an interruption a defective transport wrapped in a recurring type is still not shared.
   That is deliberately broader in *scope* than where the facade applies the same test — the facade
@@ -285,7 +299,7 @@ lifetime.
 
 ## What the implementation has to demonstrate
 
-Beyond the ordinary — the property binding and its three readings, `eager` remaining the default and
+Beyond the ordinary — the property binding and its four readings, `eager` remaining the default and
 still failing the boot:
 
 - a deferred `build()` touches the transport not at all, while every local rejection it made before
@@ -294,7 +308,8 @@ still failing the boot:
   that read reported is pinned in the subsequent `sign` request;
 - a concurrent cold wave performs one read and every caller gets the same pair;
 - a concurrent failing wave performs one read; every caller gets the contract type the fetch failed
-  with, carrying the same status and declared delay, as distinct exception instances each with the
+  with — carrying the same status and declared delay where that type was the unavailability, which is
+  the only one of the two that reports either — as distinct exception instances each with the
   recorded cause beneath it;
 - a later caller, after a failed wave, starts a new read;
 - an interrupted fetching caller keeps its own exception, and no waiter is handed a cancellation: one
@@ -304,11 +319,14 @@ still failing the boot:
   recurring failure, which the flight refuses to share while its own caller still receives it as
   labelled;
 - an interrupted waiter takes its own cancellation while the flight continues to serve the others,
-  with no second read;
+  with no second read, and its own `send` reports the interruption;
 - a failure that is neither contract type reaches its own caller unchanged, and the waiters retry;
-- a first read that fails inside a `send` arrives as the outcome the taxonomy gives it rather than
-  propagating — worth its own case because the first `publicKey()` happens at the token-cache key
-  step rather than where the VAPID header is built;
+- a first read failing inside a `send` is sorted by the taxonomy rather than by where it happened: an
+  unavailability arrives as the `SignerUnavailable` outcome and a `PushCryptoException` leaves `send`
+  as itself. Worth its own case because the first `publicKey()` happens at the token-cache key step
+  rather than where the VAPID header is built;
+- the published conformance kit passes against a deferred-mode signer, whose `publicKey()` performs
+  I/O on the call the kit makes first;
 - after initialization, a token-cache hit performs no Vault call at all, and the initialization guard
   does not serialize signing: a second `sign` completes while a first is blocked inside the
   transport;
@@ -322,9 +340,11 @@ timing: a wave that is only *probably* concurrent passes for the wrong reason on
 
 `README.md`, whose Vault example is the eager fetched builder; `docs/VAULT.md` for both modes, the
 migration recipe and the supplied-key route stated as the zero-cost answer; `docs/SPRING.md` for the
-property; `docs/DESIGN.md` §7. The startup-supervisor contract is stated in three places that must
-stop reading as though it applied to every fetched builder — the builder's Javadoc, `docs/VAULT.md`
-and `docs/DESIGN.md`.
+property; `docs/DESIGN.md` §7; and `docs/PERFORMANCE.md`, whose note beside the 7 ns figure says the
+fetched mode reads Vault once at startup and never again — true of one of the two modes once this
+lands, and that document deletes a sentence that no longer holds rather than letting it age. The
+startup-supervisor contract is stated in three places that must stop reading as though it applied to
+every fetched builder — the builder's Javadoc, `docs/VAULT.md` and `docs/DESIGN.md`.
 
 ADR-025 describes the fetched mode's read as happening at startup in three places — its body, its
 rules-out clause and its index cell. Both records are drafts as this is written, so this change makes
@@ -336,9 +356,10 @@ is implemented, none of the three can be edited.
 A deferred mode that reads the key again after a successful read, retains anything but a successful
 pair, or consults Vault on a token-cache hit; a deferred mode selected by a step on a builder whose
 `build()` also reads Vault, or by a boolean property; `eager` ceasing to be the default; a deferred
-`build()` that contacts Vault, or that skips a local check the eager one makes; a written
-`public-key-fetch` accepted beside a supplied `public-key`, an unrecognised value read as either mode,
-and a binding that cannot tell an unset property from a written one; a metadata read begun while the
+`build()` that contacts Vault, or that skips a check the eager one makes without reading a Vault
+response; a written `public-key-fetch` accepted beside a supplied `public-key`, an unrecognised value
+read as either mode, a blank value read as a written one, and a binding that cannot tell an unset
+property from a written one; a metadata read begun while the
 signer records another as active; a failed or cancelled read remembered as state; a fetching caller's
 cancellation delivered to a caller that was not interrupted, a waiter's cancellation ending a flight
 that serves others, or a cancellation shared because it was classified by the type it was wrapped in

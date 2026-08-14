@@ -58,8 +58,8 @@ sign reversed. Absent is not a value: it is the default, and the default is on.
 over `push2u.*`.** Off, the core starter contributes no signer, no transport and no sender; the
 health indicator, which lives in its own auto-configuration so the starter stays usable without
 Actuator on the classpath, honours the same condition and is gone too; and every signer starter
-honours it, so the Vault signer is never constructed — which in its fetched mode means a metadata
-read from Vault, a call no deployment that has declared the custodian unused should pay for. A
+honours it, so the Vault signer is never constructed, and the metadata read its fetched mode performs
+never happens — a call no deployment that has declared the custodian unused should pay for. A
 signer starter that does not honour it contributes its signer anyway, and the refusal below is then
 correctly silent: that starter is outside this one's reach in the same way an excluded
 auto-configuration is. The switch does not remove an application's own `PushSender`, which is not
