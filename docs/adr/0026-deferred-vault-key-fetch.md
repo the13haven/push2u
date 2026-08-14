@@ -22,54 +22,71 @@ does send and meets a Vault that is not ready yet.
 
 ## The decision, part one: the read is deferrable, by a builder of its own
 
-**`builderWithDeferredPublicKeyFetch(address, keyName, token)` is a third factory**, beside the two
-that exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring with the values
-`eager` (the default, today's behaviour) and `deferred`.
+**`builderWithDeferredPublicKey(address, keyName, token)` is a third factory**, beside the two that
+exist, and `push2u.signer.vault.public-key-fetch` selects it under Spring.
 
 - **A factory rather than an optional step**, because the convention here gives one
-  `builderWith<what exactly>()` to each way of assembling a type that differs in *contract*, and
-  that is exactly the axis the two existing builders are split on: `builderWithFetchedPublicKey`
-  reads Vault inside `build()` and can fail there, `builderWithSuppliedPublicKey` contacts nothing.
-  A `fetchOnFirstUse()` step on the fetched builder would make one `build()` sometimes perform I/O
-  and sometimes not — the ambiguity the split exists to prevent, reintroduced as a flag. The price
-  is a third builder repeating `mount`, `namespace`, `transport` and `allowInsecureHttp()`; that
+  `builderWith<what exactly>()` to each way of assembling a type that differs in *contract*, and the
+  three contracts are distinct: the eager fetched builder reads Vault inside `build()` and pins what
+  it read; the supplied builder takes the key and the version from the caller and contacts nothing,
+  ever; this one takes them from Vault, at first use rather than at construction. The axis is
+  therefore *where the published key comes from and what `build()` promises*, and not merely whether
+  `build()` performs I/O — on that narrower question the deferred and the supplied builders answer
+  alike. A `fetchOnFirstUse()` step on the fetched builder would instead make one `build()` sometimes
+  perform I/O and sometimes not, which is the ambiguity the split exists to prevent. The name keeps
+  the form of the two shipped factories, which name the key rather than the call. The price is a
+  third builder repeating `mount`, `namespace`, `transport` and `allowInsecureHttp()`; that
   duplication already exists between the two shipped builders, and it is cheaper than a terminal
   operation whose contract a reader has to reconstruct from another step.
-- **An enum rather than a boolean property**, because the question is *when the key is read* and a
-  third answer is imaginable, while `public-key-fetch: true` names nothing. `fetch` alone is refused
-  as the key: this signer makes two kinds of Vault call, a metadata `GET` and a `sign` `POST`, and
-  only the first one is deferred.
 - **`build()` still performs every local check**, in the same order and with the same types —
-  including the refusal of plain `http` to a host that is not a literal loopback, which is decided
-  in `build()` because the opt-in is a builder step. What it no longer does is contact Vault, so in
-  this mode it raises neither `VapidSignerUnavailableException` nor the `PushCryptoException` that
-  reports a key Vault could not have meant. The startup-supervisor contract the fetched builder
-  documents — test the interruption, then the type — belongs to the eager builder alone, and the
-  deferred one says so rather than inheriting a sentence about failures it cannot produce.
-- **The first `sign`, `publicKey` or `publicKeyBase64Url` performs the read.** All three, because
-  all three need the pair: `publicKeyBase64Url` is a `default` method over `publicKey`, and `sign`
-  pins the version the advertised key belongs to.
+  including the refusal of plain `http` to a host that is not a literal loopback, which is decided in
+  `build()` because the opt-in is a builder step. What it no longer does is contact Vault, so in this
+  mode it raises neither `VapidSignerUnavailableException` nor the `PushCryptoException` that reports
+  a key Vault could not have meant. The startup-supervisor contract the fetched builder documents —
+  test the interruption, then the type — belongs to the eager builder alone, and the deferred one
+  says so rather than inheriting a sentence about failures it cannot produce.
+- **The first `sign`, `publicKey` or `publicKeyBase64Url` performs the read.** The enumeration binds
+  all three because it binds an *overriding* `publicKeyBase64Url` too: the `default` implementation
+  initializes through `publicKey` on its own, and an implementation that answers from a custodian's
+  pre-encoded form must initialize as well rather than answer before the pair exists.
 - **A successful pair is retained for the signer's lifetime**, as one immutable record published
-  through a single volatile field. Both halves of that sentence are load-bearing. The pair is
-  atomic because that is the whole reason the fetched mode exists — a version and a public key from
-  one response, so the two can never drift — and it is retained forever because the advertised key
-  is contractually stable for a signer's lifetime. There is no TTL, no eviction and no second read
-  after a success: those would each be a way of spelling the `refresh()` that part two refuses.
+  through a single volatile field. Both halves of that sentence are load-bearing. The pair is atomic
+  because that is the whole reason the fetched mode exists — a version and a public key from one
+  response, so the two can never drift — and it is retained because the advertised key is
+  contractually stable for a signer's lifetime. There is no TTL, no eviction and no second read after
+  a success: those would each be a way of spelling the `refresh()` that part two refuses.
 - **The signing `POST` never runs while the initialization lock is held.** ADR-019 fixed that rule
   for the token cache — look up, release, sign, publish — and the reason is the same here: a
-  signature that queues behind another thread's Vault call is the stall this change exists to
-  remove, relocated into a narrower place.
+  signature that queues behind another thread's Vault call is the stall this change exists to remove,
+  relocated into a narrower place.
+
+### The property
+
+`public-key-fetch` takes `eager` and `deferred`, and nothing else. Three readings are fixed here
+rather than left to the implementation, because the record next door fixes the same kind of question
+for its own switch:
+
+- **Unset is distinguishable from a written value**, so the property is bound without a default.
+  Absent, the mode is the one the other properties already imply: eager where no `public-key` is
+  set, and no metadata read at all where one is.
+- **Any written value beside a `public-key` fails the context**, naming both keys. The supplied mode
+  performs no metadata read, so a deployment stating when that read happens has stated something
+  about a call that does not exist — and `deferred` there would otherwise read as a promise the
+  signer cannot keep.
+- **A value that is neither fails the context naming the key**, rather than being read as one of
+  the two.
 
 ### Why the deferred mode must cache, rather than read the key when asked
 
 `PushSender` reads `signer.publicKey()` on **every** token-cache lookup, hit included, because the
 advertised key is half of the cache key and is what detects a signer whose identity moved. Today
-that read is a field clone on both shipped signers, measured at 7 ns, which is what makes ADR-019's
-arithmetic hold. A deferred mode implemented as "go to Vault when someone asks for the key" would
-therefore put a `GET` on the path of every send, hit or miss — the signer ADR-019 describes as
-keeping a round trip per send by its own construction, and says nothing in the sender can take off
-the path. So caching after the first success is not a tuning choice in this decision; it is the
-condition under which the deferred mode is allowed to exist.
+that read is a field clone: measured at 7 ns on the Vault signer, which is the one where it could
+plausibly have been a round trip, and the same shape on the local one. A deferred mode implemented
+as "go to Vault when someone asks for the key" would therefore put a `GET` on the path of every send,
+hit or miss — the signer ADR-019 describes as keeping a round trip per send by its own construction,
+and says nothing in the sender can take off the path. So caching after the first success is not a
+tuning choice in this decision; it is the condition under which the deferred mode is allowed to
+exist.
 
 ### The initialization contract
 
@@ -81,7 +98,7 @@ condition under which the deferred mode is allowed to exist.
 > caller leaves the active flight untouched. After a shared failure, later callers may begin a new
 > fetch; only successful metadata is retained for the signer's lifetime.
 
-That paragraph is the contract, and the state machine it implies has three transitions out of a
+That paragraph is the contract, and the state machine it implies has four transitions out of a
 flight rather than two:
 
 ```text
@@ -89,22 +106,22 @@ UNINITIALIZED
     │ a caller becomes the fetching one
     ▼
 FETCHING(flight)
-    ├── success ──────────────────► READY(metadata)      retained for the signer's lifetime
-    ├── shared failure ───────────► UNINITIALIZED        waiters get a fresh exception each
-    └── fetching caller cancelled ► UNINITIALIZED        waiters retry; one becomes the next
+    ├── success ──────────────────► READY(metadata)   kept for the signer's lifetime
+    ├── shared failure ───────────► UNINITIALIZED     each waiter throws its own exception
+    ├── fetching caller cancelled ► UNINITIALIZED     waiters retry; one takes over
+    └── failure of neither type ──► UNINITIALIZED     waiters retry; it reaches its own caller
 ```
 
-The two returns to `UNINITIALIZED` are not the same event, and conflating them is the defect this
-record exists to prevent. Four consequences are contract rather than implementation advice:
+The three returns to `UNINITIALIZED` are not one event, and conflating them is the defect this record
+exists to prevent. Five consequences are contract rather than implementation advice:
 
-- **Single flight, because a cold fan-out is a load amplifier.** Without it, N threads meeting an
-  uninitialized signer make N metadata reads. Against a healthy Vault that is N audited operations
-  for one value — Vault writes every request and response to each audit device and refuses all
-  requests when one cannot be written, which is the same amplification argument the health
-  indicator's result cache already carries. Against an unreachable Vault it is worse than the
-  startup failure this decision replaces: with the shipped defaults of a 10 s connect timeout and a
-  30 s request timeout, a serialized queue of waiters each paying its own timeout leaves the last
-  one waiting N times over.
+- **Single flight, because a cold fan-out is a load amplifier.** Without it, N callers meeting an
+  uninitialized signer make N concurrent metadata reads for one value. Against a healthy Vault that
+  is N audited operations — Vault writes every request and response to each audit device and refuses
+  all requests when one cannot be written, which is the same amplification argument the health
+  indicator's result cache already carries. Single flight is about the signer's own record of an
+  active fetch, not about I/O somewhere below: a transport whose request has been abandoned may still
+  be finishing it, and nothing here can or should reach into that.
 - **A failure is shared with the flight it belongs to, and then forgotten.** A caller that arrived
   while the fetch was running gets that fetch's outcome; a caller arriving afterwards starts a new
   one. There is no negative cache: a custodian that could not serve the read a moment ago is
@@ -115,28 +132,40 @@ record exists to prevent. Four consequences are contract rather than implementat
   cause chain and the flag re-set, because a transport does not sort an incomplete exchange by what
   made it incomplete — and the facade recognises a cancellation by a disjunction over exactly those
   two signals. So handing the fetching caller's exception to threads nobody interrupted converts
-  their sends into `PushInterruptedException`: a cancellation invented for a caller that never asked
-  for one, and the send abandoned rather than attempted. The fetching caller therefore keeps its own
-  exception, its flight is abandoned rather than failed, and the waiters retry. Symmetrically, a
-  waiter that is interrupted while waiting takes its own cancellation and leaves the flight running
-  for everyone else — it did not start the fetch and must not end it.
-  **The cancellation test runs before the failure is classified by type**, over the same disjunction
-  the facade uses: an interruption that a defective transport wrapped in a `PushCryptoException` is
-  still a cancellation, and must not be shared under the type it was mislabelled with.
-- **What is shared is a description, never a `Throwable`.** One exception instance thrown from
-  several threads carries the fetching caller's stack, loses each waiter's own, and shares mutable
-  suppressed-exception state between them. A flight therefore records an immutable description —
-  the message, the cause, and for an unavailability the status and the declared delay — and each
-  waiter constructs its own exception from it: the original as the cause, its own stack from its own
-  throw site.
-  Two details of that reconstruction are decided here rather than left to the implementation. The
-  promise is the **contract type** — `VapidSignerUnavailableException` or `PushCryptoException` —
-  and not the runtime class: both are extensible, a subclass a custom transport raised cannot be
-  reconstructed without reflection, and nothing in the published contract lets a caller branch on
-  it. And the two declared values are read **exactly once**, when the description is taken, because
-  the accessors are not final and an extending exception may answer differently on every call. That
-  is not a new rule: `PushOutcome.SignerUnavailable` snapshots the same two values in its
-  constructor for the same reason, and a test pins it.
+  their sends into an interruption: a cancellation invented for a caller that never asked for one,
+  reported with an interrupt flag nothing set. The fetching caller therefore keeps its own exception,
+  its flight is abandoned rather than failed, and the waiters retry. Symmetrically, a waiter that is
+  interrupted while waiting takes its own cancellation and leaves the flight running for everyone
+  else — it did not start the fetch and must not end it.
+  **A flight applies that disjunction to every failure it is about to share, before classifying it by
+  type**, so an interruption a defective transport wrapped in a recurring type is still not shared.
+  That is deliberately broader in *scope* than where the facade applies the same test — the facade
+  tests inside its two conversion sites, and a `PushCryptoException` from the signer propagates
+  untested — and the two therefore differ about that one mislabelled exception on purpose. The flight
+  refuses to share it; the fetching caller still sees it leave `send` as the recurring failure it was
+  labelled, which is today's behaviour and not this record's to change.
+- **A failure is never shared as one thrown instance.** One exception thrown from several threads
+  carries the fetching caller's stack, leaves each waiter without its own, and gives them all one
+  mutable suppressed-exception list. A flight therefore records an immutable description of what
+  failed — the message, the cause it carried, and for an unavailability the status and the declared
+  delay — and each waiter throws its own exception built from that: its own stack from its own throw
+  site, and the recorded cause beneath it. The failing instance itself is not retained past the
+  flight. The description does hold a `Throwable`, so what is ruled out is one instance *thrown* by
+  several threads rather than one instance reached from several cause chains; a cause is diagnostics,
+  and nothing in this library writes into one.
+  Two details of the reconstruction are decided here. The promise is the **contract type** —
+  `VapidSignerUnavailableException` or `PushCryptoException` — and not the runtime class: both are
+  extensible, a subclass a custom transport raised cannot be reconstructed without reflection, and
+  nothing in the published contract lets a caller branch on it. And the two declared values are read
+  **exactly once**, when the description is taken, because the accessors are not final and an
+  extending exception may answer differently on every call. That is not a new rule:
+  `PushOutcome.SignerUnavailable` snapshots the same two values in its constructor for the same
+  reason, and a test pins it.
+- **A failure that is neither contract type ends the flight the way a cancellation does.** The
+  transport is a consumer-replaceable seam, and any other `RuntimeException` out of it is a defect
+  that must propagate unchanged. There is nothing to reconstruct it as, and laundering it into either
+  contract type is exactly what the exception taxonomy forbids. So it reaches its own caller as it
+  is, the flight is abandoned, and the waiters retry.
 
 ### What this costs, stated as the trade it is
 
@@ -153,22 +182,30 @@ includes push2u in readiness, or polls the health endpoint, learns within second
 that does neither may not learn until the first send. `eager` therefore stays the default, and the
 documentation states the fork rather than implying that nothing was given up.
 
+The second cost is paid by whoever waits. A caller that arrives during a flight blocks on *another
+caller's* Vault call, bounded by that flight's own connect and request timeouts and by nothing this
+library adds — and a custom transport that sets no request timeout holds every waiter rather than
+only the caller who started the fetch. This is the same reasoning ADR-019 used to keep a signature
+out of the token cache's lock, and here it is accepted rather than refused: the call being waited on
+is the one that has to complete before any send can proceed at all, and the alternative to waiting
+for it is making the same call again.
+
 ### The zero-cost option that already exists
 
 A deployment whose only requirement is that boot must not depend on Vault does not need this mode at
-all: the supplied-key builder, and its `public-key` plus `key-version` properties, construct a
-signer without contacting anything. The public key and the version are not secrets — they are the
+all: the supplied-key builder, and its `public-key` plus `key-version` properties, construct a signer
+without contacting anything. The public key and the version are not secrets — they are the
 deployment's published identity — so carrying them in configuration is not the duplication it would
-be for key material, and the health probe catches a mispinned pair by verifying a signature against
-the advertised key. What it gives up is the single source of truth: the operator now provisions two
-values that must agree with Vault. This record names that route in the documentation as the first
-answer, with the deferred mode for deployments that want Vault to remain the only place the key is
-stated.
+be for key material, and the health probe as it stands today catches a mispinned pair by verifying a
+signature against the advertised key. What it gives up is the single source of truth: the operator
+now provisions two values that must agree with Vault. This record names that route in the
+documentation as the first answer, with the deferred mode for deployments that want Vault to remain
+the only place the key is stated.
 
 ## The decision, part two: `refresh()` is refused
 
-**No method re-reads the key on a live signer**, and the advertised key stays stable for the
-signer's lifetime.
+**No method re-reads the key on a live signer**, and the advertised key stays stable for the signer's
+lifetime.
 
 - **The protocol makes a hot rotation something other than a rotation.** RFC 8292 §4.2 entitles a
   push service to refuse a JWT whose key is not the one the subscription was created under, so
@@ -181,18 +218,18 @@ signer's lifetime.
   that is internally contradictory and can only fail at the push service, far from its cause.
   ADR-019 already recorded this residue, as the one thing a signer violating its contract could do
   inside a single header; building `refresh()` would make our own shipped signer that violator, in
-  its normal mode of operation. The only construction that would close it is a single SPI call
-  returning the signature and the key together, which ADR-019 weighed and refused: an abstract
-  addition to a published interface, for a hazard that rescues no deployment whose advertised key
-  moved anyway.
+  its normal mode of operation. The only construction that would close it for this signer is a single
+  SPI call returning the signature and the key together, which ADR-019 weighed and refused: an
+  abstract addition to a published interface, for a hazard that rescues no deployment whose
+  advertised key moved anyway.
 - **Rotation is therefore documented as a migration**, and the recipe is more than "new signer, new
   sender": new subscriptions are created under the new `applicationServerKey`, subscriptions created
   under the previous key keep being sent through a sender holding the previous signer, and the old
   identity is retired only once that cohort is gone. Without the routing step the application cannot
-  tell which sender a given stored subscription belongs to, which is the part a shorter recipe
-  leaves the reader to discover in production. Raising `min_encryption_version` past the pinned version, or
+  tell which sender a given stored subscription belongs to, which is the part a shorter recipe leaves
+  the reader to discover in production. Raising `min_encryption_version` past the pinned version, or
   trimming it with `min_available_version`, ends the old signer's ability to sign at all — so those
-  are the operations that must wait until the migration is finished, and they fail loudly today with
+  are the operations that must wait until the migration is finished, and today they fail loudly with
   a `PushCryptoException` on every send.
 - **No key-version accessor is published yet.** A `keyVersion()` on the Vault signer answers what
   this process pinned and not what Vault now holds, so it detects drift only for a caller that reads
@@ -201,17 +238,35 @@ signer's lifetime.
   operational check belongs in the documentation, against Vault, and an accessor is published when a
   consumer has a use for it and an action to take from its answer.
 
+## What this does not touch
+
+- **ADR-004.** The retained pair is not the state that record rules out. It is not a subscription and
+  says nothing about one; it is not per-send state, since one pair serves every send; and it is
+  reconstructible from the custodian at any moment. It is the same value the eager mode already holds
+  in a final field for the life of the signer — this decision moves when it is written, not what is
+  kept.
+- **ADR-019.** That record rules out an unbounded or unevictable cache, and the pair here has neither
+  a bound nor an eviction rule on purpose. The two are different objects: a token expires and is one
+  of many, keyed by an audience an untrusted party can influence, while the pair is one published
+  identity per signer that is contractually forbidden to change. Nothing about the token cache's
+  bound is relaxed, and no second entry can ever exist here to bound.
+- **ADR-005 and ADR-010.** No SPI gains a member, and the seam count stays three. What changes is one
+  implementation's construction, behind the interface both records draw.
+- **ADR-016, ADR-021, ADR-022.** The endpoint policy still runs on every send ahead of everything;
+  no retry is introduced anywhere; and the exception taxonomy is applied rather than extended — this
+  record adds no type and re-labels none.
+
 ## Rejected alternatives
 
-- **A `@Lazy` injection point in the starter**, which would need no library change at all. The
-  proxy turns a Vault outage into a `BeanCreationException` on first use, which leaves `send` as
-  neither `SignerUnavailable` nor any other classified outcome but as a foreign `RuntimeException`
-  the facade must treat as a defect — the taxonomy ADR-022 settled, bypassed by the framework.
+- **A `@Lazy` injection point in the starter**, which would need no library change at all. The proxy
+  turns a Vault outage into a `BeanCreationException` on first use, which leaves `send` with neither
+  `SignerUnavailable` nor any other classified outcome but a foreign `RuntimeException` the facade
+  must treat as a defect — the taxonomy ADR-022 settled, bypassed by the framework.
 - **Retrying the startup read with backoff**, which is what the reporter's other Vault consumers do.
   It puts a schedule and a sleep inside a library that has just finished handing every schedule to
   the caller, and it only postpones the same failure while holding the context in a starting state.
-- **A background refresher or a `refresh-interval` driven from a `TaskScheduler`.** ADR-019 refused
-  a thread that runs when nobody called the library, and this would be a thread whose purpose is the
+- **A background refresher or a `refresh-interval` driven from a `TaskScheduler`.** ADR-019 refused a
+  thread that runs when nobody called the library, and this would be a thread whose purpose is the
   mutation part two refuses.
 - **A TTL on the fetched pair**, which is a refresh with the trigger hidden in a duration.
 - **Remembering a failed fetch**, which converts a custodian's transient state into a permanent one.
@@ -221,15 +276,17 @@ signer's lifetime.
 - **Treating a cancelled fetch as a failure the flight can share**, which invents a cancellation for
   callers that were never interrupted.
 - **`java.lang.StableValue`**, whose semantics are exactly right — lazy, write-once, single
-  initialization — and which is a preview API. The baseline is Java 21, and a preview type would
-  oblige every consumer to run with preview features enabled on one JDK version.
+  initialization. The bar it does not clear is the build's, not the runtime's: the compiler targets
+  release 21, so an API that does not exist there cannot be referenced at all, and a preview type
+  would additionally oblige every consumer to enable preview features on the one JDK version that
+  ships it.
 - **A `fetchOnFirstUse()` step on the existing fetched builder**, and **a boolean property**: both
-  above, under why the factory and the enum.
+  above, under why the factory and why the enum.
 
 ## What the implementation has to demonstrate
 
-Beyond the ordinary — the property binding, the rejection of `public-key-fetch: deferred` beside an
-explicit `public-key`, `eager` remaining the default and still failing the boot:
+Beyond the ordinary — the property binding and its three readings, `eager` remaining the default and
+still failing the boot:
 
 - a deferred `build()` touches the transport not at all, while every local rejection it made before
   still happens there;
@@ -238,43 +295,58 @@ explicit `public-key`, `eager` remaining the default and still failing the boot:
 - a concurrent cold wave performs one read and every caller gets the same pair;
 - a concurrent failing wave performs one read; every caller gets the contract type the fetch failed
   with, carrying the same status and declared delay, as distinct exception instances each with the
-  original beneath it;
+  recorded cause beneath it;
 - a later caller, after a failed wave, starts a new read;
-- an interrupted fetching caller keeps its own exception, and no waiter is handed a cancellation:
-  one of them starts the next read, and none of their sends reports an interruption. Both halves of
-  the disjunction are exercised — a cause chain carrying `InterruptedException` with the flag
-  cleared, and the flag set with no such cause — and so is an interruption mislabelled by a
-  transport as a recurring failure;
+- an interrupted fetching caller keeps its own exception, and no waiter is handed a cancellation: one
+  of them starts the next read, and none of their sends reports an interruption. Both halves of the
+  disjunction are exercised — a cause chain carrying `InterruptedException` with the flag cleared,
+  and the flag set with no such cause — and so is an interruption a transport mislabelled as a
+  recurring failure, which the flight refuses to share while its own caller still receives it as
+  labelled;
 - an interrupted waiter takes its own cancellation while the flight continues to serve the others,
   with no second read;
-- after initialization, a token-cache hit performs no Vault call at all, and concurrent signatures
-  are not serialized by whatever guards the initialization;
-- the health indicator, when disabled, causes no fetch; when enabled, its first probe performs the
-  metadata read and then a signature.
+- a failure that is neither contract type reaches its own caller unchanged, and the waiters retry;
+- a first read that fails inside a `send` arrives as the outcome the taxonomy gives it rather than
+  propagating — worth its own case because the first `publicKey()` happens at the token-cache key
+  step rather than where the VAPID header is built;
+- after initialization, a token-cache hit performs no Vault call at all, and the initialization guard
+  does not serialize signing: a second `sign` completes while a first is blocked inside the
+  transport;
+- the health indicator, when disabled, causes no fetch; when enabled, its first probe initializes
+  through the signature it takes first and then reads the key.
+
+The concurrent cases are gated deterministically inside the fake transport rather than by thread
+timing: a wave that is only *probably* concurrent passes for the wrong reason on a busy runner.
 
 ## Documents
 
 `README.md`, whose Vault example is the eager fetched builder; `docs/VAULT.md` for both modes, the
 migration recipe and the supplied-key route stated as the zero-cost answer; `docs/SPRING.md` for the
-property; `docs/DESIGN.md` §7; the Javadoc of both fetched builders, where the startup-supervisor
-contract has to stop being stated as though it applied to both.
+property; `docs/DESIGN.md` §7. The startup-supervisor contract is stated in three places that must
+stop reading as though it applied to every fetched builder — the builder's Javadoc, `docs/VAULT.md`
+and `docs/DESIGN.md`.
 
-ADR-025 is `Proposed` as this is written, and one of its sentences describes the Vault signer's
-fetched mode as "a read from Vault during startup". Under this decision that is true of one of two
-modes. While that record is still a draft the sentence can be generalised to the metadata read
-itself; once its decision is implemented it may not be edited at all, and the description of what
-the signer currently does belongs to `docs/DESIGN.md` regardless.
+ADR-025 describes the fetched mode's read as happening at startup in three places — its body, its
+rules-out clause and its index cell. Both records are drafts as this is written, so this change makes
+that wording general rather than leaving an instruction whose window closes: once ADR-025's decision
+is implemented, none of the three can be edited.
 
-This rules out a Vault signer whose deferred mode reads the key more than once for a lifetime, or
-consults Vault on a token-cache hit; a deferred mode selected by a step on a builder whose `build()`
-also reads Vault, or by a boolean property; a metadata read performed while another one is in
-flight; a failed or cancelled read remembered as state; a fetching caller's cancellation delivered
-to a caller that was not interrupted, and a waiter's cancellation ending a flight that serves
-others; a cancellation classified by the type it was wrapped in rather than by the disjunction that
-recognises it; one exception instance thrown from several threads, an exception's declared values
-read once per observer rather than once per flight, and a promise about the concrete class of a
+## What this rules out
+
+A deferred mode that reads the key again after a successful read, retains anything but a successful
+pair, or consults Vault on a token-cache hit; a deferred mode selected by a step on a builder whose
+`build()` also reads Vault, or by a boolean property; `eager` ceasing to be the default; a deferred
+`build()` that contacts Vault, or that skips a local check the eager one makes; a written
+`public-key-fetch` accepted beside a supplied `public-key`, an unrecognised value read as either mode,
+and a binding that cannot tell an unset property from a written one; a metadata read begun while the
+signer records another as active; a failed or cancelled read remembered as state; a fetching caller's
+cancellation delivered to a caller that was not interrupted, a waiter's cancellation ending a flight
+that serves others, or a cancellation shared because it was classified by the type it was wrapped in
+rather than by the disjunction that recognises it; a failure of neither contract type laundered into
+one of them; one exception instance thrown by several threads, an exception's declared values read
+once per observer rather than once per flight, and a promise about the concrete class of a
 reconstructed failure; a signature taken while the initialization guard is held; a claim that the
 health indicator makes the deferred mode fail-fast; and, on the other half, any published operation
-that re-reads the key on a live signer — a `refresh()`, a TTL, a scheduled refresher — a key-version
-accessor published without a consumer, and a rotation recipe that omits the routing of subscriptions
-created under the previous key.
+that re-reads a key the signer has already read successfully — a `refresh()`, a TTL, a scheduled
+refresher — a key-version accessor published without a consumer, and a rotation recipe that omits the
+routing of subscriptions created under the previous key.
