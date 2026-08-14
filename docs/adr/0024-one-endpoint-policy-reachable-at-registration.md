@@ -53,6 +53,17 @@ with another scope has not broken the decision, because what may not be duplicat
 the place it is stated, not the instance. A second definition of the same rule is the defect, and it
 is a defect whether or not the two objects happen to behave alike today.
 
+**And "one" reaches as far as one process, which is as far as a library can reach.** Within a
+context there is a single definition and every point that applies the policy reads that one. Across
+processes — a service that accepts subscriptions and a service that sends, each with its own context
+— what this record guarantees is one *interpretation*, not one *value*: both read the same two
+properties through the same code, so the rules they end up with can differ only where the configured
+values differ. Keeping those in step is configuration delivery, the same problem a deployment
+already solves for every other setting two of its services share, and it is deliberately outside
+this record. The drift this record removes is the second *interpretation* — a boundary that decides
+for itself what an allowlist means — because that is the one that changes under the deployment
+without anything being edited, as the next section shows it already has.
+
 ## Why the core gains no API
 
 Four additions were considered. Each would answer the issue, and each is refused.
@@ -93,8 +104,9 @@ each refusal answers to its client, not which of the two runs first.
 
 A deployment can already read `push2u.allowed-origins` out of the environment and build a second
 policy from it, without registering it as a bean. It works, and it is what the reporting deployment
-does today. It is not what this record chooses, because a rule stated in two places is a rule that
-differs at the next rule kind — and it already has. ADR-017 added `push2u.allowed-domains`; a
+does today. It is not what this record chooses, because a boundary that decides for itself what an
+allowlist means is a boundary that means something different at the next rule kind — and it already
+does. ADR-017 added `push2u.allowed-domains`; a
 deployment expressing its allowlist as a zone now has a registration boundary that refuses endpoints
 its sender would accept. Nothing reports the disagreement, because there is no place where the two
 are compared: registration simply starts answering `400` to subscriptions that would have been
@@ -131,13 +143,22 @@ also has no sender starts exactly as it does today. The *obligation* to state it
 put it, on the sender: a deployment that sends and has stated nothing still fails at startup, with
 the message it fails with now.
 
-**No diagnostic moves, which is the second thing that condition buys.** `pushSender` keeps resolving
-the policy through an `ObjectProvider`, exactly as it does now, so the three refusals it owns stay
-where they are and say what they say: both properties unset with no bean, every set property empty
-with no bean, and a non-empty property beside an application-supplied bean. What moves into the
-policy's factory is the construction of the rules, and with it the refusal naming a malformed entry
-by property and index. The sender stops *building* the policy; it goes on deciding whether the
-deployment expressed one.
+**The four refusals split by what they are about, and one of them stops belonging to the sender.**
+Two are about an *obligation*: both properties unset with no bean, and every set property empty with
+no bean. The obligation is the sender's — ADR-016 asks the question of a deployment that sends — so
+those two stay in `pushSender`, which keeps resolving the policy through an `ObjectProvider` exactly
+as it does now, and keeps saying what it says. One is about a *malformed value* and moves into the
+policy's factory with the construction of the rules, naming the entry by property and index.
+
+The fourth is about a *contradiction* — a non-empty allowlist property beside an application-supplied
+bean — and a contradiction does not become acceptable because this context happens not to send. Left
+in `pushSender`, it would be unreachable exactly where it now matters most: a registration-only
+service has no sender, so an application bean would suppress the starter's policy under
+`@ConditionalOnMissingBean` while the stated allowlist was ignored without a word, and the boundary
+would validate against a rule its operator did not think was in force. So the exclusivity check
+becomes a startup check of the context itself, independent of whether a sender exists — it reads bean
+*definitions* rather than instances, so it forces nothing into existence, and its message is
+unchanged, naming the property and the bean.
 
 **Which bean is whose is answered by where its definition came from, not by its name.** The
 definition registered under the starter's name carries the metadata of the factory method that
@@ -152,9 +173,10 @@ rather than towards silently dropping a stated allowlist.
 **One price is paid knowingly.** `@ConditionalOnMissingBean` is reliable against beans from the
 application's own configuration, which is processed before auto-configurations. A policy contributed
 by *another* auto-configuration ordered after this one arrives too late for the condition, so the
-context holds two `EndpointPolicy` beans and fails on the ambiguity instead of with this starter's
-own message. It fails loudly either way, and the case is rare enough to accept and specific enough
-to write down.
+context ends up holding two `EndpointPolicy` beans. It fails at startup either way — on the
+contradiction check where an allowlist was also stated, and on the ambiguity where the sender
+resolves first — and which message arrives is not worth pinning for a case this rare. What matters
+is that it is loud, and it is.
 
 Nothing about the properties changes: `push2u.allowed-origins` and `push2u.allowed-domains` are two
 halves of one statement, unioned into one allowlist, and the exclusivity is between the properties
@@ -202,7 +224,12 @@ and the second call site was available to it before this record existed.
 - A policy built inside the sender's factory method in an auto-configuration and left unrepresented
   in the context that owns it.
 - An application-supplied policy bean winning silently over a non-empty allowlist property: the
-  conflict diagnostic, naming the bean, survives the move.
+  conflict diagnostic, naming the property and the bean, survives the move.
+- That diagnostic reachable only through the sender, so that a context building none accepts the
+  contradiction in silence — a contradiction is not excused by a deployment that does not send.
+- A claim that one rule spans processes. Within a context the definition is one; across services the
+  guarantee is one interpretation of the same properties, and the values are configuration delivery,
+  which this record does not undertake.
 - The starter's own bean recognised by its name, which an application is equally free to choose,
   rather than by the definition it came from.
 - A startup failure demanding an allowlist from a deployment that configured no sender.
