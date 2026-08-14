@@ -195,12 +195,15 @@ the same mistake in the opposite direction.
 **A specific finding outranks the general one, and neither is aggregated.** Two different orders
 carry that, and conflating them is how it gets lost. One is the order of the auto-configurations,
 which decides what each check's condition can see, and it is the order the starters already declare
-between themselves. The other is the order in which the raised checks run, which has its own
-mechanism, and about it this record requires only that it be declared and pinned by a test rather
-than inherited: the framework promises the registration sequence of unordered post-processors as far
-as it can and no further, and a sequence nothing fails over is not an order. An explicit precedence
-on both checks answers it as well as declaring neither and testing the result does. Declaring it on
-one and not the other is the answer that reads as an order and produces the opposite one.
+between themselves. The other is the order in which the raised checks run, and it is not the first
+one restated: the framework runs post-processors that declare a precedence ahead of those that do
+not, and orders what remains by a registration sequence it promises only as far as it can. So the
+running order is declared on both checks, and a test pins the result. Testing an undeclared order is
+not the same answer and does not substitute for it — a green test over a sequence nothing guarantees
+records what this version happens to do, and the next one is free to do otherwise without failing
+anything. Declaring it on one check and not on the other is refused for a different reason: which of
+the two then runs first depends on which of them declared, and a reader who has to work that out
+from the buckets a framework sorts into is a reader this record has failed.
 
 What is refused is the step after that: a mechanism by which one module's finding is collected into
 another module's message. That is a cross-module contract, published for the life of the API, in
@@ -244,6 +247,13 @@ rather than a missing signer; the check itself is absent, because the auto-confi
 excluded; and everything else, which is the enumeration above. An analyzer that answered "configure
 a signer" in all three would reintroduce this record's own subject one layer down — a deliberate
 "off" reported as a defect.
+
+**And it has to win.** The framework ships an analyzer for a missing bean of its own, both recognise
+the same failure, and what the operator reads is whichever of them answers first in a sorted list. So
+this one declares its precedence over that list rather than taking the position the list happens to
+give it, and a test pins that its text is the one that arrives. Losing that race leaves no mark: the
+startup output is still correct, still generic, and looks exactly like the output that existed before
+this record did.
 
 ## What this does not touch
 
@@ -299,11 +309,11 @@ signer are the ones that already exist.
   equally a mechanism for one module to contribute its finding to another module's message.
 - A partial-configuration diagnostic that fires while a `VapidSigner` or `PushSender` bean exists,
   and so refuses a deployment over configuration nothing reads.
-- A general refusal that outranks a starter's specific finding, or an order between the two that
-  nothing declares and no test pins — a registration sequence the framework promises only as far as
-  it can is not an order.
-- A precedence declared on one of the two checks and not on the other, which reads as an order and
-  produces the opposite one.
+- A general refusal that outranks a starter's specific finding; an order between the two taken from
+  the registration sequence the framework promises only as far as it can; and a test over that
+  sequence offered as the thing that pins it.
+- A precedence declared on one of the two checks and not on the other, which leaves which one runs
+  first depending on which one declared.
 - A starter's diagnostic sharing an auto-configuration with its contribution, and so deciding
   whether a signer exists from a point before the local one is registered.
 - A value of `push2u.enabled` that is neither `true` nor `false` read as either of them.
@@ -315,5 +325,7 @@ signer are the ones that already exist.
   diagnostics, not a contract.
 - A missing-bean analyzer that answers "configure a signer" to a deployment that switched delivery
   off, or to a context whose auto-configuration was excluded.
+- That analyzer's precedence over the framework's own left to the position a factories list happens
+  to give it, or its winning the race left unpinned.
 - An activation switch reaching the core: nothing in this record is visible to a deployment that
   builds its sender by hand.
