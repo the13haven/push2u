@@ -346,8 +346,15 @@ advance: a group that names this contributor is edited in the same change that r
 is the same one in every case, and it is the right one on its own terms — the exclusion was there to
 keep a signer probe out of the check, and there is no probe left to keep out.
 
+**A `*` in the same list switches that check off for everything written after it.** The validator
+walks a group's names in the order they were written and stops at the first `*`, leaving the rest of
+that list unchecked — and since `*` already means every contributor, a name after it changes nothing
+at run time either, so it is inert and unverified at once. `include` and `exclude` are walked
+separately, so a `*` on one side says nothing about the other. This is why the second recipe above
+spells its list out: an explicit list is the one the framework actually checks for you.
+
 **`management.endpoint.health.validate-group-membership: false` is the escape hatch from that
 validation, and not a fourth recipe.** It points no check anywhere and moves no contributor between
-groups; it stops the paragraph above from failing a context, for every group and every name at once,
-and with it goes the check that catches a name misspelled the way `diskspace` is. There is no
+groups; it stops the paragraphs above from failing a context, for every group and every name at
+once, and with it goes the check that catches a name misspelled the way `diskspace` is. There is no
 per-name form of it.
