@@ -55,11 +55,12 @@ import com.the13haven.push2u.VapidSigner;
  * (not only on {@link Push2uAutoConfiguration}) so the indicator's configuration binds even in a context that supplies
  * its own {@code VapidSigner} bean and excludes the main autoconfiguration.
  *
- * <p>The indicator is an ordinary application-scoped contributor: it lands in the health endpoint's primary group (and
- * in {@code readiness} only if the operator includes it there), never in {@code liveness} — Spring Boot's liveness
- * group holds only the application's own {@code LivenessState}, and this autoconfiguration registers no group
- * customization that could change that. Liveness failures restart containers, and no restart fixes an unreachable
- * signer backend.
+ * <p>The indicator is an ordinary application-scoped contributor: it lands in the health endpoint's primary group, and
+ * in {@code liveness} or {@code readiness} only where the operator declares a group of that name including it — left
+ * alone, Spring Boot builds each availability group from the application's own state alone, and this autoconfiguration
+ * registers no group customization that could change either. The two names take the same route, so neither is safe by
+ * construction. Liveness failures restart containers, and no restart fixes an unreachable signer backend, so putting
+ * this contributor in {@code liveness} buys a pod restart over a signer outage.
  */
 @AutoConfiguration(after = Push2uAutoConfiguration.class)
 @ConditionalOnClass(HealthIndicator.class)
