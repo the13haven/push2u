@@ -28,4 +28,6 @@ dependencies / documentation, or ignore-for-release for housekeeping.
       decision did (an implemented ADR is never edited); `README.md` updated if the consumer-
       facing API or limits changed, `docs/SPRING.md` / `docs/VAULT.md` if a starter or Vault
       property did, `docs/HEALTH.md` if the health indicator did, `docs/VAPID.md` if the
-      key-generation recipe did.
+      key-generation recipe did, `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did —
+      how or when a signer pins a key version, anything that re-reads a key on a live signer, a
+      key-version accessor, or a change to how `401`/`403` is classified.

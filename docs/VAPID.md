@@ -5,6 +5,11 @@ the push services, so it is created once, outside the application, and handed to
 configuration. This is that one-time recipe — [`README.md` → VAPID keys](../README.md#vapid-keys)
 covers the pair's lifecycle and where its two halves go afterwards.
 
+**"Once" is meant literally.** Every subscription a browser creates is bound to the public key it
+was handed, so the day a second pair has to replace this one is a migration run beside the first
+rather than a swap: [`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) is the runbook for it, and the
+step it starts from is the recipe below.
+
 ## What has to come out
 
 Any P-256 generator will do, as long as it emits the encodings used here: the public key as the

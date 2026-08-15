@@ -27,7 +27,8 @@ decision in [`docs/adr/`](adr/README.md); they are cited here rather than restat
 *use* the library belongs to the consumer-facing references instead: [`README.md`](../README.md) for
 the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integrations,
 [`HEALTH.md`](HEALTH.md) for the health indicator one of them registers, [`VAPID.md`](VAPID.md) for
-generating the key pair, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the browser push services an
+generating the key pair and [`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) for replacing it on a
+running deployment, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the browser push services an
 endpoint allowlist names, and the Javadoc for individual contracts.
 
 ## 2. Goals and non-goals

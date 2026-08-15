@@ -484,45 +484,32 @@ own, next.
 
 ## Adopting a new key version is a migration
 
-Ordinary rotation — `vault write -f transit/keys/<key>/rotate` — is safe for a running pinned
-signer: it keeps signing with the version whose public key it advertises, and new latest versions
-accumulate beside it in Vault without touching it.
+Ordinary rotation — `vault write -f transit/keys/<key>/rotate` — creates a new key version and does
+nothing else. It is safe for a running pinned signer, which keeps signing with the version whose
+public key it advertises; what it does not do, and cannot, is rotate this deployment's VAPID
+identity. A push subscription is bound to the `applicationServerKey` it was created under, so a new
+version is adopted by running a migration beside the old identity, never by swapping one in — which
+is why there is deliberately no `refresh()`, no TTL on the fetched pair and no re-read of any kind
+on a live signer.
 
-What no operation on a live signer will ever do is *adopt* the new version. There is deliberately
-no `refresh()`, no TTL on the fetched pair and no re-read of any kind, and the reason is the
-protocol before it is the library: RFC 8292 §4.2 entitles a push service to refuse a JWT whose key
-is not the one the subscription was created under, so swapping the advertised key under a live
-sender does not rotate an identity — it invalidates every subscription taken out under the old
-one. (The SPI seconds the refusal: a VAPID header is built from two separate calls, `sign` then
-`publicKey`, so a swap landing between them would produce a signature from one version beside the
-other version's `k` — a header that can only fail at the push service, far from its cause.)
-Adopting a new key version is therefore a migration, run beside the old identity rather than in
-place of it:
+**Two operations must therefore wait until that migration has finished:** raising the key's
+`min_encryption_version` past the version a signer pinned, and trimming the version away with
+`min_available_version`. Either ends the old signer's ability to sign at all — every send through it
+fails loudly with a `PushCryptoException` — and the second cannot be undone.
 
-1. **Rotate the Transit key in Vault.** The running fleet is unaffected — every pinned signer
-   keeps signing with its own version.
-2. **Build a second signer and a second sender** beside the old pair — the fetched modes read the
-   new latest version on construction or first use; the explicit mode takes the new `public-key`
-   with its `key-version`. New browser subscriptions are created under the new signer's
-   `applicationServerKey` (`signer.publicKeyBase64Url()`).
-3. **Route sends by the key each subscription was created under.** Store the
-   `applicationServerKey` (or your own key identifier) beside every subscription at registration
-   time: a send for a subscription from the old cohort goes through the sender holding the old
-   signer, one from the new cohort through the new. This step is not optional prose — without it
-   the application cannot tell which sender a stored subscription belongs to, and every send
-   routed to the wrong one is a push-service rejection of the JWT, discovered in production. A
-   deployment that never stored the key alongside its subscriptions treats everything already
-   stored as the old cohort.
-4. **Retire the old identity only once its cohort is gone** — expired, re-subscribed, or deleted.
-   Until then both senders run.
-5. **Only then** raise `min_encryption_version` past the old pinned version, or trim it away with
-   `min_available_version`. Either operation ends the old signer's ability to sign at all — every
-   send through it fails loudly with a `PushCryptoException` — so they are the migration's last
-   step, never its first.
+**A third needs no operator action at all, which is what makes it the one that catches people out:**
+the fetched modes take `latest_version` from the read they perform, and neither persists it. An
+eager signer performs that read every time one is built, so the next restart after a rotate
+advertises the new version fleet-wide while every stored subscription is still bound to the old one;
+a deferred signer that has not been used yet has performed no read, so its *first send* does the
+same thing with nothing restarted at all. Pin the version you have — the
+[explicit mode](#explicit-public-key), with `key-version` — *before* rotating anything, and across
+the whole fleet before the rotate runs.
 
 There is also deliberately no `keyVersion()` accessor on the signer: it would answer what this
-process pinned, not what Vault now holds, so it detects a pending rotation only for a caller that
-reads Vault anyway — and `latest != pinned` is the normal, safe state for VAPID rather than a
-fault. The operational check belongs against Vault itself
-(`vault read transit/keys/<key>` and compare `latest_version` with what the fleet was built
-against).
+process pinned, not what Vault now holds, and `latest != pinned` is the normal, safe state for VAPID
+rather than a fault.
+
+[`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) is the runbook — the preconditions, the migration
+step by step, what to watch and where those numbers come from, what must not happen, the separate
+procedure for a compromised key, and the check against Vault that replaces the accessor above.
