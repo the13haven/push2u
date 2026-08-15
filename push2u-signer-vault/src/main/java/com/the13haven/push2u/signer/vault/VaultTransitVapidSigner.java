@@ -543,8 +543,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * threw is no reason to leave the waiters parked forever — and it ends even if recording that secondary fails
          * in turn, since the release sits in the {@code finally} below rather than beside the recording. And the caller
          * keeps the failure it was given, because a defect in an exception's own accessors says nothing about what the
-         * read met: the secondary is attached to the failure as a suppressed exception — where a secondary raised while
-         * handling a primary belongs — and the failure travels on as the classified thing it is. A failure whose
+         * read met: the secondary is filed on the failure as a suppressed exception — where a secondary raised while
+         * handling a primary belongs — and the failure travels on as the classified thing it is. Filing it has two
+         * limits, both deliberate: nothing can suppress itself, so an accessor that threw the failure itself leaves
+         * nothing to record and the failure travels alone; and a machine failure out of the recording is not swallowed,
+         * so that one reaches the caller in place of the failure rather than being hidden behind it. A failure whose
          * description could not be taken is shared with nobody, so the waiters retry, exactly as they do for a failure
          * of neither contract type.
          */

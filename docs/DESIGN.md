@@ -936,7 +936,10 @@ No traversal route through OSS Vault is claimed here.
   delivers through a method declaring none, and a failure whose overridable accessors throw while
   the description of it is being taken. Both abandon the flight, and both leave their caller the
   failure it was given — the second with the accessor's complaint filed on that failure as a
-  suppressed exception rather than thrown in its place. Neither is a fine point: a flight left
+  suppressed exception rather than thrown in its place, so far as it can be filed at all: nothing
+  can suppress itself, so an accessor that threw the failure itself leaves nothing to record, and a
+  machine failure out of the recording reaches the caller in place of the failure rather than being
+  hidden behind it. Neither is a fine point: a flight left
   recorded as active parks its waiters forever and then collects every later caller on the same
   dead latch, which is one consumer's transport defect turned into a signer that never answers
   again. No signing `POST` ever runs while the
