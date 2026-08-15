@@ -11,6 +11,7 @@ import java.util.Base64;
 import java.util.Objects;
 import java.util.function.Supplier;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -31,9 +32,16 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 /**
  * Autoconfigures a {@link VaultTransitVapidSigner} as the {@link VapidSigner} from {@code push2u.signer.vault.*}.
  * Active when {@code address}, {@code key-name} and {@code token} are set; {@code public-key} is optional — when
- * omitted (or blank) the signer reads its public key and key version from {@code transit/keys/<key>} at startup and
- * pins that version for signing (the recommended single-source-of-truth mode; the token then needs {@code read} on the
- * key), and when supplied the signer uses it verbatim (token needs only {@code sign}). With an explicit
+ * omitted (or blank) the signer reads its public key and key version from {@code transit/keys/<key>} and pins that
+ * version for signing (the recommended single-source-of-truth mode; the token then needs {@code read} on the key), and
+ * when supplied the signer uses it verbatim (token needs only {@code sign}). {@code public-key-fetch} says <em>when</em>
+ * that read happens — {@code eager}, the default, inside context refresh, or {@code deferred}, at the first use of the
+ * signer, for a deployment whose Vault is brought up beside the application rather than before it. The key takes those
+ * two values and no other, a blank value reads as unset, and a written value beside a {@code public-key} fails startup:
+ * the supplied mode performs no metadata read, so a deployment stating when that read happens has stated something
+ * about a call that does not exist. Those readings are decided here, while the signer is built, which places them on
+ * the delivery-path side of {@code push2u.enabled} by construction — a deployment that does not send never meets them.
+ * With an explicit
  * {@code public-key}, set {@code key-version} to pin the matching Transit key version — without it Vault signs with the
  * latest version, which stops matching the configured public key after a key rotation. {@code namespace} is likewise
  * optional: set it when the Transit engine lives in a Vault Enterprise/HCP namespace, and the signer sends it as the
@@ -125,6 +133,9 @@ public final class VaultSignerAutoConfiguration {
             VaultSignerProperties properties,
             ObjectProvider<VaultHttpTransport> transport,
             @Qualifier("push2uVaultHttpClient") ObjectProvider<HttpClient> vaultHttpClient) {
+        // Parsed ahead of everything: a value that is neither mode fails the context naming the
+        // key whatever else is configured, before any mode-specific reasoning could run on it.
+        PublicKeyFetch publicKeyFetch = publicKeyFetch(properties);
         VaultHttpTransport resolved = resolveTransport(properties, transport, vaultHttpClient);
         // The condition already gates this bean on all three being stated; restated as checks so
         // the contract holds in the type system too, and so a future change to the condition fails
@@ -148,13 +159,29 @@ public final class VaultSignerAutoConfiguration {
             if (keyVersion != null) {
                 throw new IllegalStateException(
                         "push2u.signer.vault.key-version requires push2u.signer.vault.public-key: in the"
-                                + " fetched mode the signer pins the key version it reads from Vault itself");
+                                + " fetched modes the signer pins the key version it reads from Vault itself");
             }
-            // Fetched mode: the signer reads the public key + key version from transit/keys/<key> at
-            // construction and pins that version, keeping the Transit key the single source of truth
-            // (the token needs `read` on the key). The factory validates the address (the key name
-            // and token are already-valid value types), so an IllegalArgumentException out of this
-            // call is the address's and is translated to its YAML property name.
+            if (publicKeyFetch == PublicKeyFetch.DEFERRED) {
+                // Deferred fetch: the same transit/keys/<key> read and the same pinned pair, at the
+                // signer's first use instead of here — so this build() performs no Vault call, and
+                // a Vault still sealing or mounting while this context refreshes fails the first
+                // send (or health probe) rather than the boot.
+                VaultTransitVapidSigner.DeferredPublicKeyFetchBuilder deferred = translated(
+                        "push2u.signer.vault.address",
+                        () -> VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(address, keyName, token));
+                translated("push2u.signer.vault.mount", () -> deferred.mount(properties.mount()));
+                if (namespace != null) {
+                    translated("push2u.signer.vault.namespace", () -> deferred.namespace(namespace));
+                }
+                deferred.transport(resolved);
+                return builtWithPlainHttpRejectionTranslated(deferred::build);
+            }
+            // Eager fetched mode — the default, whether the key is unset or says so: the signer
+            // reads the public key + key version from transit/keys/<key> at construction and pins
+            // that version, keeping the Transit key the single source of truth (the token needs
+            // `read` on the key). The factory validates the address (the key name and token are
+            // already-valid value types), so an IllegalArgumentException out of this call is the
+            // address's and is translated to its YAML property name.
             VaultTransitVapidSigner.FetchedPublicKeyBuilder fetched = translated(
                     "push2u.signer.vault.address",
                     () -> VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token));
@@ -164,6 +191,16 @@ public final class VaultSignerAutoConfiguration {
             }
             fetched.transport(resolved);
             return builtWithPlainHttpRejectionTranslated(fetched::build);
+        }
+        if (publicKeyFetch != null) {
+            // Any written value, not only `deferred`: the supplied mode performs no metadata read,
+            // so `eager` beside a public-key is equally a statement about a call that does not
+            // exist — and `deferred` there would read as a promise the signer cannot keep.
+            throw new IllegalStateException("push2u.signer.vault.public-key-fetch cannot be set beside"
+                    + " push2u.signer.vault.public-key: with a supplied public key the signer never reads"
+                    + " transit/keys/<key>, so there is no fetch whose moment the property could choose."
+                    + " Remove push2u.signer.vault.public-key-fetch, or remove push2u.signer.vault.public-key"
+                    + " (and key-version) to let the signer fetch the key from Vault");
         }
         // Explicit mode: the published public key is supplied; the token needs only `sign`. Without a
         // key-version the sign requests use Vault's latest key version — rotation-unsafe by contract.
@@ -192,6 +229,37 @@ public final class VaultSignerAutoConfiguration {
             translated("push2u.signer.vault.key-version", () -> builder.keyVersion(keyVersion));
         }
         return builtWithPlainHttpRejectionTranslated(builder::build);
+    }
+
+    /** The two moments the fetched mode may read {@code transit/keys/<key>} at; the property names the same pair. */
+    private enum PublicKeyFetch {
+        EAGER,
+        DEFERRED
+    }
+
+    /**
+     * The written {@code public-key-fetch} reading, or {@code null} where the key is unset — and a blank value is not
+     * a written one: Spring binds an empty property to the empty string, so a {@code ${VAR:}} default that resolved to
+     * nothing reads as unset, the same way this starter already reads a blank {@code public-key}. The two values are
+     * matched the way the binder matches an enum — case does not decide anything — and a value that is neither fails
+     * the context naming the key, never gets read as one of the two.
+     */
+    private static @Nullable PublicKeyFetch publicKeyFetch(VaultSignerProperties properties) {
+        String written = properties.publicKeyFetch();
+        if (written == null || written.isBlank()) {
+            return null;
+        }
+        String value = written.trim();
+        if ("eager".equalsIgnoreCase(value)) {
+            return PublicKeyFetch.EAGER;
+        }
+        if ("deferred".equalsIgnoreCase(value)) {
+            return PublicKeyFetch.DEFERRED;
+        }
+        throw new IllegalArgumentException("push2u.signer.vault.public-key-fetch takes 'eager' or 'deferred', got '"
+                + value + "'. 'eager' reads the public key from Vault at startup, inside context refresh (the"
+                + " default when the property is unset); 'deferred' reads it at the signer's first use, so a Vault"
+                + " that is not ready yet fails the first send instead of the boot");
     }
 
     /**
