@@ -48,7 +48,19 @@ that answers it.
 That is every key the sender itself takes. The health probe's two keys are not under this prefix at
 all — they are Spring Boot's, under `management.health.push2u.*`, see
 [`HEALTH.md`](HEALTH.md) — and the Vault signer starter carries its own
-`push2u.signer.vault.*`. **There is no `push2u.retry.*` block**: the library performs one POST per
+`push2u.signer.vault.*` ([`VAULT.md`](VAULT.md) is their reference). One of those is worth naming
+here because it decides *when* a boot can fail: `push2u.signer.vault.public-key-fetch` takes
+`eager` — the default, and what an unset or blank value means: the fetched mode's Vault read
+happens during context refresh and a Vault that cannot serve it fails the boot — or `deferred`,
+which moves that read to the signer's first use, so the application starts while Vault is still
+coming up ([`VAULT.md` → When boot must not depend on
+Vault](VAULT.md#when-boot-must-not-depend-on-vault)). It takes nothing else: an unrecognised value
+fails the context naming the key, and any written value beside a supplied
+`push2u.signer.vault.public-key` fails it naming both keys, because the supplied mode performs no
+metadata read whose moment the property could choose. Those refusals are raised while the signer
+bean is built — step 7 of [the order below](#which-refusal-an-operator-reads-first), on the
+delivery-path side of `push2u.enabled` by construction — so they hold no position of their own in
+that list. **There is no `push2u.retry.*` block**: the library performs one POST per
 send and schedules no repeat, so there is nothing under this prefix to configure — see
 [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
@@ -144,7 +156,7 @@ whole point of the key is that neither guess is acceptable.
 |---|---|---|
 | The `VapidSigner` this starter builds, the `PushHttpClient`, the `PushSender` | not contributed | contributed |
 | The health indicator | not registered | registered (subject to its own key) |
-| Every signer starter's signer — including the Vault one's startup read | not contributed | contributed |
+| Every signer starter's signer — including the Vault one's eager startup read | not contributed | contributed |
 | An application's own `PushSender` bean | untouched | untouched |
 | The `EndpointPolicy` bean the allowlist properties express | **contributed** | contributed |
 

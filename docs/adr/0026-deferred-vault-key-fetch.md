@@ -1,6 +1,6 @@
 # ADR-026 — The Vault metadata read is deferrable; the advertised key still never moves
 
-**Status:** Proposed
+**Status:** Accepted
 
 `VaultTransitVapidSigner`'s fetched mode reads `transit/keys/<key>` inside `build()`, taking the
 latest version and that version's public key as one atomic pair. Under the Spring starter the signer

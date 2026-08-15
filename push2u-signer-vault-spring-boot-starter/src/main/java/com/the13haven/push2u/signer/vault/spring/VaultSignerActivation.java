@@ -26,7 +26,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * namespace, stated once, whose meaning cannot drift. This starter already orders itself against the core starter by
  * name without depending on it, so the condition costs no dependency either. What it buys is that a deployment which
  * has declared the custodian unused never constructs the Vault signer, and so never pays for the metadata read its
- * fetched mode performs while the context starts.
+ * eager fetched mode performs while the context starts.
  *
  * <p><b>One price comes with that, and it is stated rather than designed away.</b> Reading the switch is this module's;
  * <em>refusing a value that is neither {@code true} nor {@code false}</em> is not — that refusal belongs to the module

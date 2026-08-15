@@ -1,0 +1,18 @@
+{
+  "hints": [
+    {
+      "name": "push2u.signer.vault.public-key-fetch",
+      "values": [
+        {
+          "value": "eager",
+          "description": "Read the public key and its version from transit/keys/<key> at startup, inside context refresh — the default when the property is unset. A Vault that cannot serve the read fails the boot."
+        },
+        {
+          "value": "deferred",
+          "description": "Read the same atomic pair at the signer's first use instead, so the application starts while Vault is still sealing, unsealing or mounting; a Vault that is not ready fails the first send or health probe rather than the boot. Only valid without public-key — the supplied mode performs no metadata read."
+        }
+      ],
+      "providers": []
+    }
+  ]
+}
