@@ -67,8 +67,9 @@ the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
-string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/VAPID.md`, `docs/MIGRATION.md` or
-anywhere else freezes at whatever version it was written with and starts lying at the next release.
+string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/VAPID.md`,
+`docs/MIGRATION.md` or anywhere else freezes at whatever version it was written with and starts
+lying at the next release.
 Those documents point at README's Installation section instead. The exception is a document that is
 *about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
 version on purpose, and a frozen coordinate there is correct.

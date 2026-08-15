@@ -8,9 +8,10 @@ version the starters need.
 The document is in two parts. The first is the indicator itself: what it probes, what that asserts
 and what it does not, the two keys that configure it, and when it is registered. The second is
 Spring Boot's own health-group machinery — the routes that keep a signer's backend out of a
-container health check, and what the framework validates about a group. Almost all of that second
-part reads the same for any contributor at all; the one section in it that is about this one says so
-in its heading.
+container health check, and what the framework validates about a group. Much of that second part is
+framework behaviour that would read the same for any contributor at all, and the two are not
+separated: the third recipe writes `push2u` into a group's YAML, and one subsection is about this
+contributor from its heading down. It does not divide into a part to read and a part to skip.
 
 ## The probe
 
@@ -238,12 +239,12 @@ The context fails exactly as it was failing before, this time naming an empty st
 nothing at all to reason from. "I cleared it" and "I blanked it" are the same intention, and only
 one of them starts.
 
-### Where the membership check stops
+### Where the membership check stops, and the validator beside it
 
-**A `*` in the same list switches that check off for everything written after it.** The validator
-walks a group's names in the order they were written and stops at the first `*`, leaving the rest of
-that list unchecked. `include` and `exclude` are walked separately, so a `*` on one side says
-nothing about the other.
+**A `*` in a group's `include` or `exclude` switches that check off for everything written after
+it.** The validator walks a group's names in the order they were written and stops at the first `*`,
+leaving the rest of that list unchecked. `include` and `exclude` are walked separately, so a `*` on
+one side says nothing about the other.
 
 So the wildcard's position, and nothing else, decides whether a mistake beside it is caught:
 `include: "*,diskspace"` starts cleanly while `include: "diskspace,*"` refuses over `diskspace` —
