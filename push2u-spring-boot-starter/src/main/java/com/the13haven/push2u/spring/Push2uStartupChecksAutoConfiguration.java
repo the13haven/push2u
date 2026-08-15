@@ -105,9 +105,9 @@ public final class Push2uStartupChecksAutoConfiguration {
      * Fails the context at startup while any {@code push2u.*} key a release removed is still present, naming every one
      * it finds and where each key's effect went. Binding ignores an unknown key silently, so without this refusal an
      * operator upgrading past a removal would keep a setting in their YAML that configures nothing and reads as though
-     * it were in force. The check reads the <em>bound environment</em> at context refresh, so it catches each key in
-     * every spelling relaxed binding accepts — {@code push2u.record-size}, {@code push2u.recordSize},
-     * {@code PUSH2U_RECORD_SIZE} — and it publishes nothing: no property component retained to be rejected, no public
+     * it were in force. The check reads the <em>bound environment</em> at context refresh, so it catches each key
+     * however it is spelled — the kebab-case name a guide prints, the camelCase form, and the upper-case
+     * environment-variable form — and it publishes nothing: no property component retained to be rejected, no public
      * type, no public constant.
      *
      * <p><b>Every dead key present is named in one refusal, from one check.</b> The keys a release removes are commonly
@@ -119,10 +119,13 @@ public final class Push2uStartupChecksAutoConfiguration {
      *
      * <p><b>A tombstone has an end, and the end belongs to the entry</b> rather than to this check or to the class
      * hosting it: each key is carried for one minor release after the release that removed it, and the release adding
-     * an entry opens the work item that removes it. Entries added by different releases end at different times, which
-     * is why each says what removed it; retiring one is deleting its entry, and the check goes when the last entry
-     * does. They exist to catch a configuration written against the previous release, not to accumulate for the life of
-     * the library, and the closing release is named in that work item once it exists rather than guessed at here.
+     * an entry opens the work item that removes it. Entries added by different releases therefore end at different
+     * times. Each entry says what removed its key, which is what a reader needs in order to recognise it; <em>when</em>
+     * that happened is deliberately not written here, because the release a window is counted from has no number until
+     * its tag exists — it is in the work item that release opened, and in this file's history. Retiring a key is
+     * deleting its entry, keys removed by one change go together, and the check goes when the last entry does. They
+     * exist to catch a configuration written against the previous release, not to accumulate for the life of the
+     * library.
      *
      * <p><b>Every entry is declared here rather than beside the feature whose key it names</b>, and the difference is
      * not organisational. The health keys are the worked case: the autoconfiguration that owns that feature exists only
@@ -141,7 +144,7 @@ public final class Push2uStartupChecksAutoConfiguration {
          * now, and what to write instead. Adding a tombstone is adding an entry here; retiring one when its window
          * closes is deleting that entry, and nothing around it moves.
          */
-        private static final List<RemovedProperty> REMOVED_PROPERTIES = List.of(
+        static final List<RemovedProperty> REMOVED_PROPERTIES = List.of(
                 // Removed when the aes128gcm record size became a value derived from the body
                 // ceiling, so that one property answers the size question.
                 new RemovedProperty(
@@ -201,7 +204,10 @@ public final class Push2uStartupChecksAutoConfiguration {
         }
 
         /** A key a release removed, with the whole of what an operator still holding it is told. */
-        private record RemovedProperty(String key, String refusal) {}
+        // Package-private rather than private so the suite can drive its completeness case off the
+        // entries themselves: a list of today's keys written into a test would leave the next entry
+        // uncovered while the test went on passing.
+        record RemovedProperty(String key, String refusal) {}
     }
 
     /**

@@ -185,26 +185,29 @@ class Push2uStartupChecksAutoConfigurationTest {
     }
 
     @Test
-    void everyDeadKeyThisReleaseRemovedIsNamedInOneFailure() {
-        // The configuration an operator upgrading from the released guide actually holds: it
-        // printed record-size in the defaults block and the push2u.health block beside it, so all
-        // three dead keys arrive together. One failure has to name all three, or the upgrade costs
-        // a failed start per key with each one hiding the next — the same reasoning that puts the
-        // two health keys in one message, one level up.
-        String[] everyDeadKey = {"push2u.record-size=4096", "push2u.health.enabled=false", "push2u.health.cache-ttl=5s"
-        };
+    void everyDeadKeyThisCheckKnowsAboutIsNamedInOneFailure() {
+        // Why one failure at all: the configuration an operator upgrading from the released guide
+        // holds is every one of these at once, because the guide printed them together — record-size
+        // in the defaults block and the push2u.health block beside it. Refused one startup at a
+        // time, each key would hide the next and the upgrade would cost a failed start per key.
+        //
+        // The keys come from the check's own entries rather than from a list written out here, so an
+        // entry a later release adds is covered the day it lands, and one whose refusal forgets to
+        // name its own replacement fails here instead of in an operator's log. The values are
+        // arbitrary: the check asks whether a key is bound, never what it was bound to.
+        var removedProperties = Push2uStartupChecksAutoConfiguration.RemovedPropertyTombstones.REMOVED_PROPERTIES;
+        String[] everyDeadKey = removedProperties.stream()
+                .map(removed -> removed.key() + "=whatever-the-operator-wrote")
+                .toArray(String[]::new);
 
         runner.withPropertyValues(everyDeadKey).run(context -> {
             assertThat(context).hasFailed();
-            assertThat(context.getStartupFailure())
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("push2u.record-size")
-                    .hasMessageContaining("push2u.health.enabled")
-                    .hasMessageContaining("push2u.health.cache-ttl")
-                    .as("each dead key is answered with its own replacement, not with a list of names")
-                    .hasMessageContaining("push2u.max-encrypted-body-bytes")
-                    .hasMessageContaining("management.health.push2u.enabled")
-                    .hasMessageContaining("management.health.push2u.cache-ttl");
+            assertThat(context.getStartupFailure()).isInstanceOf(IllegalStateException.class);
+            for (var removed : removedProperties) {
+                assertThat(context.getStartupFailure())
+                        .as("%s is answered in full, with its own replacement, not merely listed", removed.key())
+                        .hasMessageContaining(removed.refusal());
+            }
         });
 
         // And one edit is enough: the same context with those keys deleted starts. This is the half
