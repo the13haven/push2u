@@ -31,11 +31,16 @@ behaviour and would read the same for any contributor at all. `docs/SPRING.md` k
 introduction and a link to it, in the shape README uses for `docs/SPRING.md` itself.
 `docs/VAPID-KEY-ROTATION.md` is the operator runbook for replacing that pair on a running
 deployment, and it is a runbook rather than a design record throughout: what a Vault Transit
-`rotate` does and does not do in each of the three construction modes, taking the deferred fetch at
-both of its moments — an eager signer takes `latest_version` every time one is built, so the next
-restart after a rotate springs the trap, while a deferred one that has not been used holds no
-version at all and adopts the new one on its first send, with nothing restarted and nothing
-deployed — then the custodian-neutral two-cohort migration with its preconditions,
+`rotate` does and does not do across the three construction modes — five states once the deferred
+fetch's two moments and the supplied mode's pinned and unpinned forms are separated, of which only a
+supplied `key-version` is beyond a rotate's reach. An eager signer takes `latest_version` every time
+one is built, so the next restart after a rotate springs the trap; a deferred one that has not been
+used holds no version at all and adopts the new one on its first send, with nothing restarted and
+nothing deployed. The pinning move that precedes any rotate carries its own check, because the
+version comes from Vault and the key from the running process and the two agree only if nothing
+rotated in between — the same two-source shape the document then warns about again where a
+subscription's generation label is written. Then the custodian-neutral two-cohort migration with its
+preconditions,
 observability, rollback and forbidden actions, the separately-shaped procedure for a compromised
 key, and why no `refresh()` or key-version accessor exists. It absorbed the five-step recipe
 `docs/VAULT.md` used to carry, which keeps only the warning and the link, so there is one recipe in

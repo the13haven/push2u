@@ -112,8 +112,9 @@ version" ([Sign
 data](https://developer.hashicorp.com/vault/api-docs/secret/transit#sign-data)), and push2u's
 fetched modes never leave it unset.
 
-What that means for a running deployment depends on which mode built the signer, and — for one of
-them — on whether that signer has been used yet:
+What that means for a running deployment depends on which mode built the signer, on whether a
+version was pinned, and — for one mode — on whether the signer has been used yet. Five states, and
+exactly one of them — a supplied `key-version` — is beyond a rotate's reach:
 
 - **An eager fetched-mode signer that is running is unaffected, and correctly so.** It captured
   `latest_version` and that version's public key from one `transit/keys/<key>` response inside
@@ -135,16 +136,29 @@ them — on whether that signer has been used yet:
   `latest_version` from the read it performs — at `build()` in the eager mode, at first use in the
   deferred one — and never persists it. So the next restart, redeploy, scale-up or reschedule reads
   afresh, lands on the new version and advertises it — while every stored subscription is still
-  bound to the old one. Nothing was rotated
-  deliberately at that moment; a `rotate` run weeks earlier is what armed it. During a rolling
-  restart the fleet is split, and the same subscription succeeds on the pods that have not restarted
-  yet and fails on the ones that have.
-- **The supplied mode with `key-version` set does not move**, on restart or otherwise; it pins the
-  version it was configured with. Left unset it sends no `key_version` at all, so Vault signs with
-  the latest — after a rotate the signature comes from a version whose public key is not the
-  `public-key` you advertise, and the health probe reports `DOWN` because that signature does not
-  verify against the advertised key ([`HEALTH.md`](HEALTH.md)). It is the one configuration where a
-  rotate breaks loudly, at once, instead of waiting for a restart.
+  bound to the old one. Nothing was rotated deliberately at that moment; a `rotate` run weeks earlier
+  is what armed it. During a rolling restart the fleet is split, and the same subscription succeeds
+  on the pods that have not restarted yet and fails on the ones that have.
+- **The supplied mode with `key-version` set does not move**, on restart or otherwise. It pins the
+  version it was configured with, and push2u additionally checks the version in the signature
+  envelope Vault returns against that pin, raising a `PushCryptoException` on a mismatch — so a
+  signature from another version fails in your own process rather than as an opaque push-service
+  rejection. This is the state the pinning move below puts you in, and the only one a rotate cannot
+  reach. Note what that check does *not* cover: it compares the envelope against the pin, not the
+  advertised key against either, so a pin that names the wrong version for the key beside it passes
+  it. That is what the pinning move's own check is for.
+- **The supplied mode with `key-version` left out is the state to get out of.** No `key_version` is
+  sent, so Vault signs with the latest — and after a rotate that is a version whose public key is not
+  the `public-key` you advertise. **The envelope check does not fire here**: it is guarded on there
+  being a pin to compare against, so with none the returned version is accepted whatever it says.
+  Sends therefore do not fail loudly; they fail at the push service as `401`/`403`, the same silent
+  shape as the fetched-mode traps above. The only local signal is the health indicator, which
+  verifies a signature against the advertised key and so reports `DOWN` — but that needs Actuator on
+  the classpath, needs not to have been switched off by its own property, needs something to
+  evaluate it, caches its verdict, and is the contributor this very document routes out of the
+  container check. Even the onset lags: the VAPID token cache is keyed on the advertised key, which
+  does *not* move in this state, so tokens minted before the rotate go on being served until they
+  expire ([`HEALTH.md`](HEALTH.md) has what the probe does and does not assert).
 
 **Before you rotate, pin what you have.** A fetched-mode deployment cannot name two identities,
 because its configuration can only say "latest". An eager signer that is already running survives a
@@ -160,13 +174,34 @@ serving today:
   unpadded base64url of the 65-byte uncompressed point, nothing in this project converts between the
   two, and `publicKeyBase64Url()` already returns exactly that — the same string your frontend is
   being served as `applicationServerKey`, which is also the identifier this whole migration routes
-  on.
+  on. On a *deferred* signer that has not been used yet, asking for it **is** the first use and
+  performs the read — harmless where nothing has rotated, since it pins what any first send would
+  have pinned, and the check below is what tells you whether that is the case.
+
+**Those two halves come from different places, so check that they agree before you deploy them.**
+The version comes from Vault and the key from your own process, and they describe one identity only
+if nothing has created a version since your processes last started. `vault read` is where you
+establish that: its `keys` object "shows the creation time of each key version"
+([Read key](https://developer.hashicorp.com/vault/api-docs/secret/transit#read-key)), so compare
+those against the start time of your oldest running process. **This is the only evidence there is**,
+because nothing publishes what a running signer pinned — the same deliberate absence as
+[Why there is no `refresh()`](#why-there-is-no-refresh) — and no check anywhere establishes that a
+supplied `public-key` belongs to the supplied `key-version`: not Vault's, and not push2u's.
+
+If a version is newer than your oldest process, **stop**. `latest_version` is not what the fleet is
+serving, so the pair you were about to pin would advertise one version's key beside another
+version's signature, and the one local guard would not catch it: push2u compares the signature
+envelope's version against the *pinned* number, and those two would agree. Every push service would
+reject; nothing in your logs would. That is
+[When the migration is not possible yet](#when-the-migration-is-not-possible-yet).
 
 **That rollout has to be finished before the rotate, everywhere.** One fetched-mode process left
 running is one process that will adopt the new version the moment anything restarts it — an
 autoscaler, a crash loop, a node drain — and by the paragraph above that is enough to split the
 fleet across two identities. No fetched-mode process may remain when the rotate runs. Pin the new
-identity the same way once it exists, so that a later rotate by someone else moves nothing either.
+identity the same way once it exists — reading `latest_version` back after your own rotate and
+confirming it is the version that rotate created, since the same check applies in a shorter window —
+so that a later rotate by someone else moves nothing either.
 
 **So "routine rotation for hygiene" is close to meaningless for a Transit key dedicated to VAPID.**
 The new version cannot be adopted transparently; adopting it *is* the migration in Part two, and
@@ -249,6 +284,14 @@ browser was handed. New rows are K2; every row already stored is K1. Store a lab
 fixed — the point of it is that it still says K1 after K1 has gone from your configuration — and
 never a pointer to "the current key".
 
+**Derive that label from the key you actually served, not from a second source that says which
+generation is current.** A flag in configuration, or a constant in the registration handler, is a
+different source from the signer the frontend was served out of, and the two can be deployed apart
+or rolled out at different speeds — which mislabels every row registered in the gap, and step 5 then
+routes those rows to the wrong sender for the rest of their lives. The same rule as the pinning move
+in Part one, in a different place: a version and the key it belongs to are one observation or they
+are a guess.
+
 **5. Route sends by that label.** Old rows through the sender holding the old signer, new rows
 through the new one. A send routed to the wrong sender is a `401`/`403`, and nothing in that answer
 distinguishes it from a subscription the user revoked, so a routing mistake surfaces as unexplained
@@ -277,9 +320,12 @@ the wrong identity.
 the new identity uses — which is legal because it is now the latest — and that alone ends the old
 signer's ability to sign. Trimming is a second, separate step, and it needs **both** minimums
 raised: `min_available_version` is capped at the lesser of `min_decryption_version` and
-`min_encryption_version`, and `min_decryption_version` starts at `1` on every key
-([Read key](https://developer.hashicorp.com/vault/api-docs/secret/transit#read-key)), so raising
-only the encryption side leaves the cap at `1` and the trim is refused. Raise both, then trim, and
+`min_encryption_version`, and `min_decryption_version` starts at `1` on every key. The parameter
+documentation reads `(int: 0)`, which is the default of the *request field* rather than the value a
+created key carries: Vault sets it on creation, "with new key creations min decryption version is
+set to 1 rather than the int default of 0, since keys start at 1"
+([`policy.go`](https://github.com/hashicorp/vault/blob/6a77206f1cc1b6cdb29a06fd0fb9c0e154083573/sdk/helper/keysutil/policy.go)).
+So raising only the encryption side leaves the cap at `1` and the trim is refused. Raise both, then trim, and
 note that the trim is the irreversible one. For a locally held pair, delete the private half from
 the secret store. Nothing before this step removes the ability to sign under the old identity, which
 is exactly what makes every step above reversible and this one not.
@@ -396,7 +442,7 @@ value being raised to is the latest one. In a compromise it usually is not: step
 separate key, and the compromised key's bad version is its own latest. Vault refuses that —
 `min_encryption_version` can at most equal the key's latest version, and the config endpoint answers
 `cannot set min encryption version of %d, latest key version is %d`
-([`path_keys_config.go`](https://github.com/hashicorp/vault/blob/main/builtin/logical/transit/path_keys_config.go)).
+([`path_keys_config.go`](https://github.com/hashicorp/vault/blob/6a77206f1cc1b6cdb29a06fd0fb9c0e154083573/builtin/logical/transit/path_keys_config.go)).
 There is no value that stops the latest version of a Transit key from signing, so an operator who
 reaches for it mid-incident gets a flat refusal at exactly the wrong moment. Two moves that do work:
 
@@ -424,12 +470,31 @@ alive and serving, which is exactly what an attacker holding the key needs from 
 
 ## When the migration is not possible yet
 
-If the subscription store does not record which identity each row was created under, there is no
-safe gradual rotation, and no ordering of the steps above produces one. The store changes first: add
-the column, backfill every existing row with the identity in use today, deploy that, and start the
-migration afterwards. Until then the honest answer to "can we rotate?" is no.
+Two situations stop the migration before it starts, and the honest answer in both is that the fix
+comes first and the rotation afterwards.
 
-Two things that look like a way around it are not.
+**The store does not record which identity each row was created under.** There is then no safe
+gradual rotation, and no ordering of the steps above produces one. The store changes first: add the
+column, backfill every existing row with the identity in use today, deploy that, and start the
+migration afterwards.
+
+**Or a version was created after your processes started, so you cannot tell what the fleet is
+serving.** This is what the check in [Part one](#part-one-what-a-vault-transit-rotation-does) is
+looking for, and it is the state a scheduler or somebody else's rotate leaves behind. It matters
+because nothing publishes what a running signer pinned: the version is not in your configuration in
+a fetched mode, no accessor answers for it, and `latest_version` has stopped being a proxy for it.
+So the pinning move cannot be performed — its two halves would come from different identities — and
+if processes started on both sides of that version appearing, the fleet is already serving two.
+
+The way out is not another ordering of these steps. Either you hold a record, kept outside push2u,
+of the version each running process was built against — in which case pin from that record and
+carry on — or the fleet's identity has to be re-established the expensive way: treat what is running
+as one cohort you can no longer name, and plan for the resubscription the
+[emergency procedure](#emergency-rotation-when-the-key-is-compromised) describes, without the
+urgency. Either way, the cheap fix is to stop being in this state: clear `auto_rotate_period`, and
+pin every process before anything rotates again.
+
+Three things that look like a way around either situation are not.
 
 - **Rotating and letting the failures tell you which rows moved.** A key mismatch is a `401` or a
   `403`, which push2u classifies as `NonRetryableFailure`. It is not a `404`/`410`, so nothing marks
@@ -440,8 +505,12 @@ Two things that look like a way around it are not.
   reliable — and every send in the migration window becomes two real POSTs to a push service, which
   counts them. push2u performs exactly one POST per `send` on purpose; the second attempt is one the
   caller writes and owns.
+- **Restarting the fleet to "resynchronise" it.** In a fetched mode a restart does not reveal what
+  the processes were serving — it replaces it with `latest_version`, which is the very number you
+  could not trust. An ambiguity you might still have resolved from a record becomes a certainty that
+  every stored subscription is now bound to a key nothing advertises.
 
-Adding the column is smaller than either of them.
+Adding the column, and pinning before anything rotates, are both smaller than any of the three.
 
 ## Why there is no `refresh()`
 
