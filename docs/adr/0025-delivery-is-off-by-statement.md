@@ -1,6 +1,6 @@
 # ADR-025 — Delivery is off by statement, never by omission
 
-**Status:** Proposed
+**Status:** Accepted
 
 Under the Spring starter a `PushSender` bean exists when a `VapidSigner` bean does, and a signer
 exists when one of two property sets is complete: `push2u.vapid.public-key` with `.private-key` for

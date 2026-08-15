@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.health.autoconfigure.contributor.ConditionalOnEnabledHealthIndicator;
 import org.springframework.boot.health.contributor.HealthIndicator;
@@ -71,9 +72,22 @@ import com.the13haven.push2u.VapidSigner;
  * too. That is a coupling a deployment may want, and one it can decline by pointing the check at a group that states
  * what it asserts; what it should not be is a surprise, which is why it is written here beside the liveness reasoning
  * above rather than left implied by it.
+ *
+ * <p><b>This class answers {@code push2u.enabled} as well</b>, although it sits outside the one carrying the sender:
+ * being a separate auto-configuration is what keeps the starter usable without Actuator on the classpath, and it is not
+ * what decides whether the delivery switch reaches a class. The indicator probes the signer, so a deployment that has
+ * stated it does not send has no probe to keep. The indicator's own opt-out ({@code management.health.push2u.enabled})
+ * sits downstream of that and stays independent: a deployment that switched delivery off has no indicator left to opt
+ * out of, while one that is sending may still decline to tie its health to a signer. Withdrawing the contributor is not
+ * the same as rewriting a deployment's health groups, and this class does only the first — a group naming
+ * {@code push2u} is edited in the same change, whichever of the several routes removed the indicator.
  */
 @AutoConfiguration(after = Push2uAutoConfiguration.class)
 @ConditionalOnClass(HealthIndicator.class)
+@ConditionalOnProperty(
+        name = Push2uActivation.DELIVERY_SWITCH,
+        havingValue = Push2uActivation.ON,
+        matchIfMissing = true)
 @EnableConfigurationProperties(Push2uHealthProperties.class)
 public final class Push2uHealthAutoConfiguration {
 

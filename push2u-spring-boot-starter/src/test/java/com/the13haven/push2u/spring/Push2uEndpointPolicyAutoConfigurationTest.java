@@ -45,13 +45,20 @@ import com.the13haven.push2u.VapidSigner;
  */
 class Push2uEndpointPolicyAutoConfigurationTest {
 
-    /** The full starter composition, exactly as the imports file ships it. */
+    /**
+     * The full starter composition, exactly as the imports file ships it, with the statement a registration-only
+     * deployment makes: it accepts subscriptions, holds a policy and sends nothing, so {@code push2u.enabled=false} is
+     * a statement it can make truthfully — and without it every senderless context here would now be refused for
+     * holding no signer. Every assertion below therefore doubles as proof that the switch does not reach the endpoint
+     * policy: the bean is contributed, and the checks guarding its properties run, with delivery off.
+     */
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     Push2uAutoConfiguration.class,
                     Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
-                    Push2uStartupChecksAutoConfiguration.class));
+                    Push2uStartupChecksAutoConfiguration.class))
+            .withPropertyValues("push2u.enabled=false");
 
     @Test
     void theBeanExistsWhenOriginsHaveAnEntry() {
@@ -547,7 +554,11 @@ class Push2uEndpointPolicyAutoConfigurationTest {
         // operator reads the entry refusal — a refusal left inside the policy's factory method
         // would lose this race to whichever bean happened to fail first, which is why the check
         // exists at its declared position at all.
+        //
+        // push2u.enabled=true overrides the runner's statement on purpose: with delivery off there
+        // is no signer bean to fail, and the test would pass without proving anything about order.
         runner.withPropertyValues(
+                        "push2u.enabled=true",
                         "push2u.allowed-origins=http://push.example",
                         "push2u.vapid.public-key=!!not-base64url!!",
                         "push2u.vapid.private-key=!!not-base64url!!",

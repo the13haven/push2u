@@ -109,10 +109,15 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void withoutKeysThereIsNoSenderOrSigner() {
-        runner.run(context -> {
+    void withoutKeysAndWithTheStatementThereIsNoSenderOrSigner() {
+        // A deployment that says it does not send holds neither, and starts. This used to be the
+        // behaviour of a context that simply configured nothing, and that is exactly what changed:
+        // the absence of a sender no longer passes for a decision, so the deployment states it.
+        runner.withPropertyValues("push2u.enabled=false").run(context -> {
+            assertThat(context).hasNotFailed();
             assertThat(context).doesNotHaveBean(PushSender.class);
             assertThat(context).doesNotHaveBean(VapidSigner.class);
+            assertThat(context).doesNotHaveBean(PushHttpClient.class);
         });
     }
 

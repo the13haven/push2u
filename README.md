@@ -522,7 +522,29 @@ push2u:
 That is a complete configuration: everything else has a default. The allowlist is not optional,
 though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context with neither
 of the two properties set nor an `EndpointPolicy` bean fails to start with a message naming every
-way to fix it. The two properties are not alternatives: they are unioned into one allowlist, and a
+way to fix it.
+
+**And a deployment that does *not* send says so.** `push2u.enabled` defaults to `true`, and a
+context where it is on while neither a `VapidSigner` nor a `PushSender` bean exists fails at
+startup, naming every way to answer it: the switch, this starter's two `push2u.vapid.*` keys, a
+signer starter's own configuration, or an application bean of either type. That refusal is the one
+behaviour change a deployment upgrading into this version can meet — a context that boots without
+web push today and does not know it now fails, which is exactly the state the refusal exists to
+make impossible.
+
+```yaml
+push2u:
+  enabled: false          # this deployment deliberately sends nothing
+```
+
+`false` withdraws the signer, the transport, the sender and the health indicator. It does **not**
+reach the endpoint policy: a service that accepts subscriptions and leaves the sending to another
+one keeps the policy its allowlist states, and every startup refusal guarding those properties
+keeps running. Only `true` and `false` are values — anything else fails the context naming the
+property, because this is the one key where a typo would otherwise mean the opposite of what was
+typed.
+
+The two allowlist properties are not alternatives: they are unioned into one allowlist, and a
 deployment covering all four browser push services writes both. The allowlist they express is
 published as an `EndpointPolicy` bean, so the code that accepts subscriptions injects it and
 validates each offered endpoint against the same rule every send will enforce — a service that
@@ -531,9 +553,10 @@ signer at all. There is deliberately no property
 for the unrestricted mode: under Spring it is an application `@Bean EndpointPolicy` returning
 `EndpointPolicies.unrestricted()`, so that turning the control off is a code change someone reviews
 rather than a line copied between profiles. [`SPRING.md`](docs/SPRING.md) is the reference — every
-`push2u.*` property and what a rejected value does to startup, the policy bean with the
-registration recipe written against it, and the health indicator in outline, with a link to the
-document that carries it.
+`push2u.*` property and what a rejected value does to startup, `push2u.enabled` with the refusal it
+answers and which startup checks run on each side of it, the policy bean with the registration
+recipe written against it, and the health indicator in outline, with a link to the document that
+carries it.
 
 ## Vault Transit signer
 

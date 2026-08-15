@@ -90,6 +90,15 @@ signer is the only part of a send that can stop working while the application ru
 backend that can go down, holds a token that can expire, names a key that can be deleted — while
 the rest of a `PushSender` is configuration the builder validated at startup.
 
+**`push2u.enabled: false` removes it as well, and sits upstream of the two keys above.** That
+setting is the statement a deployment makes when it does not send at all
+([`SPRING.md`](SPRING.md#does-this-deployment-send)); it withdraws the signer, and the probe exists
+to exercise a signer. The two decisions stay independent in the direction that matters: a
+deployment that *is* sending may still decline to tie its health to a signer, which is what
+`management.health.push2u.enabled: false` is for. The reverse does not hold —
+`management.health.push2u.enabled: true` cannot bring back a contributor in a deployment that has
+turned delivery off, because there is no signer left for it to probe.
+
 While the main autoconfiguration is active, a signer bean gives you a `PushSender` bean as well (or
 a startup failure naming `push2u.vapid.subject` or the allowlist properties), so this changes
 nothing there. Where it matters is a context that *excludes* `Push2uAutoConfiguration` and wires its
@@ -182,7 +191,12 @@ healthcheck:
 
 Membership is "included and not excluded", and an empty `include` includes everything, so this reads
 "everything but push2u" — the shortest form, and the only one that keeps picking up contributors
-added later. It is also a claim about push2u, which is what the presence requirement below is about.
+added later. It is also a claim about push2u, which is what the presence requirement below is about:
+write it only where this deployment will go on registering the contributor, and read that as
+including "will go on sending", since `push2u.enabled: false` withdraws the indicator along with the
+signer. A deployment that may one day state that line is better served by the second recipe, which
+names what the check asserts and never mentions push2u at all.
+
 The same machinery in reverse gives the monitoring side a group that *does* watch the probe:
 
 ```yaml
@@ -193,6 +207,10 @@ management:
         push:                       # not push2u — see below
           include: push2u           # /actuator/health/push
 ```
+
+An `include` is the same claim as an `exclude`, and carries the same requirement: this group names a
+contributor, so it stops the context starting in every deployment where the contributor is not
+registered — including one that has stated `push2u.enabled: false`.
 
 **Excluding this probe is not the same as keeping its backend out of the verdict.** The exclusion
 removes one contributor from one group. A deployment that also carries some other contributor
@@ -213,16 +231,24 @@ Health contributor 'push2u' defined in 'management.endpoint.health.group.contain
 By the conditions above, the `push2u` contributor is absent from a deployment that set
 `management.health.push2u.enabled: false`, from one that set
 `management.health.defaults.enabled: false` and did not name this indicator back in, from one that
-stopped configuring a signer, and from one that dropped the starter — and a group naming it stops
-all four from starting. The message names the framework's validator rather than anything done to
-push2u, which is why it is worth knowing in advance: a group that names this contributor is edited
-in the same change that removes it. The edit is the same one in every case, and it is the right one
-on its own terms — the exclusion was there to keep a signer probe out of the check, and there is no
-probe left to keep out.
+set `push2u.enabled: false`, from one that stopped configuring a signer, and from one that dropped
+the starter — and a group naming it stops all five from starting. The message names the framework's
+validator rather than anything done to push2u, which is why it is worth knowing in advance: a group
+that names this contributor is edited in the same change that removes it. The edit is the same one
+in every case, and it is the right one on its own terms — the exclusion was there to keep a signer
+probe out of the check, and there is no probe left to keep out.
+
+**`push2u.enabled: false` is the entry on that list most likely to be written under pressure.** It
+is the one line that answers the startup refusal a deployment holding no signer now meets, so it
+arrives in the middle of a failed start, in a change nobody planned — and it takes the contributor
+with it. If the deployment carries a group naming `push2u`, the reward for adding that line is a
+second failed start, this time with the validator's message and nothing in it pointing back at what
+was just edited. Edit the group in the same change, or expect to meet it seconds later.
 
 **That assumes one party owns both, and an application distributing push2u is where it stops being
 true.** A health group shipped inside an image is a build artifact; the deployment that switches the
-probe off has properties and environment variables and no way to edit it. So the rule for anyone
+probe off — or states `push2u.enabled: false`, which is a property like any other — has properties
+and environment variables and no way to edit it. So the rule for anyone
 *shipping* a group is the stronger one: **do not name `push2u` in a group you distribute** — you are
 writing a claim that someone else will be refused for, in a message naming neither you nor them. The
 deployment left holding such an image is often not stuck: the group's key can be overridden from the

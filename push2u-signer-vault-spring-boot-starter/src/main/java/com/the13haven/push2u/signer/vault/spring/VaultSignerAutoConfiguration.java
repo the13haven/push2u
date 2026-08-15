@@ -18,6 +18,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 
 import com.the13haven.push2u.P256PublicKeys;
 import com.the13haven.push2u.VapidSigner;
@@ -40,7 +41,10 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  *
  * <p>Ordered before the core starter's {@code Push2uAutoConfiguration} (by name, so this module need not depend on it)
  * and {@link ConditionalOnMissingBean}: when both starters are present this remote signer wins over the in-JVM local
- * signer, while an application-supplied {@link VapidSigner} still overrides both.
+ * signer, while an application-supplied {@link VapidSigner} still overrides both. <b>Nothing fails if that ordering
+ * declaration is deleted</b> — the sorter seeds itself with the class names, these two happen to sort the same way, and
+ * no test can tell the difference — so it looks redundant and is not: the coincidence is not the contract, and the day
+ * either class is renamed the order it states is all that would be left.
  *
  * <p><b>Transport.</b> Every Vault call (the Transit {@code sign} POST and the fetched mode's startup metadata GET)
  * goes through one {@link VaultHttpTransport}, resolved in priority order:
@@ -63,8 +67,26 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  *
  * The qualifier keeps the Vault client separate from any push-delivery {@code HttpClient} the application may define —
  * the two transports face different trust domains on purpose.
+ *
+ * <p><b>The whole class answers {@code push2u.enabled}</b>, the core starter's key stating whether this deployment
+ * sends. Off, no signer is contributed and none is constructed — which in the fetched mode means the metadata read
+ * against Vault during context refresh is never performed either, a call no deployment that has declared the custodian
+ * unused should pay for. Honouring a key another module owns is not the coupling this starter otherwise avoids: it
+ * copies no activation rule and cannot go stale, and this class already orders itself against that starter by name
+ * without depending on it. <b>Reading that key is this module's; refusing a value of it that is neither {@code true}
+ * nor {@code false} is not</b> — that refusal belongs to the module owning the key, and a second implementation here
+ * would be one rule defined in two modules that cannot see each other. The price is stated rather than designed away,
+ * and {@link VaultSignerActivation} spells it out: in a composition carrying this starter without the core one, a
+ * mistyped switch is refused by nothing and the condition below withholds the signer silently. This class carries the
+ * contribution; the diagnostic over a half-stated {@code push2u.signer.vault.*} block is
+ * {@link VaultSignerDiagnosticsAutoConfiguration}'s, and the two cannot share a class because they belong at opposite
+ * ends of the ordering.
  */
 @AutoConfiguration(beforeName = "com.the13haven.push2u.spring.Push2uAutoConfiguration")
+@ConditionalOnProperty(
+        name = VaultSignerActivation.DELIVERY_SWITCH,
+        havingValue = VaultSignerActivation.ON,
+        matchIfMissing = true)
 @EnableConfigurationProperties(VaultSignerProperties.class)
 public final class VaultSignerAutoConfiguration {
 
@@ -86,7 +108,9 @@ public final class VaultSignerAutoConfiguration {
 
     /**
      * The Vault Transit signer, built from {@code push2u.signer.vault.*}. Absent unless the address, key name and token
-     * are all set, and yields to an application-supplied signer.
+     * are all stated — a blank value is not a statement, so a token defaulted as {@code ${VAULT_TOKEN:}} that resolved
+     * to nothing leaves the signer absent rather than activating one that is refused for being empty. Yields to an
+     * application-supplied signer.
      *
      * @param properties the bound configuration
      * @param transport an optional application {@link VaultHttpTransport} for the Vault calls
@@ -96,17 +120,15 @@ public final class VaultSignerAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
-    @ConditionalOnProperty(
-            prefix = "push2u.signer.vault",
-            name = {"address", "key-name", "token"})
+    @Conditional(VaultSignerActivation.OnVaultSignerConfigured.class)
     VapidSigner vaultTransitVapidSigner(
             VaultSignerProperties properties,
             ObjectProvider<VaultHttpTransport> transport,
             @Qualifier("push2uVaultHttpClient") ObjectProvider<HttpClient> vaultHttpClient) {
         VaultHttpTransport resolved = resolveTransport(properties, transport, vaultHttpClient);
-        // @ConditionalOnProperty already gates this bean on all three being set; restated as checks
-        // so the contract holds in the type system too, and so a future change to the condition
-        // fails here naming the property rather than with a NullPointerException.
+        // The condition already gates this bean on all three being stated; restated as checks so
+        // the contract holds in the type system too, and so a future change to the condition fails
+        // here naming the property rather than with a NullPointerException.
         URI address = Objects.requireNonNull(properties.address(), "push2u.signer.vault.address");
         // The value types (and the mount step) validate on construction; each rejection is
         // re-thrown with the YAML property name in front, the same translation every other

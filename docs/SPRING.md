@@ -11,6 +11,7 @@ Configure a local VAPID signer:
 
 ```yaml
 push2u:
+  enabled: true                       # default — see Does this deployment send? below
   vapid:
     public-key: "${VAPID_PUBLIC_KEY}"
     private-key: "${VAPID_PRIVATE_KEY}"
@@ -38,6 +39,11 @@ the `VapidSigner` comes from; leaving it unset fails the context with a message 
 property. The endpoint policy is required in the same way, from one of its two sources — see
 [Endpoint policy](#endpoint-policy). Neither is required when the application supplies its own
 `PushSender` bean — that bean bypasses the starter's checks entirely.
+
+A signer is required in a way of its own: see
+[Does this deployment send?](#does-this-deployment-send) — a context that is on and holds neither a
+`VapidSigner` nor a `PushSender` bean fails at startup, and `push2u.enabled: false` is the line
+that answers it.
 
 That is every key the sender itself takes. The health probe's two keys are not under this prefix at
 all — they are Spring Boot's, under `management.health.push2u.*`, see
@@ -90,6 +96,129 @@ Neither `jwt-renew-before` nor `jwt-cache-size` is validated against `jwt-expiry
 other: a margin at or above `jwt-expiry` is not an error but simply means every send signs afresh,
 and a cache bound is never a second way to spell `jwt-reuse: false`, which is why below 1 is
 refused rather than read as "cache nothing".
+
+## Does this deployment send?
+
+**A deployment states that it does not send, or the autoconfigured delivery path is present and
+usable.** `push2u.enabled` is that statement, it defaults to `true`, and the third state — on, with
+neither a `VapidSigner` nor a `PushSender` bean in the context — fails at startup.
+
+```yaml
+push2u:
+  enabled: false        # this deployment deliberately sends nothing
+```
+
+**Why it is a failure and not a warning.** A deployment that mistypes a property prefix binds
+nothing, validates nothing, boots green and never sends. Nothing in the process can tell it from a
+correctly configured deployment that has had nothing to send yet, and the first symptom is a
+notification a user did not receive — which nobody reports. For a library whose whole subject is
+delivery, "silently does not deliver" is the state it should be least able to enter, and a WARN in
+a log aggregator is a line a deployment finds after the notifications it lost.
+
+**The refusal names every way to answer it**, and any one of them is enough:
+
+- `push2u.enabled: false`, if this deployment deliberately does not send;
+- `push2u.vapid.public-key` and `push2u.vapid.private-key`, the two keys this starter owns;
+- a signer starter's own configuration — the Vault one's `push2u.signer.vault.*`, or any other
+  starter that contributes a `VapidSigner`. The refusal does not name those prefixes: a message
+  that spelled another module's activation rules would go stale the day that module changed them,
+  and each starter answers for its own keys;
+- an application `VapidSigner` bean, or an application `PushSender` bean. Both stand the refusal
+  down, from anywhere in the context.
+
+It also points at the framework's condition report, by the **startup flag** that prints it
+(`--debug`) rather than at `/actuator/conditions` — a context that failed to start serves no
+endpoint.
+
+**Only `true` and `false` are values.** Anything else fails the context naming the property. The
+framework's usual reading of an `enabled` key — anything not literally `false` is on — is the safer
+of the two directions and still not good enough here: it turns `flase` into a deployment that sends
+although it said not to. Absent is not a value: it is the default, and the default is on. A
+**blank** value is refused like any other unrecognised one — `PUSH2U_ENABLED=${SOMETHING:}`
+resolving to nothing would otherwise have to be read as one of two opposite statements, and the
+whole point of the key is that neither guess is acceptable.
+
+### What `false` withdraws, and what it does not
+
+| | `push2u.enabled: false` | `true`, or unset |
+|---|---|---|
+| The `VapidSigner` this starter builds, the `PushHttpClient`, the `PushSender` | not contributed | contributed |
+| The health indicator | not registered | registered (subject to its own key) |
+| Every signer starter's signer — including the Vault one's startup read | not contributed | contributed |
+| An application's own `PushSender` bean | untouched | untouched |
+| The `EndpointPolicy` bean the allowlist properties express | **contributed** | contributed |
+
+Startup checks sort by what each one is *about*, never by where it happens to be implemented. Six of
+them need a row, and they are the whole of this table — every other refusal the starters raise
+happens *while a bean the switch withdraws is being constructed*, so it is on the delivery-path side
+by construction and could not be anywhere else: the signer's own key material, every builder value
+the sender translates from a property, and every per-property translation in a signer starter.
+
+| Startup check | `push2u.enabled: false` | `true`, or unset |
+|---|---|---|
+| The value of `push2u.enabled` itself | runs | runs |
+| A malformed allowlist entry | runs | runs |
+| An allowlist stated beside an application policy bean | runs | runs |
+| A signer starter's partial-configuration diagnostic | skipped | runs |
+| The general refusal over a missing signer | skipped | runs |
+| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
+
+The first three and the last are about a *value*: an entry that is not an origin is not an origin
+in a context that sends nothing either, and a key a release removed configures nothing on either
+side. The middle two are about the *delivery path* — each asks, in its own words, whether this
+deployment can sign, and a deployment that has said it does not send has answered that already.
+
+**The switch does not reach the endpoint policy**, and that is the point of the row above. A
+service that accepts subscriptions and leaves the sending to another one has no signer and wants
+none; it is exactly the deployment the policy bean exists for, and `push2u.enabled: false` is the
+statement it can make truthfully while keeping the allowlist it states. Being outside the
+auto-configuration that carries the sender is *not* what makes the policy safe — the health
+indicator is outside it too and is withdrawn all the same.
+
+### A signer starter's own diagnostic
+
+A starter that contributes a signer answers for its own properties. The Vault one refuses a context
+whose `push2u.signer.vault.*` block is stated by halves — some of `address`, `key-name` and `token`
+present, not all — naming which it found and which are missing, since that shape contributes no
+signer and would otherwise say nothing at all. It **stands down** when a `VapidSigner` or a
+`PushSender` bean exists from anywhere: a deployment sending through the local signer with a
+half-written Vault block left over has a stale property, not a broken deployment. And it is skipped
+with `push2u.enabled: false`, because the beans its stand-down looks for are exactly what the
+switch removes.
+
+### Blank counts as unset, for the properties that activate a signer
+
+Spring treats an empty property as a present one, so `public-key: "${VAPID_PUBLIC_KEY:}"` beside a
+private key defaulted the same way would activate the signer and then be refused — not for its
+encoding, since an empty string is valid base64url, but for the length of the point it did not
+carry. For the properties that *activate* a signer — this starter's two `push2u.vapid.*` keys, and
+each signer starter's own activating set — **a blank value counts as unset**, so what the
+deployment reads is the refusal above, naming the configuration that is missing.
+
+Nothing is lost by it: no blank value of any of them could have produced a signer, so the only
+outcomes traded are two failures. It is a deliberate divergence from the framework's reading of
+"set", and it belongs to activation only — it says nothing about the allowlist properties, where an
+explicitly empty value is a statement with a meaning of its own (see
+[the escape hatch](#what-fails-at-startup-and-from-where)).
+
+### Which refusal an operator reads first
+
+One context can earn several refusals at once, and what arrives is whichever is declared first.
+The order, most specific first, is:
+
+1. the value of `push2u.enabled`;
+2. a tombstone over a removed property;
+3. a malformed allowlist entry;
+4. an allowlist stated beside an application policy bean;
+5. a signer starter's partial-configuration diagnostic;
+6. the general refusal over a missing signer;
+7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+   built, including what the autoconfigured sender refuses on its own.
+
+Steps 3 to 6 are specific before general, a value before the path. Steps 1 and 2 sit ahead of all
+of it because they decide whether the configuration underneath them can be read at face value at
+all. It is about which message arrives first and nothing more: no later step's *condition* depends
+on an earlier step's outcome.
 
 ## The outcome a Spring caller reads
 
@@ -268,7 +397,14 @@ beside an application bean boots, the bean in force and the properties read by n
 contexts as well as registration-only ones; a malformed entry is then refused only where the
 policy bean is actually built, as that bean's creation failure, and in a context that builds no
 policy bean it goes unreported — which for a senderless context is exactly the behaviour that
-predates the bean, when nothing outside the sender read these properties at all.
+predates the bean, when nothing outside the sender read these properties at all. That exclusion now
+also takes the two refusals from
+[Does this deployment send?](#does-this-deployment-send) with it — the value of `push2u.enabled`,
+and the general refusal over a missing signer — since all of them are hosted there. An application
+that requires a `PushSender` from such a context still gets an explanation rather than the
+framework's generic one: the missing-bean failure is analysed, and what it says depends on which of
+the three causes applies — the deployment stated `false` and something still requires a sender,
+the checks were excluded, or the question is simply unanswered.
 
 One escape hatch, and it is per property: a service that *inherits* `push2u.allowed-origins` from
 a shared configuration it does not own cannot unset the property, so setting it to an explicitly
@@ -337,6 +473,12 @@ the result against that signer's own advertised public key. Its two keys are Spr
 `management.health.push2u.enabled` and `management.health.push2u.cache-ttl`, and not `push2u.*` —
 earlier versions spelled them `push2u.health.enabled` and `push2u.health.cache-ttl`, and both of
 those now fail the context at startup with a message naming the replacement.
+
+`push2u.enabled: false` removes the indicator too, and its own key cannot bring it back: the switch
+sits upstream of it, so a deployment that has turned delivery off has no probe left to opt out of.
+**A health group naming `push2u` is edited in the same change** — the framework validates group
+membership and refuses a context naming a contributor that does not exist, in a message naming
+neither the switch nor anything else done to push2u.
 
 [`HEALTH.md`](HEALTH.md) is the reference — what the probe asserts about the signer and what it
 deliberately does not, the two keys with their cache and their startup refusals, when the indicator

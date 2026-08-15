@@ -984,6 +984,63 @@ present — a health indicator. Application beans of the same types override the
 application-supplied `PushSender` bypasses the starter's factory method entirely, so everything
 below concerns the *autoconfigured* sender alone.
 
+**Delivery is off by statement, never by omission**
+([ADR-025](adr/0025-delivery-is-off-by-statement.md)). `push2u.enabled` is that statement, it
+defaults to on, and the third state — on, with neither a sender nor a signer in the context — fails
+at startup. The invariant is deliberately narrow: *under an active auto-configuration, the absence
+of a sender is incompatible with `push2u.enabled` other than `false`.* An application that excludes
+the auto-configuration, supplies its own `PushSender`, or does not carry the starter has left the
+decision outside the starter's reach, and the record claims nothing about it.
+
+Only `true` and `false` are values. A value that is neither — a blank one included — fails the
+context naming the property rather than being read as one of them: this is the one key where a typo
+would be free to mean the opposite of what was typed, and the framework's own reading of an
+`enabled` key (anything not literally `false` is on) turns `flase` into a deployment that sends
+although it said not to. The condition on the delivery path is the framework's
+`@ConditionalOnProperty` with `havingValue = "true"`, so an unrecognised value leaves that path
+*inactive* while the check at step 1 below fails the context — a mistyped switch never builds a
+signer, least of all one whose construction reads a remote custodian, for a context that is about
+to fail anyway.
+
+The switch is a condition every auto-configuration on the delivery path honours, and not a master
+switch over `push2u.*`. Off: no signer, no transport, no sender; the health indicator, which lives
+in its own auto-configuration so the starter stays usable without Actuator, honours the same
+condition and is gone too; and every signer starter honours it, so the Vault signer is never
+constructed and its fetched mode's startup read against Vault is never paid for. A signer starter's
+own *diagnostic* is gated with it as well, for the reason the table below gives. It does not remove
+an application's own `PushSender`, which is not this starter's to withdraw, and **it does not reach
+the endpoint policy** — the constraint this places on ADR-024's bean, which is why
+`Push2uEndpointPolicyAutoConfiguration` carries no condition at class level and may never gain one.
+Being outside the class that carries the sender is not what makes the policy safe: the health
+indicator is outside it too and is gated all the same.
+
+A signer starter therefore reads a key another module owns, and that is not the coupling the
+diagnostics avoid. Naming another module's prefixes *inside a message* copies its activation rules
+and goes stale; honouring a switch copies nothing — one fact about the namespace, whose meaning
+cannot drift — and the Vault starter already orders itself against the core starter by name without
+depending on it, so the condition costs no dependency either.
+
+**Reading the switch is a signer starter's; refusing a value of it that is neither is not.** That
+refusal is step 1 of the list below and belongs to the module owning the key: a second
+implementation in a module that cannot see the first would be one rule defined twice with nothing to
+guarantee which of them an operator reads, which is the defect the list exists to prevent. One price
+comes with that and is stated rather than designed away — in a composition carrying a signer starter
+*without* the core one, a mistyped `push2u.enabled` is refused by nothing and the signer starter's
+condition reads it the only way a condition can, as not `true` and therefore off, withholding the
+signer silently. Every deployment that actually sends carries the core starter, where the refusal
+is, and where it arrives ahead of everything else.
+
+**Blank counts as unset, for the properties that activate a signer.** `@ConditionalOnProperty`
+treats an empty value as present, so `public-key: ${VAPID_PUBLIC_KEY:}` beside a private key
+defaulted the same way would activate the local signer and then be refused for the length of a
+point the empty string never carried. Both starters therefore replace that condition with one of
+their own over their activating set — the core's two `push2u.vapid.*` keys, the Vault starter's
+`address`/`key-name`/`token` — reading through `Binder` and counting a blank as unset. Nothing is
+lost: no blank value of any of them could have produced a signer, so the only outcomes traded are
+two failures, and the one chosen names the missing configuration. The reading belongs to activation
+alone and says nothing about the allowlist properties, where explicitly empty is a statement with a
+meaning of its own.
+
 **A value the core rejects is re-thrown with the YAML property name in front of the core's own
 message.** The core is where a constraint is stated once, so the starter neither restates a bound
 nor validates ahead of it — two copies of a limit drift, and the core is the authority on what a
@@ -1013,9 +1070,8 @@ which reads the bound environment at context refresh
 through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
 every dead key it finds and where each one's effect went. It retains no properties component,
 publishes no type and no constant. Running as a post-processor puts it ahead of every bean-creation
-failure; its position among the starter family's declared startup checks is a package-private
-constant in `StartupCheckOrder`, ahead of the two allowlist checks below and numbered to leave room
-for the checks [ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around them. A tombstone is
+failure; its position among the starter family's declared startup checks is step 2 of the list
+above, a package-private constant in `StartupCheckOrder`. A tombstone is
 carried for one minor release after the release that removed its property, and the release adding
 one opens the work item that removes it — the end belongs to the entry, not to the check raising it
 or the class hosting it, so retiring one is deleting one entry.
@@ -1036,17 +1092,142 @@ configuration, so that condition would let through precisely the case the tombst
 generalises is not "beware Actuator" but that a check inherits every condition standing between it
 and the context, including ones that have nothing to do with what it checks.
 
-**Every startup check lives in `Push2uStartupChecksAutoConfiguration`, and that class contributes
-nothing else.** Two rules meet there. A check may be suppressed by nothing — not the delivery
-switch a future release puts on the class carrying the sender, and not a condition on a class, a
-bean or a property — so the hosting class carries no condition of any kind. And an
-auto-configuration that contributes a bean an operator might want to remove may not also host a
-check: excluding an auto-configuration is the framework's ordinary tool for removing its
-contribution, and a check riding beside the bean would vanish with it — the refusal would disappear
-in exactly the deployment whose operator reached for the standard tool. Excluding the checks' own
-class is therefore the one deliberate way to switch them off, visible in the exclusion line that
-names it, and it is the single route by which a stated allowlist can boot beside an application
-policy bean.
+**Every startup check of the core starter lives in `Push2uStartupChecksAutoConfiguration`, and that
+class contributes nothing else.** Two rules meet there. An auto-configuration that contributes a
+bean an operator might want to remove may not also host a check: excluding an auto-configuration is
+the framework's ordinary tool for removing its contribution, and a check riding beside the bean
+would vanish with it — the refusal would disappear in exactly the deployment whose operator reached
+for the standard tool. And a check runs when its row in the table below says it runs, suppressed by
+nothing the row does not mention — so the hosting class carries no condition of any kind, and the
+one check that carries one carries the switch alone. Excluding the checks' own class is the
+deliberate way to switch them off, visible in the exclusion line that names it, and it is the single
+route by which a stated allowlist can boot beside an application policy bean.
+
+**Which side of the switch a check falls on is decided by what it is about, never by where it is
+implemented.** Most of this starter family's refusals need no decision at all: one raised *while a
+bean the switch withdraws is being constructed* is on the delivery-path side by construction and
+could not be anywhere else. That covers the signer's own key material, every builder value the
+sender translates from a property, and every per-property translation in a signer starter. What is
+left is the six that take a declared position, and they are the whole of this table:
+
+| Startup check | `push2u.enabled: false` | `true`, or unset |
+|---|---|---|
+| The value of `push2u.enabled` itself | runs | runs |
+| A malformed allowlist entry | runs | runs |
+| An allowlist stated beside an application policy bean | runs | runs |
+| A signer starter's partial-configuration diagnostic | skipped | runs |
+| The general refusal over a missing signer | skipped | runs |
+| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
+
+The rows that run on both sides are about a *value*: an entry that is not an origin is not an origin
+in a context that sends nothing either, and a key a release removed configures nothing on either
+side. The two that are skipped are about the *delivery path* — each asks, in its own words, whether
+this deployment can sign, and a deployment that has said it does not send has answered that.
+
+A signer starter's diagnostic is gated by the switch although it is not a contribution, and the
+reason is its own stand-down: that stand-down is over an existing `VapidSigner` or `PushSender`
+bean, and the switch is precisely what keeps those from existing. Ungated, a deployment that
+switched delivery off with half a `push2u.signer.vault.*` block left over would be refused over
+configuration nothing reads — the mistake the stand-down exists to prevent, with the sign reversed.
+
+**One declared order over every startup check.** One context can earn several at once, and the
+operator reads whichever arrives first, so there is one list and every check declares its position
+in it:
+
+1. **the value of `push2u.enabled`** — a deployment that mistyped the one key deciding whether any
+   of this applies is owed that sentence and not a consequence of it;
+2. **a tombstone over a removed property** — a key that no longer exists makes every reading under
+   it a reading of something the operator did not mean to write;
+3. **a malformed allowlist entry**;
+4. **an allowlist stated beside an application policy bean**;
+5. **a signer starter's partial-configuration diagnostic**;
+6. **the general refusal over a missing signer**;
+7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+   built. Those are reachable there because steps 5 and 6, the two about whether a signer exists,
+   stand down once its definition does. Steps 1 to 4 have no such stand-down and must not grow one:
+   none of them is about a signer.
+
+Steps 3 through 6 are specific before general, a value before the path; steps 1 and 2 sit ahead of
+all of it because they decide whether the configuration underneath them can be read at face value at
+all. The order is about which message an operator holding several faults reads first, and nothing
+more: no later step's *condition* is decided by an earlier step's outcome, and none could be — a
+condition on an auto-configuration is evaluated while the configuration classes are parsed, long
+before any of these checks runs.
+
+**The mechanism is narrower than it sounds, and three ways out of it are silent.** The framework
+sorts post-processors of the bean factory into buckets by the *kind* of precedence they declare and
+orders only within each bucket, so two checks in different buckets run in bucket order whatever
+integers they carry. A post-processor of the bean definition *registry* is a different phase and
+completes before any plain bucket; a check over the environment as it is being prepared precedes the
+context itself (which is why the tombstone reads the environment at refresh); and the bucket is
+chosen from the **declared return type of the `@Bean` method**, not from the object it returns, so a
+factory method declaring `BeanFactoryPostProcessor` lands the check in the bucket that is never
+sorted, carrying an order nothing reads. So every check of this family implements `Ordered` **on its
+class**, and the `@Bean` method that contributes it declares **that class** as its return type and
+is `static` — which the framework instructs for a method producing a post-processor without
+enforcing, and which keeps the auto-configuration itself uninstantiated in that early phase.
+
+**The numbers cannot live in one place.** A signer starter deliberately does not depend on the core
+starter, so no constant is visible to both: steps 1, 2, 3, 4 and 6 are `StartupCheckOrder` in
+`push2u-spring-boot-starter`, step 5 is `VaultStartupCheckOrder` in the Vault starter, and each
+module reads its own against the list above. What pins the order is therefore not a constant's value
+— a test asserting that a number here equals a number written in a document proves someone typed it
+twice, and stays green while the module next door moves its own — but the message that arrives in a
+context holding *every* starter that declares a position, configured to earn several refusals at
+once. That context exists in exactly one place, the Vault starter's suite, which is the only one
+with both starters on a classpath.
+
+**The general refusal is raised from a post-processor, and its stand-down is a condition.** A bean
+that requires a `PushSender` is instantiated before any ordinary bean an auto-configuration
+contributes, so a refusal raised as one would lose the race and the operator would read the
+framework's "required a bean that could not be found" instead. Raising it from a post-processor puts
+it ahead of every application singleton, while the condition that decides whether to raise it stays
+where it belongs: `@ConditionalOnMissingBean({VapidSigner.class, PushSender.class})` on the factory
+method, decided while the auto-configurations are processed and against bean *definitions*, so
+nothing is forced into existence to answer it. One price is paid knowingly, and it is ADR-024's in
+the other direction: that condition sees the application's own configuration and every signer
+starter ordered ahead of `Push2uStartupChecksAutoConfiguration`, which is now
+`@AutoConfiguration(after = Push2uAutoConfiguration.class)` so the in-JVM signer counts too. A signer
+starter that declares no order is placed by a fallback, and where that puts it afterwards the
+context fails demanding a signer it holds — the alternative is a refusal raised after the
+application beans it exists to precede.
+
+Its message enumerates what the deployment may do — the switch, an application `VapidSigner` or
+`PushSender` bean, the two key properties this module owns, any signer starter's own configuration,
+and the framework's condition report — and stops there. It names no other module's prefixes and
+counts none of its keys, and nothing collects one module's finding into another's message: that
+would be a cross-module contract published for the life of the API in exchange for one better
+sentence in a failure that already names both. The condition report is named by the **startup flag**
+that prints it rather than by `/actuator/conditions`, which a context that failed to start does not
+serve; and the message is not assembled by reading that report either, whose keys and wording are
+diagnostics rather than a contract.
+
+**A signer starter's diagnostic is not its contribution, and the two cannot share a class.** The
+contribution is ordered *ahead* of `Push2uAutoConfiguration` so the signer it registers is there for
+the sender's own condition to find; a diagnostic has to be ordered *behind* every contribution, the
+in-JVM signer's included, or it cannot see whether any signer was contributed at all. So the Vault
+starter ships two: `VaultSignerAutoConfiguration` before, `VaultSignerDiagnosticsAutoConfiguration`
+after, both ahead of the general refusal in the running order. Without the split the stand-down
+would be unreachable — a deployment sending through the local signer with a forgotten
+`push2u.signer.vault.address` would be refused by a check that could not yet see the signer it was
+about to be told to stand down for.
+
+**The case the refusal cannot reach is answered by a failure analyzer.** An application that
+requires a `PushSender` from a context where the check never ran gets `MissingPushSenderFailureAnalyzer`,
+which distinguishes three causes and gives three answers: the deployment stated `false` and
+something still required a sender, which is a contradiction in the application rather than a missing
+signer; the check is absent because its auto-configuration was excluded; and everything else, which
+is the same enumeration the refusal gives — with a context that already holds a `VapidSigner` led
+with the piece that is actually missing. Answering "configure a signer" to all three would
+reintroduce the record's own subject one layer down, a deliberate "off" reported as a defect; and
+for the same reason no answer may state something false about the context it describes, so the
+signer-present branch names both shapes that reach it — `Push2uAutoConfiguration` inactive, and
+`Push2uAutoConfiguration` active but unable to see a signer an auto-configuration ordered after it
+registered — rather than claiming either. The
+framework ships an analyzer for the same failure, so this one declares `@Order(HIGHEST_PRECEDENCE)`
+rather than taking the position its `spring.factories` entry happens to give it, and a test pins that
+its text is the one that arrives — losing that race would leave no mark, since the output would be
+correct, generic and exactly what it was before.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
@@ -1136,10 +1317,19 @@ reaches this indicator like any other and the operator has one place to look rat
 indicator stays out of both availability groups unless the operator declares one that includes it —
 Spring Boot builds `liveness` and `readiness` from the application's own state, and the starter
 registers no group customization: an unreachable Vault is not something a container restart fixes.
+`push2u.enabled` sits upstream of that switch and the two stay independent: a deployment that turned
+delivery off has no indicator left to opt out of, while one that is sending may still decline to tie
+its health to a signer. Withdrawing the contributor is not the same as rewriting an operator's
+health groups, and the starter does only the first — the framework validates group membership and
+refuses a context naming a contributor that does not exist, so a group naming `push2u` is edited in
+the same change, by whichever of the several routes removed the indicator.
 
-`push2u-signer-vault-spring-boot-starter` is ordered before the core starter. When both are
-configured, the Vault signer takes precedence over the local signer unless the application
-provides its own `VapidSigner`.
+`push2u-signer-vault-spring-boot-starter` ships two auto-configurations, at opposite ends of the
+ordering: `VaultSignerAutoConfiguration` is ordered before the core starter, so that when both are
+configured the Vault signer takes precedence over the local one unless the application provides its
+own `VapidSigner`; `VaultSignerDiagnosticsAutoConfiguration` is ordered after it, for the reason
+given above. Both honour `push2u.enabled`, so a deployment that has declared the custodian unused
+never constructs the signer and never performs the fetched mode's startup read.
 
 ## 9. Verification
 
@@ -1178,6 +1368,15 @@ The automated suite covers:
   and, reproducing the two documented Vault Spring Boot YAML examples as property values, that the
   core and Vault Transit signer starters compose into a working `PushSender`
   (`VaultSignerAutoConfigurationTest`);
+- the activation switch on both sides — every bean it withdraws and every one it does not, each
+  value refusal running with delivery off, a value that is neither `true` nor `false`, a blank
+  activating property read as unset, and each stand-down of the general refusal
+  (`Push2uDeliverySwitchTest`); the missing-sender analyzer's three answers and that its text is the
+  one the framework's sorted list produces (`MissingPushSenderFailureAnalyzerTest`);
+- the one running order over every declared startup check, pinned by the message that arrives in a
+  context holding both starters and earning every refusal at once, then one fault at a time down the
+  list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
+  modules that cannot see each other;
 - Vault Transit integration through Testcontainers.
 
 The published vectors are the specification, not a snapshot of current behaviour: when a change

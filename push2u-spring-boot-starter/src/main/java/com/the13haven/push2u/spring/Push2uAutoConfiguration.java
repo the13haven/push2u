@@ -13,11 +13,18 @@ import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionMessage;
+import org.springframework.boot.autoconfigure.condition.ConditionOutcome;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.SpringBootCondition;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ConditionContext;
+import org.springframework.context.annotation.Conditional;
+import org.springframework.core.type.AnnotatedTypeMetadata;
 
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.JdkPushHttpClient;
@@ -36,8 +43,21 @@ import com.the13haven.push2u.VapidSigner;
  * a bean, so the application code that accepts subscriptions can apply the same policy, and the sender takes it from
  * the context like any other collaborator. The Actuator health indicator is added by
  * {@link Push2uHealthAutoConfiguration}.
+ *
+ * <p><b>The whole class answers {@code push2u.enabled}.</b> Off, this deployment contributes no signer, no transport
+ * and no sender — the statement a deployment makes when it does not send, and the one thing that keeps "does not send"
+ * distinguishable from "silently fails to send". The switch reaches the delivery path and nothing else: it is not a
+ * master switch over {@code push2u.*}, it leaves an application's own {@link PushSender} alone, and it deliberately
+ * does not reach the endpoint policy, whose auto-configuration a deployment that accepts subscriptions and sends
+ * nothing still needs. Anything other than {@code true} or {@code false} leaves this class inactive and fails the
+ * context from {@link Push2uStartupChecksAutoConfiguration}, naming the property: a mistyped switch must not build a
+ * signer for a context that is about to fail, least of all one whose construction reads a remote custodian.
  */
 @AutoConfiguration
+@ConditionalOnProperty(
+        name = Push2uActivation.DELIVERY_SWITCH,
+        havingValue = Push2uActivation.ON,
+        matchIfMissing = true)
 @EnableConfigurationProperties(Push2uProperties.class)
 public final class Push2uAutoConfiguration {
 
@@ -49,7 +69,10 @@ public final class Push2uAutoConfiguration {
 
     /**
      * The in-JVM VAPID signer, built from {@code push2u.vapid.public-key} / {@code .private-key}. Absent unless both
-     * keys are set, and yields to an application-supplied {@link VapidSigner} (so a remote signer wins).
+     * keys are stated — and a blank value is not a statement, so the {@code ${VAPID_PUBLIC_KEY:}} shape that resolves
+     * to nothing leaves the signer absent rather than activating one that cannot be built. What answers such a context
+     * is the refusal over a missing signer, which names these two keys among the ways to fix it. Yields to an
+     * application-supplied {@link VapidSigner} (so a remote signer wins).
      *
      * @param properties the bound configuration
      * @return the local signer
@@ -66,14 +89,12 @@ public final class Push2uAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(VapidSigner.class)
-    @ConditionalOnProperty(
-            prefix = "push2u.vapid",
-            name = {"public-key", "private-key"})
+    @Conditional(OnLocalVapidKeys.class)
     VapidSigner push2uVapidSigner(Push2uProperties properties) {
         Push2uProperties.Vapid vapid = properties.vapid();
-        // @ConditionalOnProperty already gates this bean on both keys being set; restated as a
-        // check so the contract holds in the type system too, and so a future change to the
-        // condition fails here with the property name rather than with a NullPointerException.
+        // The condition already gates this bean on both keys being stated; restated as a check so
+        // the contract holds in the type system too, and so a future change to the condition fails
+        // here with the property name rather than with a NullPointerException.
         String publicKey = Objects.requireNonNull(vapid.publicKey(), "push2u.vapid.public-key");
         String privateKey = Objects.requireNonNull(vapid.privateKey(), "push2u.vapid.private-key");
         try {
@@ -302,5 +323,35 @@ public final class Push2uAutoConfiguration {
         return new IllegalStateException(expressed + ", but no EndpointPolicy bean exists in this context — the"
                 + " allowlist becomes one only through Push2uEndpointPolicyAutoConfiguration, which is not active here"
                 + " (most likely excluded). Restore that auto-configuration, or supply an EndpointPolicy bean.");
+    }
+
+    /**
+     * The condition under which this starter contributes its in-JVM signer: both {@code push2u.vapid.public-key} and
+     * {@code push2u.vapid.private-key} state a value. A <em>blank</em> value states nothing — the shape a deployment
+     * writes as {@code ${VAPID_PUBLIC_KEY:}} so that a missing variable does not stop the container from starting — and
+     * the framework's own property condition would take it for a stated one, activate the signer, and refuse it for the
+     * length of a point the empty string never carried. Reading blank as unset trades that failure for one that names
+     * the configuration which is actually missing; no blank value could have produced a signer either way.
+     */
+    static final class OnLocalVapidKeys extends SpringBootCondition {
+
+        /** The two keys this module owns, in the spelling its refusals use. */
+        static final String PUBLIC_KEY = "push2u.vapid.public-key";
+
+        /** The private half of the same pair. */
+        static final String PRIVATE_KEY = "push2u.vapid.private-key";
+
+        @Override
+        public ConditionOutcome getMatchOutcome(ConditionContext context, AnnotatedTypeMetadata metadata) {
+            Binder binder = Binder.get(context.getEnvironment());
+            ConditionMessage.Builder message = ConditionMessage.forCondition("push2u local VAPID keys");
+            boolean publicKey = Push2uActivation.isStated(binder, PUBLIC_KEY);
+            boolean privateKey = Push2uActivation.isStated(binder, PRIVATE_KEY);
+            if (publicKey && privateKey) {
+                return ConditionOutcome.match(message.because(PUBLIC_KEY + " and " + PRIVATE_KEY + " are both set"));
+            }
+            String missing = publicKey ? PRIVATE_KEY : (privateKey ? PUBLIC_KEY : PUBLIC_KEY + " and " + PRIVATE_KEY);
+            return ConditionOutcome.noMatch(message.because(missing + " unset or blank"));
+        }
     }
 }
