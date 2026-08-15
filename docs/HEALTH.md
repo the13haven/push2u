@@ -9,7 +9,7 @@ The document is in two parts. The first is the indicator itself: what it probes,
 and what it does not, the two keys that configure it, and when it is registered. The second is
 Spring Boot's own health-group machinery — the routes that keep a signer's backend out of a
 container health check, and what the framework validates about a group. Much of that second part is
-framework behaviour that would read the same for any contributor at all, and the two are not
+framework behaviour that would read the same for any contributor at all, and the two kinds are not
 separated: the third recipe writes `push2u` into a group's YAML, and one subsection is about this
 contributor from its heading down. It does not divide into a part to read and a part to skip.
 
@@ -239,7 +239,7 @@ The context fails exactly as it was failing before, this time naming an empty st
 nothing at all to reason from. "I cleared it" and "I blanked it" are the same intention, and only
 one of them starts.
 
-### Where the membership check stops, and the validator beside it
+### Where the membership check stops, and the clash beside it
 
 **A `*` in a group's `include` or `exclude` switches that check off for everything written after
 it.** The validator walks a group's names in the order they were written and stops at the first `*`,
