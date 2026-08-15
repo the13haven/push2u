@@ -540,11 +540,13 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * <p>Describing a failure consults it — its cause chain, its message, and for an unavailability its status and
          * declared delay — and every one of those is an overridable member of an exception a replaceable transport
          * produced, so any of them may throw. Two things must survive that. The flight ends, because a description that
-         * threw is no reason to leave the waiters parked forever. And the caller keeps the failure it was given,
-         * because a defect in an exception's own accessors says nothing about what the read met: the secondary is
-         * attached to the failure as a suppressed exception — where a secondary raised while handling a primary belongs
-         * — and the failure travels on as the classified thing it is. A failure whose description could not be taken is
-         * shared with nobody, so the waiters retry, exactly as they do for a failure of neither contract type.
+         * threw is no reason to leave the waiters parked forever — and it ends even if recording that secondary fails
+         * in turn, since the release sits in the {@code finally} below rather than beside the recording. And the caller
+         * keeps the failure it was given, because a defect in an exception's own accessors says nothing about what the
+         * read met: the secondary is attached to the failure as a suppressed exception — where a secondary raised while
+         * handling a primary belongs — and the failure travels on as the classified thing it is. A failure whose
+         * description could not be taken is shared with nobody, so the waiters retry, exactly as they do for a failure
+         * of neither contract type.
          */
         private void endFailedFlight(Flight flight, RuntimeException failure) {
             SharedFailure shared = null;
@@ -711,21 +713,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Records {@code secondary} on {@code failure} without ever letting it displace it. The recording is allowed to
-     * fail, and one way for it to fail is reachable exactly here: {@code addSuppressed} refuses an exception offered as
-     * its own suppressor, and an accessor that threw the failure itself hands it precisely that. The method is
-     * {@code final} on {@code Throwable}, so no consumer type can make it refuse for reasons of its own, and its only
-     * other refusal is a {@code null} argument, which a catch clause cannot produce. Whatever comes back, the failure
-     * travels exactly as it was raised — a defective exception object may cost itself its own diagnostics, never the
-     * report of what the read met.
+     * Records {@code secondary} on {@code failure} without letting the recording displace it. Exactly one refusal is
+     * reachable here, and it is caught: {@code addSuppressed} rejects an exception offered as its own suppressor, which
+     * is what an accessor that threw the failure itself hands it. The set is closed rather than assumed — the method is
+     * {@code final} on {@code Throwable}, so no consumer type can make it refuse for reasons of its own, and its one
+     * other refusal is a {@code null} argument, which a catch clause cannot produce. Anything else out of that call is
+     * the machine and not the diagnostics, so it is left to leave: the caller then receives it in place of the failure,
+     * and the flight is released regardless, because the release sits in the caller's {@code finally} rather than
+     * beside this record.
      */
     private static void suppress(Throwable failure, Throwable secondary) {
         try {
             failure.addSuppressed(secondary);
-        } catch (RuntimeException | Error refused) {
-            // Deliberately swallowed, and the last place it could be: the caller is owed the
-            // failure the read produced, not a complaint about the exception carrying it. Wider
-            // than the one refusal that can arrive because there is nothing to do with any of them.
+        } catch (IllegalArgumentException selfSuppression) {
+            // The failure was offered as its own suppressor, which only its own accessor throwing
+            // it can produce. There is nothing to record and nothing to report: the caller is owed
+            // the failure the read produced, not a complaint about the exception carrying it.
         }
     }
 

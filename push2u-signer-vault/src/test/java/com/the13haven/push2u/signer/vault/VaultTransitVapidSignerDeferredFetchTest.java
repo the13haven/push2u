@@ -405,6 +405,39 @@ class VaultTransitVapidSignerDeferredFetchTest {
                 .isEqualTo(2);
     }
 
+    @Test
+    void anAccessorThrowingTheFailureItselfIsNotDisplacedByTheRefusalThatCauses() throws Exception {
+        // The one refusal recording a secondary can raise: an exception offered as its own
+        // suppressor. It arrives whenever the accessor threw the failure itself, and it must not
+        // reach the caller in place of that failure — the caller keeps it, with nothing recorded
+        // on it, because nothing can be — nor leave the flight recorded as active.
+        SelfThrowingUnavailable outage = new SelfThrowingUnavailable("Vault Transit key read must wait");
+        CountDownLatch fetchArrived = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        ScriptedVaultTransport transport = new ScriptedVaultTransport()
+                .onGetGated(fetchArrived, releaseFetch, () -> {
+                    throw outage;
+                })
+                .onGet(VaultTransitVapidSignerDeferredFetchTest::healthyKeys);
+        VapidSigner signer = deferredSigner(transport);
+
+        Caller fetcher = Caller.start("fetcher", signer::publicKey);
+        awaitGate(fetchArrived);
+        Caller waiter = Caller.start("waiter", signer::publicKey);
+        awaitParkedOnFlight(waiter);
+        releaseFetch.countDown();
+
+        Throwable fetcherFailure = fetcher.awaitFailure();
+        assertThat(fetcherFailure)
+                .as("the refusal is swallowed; the caller keeps the failure it was given")
+                .isSameAs(outage);
+        assertThat(fetcherFailure.getSuppressed())
+                .as("and nothing is recorded on it, an exception being unable to suppress itself")
+                .isEmpty();
+        assertThat(waiter.awaitValue()).isEqualTo(HEALTHY_VAULT.publicKeyUncompressed());
+        assertThat(transport.keyReads()).isEqualTo(2);
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // Cancellation — caller-local in both directions
     // ---------------------------------------------------------------------------------------------------------------
@@ -748,6 +781,22 @@ class VaultTransitVapidSignerDeferredFetchTest {
         @Override
         public java.util.OptionalInt status() {
             throw accessorFailure;
+        }
+    }
+
+    /**
+     * A subclass whose declared-value accessor throws the failure itself — the shape that makes recording the secondary
+     * refuse, since nothing can be its own suppressor.
+     */
+    private static final class SelfThrowingUnavailable extends VapidSignerUnavailableException {
+
+        private SelfThrowingUnavailable(String message) {
+            super(message);
+        }
+
+        @Override
+        public java.util.OptionalInt status() {
+            throw this;
         }
     }
 
