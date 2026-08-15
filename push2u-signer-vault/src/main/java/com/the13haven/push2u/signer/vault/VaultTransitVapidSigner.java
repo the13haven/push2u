@@ -22,10 +22,17 @@ import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.EllipticCurve;
 import java.security.spec.X509EncodedKeySpec;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -68,8 +75,8 @@ import com.the13haven.push2u.VapidSignerUnavailableException;
  * pointing at {@code 127.0.0.1} through the hosts file still needs the opt-in.
  *
  * <p>The Vault key must be an {@code ecdsa-p256} Transit key. The VAPID public key is your published identity; Vault
- * holds only the private half. There are two ways to supply the public key, one builder each — the two differ in
- * contract, not merely in parameters, which is why neither is the default:
+ * holds only the private half. There are three ways to obtain the public key, one builder each — they differ in
+ * contract, not merely in parameters, which is why none of them is the default:
  *
  * <ul>
  *   <li><b>Explicit</b> ({@link #builderWithSuppliedPublicKey(URI, TransitKeyName, VaultToken, byte[])} — the builder
@@ -95,39 +102,55 @@ import com.the13haven.push2u.VapidSignerUnavailableException;
  *       type is only Vault's claim about the key, while the curve checks inspect the key material itself — and any
  *       failure raises a {@link PushCryptoException} at construction instead of surfacing as an unexplained
  *       push-service rejection on the first send.
+ *   <li><b>Deferred fetch</b> ({@link #builderWithDeferredPublicKeyFetch(URI, TransitKeyName, VaultToken)}) — the same
+ *       fetched key, read at first use instead of at construction: what is deferred is the <em>call</em>, not the key.
+ *       {@code build()} contacts Vault not at all, so an application whose context is refreshed while Vault is still
+ *       sealing, unsealing or mounting starts anyway; the first {@code sign}, {@code publicKey} or
+ *       {@code publicKeyBase64Url} performs the one {@code transit/keys/<key>} read, with the same atomic
+ *       version-and-key pair and the same P-256 validation the eager fetched mode applies at construction — moved in
+ *       time, not weakened. A successful pair is retained for the signer's lifetime; a failed or interrupted read is
+ *       never remembered, so a later call simply tries again. The token needs the same {@code sign} plus {@code read}
+ *       capabilities as the eager fetched mode.
  * </ul>
  *
- * <p>Both Vault calls — the Transit {@code sign} POST and the fetched mode's one-time {@code transit/keys} read — go
+ * <p>Both Vault calls — the Transit {@code sign} POST and the fetched modes' one-time {@code transit/keys} read, at
+ * startup or at first use — go
  * through this module's {@link VaultHttpTransport} seam (default {@link JdkVaultHttpTransport}), so an application's
- * mTLS, proxy, or observability transport applies to the startup metadata read as much as to signing. Deliberately
+ * mTLS, proxy, or observability transport applies to the metadata read as much as to signing. Deliberately
  * <em>not</em> push2u-core's {@code PushHttpClient}: push delivery talks to untrusted capability URLs and discards
  * response bodies, while Vault's responses must be read — buffered under the transport's size cap and per-request
  * timeout. The small Vault request/response JSON is built and parsed by hand — no JSON library.
  *
- * <p>Both factory methods take everything required — the Vault base address, the {@link TransitKeyName} and the
+ * <p>Every factory method takes everything required — the Vault base address, the {@link TransitKeyName} and the
  * {@link VaultToken} — so an incomplete signer cannot be expressed and {@code build()} never refuses over a missing
  * value; the value types keep the arguments impossible to swap and carry their own validation. The builders hold only
  * the optional steps: {@code mount} (default {@code "transit"}), {@code namespace} (default none — see below),
  * {@code transport} (default {@link JdkVaultHttpTransport}) and {@code allowInsecureHttp()} (off by default — see the
- * scheme rule above). Only the supplied-key builder has {@code keyVersion} — in the fetched mode the version is Vault's
- * to state, not the caller's.
+ * scheme rule above). Only the supplied-key builder has {@code keyVersion} — in the fetched modes the version is
+ * Vault's to state, not the caller's.
  *
  * <p><b>Vault namespaces (Enterprise/HCP):</b> when the Transit engine lives inside a <a
  * href="https://developer.hashicorp.com/vault/docs/enterprise/namespaces">Vault Enterprise or HCP Vault namespace</a>,
  * set it with the builders' {@code namespace(...)} step. The signer then sends the {@code X-Vault-Namespace} header on
- * <em>both</em> Vault calls — every Transit {@code sign} POST and the fetched mode's one-time {@code transit/keys}
+ * <em>both</em> Vault calls — every Transit {@code sign} POST and the fetched modes' one-time {@code transit/keys}
  * read. Without the step no such header is sent at all, which is what Vault OSS (which has no namespaces) expects.
  *
- * <p><b>Key rotation:</b> the fetched mode captures the key version together with its public key at construction and
- * pins that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
+ * <p><b>Key rotation:</b> the fetched modes capture the key version together with its public key — at construction, or
+ * at first use in the deferred mode — and
+ * pin that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
  * the advertised public key — rotating the Transit key in Vault does not break signing <em>by itself</em>. What the pin
  * does not survive is the operator raising the key's {@code min_encryption_version} above the pinned version: Vault
  * then rejects sign requests carrying that {@code key_version}, and every {@code sign} call fails loudly with a
  * {@link PushCryptoException}. Trimming old key versions (raising {@code min_available_version}) deletes the pinned
- * version outright and breaks signing the same way. Recover by recreating the signer (the fetched mode re-reads the
+ * version outright and breaks signing the same way. Recover by recreating the signer (a fetched mode re-reads the
  * then-latest version and its public key) or, in the explicit mode, by supplying the new version's public key with the
  * matching {@code keyVersion}. The rotated key is also not picked up until the signer is recreated, which is the
  * behaviour VAPID wants: the public key is your published identity, and push subscriptions pin it at subscribe time.
+ * There is deliberately no operation that re-reads the key on a live signer: swapping the advertised key under a live
+ * sender would not adopt a new identity but invalidate every subscription taken out under the old one — RFC 8292 §4.2
+ * entitles a push service to refuse a JWT whose key is not the one the subscription was created under — so adopting a
+ * new key version is a migration built on a <em>new</em> signer and a new sender, run beside the old pair until the
+ * subscriptions created under the previous key are gone.
  * The explicit mode pins whatever version {@link SuppliedPublicKeyBuilder#keyVersion(int)} was given. Omitting that
  * step sends no {@code key_version}, so Vault signs with the latest — that form is only safe if the Transit key is
  * never rotated; set {@code keyVersion} otherwise.
@@ -192,16 +215,29 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     @Nullable
     private final String namespace;
 
-    private final byte[] publicKey;
-    /** The Transit key version every {@code sign} call pins; {@code null} sends no {@code key_version}. */
+    /**
+     * The signer's published identity — the key version every {@code sign} call pins beside the public key it belongs
+     * to — as one immutable pair behind a single volatile field. The two immediate modes write it in the constructor
+     * and it never changes; the deferred mode leaves it unset until the first successful metadata read publishes it,
+     * and from that moment it is equally final in effect: only a successful pair is ever written, exactly once, and it
+     * is retained for the signer's lifetime because the advertised key is the identity subscriptions are bound to.
+     */
     @Nullable
-    private final Integer keyVersion;
+    private volatile VaultKeyMetadata metadata;
 
-    /** The (version, public key) pair read atomically from one {@code transit/keys/<name>} response. */
-    // ArrayRecordComponent: a private carrier that never escapes this class — the constructor copies
-    // the array into the signer's own field, and nothing else ever reads it.
+    /** The deferred mode's first-use initialization; {@code null} in the two modes that hold their pair from birth. */
+    @Nullable
+    private final DeferredInitialization deferredInitialization;
+
+    /**
+     * The (version, public key) pair, read atomically from one {@code transit/keys/<name>} response in the fetched
+     * modes; the supplied mode carries the caller's key here with the version it pinned, or none. A {@code null}
+     * version sends no {@code key_version}, so Vault signs with its latest.
+     */
+    // ArrayRecordComponent: a private carrier that never escapes this class — every array wrapped
+    // here is freshly produced or defensively copied first, and publicKey() clones on the way out.
     @SuppressWarnings("ArrayRecordComponent")
-    private record VaultKeyMetadata(int version, byte[] publicKey) {}
+    private record VaultKeyMetadata(@Nullable Integer version, byte[] publicKey) {}
 
     /**
      * A builder for the <b>fetched</b> mode: {@link FetchedPublicKeyBuilder#build()} reads {@code transit/keys/<key>}
@@ -257,6 +293,33 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         return new SuppliedPublicKeyBuilder(address, keyName, token, publicKey);
     }
 
+    /**
+     * A builder for the <b>deferred fetch</b> mode: the public key and its version come from Vault, exactly as in the
+     * fetched mode, but the {@code transit/keys/<key>} read happens at first use instead of inside
+     * {@link DeferredPublicKeyFetchBuilder#build()} — what is deferred is the <em>call</em>, not the key. Use it where
+     * the application must start while Vault may still be sealing, unsealing or mounting — a Vault brought up beside
+     * the application rather than before it — and where the key should still be stated in exactly one place.
+     *
+     * @param address the Vault base address, e.g. {@code https://vault.example:8200} — or, for a Vault behind a reverse
+     *     proxy or ingress prefix, e.g. {@code https://gw.example/vault} (see the class Javadoc for the address
+     *     contract; the scheme must be {@code http} or {@code https}, and plain {@code http} beyond a literal loopback
+     *     host additionally needs the builder's {@code allowInsecureHttp()} step). Userinfo in the address is
+     *     preserved, but the built-in transport does not use it — no {@code Authorization} header is formed from it;
+     *     Vault authentication is the token. A custom {@link VaultHttpTransport} may honour it, e.g. for a basic-auth
+     *     fronting proxy
+     * @param keyName the {@code ecdsa-p256} Transit key name
+     * @param token the Vault token authorising {@code sign} on the key plus {@code read} on {@code transit/keys/<key>}
+     *     (this mode reads the key metadata, merely later than the fetched one)
+     * @return a new builder
+     * @throws IllegalArgumentException if {@code address} is not an absolute URI with a host, has a scheme other than
+     *     {@code http} or {@code https} (case-insensitive), carries a query or fragment, or has a path violating the
+     *     per-segment rule (empty, {@code .} or {@code ..} segments, or characters outside {@code [A-Za-z0-9_.-]})
+     */
+    public static DeferredPublicKeyFetchBuilder builderWithDeferredPublicKeyFetch(
+            URI address, TransitKeyName keyName, VaultToken token) {
+        return new DeferredPublicKeyFetchBuilder(address, keyName, token);
+    }
+
     private VaultTransitVapidSigner(
             URI vaultAddress,
             String mount,
@@ -287,16 +350,338 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // Validated at the namespace(...) step that set it (allowed set [A-Za-z0-9_.-] plus '/'),
         // so by construction the value is visible ASCII and header-safe — see requireValidVaultPath.
         this.namespace = namespace;
-        this.publicKey = publicKey.clone();
-        this.keyVersion = keyVersion;
+        this.metadata = new VaultKeyMetadata(keyVersion, publicKey.clone());
+        this.deferredInitialization = null;
         this.transport = Objects.requireNonNull(transport, "transport");
+    }
+
+    /**
+     * The deferred-fetch constructor: no pair yet, and the {@code transit/keys/<keyName>} URI kept for the first-use
+     * read that will publish one. Everything local is validated exactly as the other constructors validate it; what is
+     * absent is only what a Vault response would have supplied.
+     */
+    private VaultTransitVapidSigner(
+            URI vaultAddress,
+            String mount,
+            @Nullable String namespace,
+            TransitKeyName keyName,
+            VaultToken token,
+            VaultHttpTransport transport) {
+        Objects.requireNonNull(vaultAddress, "vaultAddress");
+        Objects.requireNonNull(mount, "mount");
+        Objects.requireNonNull(keyName, "keyName");
+        this.signUri = vaultApiUri(vaultAddress, "/v1/" + mount + "/sign/" + keyName.value());
+        // Unwrapped once, as in the canonical constructor: valid by construction, never printed.
+        this.token = Objects.requireNonNull(token, "token").value();
+        this.namespace = namespace;
+        this.metadata = null;
+        this.deferredInitialization =
+                new DeferredInitialization(vaultApiUri(vaultAddress, "/v1/" + mount + "/keys/" + keyName.value()));
+        this.transport = Objects.requireNonNull(transport, "transport");
+    }
+
+    /**
+     * The signer's (version, public key) pair: the one it was built with, or — in the deferred mode — the one the
+     * first use reads from Vault, initializing if no successful read has published a pair yet.
+     */
+    private VaultKeyMetadata keyMetadata() {
+        VaultKeyMetadata current = metadata;
+        if (current != null) {
+            return current;
+        }
+        // Only the deferred mode can arrive here: the other two constructors publish the pair
+        // before the signer exists.
+        return Objects.requireNonNull(deferredInitialization, "deferredInitialization")
+                .initialize();
+    }
+
+    /**
+     * The deferred mode's first-use initialization: at most one metadata read in flight per signer, and only a
+     * successful pair ever retained.
+     *
+     * <p><b>At most one flight is active at a time</b> — the signer's own record of an active fetch, {@code
+     * activeFlight}, is what bounds the reads it starts. Without that bound, a cold fan-out of N concurrent senders
+     * would open N reads of one value against a custodian that audits every request; with it, one caller fetches and
+     * the rest wait on that caller's read, bounded by the transport's own connect and request timeouts and by nothing
+     * added here. The bound is over reads this signer <em>starts</em>: a transport whose request was abandoned may
+     * still be finishing I/O underneath, and nothing here reaches into that.
+     *
+     * <p><b>A flight ends in one of four ways, and the three that do not succeed are distinct on purpose.</b> A
+     * successful pair is published through the signer's one volatile field and kept for the signer's lifetime. A
+     * failure of one of the two contract types — the custodian unable to serve the read now, or a failure that recurs —
+     * is shared with the callers already waiting on this flight and then forgotten: each waiter throws its own fresh
+     * exception built from an immutable description of the failure, and a caller arriving after the flight ended starts
+     * a new read, because a custodian that could not serve a moment ago is exactly the thing that recovers on its own
+     * terms and remembering the refusal would turn a transient outage into a permanent one. A cancellation of the
+     * fetching caller is not shared at all — handing it to threads nobody interrupted would convert their calls into
+     * cancellations they never asked for — so the fetching caller keeps its own exception, the flight is abandoned, and
+     * the waiters retry with one of them taking over. And a failure of neither contract type is a defect in a
+     * replaceable transport: it reaches its own caller exactly as thrown, is never laundered into a contract type, and
+     * abandons the flight the way a cancellation does.
+     *
+     * <p><b>No signing request ever runs while this guard is held.</b> The monitor below protects only the record of
+     * the active flight; the read itself runs on the fetching caller's thread outside it, waiters block on the flight's
+     * latch rather than on the monitor, and once a pair is published every later call takes the volatile fast path
+     * without touching either — so one caller blocked inside the transport never serializes another caller's signature.
+     */
+    private final class DeferredInitialization {
+
+        /** The {@code transit/keys/<keyName>} URI of the one read this initialization performs. */
+        private final URI keyUri;
+
+        /** Guards {@link #activeFlight} and nothing else — never held across any I/O. */
+        private final Object guard = new Object();
+
+        /** The signer's record of the one fetch currently in flight; {@code null} when none is. */
+        @Nullable
+        private Flight activeFlight;
+
+        private DeferredInitialization(URI keyUri) {
+            this.keyUri = keyUri;
+        }
+
+        /**
+         * The published pair, fetching it if this caller is the first — or waiting on the caller that already is.
+         * Returns only a successfully read pair; every failure leaves as an exception, as {@link #fetch} and
+         * {@link #awaitSharedOutcome} decide.
+         */
+        VaultKeyMetadata initialize() {
+            while (true) {
+                VaultKeyMetadata published = metadata;
+                if (published != null) {
+                    return published;
+                }
+                Flight flight;
+                boolean fetching = false;
+                synchronized (guard) {
+                    // Re-checked under the guard: a flight that succeeded between the read above
+                    // and this monitor must be honoured, never re-fetched — the pair is read once
+                    // per signer, and a second read after a success is what this re-check rules out.
+                    published = metadata;
+                    if (published != null) {
+                        return published;
+                    }
+                    if (activeFlight == null) {
+                        activeFlight = new Flight();
+                        fetching = true;
+                    }
+                    flight = activeFlight;
+                }
+                if (fetching) {
+                    return fetch(flight);
+                }
+                VaultKeyMetadata shared = awaitSharedOutcome(flight);
+                if (shared != null) {
+                    return shared;
+                }
+                // The flight was abandoned — its fetching caller was cancelled, or met a failure of
+                // neither contract type. Nothing was shared, so this caller retries: one of the
+                // remaining callers becomes the next fetching one.
+            }
+        }
+
+        /**
+         * Performs this flight's one metadata read, publishes a success for the signer's lifetime, and decides what the
+         * flight leaves for its waiters. The fetching caller always keeps the exception it was given — rethrown here
+         * unchanged, whatever the waiters are handed.
+         */
+        private VaultKeyMetadata fetch(Flight flight) {
+            VaultKeyMetadata fetched;
+            try {
+                fetched = fetchKeyMetadata(keyUri, namespace, token, transport);
+                // The same belt over the same braces the eager mode's constructor applies: the
+                // fetch validated the pair against the platform's own P-256 parameters, and this
+                // re-checks the point against the core's hard-coded constants before anything is
+                // published — the check moved from construction to first use, not out of the path.
+                P256PublicKeys.requireOnCurve(fetched.publicKey(), "publicKey");
+            } catch (RuntimeException failure) {
+                finish(flight, describeIfShareable(failure));
+                throw failure;
+            } catch (Error error) {
+                // Not this seam's to classify — but the flight must not stay recorded as active,
+                // or every waiter outlives it parked on a latch nobody will count down.
+                finish(flight, null);
+                throw error;
+            }
+            metadata = fetched;
+            finish(flight, fetched);
+            return fetched;
+        }
+
+        /**
+         * Ends {@code flight}: records what it leaves behind ({@code outcome} — the pair, a {@link SharedFailure}, or
+         * {@code null} for an abandoned flight), clears the signer's record of an active fetch, and wakes the waiters.
+         * Cleared before the latch opens so that a waiter waking from an abandoned flight and retrying can only meet
+         * the <em>next</em> flight or start one — never re-attach to this finished one and wait forever.
+         */
+        private void finish(Flight flight, @Nullable Object outcome) {
+            flight.outcome = outcome;
+            synchronized (guard) {
+                if (activeFlight == flight) {
+                    activeFlight = null;
+                }
+            }
+            flight.done.countDown();
+        }
+
+        /**
+         * Waits for the active flight this caller attached to, and reads what it shared: the pair on success, a fresh
+         * exception of the contract type on a shared failure, or {@code null} where the flight was abandoned and this
+         * caller should retry.
+         *
+         * <p>A caller interrupted <em>while waiting</em> takes its own cancellation and leaves the flight running for
+         * everyone else — it did not start the fetch and must not end it. It holds no transport failure of its own, so
+         * its cancellation takes the shape the transport would have produced: the unavailability type with the
+         * {@link InterruptedException} beneath it and the interrupt flag re-set, which is exactly what a caller
+         * supervising the call — or the sender's own cancellation test — recognises as an interruption.
+         */
+        private @Nullable VaultKeyMetadata awaitSharedOutcome(Flight flight) {
+            try {
+                flight.done.await();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new VapidSignerUnavailableException(
+                        "interrupted while waiting for another caller's read of the Vault Transit key metadata"
+                                + " — the read itself continues for the callers that were not interrupted",
+                        interrupted);
+            }
+            Object outcome = flight.outcome;
+            if (outcome instanceof VaultKeyMetadata pair) {
+                return pair;
+            }
+            if (outcome instanceof SharedFailure failure) {
+                throw failure.reconstruct();
+            }
+            return null;
+        }
+    }
+
+    /**
+     * One deferred fetch in flight: the latch its waiters block on, and what the flight left them — the pair, a
+     * {@link SharedFailure}, or {@code null} for a flight that was abandoned (its fetching caller cancelled, or a
+     * failure of neither contract type), after which a waiter retries. Written by the fetching caller before the latch
+     * opens, so every waiter that wakes reads a settled value.
+     */
+    private static final class Flight {
+
+        private final CountDownLatch done = new CountDownLatch(1);
+
+        @Nullable
+        private volatile Object outcome;
+    }
+
+    /**
+     * The immutable description of a flight's shared failure, taken once when the flight ends: the message, the
+     * fetch's own failure whole, and — for the unavailability, the only one of the two contract types that reports
+     * either — the custodian's status and declared delay.
+     *
+     * <p>Each waiter throws a <em>fresh</em> exception built from this, never the one instance the fetching caller was
+     * given: one instance thrown from several threads would carry the fetching caller's stack, leave each waiter
+     * without its own, and hand them all one mutable suppressed-exception list. The fetch's failure travels as the
+     * reconstruction's cause — the whole exception, not that exception's own cause, because an unavailability built
+     * from an answered status often has no cause at all, and a waiter rebuilt from nothing would say nothing about the
+     * read that failed. A cause reached from several chains is diagnostics; nothing here writes into one.
+     *
+     * <p>Two details are deliberate. The reconstruction promises the <b>contract type</b> — {@code
+     * VapidSignerUnavailableException} or {@code PushCryptoException} — never the runtime class: both types are
+     * extensible, a transport's subclass cannot be rebuilt without reflection, and no published contract lets a caller
+     * branch on it. And the two declared values are read <b>exactly once</b>, here, because the accessors are not
+     * final and an extending exception may answer differently on every call.
+     */
+    private record SharedFailure(
+            boolean unavailability,
+            String message,
+            Throwable failure,
+            boolean hasStatus,
+            int status,
+            @Nullable Duration retryAfter) {
+
+        private static SharedFailure of(VapidSignerUnavailableException failure) {
+            OptionalInt status = failure.status();
+            Optional<Duration> retryAfter = failure.retryAfter();
+            return new SharedFailure(
+                    true, messageOf(failure), failure, status.isPresent(), status.orElse(0), retryAfter.orElse(null));
+        }
+
+        private static SharedFailure of(PushCryptoException failure) {
+            return new SharedFailure(false, messageOf(failure), failure, false, 0, null);
+        }
+
+        /** A detail message is not contractual on either type; a subclass answering none still gets a sentence. */
+        private static String messageOf(RuntimeException failure) {
+            String message = failure.getMessage();
+            return message != null ? message : "the Vault Transit key metadata read failed without a detail message";
+        }
+
+        private RuntimeException reconstruct() {
+            if (!unavailability) {
+                return new PushCryptoException(message, failure);
+            }
+            if (hasStatus) {
+                return new VapidSignerUnavailableException(message, status, retryAfter, failure);
+            }
+            if (retryAfter != null) {
+                return new VapidSignerUnavailableException(message, retryAfter, failure);
+            }
+            return new VapidSignerUnavailableException(message, failure);
+        }
+    }
+
+    /**
+     * What a failed flight shares with its waiters: a description of the failure where it was one of the two contract
+     * types and not an interruption, and {@code null} — the abandoned flight — otherwise.
+     *
+     * <p><b>The interruption test runs first, before any classification by type</b>, and it is the same disjunction the
+     * sender applies before converting a failure into an outcome: the current thread's interrupt status — the fetching
+     * caller's own thread, since this runs where the fetch failed — or an {@link InterruptedException} anywhere in the
+     * cause chain. Neither half is sound alone, and testing the type first would let a defective transport that
+     * wrapped an interruption in a recurring type share a cancellation with callers nobody interrupted. The fetching
+     * caller still receives such a failure exactly as it was labelled; refusing to <em>share</em> it is the whole of
+     * what this decides.
+     */
+    private static @Nullable SharedFailure describeIfShareable(RuntimeException failure) {
+        if (isInterruption(failure)) {
+            return null;
+        }
+        if (failure instanceof VapidSignerUnavailableException unavailable) {
+            return SharedFailure.of(unavailable);
+        }
+        if (failure instanceof PushCryptoException recurring) {
+            return SharedFailure.of(recurring);
+        }
+        return null;
+    }
+
+    /**
+     * The same interruption disjunction the sender applies, for the same reason neither half is sound alone: an
+     * interruption can surface as an {@link java.io.InterruptedIOException} with no {@link InterruptedException}
+     * beneath it (the flag half catches those), and a transport can attach a cause without re-setting the flag (the
+     * chain half catches that). The walk guards against a cyclic chain — constructible by a defective transport
+     * overriding {@code getCause()} — because a fetch must not spin over someone else's broken diagnostics.
+     */
+    private static boolean isInterruption(RuntimeException failure) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
     public byte[] sign(byte[] signingInput) {
+        // The pair is taken first, and taken once: in the deferred mode this is the call that may
+        // perform the one-time metadata read, and it returns before any lock-free path below runs —
+        // so the signing POST never runs while the initialization guard is held, and the version in
+        // the request below and the version checked against the response envelope are one value.
+        VaultKeyMetadata key = keyMetadata();
         String request = "{\"input\":\"" + Base64.getEncoder().encodeToString(signingInput)
                 + "\",\"marshaling_algorithm\":\"jws\""
-                + (keyVersion == null ? "" : ",\"key_version\":" + keyVersion) + "}";
+                + (key.version() == null ? "" : ",\"key_version\":" + key.version()) + "}";
         VaultHttpResponse response =
                 transport.post(signUri, vaultHeaders(token, namespace), request.getBytes(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
@@ -305,7 +690,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         String marshalled = extractSignature(response.body());
         byte[] signature;
         try {
-            signature = Base64.getUrlDecoder().decode(stripVaultPrefix(marshalled));
+            signature = Base64.getUrlDecoder().decode(stripVaultPrefix(marshalled, key.version()));
         } catch (IllegalArgumentException e) {
             // Report the failure as this module's exception, next to the cause — and without the
             // response payload, whose content is not worth echoing into logs.
@@ -322,40 +707,34 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     @Override
     public byte[] publicKey() {
-        return publicKey.clone();
+        return keyMetadata().publicKey().clone();
     }
 
     /**
      * Read the latest key version and <em>that version's</em> public key from {@code transit/keys/<keyName>} as one
      * atomic pair, reducing the key to the 65-byte uncompressed P-256 point. Taking both from a single response closes
      * the rotation race: even if the key is rotated right after this read, the signer keeps signing with the version
-     * its advertised public key belongs to. A single startup {@code GET} over the same {@link VaultHttpTransport} the
-     * {@code sign} calls use; the token needs {@code read} on the key.
+     * its advertised public key belongs to. A single {@code GET} — at startup, or at first use in the deferred mode —
+     * over the same {@link VaultHttpTransport} the {@code sign} calls use; the token needs {@code read} on the key.
      *
-     * <p>The key is validated as P-256 before the signer exists, all fail-fast: the Transit {@code type}
+     * <p>The key is validated as P-256 before the pair exists, all fail-fast: the Transit {@code type}
      * ({@link #requireP256KeyType}), then the key's domain parameters and its point ({@link #requireP256PublicKey}). No
      * check subsumes another — the metadata is only Vault's claim, right parameters do not put the point on the curve,
      * and a key on another curve would otherwise be squeezed into 32-byte coordinates and published as a nonsense VAPID
-     * key that fails much later, as an opaque push-service rejection.
+     * key that fails much later, as an opaque push-service rejection. The eager builder runs this inside
+     * {@code build()}; the deferred mode runs the very same method from its first-use initialization — the checks move
+     * in time, never in substance.
      */
     private static VaultKeyMetadata fetchKeyMetadata(
-            URI vaultAddress,
-            String mount,
-            @Nullable String namespace,
-            TransitKeyName keyName,
-            VaultToken token,
-            VaultHttpTransport transport) {
-        Objects.requireNonNull(vaultAddress, "vaultAddress");
-        Objects.requireNonNull(mount, "mount");
-        Objects.requireNonNull(keyName, "keyName");
+            URI keyUri, @Nullable String namespace, String token, VaultHttpTransport transport) {
+        Objects.requireNonNull(keyUri, "keyUri");
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(transport, "transport");
-        URI keyUri = vaultApiUri(vaultAddress, "/v1/" + mount + "/keys/" + keyName.value());
         // No token or namespace validation here: a VaultToken is valid by construction (visible
         // ASCII, hence header-safe), and the namespace was validated at the namespace(...) step
-        // that set it — so this call, which in the fetched mode runs before the canonical
+        // that set it — so this call, which in the eager fetched mode runs before the canonical
         // constructor, cannot offer an invalid value to the transport.
-        VaultHttpResponse response = transport.get(keyUri, vaultHeaders(token.value(), namespace));
+        VaultHttpResponse response = transport.get(keyUri, vaultHeaders(token, namespace));
         if (response.statusCode() != 200) {
             throw answerFailure("Vault Transit key read", response);
         }
@@ -964,7 +1343,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * signature, and Vault dresses wrapped tokens and Transit ciphertext in the same {@code vault:v<n>:} clothing. The
      * mismatch message carries only the two version numbers ({@link #abbreviated} keeps a nonsense digit run log-safe).
      */
-    private String stripVaultPrefix(String marshalled) {
+    private static String stripVaultPrefix(String marshalled, @Nullable Integer keyVersion) {
         Matcher signature = VAULT_SIGNATURE.matcher(marshalled);
         if (!signature.matches()) {
             throw new PushCryptoException("unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
@@ -1462,7 +1841,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             // above is a builder step, called only after the factory has returned.
             requirePlainHttpPermitted(address, allowInsecureHttp);
             VaultHttpTransport resolvedTransport = orDefaultTransport(transport);
-            VaultKeyMetadata metadata = fetchKeyMetadata(address, mount, namespace, keyName, token, resolvedTransport);
+            VaultKeyMetadata metadata = fetchKeyMetadata(
+                    vaultApiUri(address, "/v1/" + mount + "/keys/" + keyName.value()),
+                    namespace,
+                    token.value(),
+                    resolvedTransport);
             return new VaultTransitVapidSigner(
                     address,
                     mount,
@@ -1472,6 +1855,170 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                     metadata.version(),
                     metadata.publicKey(),
                     resolvedTransport);
+        }
+    }
+
+    /**
+     * Builds a signer in the <b>deferred fetch</b> mode: the public key and its version still come from Vault as one
+     * atomic {@code transit/keys/<key>} pair, but the read happens at first use — the first {@code sign},
+     * {@code publicKey} or {@code publicKeyBase64Url} call — instead of inside {@link #build()}. Obtained from
+     * {@link VaultTransitVapidSigner#builderWithDeferredPublicKeyFetch(URI, TransitKeyName, VaultToken)}, which takes
+     * everything required — this builder holds only the optional steps, so {@code build()} can never refuse over a
+     * missing value.
+     *
+     * <p>{@link #mount(String)} defaults to {@code "transit"}, {@link #namespace(String)} to none (no
+     * {@code X-Vault-Namespace} header is sent), {@link #transport(VaultHttpTransport)} to a fresh
+     * {@link JdkVaultHttpTransport}, and {@link #allowInsecureHttp()} is off — plain {@code http} beyond a literal
+     * loopback host is refused by {@code build()} without it. There is deliberately no {@code keyVersion} step: this
+     * mode takes the version from the same {@code transit/keys/<key>} response as the public key, which is what keeps
+     * the two in step.
+     *
+     * <p><b>What first use does, and how concurrent first uses behave.</b> The signer performs at most one metadata
+     * read at a time: the first caller fetches, concurrent callers wait on that caller's read — bounded by the
+     * transport's connect and request timeouts — and a successful pair is retained for the signer's lifetime, so no
+     * later call reads it again. A failed read is never remembered: callers waiting on the failed read each receive
+     * their own exception of the same contract type, carrying the read's own failure as its cause and, for the
+     * unavailability, the status and any declared delay it reported — and the next caller after the failure simply
+     * starts a new read. An interruption is never spread beyond the thread it belongs to: an interrupted fetching
+     * caller keeps its own exception while the waiters retry the read among themselves, and an interrupted waiter
+     * receives its own {@link VapidSignerUnavailableException} with the {@link InterruptedException} beneath it and
+     * the interrupt flag re-set, while the read continues for everyone else.
+     */
+    public static final class DeferredPublicKeyFetchBuilder {
+
+        private final URI address;
+        private final TransitKeyName keyName;
+        private final VaultToken token;
+
+        private String mount = DEFAULT_MOUNT;
+
+        @Nullable
+        private String namespace;
+
+        @Nullable
+        private VaultHttpTransport transport;
+
+        private boolean allowInsecureHttp;
+
+        private DeferredPublicKeyFetchBuilder(URI address, TransitKeyName keyName, VaultToken token) {
+            // Validated here, so the failure points at the factory call that supplied the value
+            // rather than at build().
+            this.address = requireValidVaultAddress(address);
+            this.keyName = Objects.requireNonNull(keyName, "keyName");
+            this.token = Objects.requireNonNull(token, "token");
+        }
+
+        /**
+         * Sets the Transit mount path. Optional — defaults to {@code "transit"}, Vault's own default mount for the
+         * Transit secrets engine. Nested mounts ({@code secrets/transit}) are legal; validated where it is set, per
+         * segment: every {@code /}-separated segment must be non-empty, not {@code .} or {@code ..}, and drawn from
+         * {@code [A-Za-z0-9_.-]} — an allowed set rather than a blacklist, because a percent-encoded {@code %2e%2e}
+         * would otherwise reopen what the literal check closes. The rationale lives on the validator in
+         * {@link VaultTransitVapidSigner}.
+         *
+         * @param mount the Transit mount path
+         * @return this builder
+         * @throws IllegalArgumentException if {@code mount} is blank or violates the per-segment rule
+         */
+        public DeferredPublicKeyFetchBuilder mount(String mount) {
+            this.mount = requireValidVaultPath(
+                    mount,
+                    "mount",
+                    "secrets/transit",
+                    "a normalizing proxy in front of Vault collapses it before Vault sees it, and Vault's own handler answers the decoded form with a 307 redirect to the collapsed path, which a redirect-following transport would re-send, X-Vault-Token header included, to a different Vault path");
+            return this;
+        }
+
+        /**
+         * Sets the Vault Enterprise/HCP namespace the Transit engine lives in, sent as the {@code X-Vault-Namespace}
+         * header on <em>both</em> Vault calls — the first-use {@code transit/keys/<key>} read and every {@code sign}.
+         * Optional — when unset, no such header is sent at all, which is what Vault OSS (no namespaces) expects. Nested
+         * namespaces ({@code team-a/sub}) are legal; validated where it is set, by the same per-segment rule as
+         * {@link #mount(String)}: every {@code /}-separated segment must be non-empty, not {@code .} or {@code ..}, and
+         * drawn from {@code [A-Za-z0-9_.-]}. The value travels in an HTTP <em>header</em>, which the rule also keeps
+         * safe: the allowed set is a strict subset of visible ASCII with no control characters, so a validated
+         * namespace can never terminate the header or inject another. The full rationale lives on the validator in
+         * {@link VaultTransitVapidSigner}.
+         *
+         * @param namespace the Vault namespace path, e.g. {@code team-a} or {@code team-a/sub}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code namespace} is blank or violates the per-segment rule
+         */
+        public DeferredPublicKeyFetchBuilder namespace(String namespace) {
+            this.namespace = requireValidVaultPath(
+                    namespace,
+                    "namespace",
+                    "team-a/sub",
+                    "a namespace travels in the X-Vault-Namespace header rather than the URL, so no path-collapsing hop acts on it and no such value can name a real namespace — it is a configuration mistake, refused here rather than sent");
+            return this;
+        }
+
+        /**
+         * Sets the transport used for <em>both</em> Vault calls — the first-use {@code transit/keys/<key>} read and
+         * every {@code sign} — so custom mTLS/proxy configuration is never bypassed. Optional; a fresh
+         * {@link JdkVaultHttpTransport} is used otherwise.
+         *
+         * <p>Its request timeout carries one extra weight in this mode: a concurrent caller meeting an uninitialized
+         * signer waits on the first caller's read, bounded by the transport's own connect and request timeouts and by
+         * nothing this library adds — so a custom transport that sets no request timeout holds every waiting caller,
+         * not only the one that started the read.
+         *
+         * @param transport the HTTP transport for the Vault API calls
+         * @return this builder
+         */
+        public DeferredPublicKeyFetchBuilder transport(VaultHttpTransport transport) {
+            this.transport = Objects.requireNonNull(transport, "transport");
+            return this;
+        }
+
+        /**
+         * Permits plain {@code http} to a host that is not a literal loopback. Without this step {@link #build()}
+         * refuses such an address, because every Vault call carries the Vault token in the {@code X-Vault-Token}
+         * request header and plain HTTP to a remote host sends it across the network in clear text. Call it only where
+         * that hop is genuinely acceptable — a physically isolated network, a test bench — and prefer {@code https}, or
+         * a TLS-terminating Vault Agent or sidecar on the same host, which needs no opt-in at all: {@code http} to a
+         * literal loopback host ({@code localhost}, a name under {@code .localhost}, a {@code 127.0.0.0/8} IPv4
+         * dotted-quad in canonical decimal — so {@code 127.0.0.1}, but neither {@code 127.1} nor {@code 0177.0.0.1} —
+         * or a bracketed IP literal denoting a loopback address, {@code [::1]} in any spelling and the IPv4-mapped
+         * writings such as {@code [::ffff:127.0.0.1]}) is always accepted. The decision reads the host text literally,
+         * never resolving it, so a hosts-file alias of {@code 127.0.0.1} still needs this step.
+         *
+         * <p>{@code https} addresses are unaffected — this step neither weakens TLS nor changes certificate validation.
+         *
+         * @return this builder
+         */
+        public DeferredPublicKeyFetchBuilder allowInsecureHttp() {
+            this.allowInsecureHttp = true;
+            return this;
+        }
+
+        /**
+         * Builds the signer. Contacts Vault not at all: the {@code transit/keys/<key>} read — and with it the Transit
+         * {@code type} check, the P-256 domain-parameter check and the on-curve check, the three checks that read a
+         * Vault response — happens on the first {@code sign}, {@code publicKey} or {@code publicKeyBase64Url} call
+         * instead. Every check that does not need a Vault response still happens at construction, with the same types
+         * as the other builders — the plain-{@code http} rule below in this method, everything else at the factory or
+         * at the step that took the value.
+         *
+         * <p><b>This {@code build()} therefore throws neither {@link VapidSignerUnavailableException} nor
+         * {@link PushCryptoException}.</b> The contract the eagerly fetching builder documents for a startup
+         * supervisor — test the interruption, then the type — belongs to that builder alone, because it is about the
+         * read its {@code build()} performs; here there is no read to supervise and nothing of that kind to catch.
+         * Those failures surface at first use instead: inside a send, the sender reports an unavailable custodian as
+         * its signer-unavailable <em>outcome</em> and lets {@link PushCryptoException} propagate as itself; outside a
+         * send — a health probe, or an application asking for the key it publishes to browsers — the first call throws
+         * exactly what the eager {@code build()} would have thrown, and whoever supervises that call reads it in the
+         * same order, interruption first.
+         *
+         * @return the signer
+         * @throws IllegalArgumentException if the address uses plain {@code http} to a host that is not a literal
+         *     loopback and {@link #allowInsecureHttp()} was not called
+         */
+        public VaultTransitVapidSigner build() {
+            // The one address rule that cannot live at the factory: the opt-in above is a builder
+            // step, called only after the factory has returned.
+            requirePlainHttpPermitted(address, allowInsecureHttp);
+            return new VaultTransitVapidSigner(address, mount, namespace, keyName, token, orDefaultTransport(transport));
         }
     }
 
