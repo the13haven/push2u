@@ -32,13 +32,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     Overflow costs a signature per send, never a delivery
  * @param defaultTtl the push {@code TTL} used when a message sets none; {@code null} keeps the {@code PushSender}
  *     default (24h). Rejected at startup if negative
- * @param recordSize the {@code aes128gcm} record size (RFC 8188 {@code rs}); {@code null} keeps the {@code PushSender}
- *     default (4096 bytes). Rejected at startup if below 18 (RFC 8188 §2); separately, a send fails if the value does
- *     not exceed that particular payload plus 17 bytes (RFC 8291 §4) — a per-payload check this property cannot
- *     pre-empt
- * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body; {@code null} keeps the {@code PushSender}
- *     default (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the
- *     fixed 103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
+ * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body — the sender's one size property, from
+ *     which the advertised {@code aes128gcm} record size is derived; {@code null} keeps the {@code PushSender} default
+ *     (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the fixed
+ *     103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
  * @param allowedOrigins the push-service origins the sender may POST to (e.g. {@code https://fcm.googleapis.com}), each
  *     matched exactly — a subdomain of a listed origin is not allowed. Its entries are unioned with those of
  *     {@code push2u.allowed-domains} into one allowlist, so the two are halves of one statement rather than rival
@@ -76,7 +73,6 @@ public record Push2uProperties(
         @Nullable Boolean jwtReuse,
         @Nullable Integer jwtCacheSize,
         @Nullable Duration defaultTtl,
-        @Nullable Integer recordSize,
         @Nullable Integer maxEncryptedBodyBytes,
         @Nullable List<String> allowedOrigins,
         @Nullable List<String> allowedDomains,

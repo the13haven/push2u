@@ -1,6 +1,6 @@
 # ADR-023 — One configured size limit, answerable before a send
 
-**Status:** Proposed
+**Status:** Accepted
 
 A `PushSender` takes two size parameters. `maxEncryptedBodyBytes` bounds the encrypted entity body,
 which is what RFC 8030 §7.2 lets a push service refuse; `recordSize` is the `rs` advertised in the

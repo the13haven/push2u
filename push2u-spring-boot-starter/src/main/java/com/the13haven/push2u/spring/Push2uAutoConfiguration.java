@@ -131,14 +131,14 @@ public final class Push2uAutoConfiguration {
      * required"}.
      *
      * <p>{@code push2u.jwt-expiry}, {@code push2u.jwt-renew-before}, {@code push2u.jwt-cache-size},
-     * {@code push2u.default-ttl}, {@code push2u.record-size} and {@code push2u.max-encrypted-body-bytes} failures from
+     * {@code push2u.default-ttl} and {@code push2u.max-encrypted-body-bytes} failures from
      * {@link PushSender.Builder#jwtExpiry(Duration)}, {@link PushSender.Builder#jwtRenewBefore(Duration)},
-     * {@link PushSender.Builder#jwtCacheSize(int)}, {@link PushSender.Builder#defaultTtl(Duration)},
-     * {@link PushSender.Builder#recordSize(int)} and {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are
-     * re-thrown with the property name prefixed, since the builder's own message names its camelCase parameter, not the
-     * YAML property. {@code push2u.jwt-reuse} takes the same route although
-     * {@link PushSender.Builder#jwtReuse(boolean)} has no value to reject: a boolean the binder accepted is always
-     * legal, and routing it with its siblings is what keeps a later constraint on it from arriving unnamed.
+     * {@link PushSender.Builder#jwtCacheSize(int)}, {@link PushSender.Builder#defaultTtl(Duration)} and
+     * {@link PushSender.Builder#maxEncryptedBodyBytes(int)} are re-thrown with the property name prefixed, since the
+     * builder's own message names its camelCase parameter, not the YAML property. {@code push2u.jwt-reuse} takes the
+     * same route although {@link PushSender.Builder#jwtReuse(boolean)} has no value to reject: a boolean the binder
+     * accepted is always legal, and routing it with its siblings is what keeps a later constraint on it from arriving
+     * unnamed.
      *
      * <p>The {@link EndpointPolicy} comes from one of two sources, and exactly one of them: the allowlist properties,
      * {@code push2u.allowed-origins} and {@code push2u.allowed-domains}, or an application-supplied
@@ -173,10 +173,10 @@ public final class Push2uAutoConfiguration {
      *     {@code EndpointPolicy} bean; if neither property nor a bean is configured; or if neither property has an
      *     entry and no bean is configured
      * @throws IllegalArgumentException if {@code push2u.jwt-expiry}, {@code push2u.jwt-renew-before},
-     *     {@code push2u.jwt-cache-size}, {@code push2u.default-ttl}, {@code push2u.record-size} or
-     *     {@code push2u.max-encrypted-body-bytes} is set to a value the builder rejects, or if an entry of
-     *     {@code push2u.allowed-origins} or {@code push2u.allowed-domains} is not a well-formed origin or domain — the
-     *     failure names the property and the index of the entry
+     *     {@code push2u.jwt-cache-size}, {@code push2u.default-ttl} or {@code push2u.max-encrypted-body-bytes} is set
+     *     to a value the builder rejects, or if an entry of {@code push2u.allowed-origins} or
+     *     {@code push2u.allowed-domains} is not a well-formed origin or domain — the failure names the property and the
+     *     index of the entry
      */
     @Bean
     @ConditionalOnMissingBean
@@ -205,7 +205,6 @@ public final class Push2uAutoConfiguration {
         applyIfPresent(properties.jwtReuse(), builder::jwtReuse, "push2u.jwt-reuse");
         applyIfPresent(properties.jwtCacheSize(), builder::jwtCacheSize, "push2u.jwt-cache-size");
         applyIfPresent(properties.defaultTtl(), builder::defaultTtl, "push2u.default-ttl");
-        applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
         applyIfPresent(
                 properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
         return builder.build();

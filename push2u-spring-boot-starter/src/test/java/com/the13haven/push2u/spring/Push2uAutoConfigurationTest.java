@@ -71,9 +71,13 @@ class Push2uAutoConfigurationTest {
     /** A well-formed subscription {@code p256dh} point, unrelated to the VAPID pair above. */
     private static String subscriptionKeyB64;
 
+    // The removed-properties tombstone rides along so every scenario here also proves that a
+    // context without the removed key starts exactly as before its check existed.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withConfiguration(
-                    AutoConfigurations.of(Push2uAutoConfiguration.class, Push2uHealthAutoConfiguration.class));
+            .withConfiguration(AutoConfigurations.of(
+                    Push2uAutoConfiguration.class,
+                    Push2uHealthAutoConfiguration.class,
+                    Push2uRemovedPropertiesAutoConfiguration.class));
 
     @BeforeAll
     static void generateVapidKeys() throws Exception {
@@ -238,19 +242,21 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void recordSizeAndMaxEncryptedBodyBytesReachTheSender() {
-        // Both properties are optional pass-throughs to the builder; assert they are not silently
-        // dropped by sending a payload that only fits under the raised limits. A stub transport
-        // stands in for the network — the point under test is the size precondition, not delivery.
+    void maxEncryptedBodyBytesReachesTheSender() {
+        // The one size property is an optional pass-through to the builder; assert it is not
+        // silently dropped by sending a payload that only fits under the raised ceiling. A stub
+        // transport stands in for the network — the point under test is the size precondition, not
+        // delivery. One property is the whole of raising the limit: the record size is derived
+        // from it, so there is no second key to raise in step.
         keyedRunner()
-                .withPropertyValues("push2u.record-size=8192", "push2u.max-encrypted-body-bytes=8192")
+                .withPropertyValues("push2u.max-encrypted-body-bytes=8192")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     assertThat(context).hasSingleBean(PushSender.class);
                     PushSender sender = context.getBean(PushSender.class);
-                    // 4096 plaintext bytes: rejected by the PushSender defaults (rs=4096, body cap
-                    // 4096 -> 3993 max plaintext) but accepted once record-size/max-encrypted-body-bytes
-                    // are raised, proving the properties actually reached the builder.
+                    // 4096 plaintext bytes: rejected by the PushSender default (body cap 4096 ->
+                    // 3993 max plaintext) but accepted once max-encrypted-body-bytes is raised,
+                    // proving the property actually reached the builder.
                     PushOutcome result = sender.send(
                             subscription(), PushMessage.builder(new byte[4096]).build());
                     assertThat(result).isInstanceOf(PushOutcome.Accepted.class);
@@ -338,26 +344,15 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void invalidRecordSizeFailsTheContextNamingTheProperty() {
-        // The builder's own message names its camelCase parameter ("recordSize"), not the YAML
-        // property — the starter re-throws with push2u.record-size prefixed so the failure is
-        // actionable. That re-thrown IllegalArgumentException wraps the builder's original as its
-        // cause, so rootCause() would find the unprefixed message instead; and Spring's own
-        // BeanCreationException.getMessage() happens to *echo* the wrapped text too, so a plain
-        // "any message in the chain contains the needle" search would match that wrapper instead of
-        // the actual exception. firstOfTypeContaining requires both the exact exception type and
-        // the message, landing on the starter's own IllegalArgumentException specifically.
-        keyedRunner().withPropertyValues("push2u.record-size=10").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.record-size:"))
-                    .hasMessageContaining("push2u.record-size:")
-                    .hasMessageContaining("recordSize must be at least");
-        });
-    }
-
-    @Test
     void invalidMaxEncryptedBodyBytesFailsTheContextNamingTheProperty() {
+        // The builder's own message names its camelCase parameter ("maxEncryptedBodyBytes"), not
+        // the YAML property — the starter re-throws with push2u.max-encrypted-body-bytes prefixed
+        // so the failure is actionable. That re-thrown IllegalArgumentException wraps the builder's
+        // original as its cause, so rootCause() would find the unprefixed message instead; and
+        // Spring's own BeanCreationException.getMessage() happens to *echo* the wrapped text too,
+        // so a plain "any message in the chain contains the needle" search would match that wrapper
+        // instead of the actual exception. firstOfTypeContaining requires both the exact exception
+        // type and the message, landing on the starter's own IllegalArgumentException specifically.
         keyedRunner().withPropertyValues("push2u.max-encrypted-body-bytes=10").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
@@ -371,8 +366,8 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void invalidJwtExpiryFailsTheContextNamingTheProperty() {
-        // Same convention as push2u.record-size: PushSender.Builder#jwtExpiry's own message names
-        // its camelCase parameter ("jwtExpiry"), not the YAML property.
+        // Same convention as push2u.max-encrypted-body-bytes: PushSender.Builder#jwtExpiry's own
+        // message names its camelCase parameter ("jwtExpiry"), not the YAML property.
         keyedRunner().withPropertyValues("push2u.jwt-expiry=25h").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
@@ -677,8 +672,8 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void malformedAllowedOriginFailsTheContextNamingThePropertyAndTheEntry() {
-        // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
-        // property name, not misbehave at send time. The index comes with it — the starter builds
+        // Same contract as the sized properties: a misconfigured allowlist must fail startup with
+        // the YAML property name, not misbehave at send time. The index comes with it — the starter builds
         // one rule per entry, so it knows which entry of which list refused, and an operator with a
         // dozen origins configured does not have to find the bad one by inspection.
         keyedRunnerWithoutEndpointPolicy()
@@ -1106,8 +1101,9 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void negativeHealthCacheTtlFailsTheContextNamingTheProperty() {
-        // Same convention as push2u.record-size: the indicator's own validation message cannot
-        // know the YAML property, so the autoconfiguration re-throws with the property prefixed.
+        // Same convention as push2u.max-encrypted-body-bytes: the indicator's own validation
+        // message cannot know the YAML property, so the autoconfiguration re-throws with the
+        // property prefixed.
         keyedRunner().withPropertyValues("push2u.health.cache-ttl=-1s").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(

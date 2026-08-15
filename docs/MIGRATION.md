@@ -119,7 +119,7 @@ PushSender sender = PushSender.builder(
 The key source, the contact and the endpoint policy are required, so they are parameters of the
 factory method rather than builder steps — `build()` has no missing value left to refuse.
 Everything else (`httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`, `jwtRenewBefore`,
-`jwtCacheSize`, `recordSize`, `maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and
+`jwtCacheSize`, `maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and
 lives on the builder. A `PushSender` is thread-safe once built, with final configuration and one
 internal cache of the VAPID tokens it has signed; build it once and share it, as you would a
 `PushService`.
@@ -387,28 +387,28 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 A per-message `ttl(...)` on `PushMessage` still wins over it. If your code always set a TTL
 explicitly, nothing changes.
 
-### Payload and record size are checked before anything is sent
+### Payload size is checked before anything is sent
 
 `web-push` performs no size checks; an oversized payload is encrypted, POSTed, and refused by the
 push service (typically `413`) — you pay the cryptography and the round trip to find out.
 
 push2u checks first, before encryption or network I/O, and reports the refusal as the
-`PayloadRejected` outcome:
+`PayloadRejected` outcome. One number configures the limit: the **encrypted body is capped at 4096
+bytes** by default, the size RFC 8030 §7.2 lets a push service refuse beyond. The single-record
+`aes128gcm` body adds a fixed 103 bytes to the plaintext, so the default admits **3993 bytes of
+plaintext** — the figure RFC 8291 §4 derives. Raise it with `.maxEncryptedBodyBytes(…)` only for an
+endpoint documented to accept more; the record size (`rs`) the RFC 8188 header advertises is
+derived from the ceiling, so there is no second parameter to raise in step.
 
-- **Encrypted body ≤ 4096 bytes** by default, the size RFC 8030 §7.2 lets a push service refuse
-  beyond. The single-record `aes128gcm` body adds a fixed 103 bytes to the plaintext, so the
-  default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives. Raise it with
-  `.maxEncryptedBodyBytes(…)` only for an endpoint documented to accept more.
-- **Record size (`rs`)** must be strictly greater than plaintext + 1 + 16 (RFC 8291 §4); values
-  below 18 are invalid outright (RFC 8188 §2) and the builder rejects them. Raising
-  `maxEncryptedBodyBytes` without raising `.recordSize(…)` to match leaves the record-size bound
-  deciding the maximum, and a payload above it is refused at send time.
-
-One outcome covers both bounds, and both of its numbers are plaintext octets — the plaintext you
-handed over, and the largest this sender's configuration would have carried. A payload that used to
-squeeze through at 4000-odd bytes now comes back as `PayloadRejected` where it used to draw a `413`
-from the push service, so the branch that handled that status is where it belongs: the remedy is the
-same, a notification rendered smaller.
+Both of the outcome's numbers are plaintext octets — the plaintext you handed over, and the largest
+this sender's configuration would have carried. A payload that used to squeeze through at 4000-odd
+bytes now comes back as `PayloadRejected` where it used to draw a `413` from the push service, so
+the branch that handled that status is where it belongs: the remedy is the same, a notification
+rendered smaller. The same question is also answerable *before* a send —
+`sender.assessPayloadSize(serializedPayload)` returns `WithinLimit` or
+`ExceedsLimit(payloadBytes, maximumPayloadBytes)` — so an application that renders notifications
+can shorten one against the reported budget instead of discovering the limit by outcome; `web-push`
+has no counterpart.
 
 ### VAPID `sub` is required
 

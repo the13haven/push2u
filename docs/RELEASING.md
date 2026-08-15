@@ -268,6 +268,26 @@ Central, which is immutable.
 - **GitHub:** the *Releases* tab shows the new release with its generated notes, and the
   `v<X.Y.Z>` tag exists.
 
+### 5. Open the removal work item for every tombstone this release shipped
+
+A release that *removes* a configuration property leaves a tombstone behind it — a startup refusal
+that fails the context while the dead key is still in a YAML file, so an operator who upgrades is
+told where the setting went instead of having it ignored in silence. Binding drops an unknown key
+without a word, which is why the refusal exists at all.
+
+A tombstone is not permanent. It is there to catch a configuration written against the *previous*
+release, and one carried indefinitely becomes code that refuses keys nobody has written in years.
+The window is **one minor release after the one that removed the property**, and closing it is a
+piece of work somebody has to be holding.
+
+**So the release that ships a tombstone opens the issue that removes it, and this is the step where
+that happens** — after the tag, not before. Until the tag exists there is no number to count the
+window from, and writing one in advance is a guess that outlives the guessing.
+
+One issue covers every tombstone the same release shipped. It lists each removed key and names this
+release as the one the window runs from; it does not name the version the removal will ship in,
+which is decided when *that* release is cut.
+
 ## Setting the next version
 
 Axion derives the next version on its own, once a tag exists: it increments the **patch** number,

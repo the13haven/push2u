@@ -78,7 +78,7 @@ public final class Push2uHealthAutoConfiguration {
      *
      * <p>{@code push2u.health.cache-ttl} failures from the indicator's own validation are re-thrown with the property
      * name prefixed, since the constructor's message cannot know the YAML property — the same convention as
-     * {@code push2u.record-size} in {@link Push2uAutoConfiguration}.
+     * {@code push2u.max-encrypted-body-bytes} in {@link Push2uAutoConfiguration}.
      *
      * @param signer the configured VAPID signer
      * @param properties the bound configuration

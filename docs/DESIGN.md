@@ -134,7 +134,7 @@ API does not have. Do not "fix" it.
 ```text
 PushSender.send(subscription, message)
     │
-    ├─ Check the payload against the body limit and the record size
+    ├─ Check the payload against the maximum the configured body ceiling admits
     ├─ Validate the endpoint against the sender's EndpointPolicy (always present)
     ├─ Decode the subscription P-256 public key, checking the point is on the curve
     ├─ Generate an ephemeral P-256 key pair and random salt
@@ -265,44 +265,64 @@ look up, release, sign, publish — because a signature may be a Vault round tri
 across it would rebuild the very stall the cache removes. Two threads missing on one audience
 concurrently is a benign race: each signs its own valid token, one is published.
 
-The two size preconditions are evaluated first, before any cryptography or network I/O. They
-constrain different things and are configured independently:
+The size precondition is evaluated first, before any cryptography or network I/O, and one number
+configures it: `maxEncryptedBodyBytes`, the RFC 8030 §7.2 ceiling on the encrypted entity body,
+default 4096. Everything else is derived from it, once, at `build()`
+([ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md)):
 
-| Precondition | Source | Default |
-|---|---|---|
-| `103 + payload ≤ maxEncryptedBodyBytes` | RFC 8030 §7.2 body limit | 4096 bytes (3993 of plaintext) |
-| `recordSize > payload + 1 + 16` | RFC 8291 §4 | `rs` 4096 |
+```text
+maximumPayloadBytes = maxEncryptedBodyBytes − BODY_OVERHEAD      (103)
+recordSize          = maximumPayloadBytes + RECORD_OVERHEAD + 1  (17 + 1)
+```
 
-They are *reported* as one value, `PayloadRejected`, carrying the plaintext the caller handed over
-and the largest plaintext this configuration would have carried — the smaller of what the two
-permit, computed once by `WebPushEncryptor.maxPlaintextBytes`. Both numbers are plaintext octets,
-the unit the caller can act in, since the remedy is a shorter notification; which of the two bounds
-was binding is a fact about the configuration rather than about the message, readable from that
-maximum by an operator holding both configured values. That is not ADR-011 moving: where the limit
-is *configured* stays on the encrypted body, and the plaintext maximum is a derivation ADR-011
-already makes. The refusal is an outcome rather than an exception because it is a fact about one
-message — the concrete case is a translated notification that fits in one language and not another —
-and killing a fan-out over it is the wrong behaviour.
+The derived `rs` — `maxEncryptedBodyBytes − 85`, so 4011 at the default — goes into the RFC 8188
+header on every send and declares exactly the plaintext capacity the sender is able to use: the
+second addend is the record overhead plus the one octet RFC 8291 §4 requires `rs` to exceed the
+sum by, exact rather than floored, so the record-size rule can never be the bound that binds
+through `PushSender`. The pre-flight maximum is therefore a single subtraction, clamped below at
+zero — a `min` over the two preconditions would be a branch no input can select, reading as a live
+guard.
 
-**The RFC 8291 §4 rule still has a single implementation**, and it is now the one both spellings of
-it are expressed in terms of: `maxPlaintextForRecordSize`, which inverts the rule into the largest
-plaintext a given `rs` carries. The pre-flight above reaches it through `maxPlaintextBytes`, and
-`checkRecordSize` — the encryptor's own last-moment refusal, reachable directly and so not covered
-by the pre-flight — compares against it too. A second copy of the rule is a defect even where it
-agrees today. The maximum is clamped below at zero before it is narrowed back to `int`: the builder's
-minimums keep both operands non-negative on every real sender, but a negative `long` narrowed to
-`int` can wrap into a large positive bound, which is the one failure a size limit must never have.
+An oversized payload is *reported* as `PayloadRejected`, carrying the plaintext the caller handed
+over and `maximumPayloadBytes`. Both numbers are plaintext octets, the unit the caller can act in,
+since the remedy is a shorter notification. That is not ADR-011 moving: where the limit is
+*configured* stays on the encrypted body, and the plaintext maximum is a derivation ADR-011 already
+makes. The refusal is an outcome rather than an exception because it is a fact about one message —
+the concrete case is a translated notification that fits in one language and not another — and
+killing a fan-out over it is the wrong behaviour.
+
+**The same question is answerable before a send.** `PushSender.assessPayloadSize(byte[])` reads the
+serialized payload's length — copying nothing, retaining nothing — and answers with the sealed
+`PayloadSizeAssessment`: `WithinLimit`, deliberately empty, or
+`ExceedsLimit(payloadBytes, maximumPayloadBytes)`, the same pair `PayloadRejected` reports. The
+assessment is the *only* way to the budget: no bare `maximumPayloadBytes()` accessor exists on the
+sender, so the first comparison is always the library's and cannot be a caller's UTF-16 code units
+against octets. Asking replaces nothing — `send` checks every payload again and never trusts an
+earlier assessment.
+
+**The RFC 8291 §4 rule still has a single implementation, now read in both directions**:
+`maxPlaintextForRecordSize` inverts the rule into the largest plaintext a given `rs` carries, and
+`recordSizeForMaxPlaintext` beside it is its exact inverse. `checkRecordSize` — the encryptor's
+own last-moment refusal, since `encrypt` keeps its `rs` parameter and is reachable directly with a
+value too small for its plaintext — compares against the first and names the exact minimum via the
+second; the sender's `build()`-time derivation runs through the second. A second copy of the rule
+is a defect even where it agrees today. The derivation deliberately does not spell its `+ 18` as
+`MIN_RECORD_SIZE`: the smallest legal `rs` is the same rule applied to an empty plaintext — the
+same 18 for a different reason.
 
 The 103-byte overhead is derived from the format the encryptor emits — an 86-byte RFC 8188 header
 (salt 16, `rs` 4, `idlen` 1, `keyid` 65), the padding delimiter (1) and the AES-GCM tag (16) — not
 hard-coded, so the plaintext maximum tracks a configured body limit
 ([ADR-011](adr/0011-size-limit-expressed-on-the-encrypted-body.md)).
 
-The arithmetic on both sides is `long`, and it is load-bearing rather than defensive: in `int`, a
-payload above `Integer.MAX_VALUE - 103` wraps to a negative size and passes any limit unnoticed,
-and a caller-supplied `rs` near either extreme wraps the record-size subtraction the same way. Both
-boundaries are covered by tests, which take lengths rather than payloads so they need no
-multi-gigabyte arrays.
+The arithmetic is `long`, and it is load-bearing rather than defensive: in `int`, a payload above
+`Integer.MAX_VALUE - 103` wraps to a negative size and passes any limit unnoticed, a
+caller-supplied `rs` near either extreme wraps the record-size subtraction the same way, and the
+pre-flight maximum is clamped below at zero before it narrows back to `int` — a negative `long`
+narrowed to `int` can wrap into a large positive bound, the one failure a size limit must never
+have. The derived `rs` stays below `Integer.MAX_VALUE` by construction (`maxEncryptedBodyBytes −
+85` for every configuration) and cannot wrap either. The boundaries are covered by tests, which
+take lengths rather than payloads so they need no multi-gigabyte arrays.
 
 `sendAsync` runs the synchronous pipeline through `CompletableFuture.supplyAsync`. By default it
 uses a library-owned virtual-thread-per-task executor rather than the common `ForkJoinPool`; the
@@ -359,7 +379,9 @@ than at send time: the constraint is known at configuration time, so a bad value
 deployment's startup instead of its first delivery.
 
 `send` returns `PushOutcome` and `sendAsync` a `CompletableFuture` of one; §4 has the variants and
-what converts into each. The line between the two channels is that an outcome describes what became
+what converts into each. `assessPayloadSize` answers the size question before a send, through the
+sealed `PayloadSizeAssessment` and deliberately not through a bare number — §4 has the shape and
+the reasoning. The line between the two channels is that an outcome describes what became
 of a requested send, whether or not a POST was reached, while an exception is reserved for using the
 API wrongly, for a defect the caller cannot act on per send, and for cancellation. Neither channel
 forces meaningful handling — an exception can be caught and dropped, a value can be discarded at the
@@ -964,6 +986,22 @@ no second helper any more: the one property group whose values reached a constru
 several at once was `push2u.retry.*`, and it is gone with the retry loop, so no property needs a
 probe to be attributed.
 
+**A property a release removed is refused, not ignored.** `push2u.record-size` went with
+[ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md), and binding would skip a leftover
+key silently — leaving the operator believing a limit is in force that nothing reads. So the
+starter carries a tombstone: a `BeanFactoryPostProcessor` in its own auto-configuration
+(`Push2uRemovedPropertiesAutoConfiguration`), which reads the bound environment at context refresh
+through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
+the key and where its effect went. It retains no properties component, publishes no type and no
+constant, and carries no condition of its own: a future delivery switch conditions the
+auto-configuration carrying the sender, and a dead key must be reported precisely in the deployment
+where nothing reads it. Running as a post-processor puts it ahead of every bean-creation failure;
+its position among the starter family's declared startup checks is a package-private constant in
+`StartupCheckOrder`, numbered to leave room for the checks
+[ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around it. A tombstone is carried for one
+minor release after the release that removed its property, and the release adding one opens the
+work item that removes it.
+
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
 halves of one statement, unioned into a single allowlist, which is the shape a deployment naming
@@ -1035,9 +1073,12 @@ The automated suite covers:
   way, or one publishing a different key altogether — plus the kit's DER-fallback verification and
   its minimal-DER re-encoding, exercised directly because no CI platform lacks the P1363 signature
   name (`VapidSignerContractSelfTest`);
-- the RFC 8291 §4 record-size boundary and the encrypted-body overhead (`WebPushEncryptorTest`);
-- payload size limits, builder validation, and the `Integer.MAX_VALUE` boundary
-  (`PushSenderPayloadSizeTest`);
+- the RFC 8291 §4 record-size boundary, the encrypted-body overhead, and the `rs` derivation
+  pinned across its whole range including both ends (`WebPushEncryptorTest`);
+- the payload size limit, builder validation, the derived `rs` in the emitted header, the
+  pre-flight assessment agreeing with the refusal on the same two numbers, a send leaving the
+  message's payload byte-for-byte unchanged, and the `Integer.MAX_VALUE` boundary
+  (`PushSenderPayloadSizeTest`, `PayloadSizeAssessmentTest`);
 - HTTP delivery, the status matrix per status and per carve-out, and the conversion of each seam
   signal into its outcome — including the interrupt disjunction on both the transport and the signer
   path;

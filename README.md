@@ -441,30 +441,51 @@ not a failure that stops it.
 The single-record `aes128gcm` body adds a fixed 103 bytes of header, padding delimiter and
 authentication tag to the plaintext ([`DESIGN.md` §4](docs/DESIGN.md#4-send-pipeline) breaks the
 figure down), so the default admits **3993 bytes of plaintext** — the figure RFC 8291 §4 derives.
-The record size defaults to 4096 as well, so raising one without the other rejects the message.
+
+`maxEncryptedBodyBytes` is the sender's one size parameter, and raising it is the whole of raising
+the limit:
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
     .maxEncryptedBodyBytes(8192)  // the endpoint is known to accept a larger body
-    .recordSize(8192)             // rs must cover the payload as well
     .build();
 ```
 
-Raise `maxEncryptedBodyBytes` only for endpoints documented or configured to accept more than
-4096 bytes — a self-hosted or intra-organisation push service, for example. RFC 8030 §7.2 only
-requires a push service to accept 4096 bytes; beyond that a service may answer with `413`.
+Raise it only for endpoints documented or configured to accept more than 4096 bytes — a
+self-hosted or intra-organisation push service, for example. RFC 8030 §7.2 only requires a push
+service to accept 4096 bytes; beyond that a service may answer with `413`.
 
-`recordSize` is a separate protocol parameter and is never adjusted to follow the body limit.
-RFC 8291 §4 requires `rs` to be *strictly greater* than the plaintext plus the padding delimiter
-(1) plus the authentication tag (16), so a payload that outgrows the configured `rs` is refused too.
-RFC 8188 §2 makes any `rs` below 18 invalid, and the builder rejects such values outright.
+The record size the RFC 8188 header advertises (`rs`) is derived from the ceiling at `build()`,
+never configured: the largest plaintext the ceiling admits, plus the padding delimiter (1), the
+authentication tag (16) and the one byte RFC 8291 §4 requires `rs` to exceed that sum by — the
+ceiling less 85, so 4011 at the default. `rs` declares exactly the plaintext capacity the sender is
+able to use, and the record-size rule can therefore never be the bound that refuses a send.
 
-One outcome covers both bounds, and both of its numbers are plaintext octets — the unit you can act
-in. `maximumPayloadBytes` is the largest plaintext this sender's configuration would have carried,
-the smaller of what the two preconditions each permit, so shortening a notification needs no
-arithmetic. Which bound was the binding one is a fact about the configuration rather than about the
-message, and an operator holding both configured values reads it off that maximum: the body ceiling
-less 103, against the record size less 18.
+Both numbers on `PayloadRejected` are plaintext octets — the unit you can act in.
+`maximumPayloadBytes` is the largest plaintext this sender carries, the ceiling less 103, so
+shortening a notification needs no arithmetic.
+
+**Ask before you send.** The same question is answerable up front, so an application that renders a
+notification can shorten it instead of discovering the limit by outcome — the case that makes it
+concrete is translation, where the same notification fits in one language and not in another:
+
+```java
+byte[] payload = serialize(notification);          // the octets you would hand to PushMessage
+switch (sender.assessPayloadSize(payload)) {
+    case PayloadSizeAssessment.WithinLimit w -> sender.send(subscription, PushMessage.of(payload));
+    case PayloadSizeAssessment.ExceedsLimit e ->
+        renderSmaller(notification, e.maximumPayloadBytes());  // the budget for the next render, then ask again
+}
+```
+
+`assessPayloadSize` reads the array's length, copies nothing and retains nothing. It takes the
+serialized octets rather than a length so the unit is never something you convert to — a
+hand-written `notification.length() <= maximum` compares UTF-16 code units against octets and
+passes for non-ASCII payloads it should fail, which is also why the sender publishes no bare
+numeric maximum: the first question about a payload is always answered by the library.
+`ExceedsLimit` carries the same two numbers `PayloadRejected` reports. Asking is optional; being
+told is not — `send` checks every payload again, and a caller that never asks simply meets the
+outcome.
 
 ## Spring Boot
 
@@ -862,8 +883,8 @@ Four things this library will not do, whatever it is configured with:
 - A VAPID JWT valid for longer than 24 hours (RFC 8292 §2).
 - Anything with the subscription after the send: the library stores none, and persisting or
   deleting one belongs to the application.
-- A body over the configured limits — see [Payload size limits](#payload-size-limits) for the two
-  that are raisable and how they interact.
+- A body over the configured limit — see [Payload size limits](#payload-size-limits) for the one
+  parameter that raises it and the record size derived from it.
 
 ## Nullness
 

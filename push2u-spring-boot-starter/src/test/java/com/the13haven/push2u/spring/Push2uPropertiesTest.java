@@ -31,7 +31,6 @@ class Push2uPropertiesTest {
                 null,
                 null,
                 null,
-                null,
                 // allowedOrigins and allowedDomains: unset, which is what the binder produces when
                 // the properties are absent. The autoconfiguration then requires an EndpointPolicy
                 // bean instead, or fails the context — but that is its business; this record only
