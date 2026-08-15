@@ -196,6 +196,7 @@ write it only where this deployment will go on registering the contributor, and 
 including "will go on sending", since `push2u.enabled: false` withdraws the indicator along with the
 signer. A deployment that may one day state that line is better served by the second recipe, which
 names what the check asserts and never mentions push2u at all.
+
 The same machinery in reverse gives the monitoring side a group that *does* watch the probe:
 
 ```yaml
@@ -206,6 +207,10 @@ management:
         push:                       # not push2u — see below
           include: push2u           # /actuator/health/push
 ```
+
+An `include` is the same claim as an `exclude`, and carries the same requirement: this group names a
+contributor, so it stops the context starting in every deployment where the contributor is not
+registered — including one that has stated `push2u.enabled: false`.
 
 **Excluding this probe is not the same as keeping its backend out of the verdict.** The exclusion
 removes one contributor from one group. A deployment that also carries some other contributor
