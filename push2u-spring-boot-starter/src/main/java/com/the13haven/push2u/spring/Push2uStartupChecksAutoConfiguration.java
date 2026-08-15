@@ -53,7 +53,10 @@ import com.the13haven.push2u.VapidSigner;
  *
  * <p>Ordered after {@link Push2uAutoConfiguration} so that the local signer's bean definition is registered before this
  * class is processed — the general refusal's stand-down is a condition decided while the auto-configurations are being
- * processed, and a signer registered afterwards is invisible to it.
+ * processed, and a signer registered afterwards is invisible to it. <b>Nothing fails if that ordering declaration is
+ * deleted</b> — the sorter seeds itself with the class names, these two happen to sort the same way, and no test can
+ * tell the difference — so it looks redundant and is not: the coincidence is not the contract, and the day either class
+ * is renamed the order it states is all that would be left.
  */
 // UseUtilityClass: every member is static because the @Bean methods must be — the framework
 // instructs that for a method producing a bean-factory post-processor, so the enclosing

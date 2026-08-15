@@ -41,7 +41,10 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  *
  * <p>Ordered before the core starter's {@code Push2uAutoConfiguration} (by name, so this module need not depend on it)
  * and {@link ConditionalOnMissingBean}: when both starters are present this remote signer wins over the in-JVM local
- * signer, while an application-supplied {@link VapidSigner} still overrides both.
+ * signer, while an application-supplied {@link VapidSigner} still overrides both. <b>Nothing fails if that ordering
+ * declaration is deleted</b> — the sorter seeds itself with the class names, these two happen to sort the same way, and
+ * no test can tell the difference — so it looks redundant and is not: the coincidence is not the contract, and the day
+ * either class is renamed the order it states is all that would be left.
  *
  * <p><b>Transport.</b> Every Vault call (the Transit {@code sign} POST and the fetched mode's startup metadata GET)
  * goes through one {@link VaultHttpTransport}, resolved in priority order:
