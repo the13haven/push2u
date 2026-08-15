@@ -421,15 +421,17 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * is shared with the callers already waiting on this flight and then forgotten: each waiter throws its own fresh
      * exception built from an immutable description of the failure, and a caller arriving after the flight ended starts
      * a new read, because a custodian that could not serve a moment ago is exactly the thing that recovers on its own
-     * terms and remembering the refusal would turn a transient outage into a permanent one. A cancellation of the
-     * fetching caller is not shared at all — handing it to threads nobody interrupted would convert their calls into
-     * cancellations they never asked for — so the fetching caller keeps its own exception, the flight is abandoned, and
-     * the waiters retry with one of them taking over. And a failure of neither contract type is a defect in a
-     * replaceable transport: it reaches its own caller exactly as thrown, is never laundered into a contract type, and
-     * abandons the flight the way a cancellation does — as does anything the transport lets out that is not a
-     * {@code RuntimeException} at all, since an implementation written in a language without checked exceptions can
-     * deliver one through a method that declares none, and a flight left recorded as active would be a signer that
-     * never answers again.
+     * terms and remembering the refusal would turn a transient outage into a permanent one. Sharing such a failure
+     * depends on describing it, which is done by calling the failure's own overridable members, so one of those
+     * throwing leaves a contract-type failure shared with nobody — its caller still keeps it, and its waiters retry as
+     * they do after any abandoned flight. A cancellation of the fetching caller is not shared at all — handing it to
+     * threads nobody interrupted would convert their calls into cancellations they never asked for — so the fetching
+     * caller keeps its own exception, the flight is abandoned, and the waiters retry with one of them taking over. And
+     * a failure of neither contract type is a defect in a replaceable transport: it reaches its own caller exactly as
+     * thrown, is never laundered into a contract type, and abandons the flight the way a cancellation does — as does
+     * anything the transport lets out that is not a {@code RuntimeException} at all, since an implementation written in
+     * a language without checked exceptions can deliver one through a method that declares none, and a flight left
+     * recorded as active would be a signer that never answers again.
      *
      * <p><b>No signing request ever runs while this guard is held.</b> The monitor below protects only the record of
      * the active flight; the read itself runs on the fetching caller's thread outside it, waiters block on the flight's
@@ -486,9 +488,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 if (shared != null) {
                     return shared;
                 }
-                // The flight was abandoned — its fetching caller was cancelled, or met a failure of
-                // neither contract type. Nothing was shared, so this caller retries: one of the
-                // remaining callers becomes the next fetching one.
+                // The flight was abandoned — its fetching caller was cancelled, met a failure of
+                // neither contract type, met one of a contract type whose description could not be
+                // taken, or met something the transport should never have let out at all. Nothing
+                // was shared, so this caller retries: one of the remaining callers becomes the next
+                // fetching one.
             }
         }
 
@@ -610,9 +614,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
      * One deferred fetch in flight: the latch its waiters block on, and what the flight left them — the pair, a
-     * {@link SharedFailure}, or {@code null} for a flight that was abandoned (its fetching caller cancelled, or a
-     * failure of neither contract type), after which a waiter retries. Written by the fetching caller before the latch
-     * opens, so every waiter that wakes reads a settled value.
+     * {@link SharedFailure}, or {@code null} for a flight that was abandoned, after which a waiter retries. A flight is
+     * abandoned by any failure it cannot share: its fetching caller cancelled, a failure of neither contract type, a
+     * failure of a contract type whose description could not be taken, and anything the transport let out that is not a
+     * {@code RuntimeException} at all. Written by the fetching caller before the latch opens, so every waiter that
+     * wakes reads a settled value.
      */
     private static final class Flight {
 
@@ -705,18 +711,21 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Records {@code secondary} on {@code failure} without ever letting it displace it. The recording is itself allowed
-     * to fail, because both throwables came from code this library does not own: an exception whose accessor threw the
-     * exception itself makes {@code addSuppressed} refuse the argument, and {@code addSuppressed} is as overridable as
-     * the accessor that failed. Either way the failure travels exactly as it was raised — a defective exception object
-     * may cost itself its own diagnostics, never the report of what the read met.
+     * Records {@code secondary} on {@code failure} without ever letting it displace it. The recording is allowed to
+     * fail, and one way for it to fail is reachable exactly here: {@code addSuppressed} refuses an exception offered as
+     * its own suppressor, and an accessor that threw the failure itself hands it precisely that. The method is
+     * {@code final} on {@code Throwable}, so no consumer type can make it refuse for reasons of its own, and its only
+     * other refusal is a {@code null} argument, which a catch clause cannot produce. Whatever comes back, the failure
+     * travels exactly as it was raised — a defective exception object may cost itself its own diagnostics, never the
+     * report of what the read met.
      */
     private static void suppress(Throwable failure, Throwable secondary) {
         try {
             failure.addSuppressed(secondary);
         } catch (RuntimeException | Error refused) {
             // Deliberately swallowed, and the last place it could be: the caller is owed the
-            // failure the read produced, not a complaint about the exception carrying it.
+            // failure the read produced, not a complaint about the exception carrying it. Wider
+            // than the one refusal that can arrive because there is nothing to do with any of them.
         }
     }
 

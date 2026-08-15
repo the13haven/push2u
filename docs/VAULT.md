@@ -235,9 +235,11 @@ time. The first caller fetches; concurrent callers wait on that caller's read �
 transport's own connect and request timeouts and by nothing the library adds, so a custom
 transport that sets no request timeout holds every waiter, not only the caller that started the
 read. A successful pair is retained for the signer's lifetime and is never re-read. A failed read
-is never remembered: the callers that were waiting on it each receive their own exception of the
-same contract type — carrying the read's own failure as its cause and, for an unavailability, the
-status and any delay Vault declared — and the next caller simply starts a new read, because a
+is never remembered. Where the signer can describe the failure — one of the two contract types —
+the callers that were waiting on it each receive their own exception of that type, carrying the
+read's own failure as its cause and, for an unavailability, the status and any delay Vault
+declared; anything else reaches the caller that met it, and the waiters simply try the read again.
+Either way nothing about the failure is kept and the next call starts a new read, because a
 Vault that could not serve a moment ago is precisely the thing that recovers on its own terms. An
 interruption stays with the thread it belongs to: an interrupted fetching caller keeps its own
 exception while the remaining callers retry among themselves, and an interrupted waiter takes its

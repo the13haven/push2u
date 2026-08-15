@@ -28,8 +28,10 @@ import com.the13haven.push2u.VapidSignerUnavailableException;
 
 /**
  * The deferred-fetch mode's initialization contract (ADR-026): {@code build()} performs no I/O, the first use performs
- * exactly one {@code transit/keys} read, a successful pair is retained for the signer's lifetime, and the four ways a
- * flight can end — success, shared failure, cancelled fetching caller, foreign failure — stay distinct.
+ * exactly one {@code transit/keys} read, a successful pair is retained for the signer's lifetime, and the ways a flight
+ * can end stay distinct — success, shared failure, cancelled fetching caller, foreign failure, plus the two the
+ * transport's own contract does not admit (a throwable that is not a {@code RuntimeException}, and a failure whose
+ * description cannot be taken because its own accessors throw), which end a flight as a foreign failure does.
  *
  * <p>Every concurrent case is gated deterministically inside the scripted transport: the fetching caller blocks on a
  * latch the test releases, and a waiter is released only after it is provably parked on the flight
