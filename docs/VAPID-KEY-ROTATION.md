@@ -45,7 +45,7 @@ which key it was created under. The rest is ordering, and the operations that mu
 | The old subscriptions | kept, and migrated as clients return | deleted — they are the attacker's reach too |
 | Two senders at once | for as long as the old cohort exists | briefly, for the length of one deploy |
 | Resubscription | driven, at the clients' own pace | forced |
-| Raising the minimum, trimming | the last step, after the cohort is empty | early, on purpose |
+| Raising the minimum, trimming | the last step, after the cohort is empty | early, on purpose — but see step 3 for what Vault will actually accept |
 | Cost of getting it wrong | subscribers stop receiving, silently | the attacker keeps a working channel |
 
 **If the private key has leaked, stop here and read [Emergency rotation when the key is
