@@ -14,12 +14,12 @@ import org.springframework.core.Ordered;
  * than taken from the registration sequence the framework promises only as far as it can.
  *
  * <p>The order is one list spanning the whole starter family, most specific first: the value of the activation switch,
- * then a tombstone over a removed property, then the allowlist refusals, then a signer starter's own diagnostic, then
- * the general refusal over a missing signer. A check declares only the position it implements — a number reserved for a
- * check that does not exist yet would be a claim nothing keeps true — and each position leaves a gap of 100 so the
- * checks around it can take theirs when they are built. Positions of checks in other modules cannot live here, because
- * a signer starter deliberately does not depend on this one; each module keeps its own constants and reads them against
- * the same list.
+ * then the tombstones over removed properties, then the allowlist refusals, then a signer starter's own diagnostic,
+ * then the general refusal over a missing signer. A check declares only the position it implements — a number reserved
+ * for a check that does not exist yet would be a claim nothing keeps true — and each position leaves a gap of 100 so
+ * the checks around it can take theirs when they are built. Positions of checks in other modules cannot live here,
+ * because a signer starter deliberately does not depend on this one; each module keeps its own constants and reads them
+ * against the same list.
  *
  * <p>The framework sorts post-processors into buckets by the kind of precedence their <em>class</em> declares and
  * compares numbers only within a bucket, so every check taking a position from this class implements {@link Ordered} on
@@ -30,15 +30,16 @@ import org.springframework.core.Ordered;
 final class StartupCheckOrder {
 
     /**
-     * A tombstone over a property a release removed: it precedes every value and wiring refusal below it, because a key
-     * that no longer exists makes any reading of the configuration under it a reading of something the operator did not
-     * mean to write. One position above it is reserved for the check on the activation switch's own value, which is not
-     * implemented yet and therefore not declared here.
+     * The tombstones over properties a release removed: they precede every value and wiring refusal below them, because
+     * a key that no longer exists makes any reading of the configuration under it a reading of something the operator
+     * did not mean to write. One position above them is reserved for the check on the activation switch's own value,
+     * which is not implemented yet and therefore not declared here.
      *
-     * <p>Several tombstones share this one position, since each is the same finding about a different key — which
-     * leaves the order <em>among</em> them undeclared, and deliberately so. Nothing should rest on which of two dead
-     * keys an operator holding both is told about first; what each tombstone owes is that its own key is named whenever
-     * it is the only one present, and each keeps that alone.
+     * <p>However many keys have been removed, this position holds <em>one</em> check that names all of them it finds. A
+     * check per key would have to share this number, since no tombstone is more specific than another, and then the
+     * only order between them would be the sequence the framework happened to register them in — leaving an operator
+     * holding several dead keys to meet one per failed startup. There is deliberately no order among tombstones to
+     * declare, because they arrive together.
      */
     static final int REMOVED_PROPERTY_TOMBSTONE = Ordered.HIGHEST_PRECEDENCE + 200;
 

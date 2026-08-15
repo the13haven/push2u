@@ -1003,18 +1003,37 @@ several at once was `push2u.retry.*`, and it is gone with the retry loop, so no 
 probe to be attributed.
 
 **A property a release removed is refused, not ignored.** `push2u.record-size` went with
-[ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md), and binding would skip a leftover
-key silently — leaving the operator believing a limit is in force that nothing reads. So the
-starter carries a tombstone: a `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
+[ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md); `push2u.health.enabled` and
+`push2u.health.cache-ttl` went to `management.health.push2u.*` when the health indicator took Spring
+Boot's own switch for a contributor. Binding would skip any leftover key silently — leaving the
+operator believing a setting is in force that nothing reads. So the starter carries a tombstone per
+removed key: entries in one `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
 which reads the bound environment at context refresh
 through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
-the key and where its effect went. It retains no properties component, publishes no type and no
-constant. Running as a post-processor puts it ahead of every bean-creation failure;
-its position among the starter family's declared startup checks is a package-private constant in
-`StartupCheckOrder`, ahead of the two allowlist checks below and numbered to leave room for the
-checks [ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around them. A tombstone is carried
-for one minor release after the release that removed its property, and the release adding one opens
-the work item that removes it — the end belongs to that one check, not to the class hosting it.
+every dead key it finds and where each one's effect went. It retains no properties component,
+publishes no type and no constant. Running as a post-processor puts it ahead of every bean-creation
+failure; its position among the starter family's declared startup checks is a package-private
+constant in `StartupCheckOrder`, ahead of the two allowlist checks below and numbered to leave room
+for the checks [ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around them. A tombstone is
+carried for one minor release after the release that removed its property, and the release adding
+one opens the work item that removes it — the end belongs to the entry, not to the check raising it
+or the class hosting it, so retiring one is deleting one entry.
+
+**One check for all of them, because the alternative charges the operator per key.** The keys a
+release removes are held together, having been copied together out of the guide that release
+replaced. A check per key could not be ordered against its siblings — no tombstone is more specific
+than another, so they would share a position and the one heard would be whichever the framework
+registered first — and a deployment holding several dead keys would meet them one failed startup at
+a time. So the position holds one check and the entries are per key: one refusal names all of them,
+one edit answers it.
+
+**A tombstone is hosted apart from the feature whose key it names**, and the health pair is the
+worked instance of the general rule below. Its natural home would be the auto-configuration that
+registers the health indicator, which carries `@ConditionalOnClass(HealthIndicator.class)` — and a
+deployment that dropped Actuator while keeping `push2u.health.*` holds exactly the same dead
+configuration, so that condition would let through precisely the case the tombstone exists for. What
+generalises is not "beware Actuator" but that a check inherits every condition standing between it
+and the context, including ones that have nothing to do with what it checks.
 
 **Every startup check lives in `Push2uStartupChecksAutoConfiguration`, and that class contributes
 nothing else.** Two rules meet there. A check may be suppressed by nothing — not the delivery

@@ -372,7 +372,19 @@ than ignored for the reason the removed `push2u.record-size` is: an ignored `ena
 have the deployment that switched the probe off quietly probing its signer again, and an ignored
 `cache-ttl` would restore the default TTL under a deployment that had lengthened it. Both refusals
 are transition aids, carried for one minor release after the release that removed the properties,
-and then removed themselves.
+and then removed themselves. A context holding several removed keys at once — the released guide
+printed `record-size` beside the `push2u.health` block — is refused once, naming every one of them,
+so the whole of the edit is visible on the first failed start.
+
+**One change at the upgrade has no dead key to refuse, and it is the one to check by hand.** Earlier
+versions of this indicator ignored `management.health.defaults.enabled` entirely, so a deployment
+that turned every contributor off wholesale kept the push2u probe; it now honours that setting like
+any other contributor and the probe goes, silently, with nothing left in the configuration for a
+startup check to object to. If you were relying on it, name it back with
+`management.health.push2u.enabled: true`. Either way, check any health group that mentions `push2u`
+before upgrading: a group naming a contributor that is no longer registered stops the context
+starting, with the framework's validator message below — which names the group's entry and nothing
+about what removed the contributor, least of all a setting that was doing something else yesterday.
 
 A successful result is served from cache for `cache-ttl`; a *failed* result for at most 5 seconds
 (the shorter of `cache-ttl` and 5s), so recovery is noticed quickly even under a long TTL.

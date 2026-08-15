@@ -28,6 +28,11 @@ import com.the13haven.push2u.PushSender;
  * context without the key starts exactly as before, which the whole of {@link Push2uAutoConfigurationTest} also pins by
  * running with this autoconfiguration present.
  *
+ * <p>They are raised together, from one check, and that is what
+ * {@link #everyDeadKeyThisReleaseRemovedIsNamedInOneFailure()} exists for: the released guide printed all three of
+ * these keys, so the deployment holding one commonly holds them all, and a refusal per startup would charge it a failed
+ * start per key.
+ *
  * <p>{@link Push2uStartupChecksAutoConfiguration} hosts two more checks, both about the allowlist properties; those are
  * covered in {@link Push2uEndpointPolicyAutoConfigurationTest} beside the bean they guard, including that they survive
  * the exclusion of the auto-configuration contributing that bean — the reason the checks live in this class rather than
@@ -177,6 +182,34 @@ class Push2uStartupChecksAutoConfigurationTest {
                             .hasMessageContaining("management.health.push2u.enabled")
                             .hasMessageContaining("management.health.push2u.cache-ttl");
                 });
+    }
+
+    @Test
+    void everyDeadKeyThisReleaseRemovedIsNamedInOneFailure() {
+        // The configuration an operator upgrading from the released guide actually holds: it
+        // printed record-size in the defaults block and the push2u.health block beside it, so all
+        // three dead keys arrive together. One failure has to name all three, or the upgrade costs
+        // a failed start per key with each one hiding the next — the same reasoning that puts the
+        // two health keys in one message, one level up.
+        String[] everyDeadKey = {"push2u.record-size=4096", "push2u.health.enabled=false", "push2u.health.cache-ttl=5s"
+        };
+
+        runner.withPropertyValues(everyDeadKey).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.record-size")
+                    .hasMessageContaining("push2u.health.enabled")
+                    .hasMessageContaining("push2u.health.cache-ttl")
+                    .as("each dead key is answered with its own replacement, not with a list of names")
+                    .hasMessageContaining("push2u.max-encrypted-body-bytes")
+                    .hasMessageContaining("management.health.push2u.enabled")
+                    .hasMessageContaining("management.health.push2u.cache-ttl");
+        });
+
+        // And one edit is enough: the same context with those keys deleted starts. This is the half
+        // that makes the assertion above about the operator's cost rather than about a string.
+        runner.run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test
