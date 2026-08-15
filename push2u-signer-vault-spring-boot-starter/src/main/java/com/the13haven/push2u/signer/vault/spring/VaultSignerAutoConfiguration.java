@@ -54,7 +54,8 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  * no test can tell the difference — so it looks redundant and is not: the coincidence is not the contract, and the day
  * either class is renamed the order it states is all that would be left.
  *
- * <p><b>Transport.</b> Every Vault call (the Transit {@code sign} POST and the fetched mode's startup metadata GET)
+ * <p><b>Transport.</b> Every Vault call (the Transit {@code sign} POST and the fetched modes' one-time metadata GET,
+ * at startup or at first use)
  * goes through one {@link VaultHttpTransport}, resolved in priority order:
  *
  * <ol>
@@ -77,9 +78,9 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  * the two transports face different trust domains on purpose.
  *
  * <p><b>The whole class answers {@code push2u.enabled}</b>, the core starter's key stating whether this deployment
- * sends. Off, no signer is contributed and none is constructed — which in the fetched mode means the metadata read
- * against Vault during context refresh is never performed either, a call no deployment that has declared the custodian
- * unused should pay for. Honouring a key another module owns is not the coupling this starter otherwise avoids: it
+ * sends. Off, no signer is contributed and none is constructed — which in the eager fetched mode means the metadata
+ * read against Vault during context refresh is never performed either, a call no deployment that has declared the
+ * custodian unused should pay for. Honouring a key another module owns is not the coupling this starter otherwise avoids: it
  * copies no activation rule and cannot go stale, and this class already orders itself against that starter by name
  * without depending on it. <b>Reading that key is this module's; refusing a value of it that is neither {@code true}
  * nor {@code false} is not</b> — that refusal belongs to the module owning the key, and a second implementation here
@@ -287,7 +288,8 @@ public final class VaultSignerAutoConfiguration {
      * application-defined {@code VaultTransitVapidSigner} bean, to which this auto-configuration yields.
      *
      * <p>Any <em>other</em> {@link IllegalArgumentException} leaving {@code build()} — from an application-supplied
-     * {@code VaultHttpTransport} answering the fetched mode's startup read, or from a check the signer may grow later —
+     * {@code VaultHttpTransport} answering the eager fetched mode's startup read, or from a check the signer may grow
+     * later —
      * is re-thrown untouched. It is not about the address, and neither the address property name nor the advice below
      * would tell the operator anything true about it.
      */

@@ -166,7 +166,10 @@ per-message — it depends only on the push service's origin, the contact and an
 to 12 hours — so the sender signs one per origin and reuses it until it nears expiry, and a large
 fan-out now waits on Vault once per distinct origin met rather than once per subscription.
 `publicKey()`, by contrast, is a field clone at 7 ns — near the floor of what this harness can
-resolve at all: the fetched mode reads Vault once at startup and never again.
+resolve at all: a fetched-mode signer reads Vault exactly once — at startup, or at first use in
+the deferred mode — and never again, so no later `publicKey()` pays a round trip. The 7 ns row
+predates the deferred mode; after its one read that mode answers from the same retained pair
+behind a volatile read, and that variant has not been measured.
 
 **Parallelism, not micro-optimisation, is what scales a fan-out.** The expensive steps are CPU-bound
 and independent per subscription, so `sendAsync` with an executor is the lever that uses the other

@@ -9,7 +9,7 @@ coordinates and the minimal working example.
 
 The address — the builders' first factory parameter, the starter's `push2u.signer.vault.address` —
 is the base every Vault API path is appended to: the signer calls
-`{address}/v1/{mount}/sign/{key}` and, in fetched mode, `{address}/v1/{mount}/keys/{key}`. Two
+`{address}/v1/{mount}/sign/{key}` and, in the fetched modes, `{address}/v1/{mount}/keys/{key}`. Two
 shapes are legal:
 
 - a root address, `https://vault.example:8200` — Vault serving its API directly;
@@ -76,19 +76,27 @@ bind, so a malformed address that carries userinfo is reported verbatim.
 
 ## Fetched public key
 
-The recommended configuration treats the Transit key as the single source of truth. At startup,
-the signer reads `latest_version` and that version's public key from one
-`transit/keys/<key>` response, then includes the captured `key_version` in every sign request.
-The advertised public key therefore continues to match the signing key even when Vault creates a
-new latest version. The token needs `update` on `transit/sign/<key>` and `read` on
-`transit/keys/<key>`.
+The recommended configuration treats the Transit key as the single source of truth. The signer
+reads `latest_version` and that version's public key from one `transit/keys/<key>` response, then
+includes the captured `key_version` in every sign request. The advertised public key therefore
+continues to match the signing key even when Vault creates a new latest version. The token needs
+`update` on `transit/sign/<key>` and `read` on `transit/keys/<key>`.
 
-The fetched key is validated as P-256 before the signer is created: the response's `type` must be
+*When* that read happens is the one thing this mode leaves to choose. By default — `eager`, and
+what an unset `public-key-fetch` means — it happens inside `build()`, which under Spring is during
+context refresh: a Vault that cannot serve it fails the boot, loudly and immediately. The
+alternative, `deferred`, moves the same read to the signer's first use, for a deployment whose
+Vault is brought up beside the application rather than before it — see
+[When boot must not depend on Vault](#when-boot-must-not-depend-on-vault). Everything below in
+this section describes both forms; where a sentence is about the startup read alone, it says so.
+
+The fetched key is validated as P-256 before any pair exists: the response's `type` must be
 `ecdsa-p256` (a missing `type` is a failure too), the parsed public key must carry P-256's domain
 parameters, and its point must satisfy the curve equation — the JCA checks none of this on its
-own. A key of another type or curve — `ecdsa-p384`, for instance — fails startup with a
-`PushCryptoException` instead of producing a VAPID key that every push service rejects later. That
-is the recurring half of what this `build()` can throw; *[What the signer
+own. A key of another type or curve — `ecdsa-p384`, for instance — fails with a
+`PushCryptoException` instead of producing a VAPID key that every push service rejects later:
+eagerly that failure is the boot's, deferred it is the first use's. In the eager form that is the
+recurring half of what `build()` can throw; *[What the signer
 throws](#what-the-signer-throws)* below has the other half and the order a startup supervisor reads
 them in.
 
@@ -174,6 +182,91 @@ for the encoding details and for the pair-level `VapidKeys.encodePublicKey(...)`
 Serving it over HTTP is the application's own route: push2u adds no bean and no endpoint for it, so
 the path, the authentication and the caching stay yours to decide.
 
+## When boot must not depend on Vault
+
+The eager startup read makes a Vault outage at boot an application outage: the signer bean is
+built during context refresh, so a Vault that is unreachable, sealed, not yet initialized, or
+holding a mount that has not been created keeps the whole application from starting. In an
+orchestrated bring-up that is exactly when Vault is least likely to be ready. Two routes remove
+the dependency, and they are listed in the order to try them.
+
+**First: supply the key.** The [explicit mode](#explicit-public-key) — `public-key` plus
+`key-version` — constructs a signer without contacting anything, ever, and it already exists;
+there is no mode to select and nothing new to operate. Neither value is a secret: they are the
+deployment's published identity, the same string every browser is handed as `applicationServerKey`
+and the version it belongs to. Carrying them in configuration is therefore not the duplication it
+would be for key material, and the health probe catches a mispinned pair by verifying a signature
+against the advertised key. What it gives up is the single source of truth — the operator now
+provisions two values that must agree with Vault.
+
+**Second: defer the read.** For a deployment that wants Vault to remain the only place the key is
+stated, the deferred-fetch form keeps everything the fetched mode is — the same atomic
+version-and-key pair from one `transit/keys/<key>` response, the same pinned `key_version` on
+every sign request, the same P-256 validation — and moves the read from `build()` to the signer's
+first use. What is deferred is the *call*, not the key.
+
+```yaml
+push2u:
+  signer:
+    vault:
+      address: "https://vault.example:8200"
+      key-name: "vapid"
+      token: "${VAULT_TOKEN}"
+      public-key-fetch: deferred    # unset (or blank) means eager — today's behaviour
+```
+
+```java
+VapidSigner signer = VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
+        URI.create("https://vault.example:8200"),
+        new TransitKeyName("vapid"),
+        new VaultToken(vaultToken))
+    .build();
+```
+
+`build()` contacts Vault not at all — every check that does not depend on a Vault response still
+happens at construction, including the plain-`http` refusal — and the first `sign`, `publicKey` or
+`publicKeyBase64Url` call performs the one read. The property takes `eager` and `deferred` and
+nothing else: an unset or blank value means `eager`, an unrecognised value fails startup naming
+the key, and a written value beside a `public-key` fails startup naming both keys — the supplied
+mode performs no metadata read, so there is no fetch whose moment the property could choose.
+
+**What first use does under concurrency.** The signer performs at most one metadata read at a
+time. The first caller fetches; concurrent callers wait on that caller's read — bounded by the
+transport's own connect and request timeouts and by nothing the library adds, so a custom
+transport that sets no request timeout holds every waiter, not only the caller that started the
+read. A successful pair is retained for the signer's lifetime and is never re-read. A failed read
+is never remembered: the callers that were waiting on it each receive their own exception of the
+same contract type — carrying the read's own failure as its cause and, for an unavailability, the
+status and any delay Vault declared — and the next caller simply starts a new read, because a
+Vault that could not serve a moment ago is precisely the thing that recovers on its own terms. An
+interruption stays with the thread it belongs to: an interrupted fetching caller keeps its own
+exception while the remaining callers retry among themselves, and an interrupted waiter takes its
+own cancellation while the read continues for everyone else.
+
+**What a first-use failure looks like.** Inside a send, the ordinary taxonomy applies: an
+unavailable Vault is reported as the `PushOutcome.SignerUnavailable` value — the whole fan-out is
+meeting the same outage, so stop submitting rather than reschedule row by row — and a
+`PushCryptoException` leaves `send` as itself. Outside a send — the health probe, or
+`publicKeyBase64Url()` serving the key to a frontend — the first call throws exactly what the
+eager `build()` would have thrown, and whoever supervises that call reads it in the same order,
+[interruption first](#what-the-signer-throws).
+
+**The honest name for what this buys is *first-observation validation*, and `eager` stays the
+default.** Deferring moves the key validation from startup to first use: a misconfigured key that
+fails the boot today fails the first send instead. The health indicator does not turn that back
+into fail-fast — it runs only when something evaluates it — so a deployment that includes push2u
+in a readiness group, or polls the health endpoint, learns of a bad key within seconds of
+starting; one that does neither may not learn until the first send. And deferring removes exactly
+one dependency, *context refresh*: the application starts, but the indicator still sits in the
+health endpoint's primary group, so a container check that curls `/actuator/health` goes unhealthy
+on its first probe against an unreachable Vault, and everything gated on that container waits
+exactly as before — the cascade moves from "will not start" to "starts, then reports unhealthy",
+which is a real improvement and not the whole of one. What this mode does not reach, in other
+words, is the health group a container check probes; where the rest of it is decided is
+[`HEALTH.md` → Keeping the probe out of a container health
+check](HEALTH.md#keeping-the-probe-out-of-a-container-health-check), and a deployment choosing
+this mode over a Vault brought up beside it is exactly the one that needs that recipe.
+
 ## Explicit public key
 
 Set `public-key` when the token must be sign-only. Also set `key-version` to the Transit version
@@ -209,10 +302,12 @@ VapidSigner signer = VaultTransitVapidSigner.builderWithSuppliedPublicKey(
     .build();
 ```
 
-There are two builders rather than one because the modes differ in contract:
-`builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there, while
-`builderWithSuppliedPublicKey(…)` contacts nothing. `keyVersion(...)` exists only on the second
-one — in the fetched mode the version comes from Vault, with the public key it belongs to.
+There are three builders rather than one because the modes differ in contract:
+`builderWithFetchedPublicKey(…)` reads Vault inside `build()` and can fail there,
+`builderWithDeferredPublicKeyFetch(…)` reads the same pair at first use and contacts nothing in
+`build()`, and `builderWithSuppliedPublicKey(…)` contacts nothing, ever. `keyVersion(...)` exists
+only on the last one — in the fetched modes the version comes from Vault, with the public key it
+belongs to.
 
 Leaving `keyVersion` (or the `key-version` property) out sends no `key_version`; Vault then signs
 with its latest version. Use that form only when the Transit key is guaranteed never to rotate.
@@ -255,8 +350,12 @@ a notification — but the whole fan-out is meeting the same outage, so the advi
 than to reschedule row by row. The second type is rethrown as it is: stop the sender and fetch a
 person.
 
-**On a fetched-mode `build()`**, which reads the key over the network, both reach a startup
-supervisor, and the order it tests them in is part of the contract:
+**On an eager fetched-mode `build()`** — the one `build()` that reads the key over the network —
+both reach a startup supervisor, and the order it tests them in is part of the contract. This
+contract belongs to that builder alone: a deferred-fetch `build()` contacts Vault not at all and
+therefore raises neither type — there is no startup read to supervise — and its first use throws
+exactly what the eager `build()` would have, read in the same order by whoever supervises *that*
+call:
 
 1. **The interruption first** — the current thread's interrupt status set, *or* an
    `InterruptedException` somewhere in the cause chain; neither half of that disjunction is sound
@@ -281,8 +380,8 @@ only bound on the wait is the one whoever schedules the next attempt chooses.
 Vault Enterprise and HCP Vault partition a server into
 [namespaces](https://developer.hashicorp.com/vault/docs/enterprise/namespaces), addressed by the
 `X-Vault-Namespace` request header. When the Transit engine lives inside one, set the namespace
-and the signer sends that header on **both** Vault calls — the Transit `sign` POST and, in fetched
-mode, the startup `transit/keys/<key>` GET — so no custom `VaultHttpTransport` is needed just to
+and the signer sends that header on **both** Vault calls — the Transit `sign` POST and, in the
+fetched modes, the one-time `transit/keys/<key>` GET — so no custom `VaultHttpTransport` is needed just to
 add the header. When it is not set, no such header is sent at all, which is what Vault OSS (no
 namespaces) expects.
 
@@ -316,8 +415,9 @@ name a real namespace anyway, so it is a configuration mistake worth refusing at
 
 ## Vault HTTP transport
 
-All Vault calls — the Transit `sign` POST and, in fetched mode, the startup `transit/keys/<key>`
-GET — go through the module's `VaultHttpTransport` seam. The default `JdkVaultHttpTransport`
+All Vault calls — the Transit `sign` POST and, in the fetched modes, the one-time
+`transit/keys/<key>` GET, at startup or at first use — go through the module's
+`VaultHttpTransport` seam. The default `JdkVaultHttpTransport`
 (JDK `java.net.http`) enforces a per-request timeout on every call (a Vault that accepts the
 connection but never answers cannot hang application startup), a fail-closed response-size cap
 counted in raw streamed bytes (an oversized response fails the call; it is never truncated), and
@@ -376,11 +476,51 @@ to whatever host the `Location` names.
 The qualifier keeps the Vault client separate from any push-delivery `HttpClient` bean: push
 transport (`PushHttpClient`) and Vault transport are deliberately independent seams.
 
-The Vault key must be `ecdsa-p256`; the fetched mode verifies this at construction (see *Fetched
-public key* above). Ordinary Vault rotation is safe for an already-running pinned signer: it
-continues using the version whose public key it advertises. Raising `min_encryption_version` above
-the pinned version, or removing that version with `min_available_version`, makes Vault reject
-subsequent sign requests. Recover by recreating the fetched signer, or by configuring the matching
-new public key and version in explicit mode. Adopting a new VAPID public key is an
-application-level migration: browser subscriptions created for the previous application-server key
-must be replaced.
+The Vault key must be `ecdsa-p256`; the fetched modes verify this when they read it (see *Fetched
+public key* above). What rotating that key means for a running deployment has a section of its
+own, next.
+
+## Adopting a new key version is a migration
+
+Ordinary rotation — `vault write -f transit/keys/<key>/rotate` — is safe for a running pinned
+signer: it keeps signing with the version whose public key it advertises, and new latest versions
+accumulate beside it in Vault without touching it.
+
+What no operation on a live signer will ever do is *adopt* the new version. There is deliberately
+no `refresh()`, no TTL on the fetched pair and no re-read of any kind, and the reason is the
+protocol before it is the library: RFC 8292 §4.2 entitles a push service to refuse a JWT whose key
+is not the one the subscription was created under, so swapping the advertised key under a live
+sender does not rotate an identity — it invalidates every subscription taken out under the old
+one. (The SPI seconds the refusal: a VAPID header is built from two separate calls, `sign` then
+`publicKey`, so a swap landing between them would produce a signature from one version beside the
+other version's `k` — a header that can only fail at the push service, far from its cause.)
+Adopting a new key version is therefore a migration, run beside the old identity rather than in
+place of it:
+
+1. **Rotate the Transit key in Vault.** The running fleet is unaffected — every pinned signer
+   keeps signing with its own version.
+2. **Build a second signer and a second sender** beside the old pair — the fetched modes read the
+   new latest version on construction or first use; the explicit mode takes the new `public-key`
+   with its `key-version`. New browser subscriptions are created under the new signer's
+   `applicationServerKey` (`signer.publicKeyBase64Url()`).
+3. **Route sends by the key each subscription was created under.** Store the
+   `applicationServerKey` (or your own key identifier) beside every subscription at registration
+   time: a send for a subscription from the old cohort goes through the sender holding the old
+   signer, one from the new cohort through the new. This step is not optional prose — without it
+   the application cannot tell which sender a stored subscription belongs to, and every send
+   routed to the wrong one is a push-service rejection of the JWT, discovered in production. A
+   deployment that never stored the key alongside its subscriptions treats everything already
+   stored as the old cohort.
+4. **Retire the old identity only once its cohort is gone** — expired, re-subscribed, or deleted.
+   Until then both senders run.
+5. **Only then** raise `min_encryption_version` past the old pinned version, or trim it away with
+   `min_available_version`. Either operation ends the old signer's ability to sign at all — every
+   send through it fails loudly with a `PushCryptoException` — so they are the migration's last
+   step, never its first.
+
+There is also deliberately no `keyVersion()` accessor on the signer: it would answer what this
+process pinned, not what Vault now holds, so it detects a pending rotation only for a caller that
+reads Vault anyway — and `latest != pinned` is the normal, safe state for VAPID rather than a
+fault. The operational check belongs against Vault itself
+(`vault read transit/keys/<key>` and compare `latest_version` with what the fleet was built
+against).

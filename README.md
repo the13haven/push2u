@@ -590,9 +590,18 @@ dependencies {
 }
 ```
 
-[`VAULT.md`](docs/VAULT.md) is the reference — the two key modes and what each validates, the
-`push2u.signer.vault.*` properties, Vault namespaces on Enterprise/HCP, and the transport seam
-every Vault call goes through.
+The example above is the *eager* fetched mode: `build()` reads the public key from Vault, so a
+Vault that cannot serve that read fails construction — under Spring, the boot — loudly and
+immediately. That coupling is a choice with two alternatives: supplying the public key in
+configuration, which contacts Vault at construction not at all, and the deferred-fetch mode
+(`builderWithDeferredPublicKeyFetch(…)`, `push2u.signer.vault.public-key-fetch: deferred`), which
+performs the same read at the signer's first use so the application starts while Vault is still
+coming up — see [`VAULT.md` → When boot must not depend on
+Vault](docs/VAULT.md#when-boot-must-not-depend-on-vault).
+
+[`VAULT.md`](docs/VAULT.md) is the reference — the three key modes and what each validates, the
+`push2u.signer.vault.*` properties, Vault namespaces on Enterprise/HCP, key rotation as a
+migration, and the transport seam every Vault call goes through.
 
 ## Endpoint policy (SSRF hardening)
 

@@ -787,12 +787,19 @@ Applications must still treat the complete endpoint as a credential and avoid lo
 ## 7. Vault Transit integration
 
 `VaultTransitVapidSigner` has no public constructor: each mode has its own builder, obtained from
-`builderWithFetchedPublicKey(address, keyName, token)` or `builderWithSuppliedPublicKey(address,
-keyName, token, point)`. Two builders rather than one overloaded family because the modes differ
-in *contract*, not only in parameters — the fetched one performs a Vault read inside `build()` and
-can fail there, the supplied one contacts nothing — and because `keyVersion` belongs to exactly
-one of them: in the fetched mode the version is Vault's to state, taken from the same response as
-the public key. A bare `builder()` would have made one of two equal modes the default by omission.
+`builderWithFetchedPublicKey(address, keyName, token)`,
+`builderWithDeferredPublicKeyFetch(address, keyName, token)` or
+`builderWithSuppliedPublicKey(address, keyName, token, point)`. Three builders rather than one
+overloaded family because the modes differ in *contract*, not only in parameters — the fetched one
+performs a Vault read inside `build()` and can fail there, the deferred one performs the same read
+at first use and contacts nothing in `build()`, the supplied one contacts nothing, ever — and
+because `keyVersion` belongs to exactly one of them: in the fetched modes the version is Vault's
+to state, taken from the same response as the public key. The axis the split sits on is *where the
+published key comes from and what `build()` promises*, not merely whether `build()` performs I/O —
+on that narrower question the deferred and the supplied builders answer alike. A
+`fetchOnFirstUse()` step on the fetched builder was rejected because it would make one `build()`
+sometimes perform I/O and sometimes not, which is the ambiguity the split exists to prevent; and a
+bare `builder()` would have made one of the equal modes the default by omission.
 
 Everything required is a factory-method parameter, so an incomplete signer does not compile and
 `build()` never refuses over a missing value — and everything required is also validated at the
@@ -868,7 +875,7 @@ or inject another. Defence in depth: a traversal segment cannot name a real name
 so such a value is a configuration mistake whichever hop sees it, and refusing it costs nothing.
 No traversal route through OSS Vault is claimed here.
 
-`VaultTransitVapidSigner` supports two modes:
+`VaultTransitVapidSigner` supports three modes:
 
 - **Fetched mode** reads `latest_version` and that version's public key atomically from one
   `transit/keys/<key>` response at construction, then pins the captured version on every sign. The
@@ -886,13 +893,48 @@ No traversal route through OSS Vault is claimed here.
   first send. Those three are what the metadata read itself performs; the canonical constructor
   then puts the same key through `P256PublicKeys.requireOnCurve` — the core's check, against its
   hard-coded constants — before the signer exists, which is what §6 weighs against the unverified
-  reference the parameter step uses. Because that `build()` is the one call in this library outside
-  any send that reaches a custodian, it is also where a startup supervisor's contract is stated: a
+  reference the parameter step uses. Because that `build()` is the one *construction-time* call in
+  this library that reaches a custodian, it is also where a startup supervisor's contract is
+  stated — and it is stated for this builder alone, since the deferred one below can produce
+  neither failure from its `build()`: a
   Vault that cannot serve the read now raises `VapidSignerUnavailableException` and is a boot worth
   retrying with backoff, while `PushCryptoException` recurs and should fail the deployment — and the
   supervisor tests the interruption *before* it reads the type, since an interrupted boot raises the
   unavailable type too and a supervisor that looped on it would sleep every backoff instantly
   against a flag nobody cleared.
+- **Deferred-fetch mode** is the fetched mode with the read moved to first use: `build()` performs
+  every check that does not depend on a Vault response — the plain-`http` refusal included — and
+  contacts Vault not at all, so a context can refresh while Vault is still sealing or mounting;
+  the first `sign`, `publicKey` or `publicKeyBase64Url` call performs the one
+  `transit/keys/<key>` read, with the same atomic pair and the same three validation steps, moved
+  in time rather than weakened. What is deferred is the call, not the key — the mode exists for a
+  Vault brought up beside the application, and it must cache rather than read on demand because
+  the sender reads `signer.publicKey()` on every token-cache lookup, hit included; a
+  read-when-asked implementation would put a Vault `GET` on the path of every send.
+  Initialization permits **at most one flight per signer** — the signer's own record of an active
+  fetch, which bounds the reads it starts rather than the I/O an abandoned exchange may still be
+  finishing — and a flight ends in one of four distinct ways. On success the pair is published
+  through a single volatile field and retained for the signer's lifetime; there is no TTL, no
+  eviction and no second read, each of which would be a hidden `refresh()`. A failure of one of
+  the two contract types is shared with the callers already attached to that flight — each throws
+  its **own** exception, reconstructed from an immutable description taken once (the message, the
+  failure itself whole as the cause, and for an unavailability the status and declared delay,
+  each declared value read exactly once); the promise is the contract type, never the runtime
+  class — and then the failure is forgotten: no negative cache, a later caller starts a new read.
+  A cancellation is caller-local in both directions — an interrupted fetching caller keeps its own
+  exception and its flight is abandoned so the waiters retry and one takes over, while an
+  interrupted waiter takes its own cancellation (the unavailability type with the
+  `InterruptedException` beneath it and the flag re-set, the shape the transport would have
+  produced) and leaves the flight running for everyone else. The flight applies the interruption
+  disjunction to every failure *before* classifying it by type, deliberately broader in scope than
+  the facade's two conversion sites, so an interruption a defective transport wrapped in a
+  recurring type is still not shared. And a failure of neither contract type reaches its own
+  caller unchanged and abandons the flight the way a cancellation does — laundering it into a
+  contract type is what the exception taxonomy forbids. No signing `POST` ever runs while the
+  initialization guard is held — the guard protects the record of the active flight and nothing
+  else, waiters block on the flight rather than on the guard, and an initialized signer takes a
+  volatile fast path that touches neither — the same look-up-release-sign-publish discipline the
+  token cache follows, for the same reason.
 - **Explicit mode** receives the public key from configuration, permitting a sign-only token.
   Supplying the matching Transit key version pins signing to that version. The supplied key gets
   the full `P256PublicKeys.requireOnCurve` check (§5): the `VapidSigner` contract — pinned by the
@@ -1329,7 +1371,13 @@ ordering: `VaultSignerAutoConfiguration` is ordered before the core starter, so 
 configured the Vault signer takes precedence over the local one unless the application provides its
 own `VapidSigner`; `VaultSignerDiagnosticsAutoConfiguration` is ordered after it, for the reason
 given above. Both honour `push2u.enabled`, so a deployment that has declared the custodian unused
-never constructs the signer and never performs the fetched mode's startup read.
+never constructs the signer and never performs the eager fetched mode's startup read.
+`push2u.signer.vault.public-key-fetch` selects between that startup read (`eager`, the default and
+what an unset or blank key means) and the deferred read at first use; its refusals — a value that
+is neither mode, and any written value beside a supplied `public-key`, whose mode performs no
+metadata read at all — are decided while the signer bean is built, which places them at step 7 of
+the startup-check order and on the delivery-path side of `push2u.enabled` by construction, so they
+deliberately hold no position in the ordered list of checks.
 
 ## 9. Verification
 
