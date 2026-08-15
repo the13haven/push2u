@@ -532,7 +532,8 @@ for the unrestricted mode: under Spring it is an application `@Bean EndpointPoli
 `EndpointPolicies.unrestricted()`, so that turning the control off is a code change someone reviews
 rather than a line copied between profiles. [`SPRING.md`](docs/SPRING.md) is the reference — every
 `push2u.*` property and what a rejected value does to startup, the policy bean with the
-registration recipe written against it, and the health indicator with its cache.
+registration recipe written against it, and the health indicator in outline, with a link to the
+document that carries it.
 
 ## Vault Transit signer
 
