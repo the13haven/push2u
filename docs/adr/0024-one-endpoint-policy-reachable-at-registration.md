@@ -1,6 +1,6 @@
 # ADR-024 — One endpoint policy, reachable where subscriptions are accepted
 
-**Status:** Proposed
+**Status:** Accepted
 
 ADR-016 made the endpoint policy a required argument of every `PushSender` factory: a deployment
 that has not said which endpoints it will contact does not get a sender. What it did not settle is

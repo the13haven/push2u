@@ -33,6 +33,7 @@ class Push2uRemovedPropertiesAutoConfigurationTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     Push2uAutoConfiguration.class,
+                    Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
                     Push2uRemovedPropertiesAutoConfiguration.class));
 

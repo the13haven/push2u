@@ -29,8 +29,9 @@ push2u:
     - "notify.windows.com"
 ```
 
-The starter creates a `VapidSigner`, `PushHttpClient`, and `PushSender`. Application beans of the
-same types take precedence.
+The starter creates a `VapidSigner`, `PushHttpClient`, `PushSender`, and — when the allowlist
+properties have an entry — an `EndpointPolicy` bean holding the allowlist they express (see
+[Endpoint policy](#endpoint-policy)). Application beans of the same types take precedence.
 
 `push2u.vapid.subject` is required to build the *autoconfigured* `PushSender`, regardless of where
 the `VapidSigner` comes from; leaving it unset fails the context with a message naming the
@@ -118,7 +119,8 @@ application's.
 
 ## Endpoint policy
 
-The autoconfigured `PushSender` needs an `EndpointPolicy`, because every `PushSender` does — which
+The endpoint policy is one value applied at both points of a subscription's life: where a
+subscription is accepted, and before every send. Every `PushSender` needs one, because which
 endpoints a deployment may POST to is a decision it has to express, and a subscription's endpoint
 is attacker-influenced wherever subscriptions are registered by clients. See
 [`README.md` → Endpoint policy (SSRF hardening)](../README.md#endpoint-policy-ssrf-hardening) for
@@ -131,8 +133,8 @@ The starter takes that decision from one of two **sources**, and exactly one of 
   subdomain at any depth, over `https` on the default port only.
   [`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four browser push services in this form — two
   origins, and two domains for the two services that publish a zone rather than a host.
-- **An application `EndpointPolicy` bean**, which the autoconfigured sender picks up. This is the
-  route for anything the properties cannot express — a corporate egress rule, a custom check, or
+- **An application `EndpointPolicy` bean**, which suppresses the starter's own. This is the route
+  for anything the properties cannot express — a corporate egress rule, a custom check, or
   `EndpointPolicies.unrestricted()`.
 
 **The two properties are not two sources.** They are two halves of one statement, and a context
@@ -140,39 +142,127 @@ setting both gets one allowlist holding all of their entries — which is exactl
 deployment naming the browser push services needs, since some of them publish a host and some a
 zone. The decision is *expressed* when at least one of them is non-empty.
 
-Expressing it **and** supplying a bean fails the context, naming whichever property is non-empty
-and naming the bean — they express the same security control, and silently preferring one would
-leave the other believed-active but ignored. Expressing **neither** — both properties unset, no
-bean — fails the context too, with a message naming the three ways to fix it: a sender wired
-without a policy would POST wherever a subscription's endpoint points, and that is not an outcome
-anyone should reach by leaving a property out.
+### The policy is a bean
+
+The allowlist the properties express is published as an `EndpointPolicy` bean the moment it is
+expressed — at least one of the two properties has an entry — and the autoconfigured `PushSender`
+takes that bean from the context like any other collaborator. The bean's condition is deliberately
+the allowlist and not the signer: a service that accepts subscriptions and leaves the sending to
+another one has no signer and needs exactly this bean, while a deployment that merely carries the
+starter without configuring web push gets no bean and no demand for one. The bean is built from
+the two properties and from nothing else, so there is still no configuration-only path to
+unrestricted egress.
+
+The *obligation* to express the decision stays with the sender: a deployment that sends and has
+expressed nothing — both properties unset and no bean, or every set property empty and no bean —
+fails at startup exactly as before, with a message naming the ways to fix it. A registration-only
+deployment that expresses nothing simply holds no policy bean, and starts.
+
+### Validating where subscriptions are accepted
+
+A policy refusal is not a `410`: nothing marks the stored row as dead, so a subscription whose
+endpoint the policy refuses fails at every send, forever, while the subscriber's browser reports a
+healthy subscription. Applying the same policy at registration keeps such rows out of the store —
+and because both points read one bean, the two cannot drift: a domain rule added for Edge is
+honoured at registration the day it is honoured at send, with no consumer change.
+
+```java
+@RestController
+class SubscriptionController {
+
+    private final EndpointPolicy endpointPolicy;   // the bean — the starter's, or your own
+    private final SubscriptionStore store;
+
+    SubscriptionController(EndpointPolicy endpointPolicy, SubscriptionStore store) {
+        this.endpointPolicy = endpointPolicy;
+        this.store = store;
+    }
+
+    @PostMapping("/subscriptions")
+    ResponseEntity<Void> register(@RequestBody SubscriptionRequest request) {
+        Subscription subscription;
+        try {
+            // 1. Build the Subscription first: the RFC 8030 endpoint rules plus the
+            //    key-material and length checks. A refusal here is a malformed subscription.
+            subscription = Subscription.fromBase64(request.endpoint(), request.p256dh(), request.auth());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();   // malformed — store nothing
+        }
+        try {
+            // 2. Apply the deployment's policy to the endpoint the Subscription carries.
+            endpointPolicy.validate(URI.create(subscription.endpoint()));
+        } catch (EndpointRejectedException e) {
+            return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+        }
+        store.save(subscription);                         // 3. Store only what both accepted.
+        return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+}
+```
+
+**The order is the seam's contract, not the application's preference.** `validate` documents its
+argument as an endpoint that already satisfies `Endpoints.requireSecure` — an absolute `https` URL
+with a host — and building the `Subscription` first is what establishes that, together with the
+key-material and length rules. So: the `Subscription` first, the policy on the endpoint it carries
+second, the row stored third. What the application does choose is what each refusal answers to its
+client. A malformed subscription (`IllegalArgumentException`) and a policy refusal
+(`EndpointRejectedException`) can both sensibly answer `400` with no body — echoing either message
+would describe the allowlist, or the refused endpoint, to whoever posted the subscription — and
+`EndpointRejectedException` deliberately does not extend `IllegalArgumentException` precisely so
+that no framework mapping makes that echo for you: the application catching it at its own boundary
+decides what a refusal means there.
+
+The registration check does not replace the send-time one. The policy is configuration and can
+change after rows were stored, so `send` validates every send regardless and reports a refusal as
+the `EndpointRejected` outcome, where a fan-out flags or removes the row and carries on.
+
+Across two services — one registering, one sending, each with its own context — what the bean
+guarantees is one *interpretation*: both build their policy from the same two properties through
+the same code, so the rules can differ only where the configured values differ. Keeping those
+values in step between the services is configuration delivery, the same problem a deployment
+already solves for every other setting they share.
+
+### What fails at startup, and from where
+
+Expressing the allowlist **and** supplying a bean fails the context, naming whichever property is
+non-empty and naming the bean — they express the same security control, and silently preferring
+one would leave the other believed-active but ignored. This refusal is a startup check of the
+context, **whether or not the deployment sends**: in a registration-only service the application
+bean would otherwise suppress the starter's policy while the stated allowlist was ignored without
+a word. Which bean is the starter's own is decided by where its definition came from, never by its
+name — an application bean that happens to be named `push2uEndpointPolicy` is an application bean,
+and a non-empty allowlist property beside it still fails the context.
+
+A malformed entry fails the context named exactly — the property it came from and its index in
+that property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from
+one entry of one named property. It, too, fails **whether or not the deployment sends**, from a
+startup check that runs ahead of every other refusal the same context might raise, so the operator
+reads the message about the value to fix first. The entry appears in the message the way an
+endpoint appears in a rejection: an origin entry with its path and query stripped, because a
+pasted capability URL is precisely the mistake being reported, and a domain entry verbatim only
+when it is a plain host-shaped token.
+
+Expressing **neither** — both properties unset, no bean — fails only a context that builds the
+autoconfigured sender, with a message naming the three ways to fix it: the obligation is the
+sender's, and a deployment that does not send is owed no demand for an allowlist it has no use
+for.
 
 One escape hatch, and it is per property: a service that *inherits* `push2u.allowed-origins` from
 a shared configuration it does not own cannot unset the property, so setting it to an explicitly
 **empty** value means "deliberately not using this property here" — beside a bean, the bean wins;
 beside the other property, that property carries the allowlist alone. Every set property empty with
-no bean still fails the context, with a message naming both keys: emptying them is a statement
-about the pair, and no single entry is left to refuse on its own terms.
+no bean still fails a sender-building context, with a message naming both keys: emptying them is a
+statement about the pair, and no single entry is left to refuse on its own terms.
 
 **Empty means empty, and a blank is not one.** Where the value arrives as one delimited string —
 an environment variable, `PUSH2U_ALLOWED_ORIGINS=`, is the case this hatch exists for — only a
 zero-length value is no entries at all. A single space is one entry; a lone comma is two, one either
 side of it. None of them is a name, but the property now *expresses* an allowlist, which is the
-opposite of what was meant by typing it.
-
-What that costs depends on what else is configured, and it is worst beside a bean — which is where
-an inherited allowlist is emptied in the first place. Beside an `EndpointPolicy` bean, an expressed
-allowlist is the contradiction above: the context
-fails naming the property and the bean, not the blank that made it look expressed. On its own, or
-beside the other property, the blank entry is refused as the malformed entry it is — which is the
-next paragraph, and the better of the two failures to be holding.
-
-A malformed entry fails the context named exactly — the property it came from and its index in that
-property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from one
-entry of one named property. The entry appears in the message the way an endpoint appears in a
-rejection: an origin entry with its path and query stripped, because a pasted capability URL is
-precisely the mistake being reported, and a domain entry verbatim only when it is a plain
-host-shaped token.
+opposite of what was meant by typing it. Wherever the blank lands, it is refused as the malformed
+entry it is, by property and index — `push2u.allowed-origins[0]`, an entry that shows nothing of
+itself but still has a position — and that refusal outranks every other complaint the same context
+could raise, the property-beside-a-bean contradiction included, so the message points at the blank
+rather than at a bean that was configured on purpose.
 
 ### No property turns the restriction off
 
