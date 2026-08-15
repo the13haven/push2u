@@ -39,6 +39,7 @@ import org.springframework.boot.health.autoconfigure.registry.HealthContributorR
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.health.registry.HealthContributorRegistry;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -232,8 +233,9 @@ class Push2uAutoConfigurationTest {
         // stop answering while the application runs, and here it is present and reachable.
         //
         // The main autoconfiguration is excluded so no PushSender bean can appear, which also
-        // exercises the reason @EnableConfigurationProperties is restated on the health
-        // autoconfiguration: without it, push2u.health.* would not bind in this context.
+        // exercises the reason the health autoconfiguration carries its own
+        // @EnableConfigurationProperties: without it, management.health.push2u.* would not bind in
+        // this context.
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(Push2uHealthAutoConfiguration.class))
                 .withUserConfiguration(CustomSignerConfiguration.class)
@@ -521,7 +523,7 @@ class Push2uAutoConfigurationTest {
         CountingSigner signer = countingSigner();
         RecordingTransport transport = new RecordingTransport();
         keyedRunner()
-                .withPropertyValues("push2u.health.cache-ttl=0s")
+                .withPropertyValues("management.health.push2u.cache-ttl=0s")
                 .withBean(VapidSigner.class, () -> signer)
                 .withBean(PushHttpClient.class, () -> transport)
                 .run(context -> {
@@ -1034,14 +1036,95 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void healthIndicatorCanBeDisabledByProperty() {
+    void healthIndicatorIsRegisteredByDefault() {
+        // The default this change deliberately does not move: Spring Boot's convention is that a
+        // contributor is on, and neither of the two keys deciding it needs to be written for the
+        // probe to exist. Stated on its own so that a regression in the condition shows up as a
+        // failing default rather than only inside a test about disabling it.
+        keyedRunner().run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+        });
+    }
+
+    @Test
+    void healthIndicatorCanBeDisabledByTheStandardProperty() {
         // The operator's escape hatch for deployments that must not tie health to the signer at
         // all: the indicator is not registered, so no health evaluation can ever reach the signer
-        // backend — while the sender itself stays wired.
-        keyedRunner().withPropertyValues("push2u.health.enabled=false").run(context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
-            assertThat(context).hasSingleBean(PushSender.class);
+        // backend — while the sender itself stays wired. The key is the one every Boot health
+        // contributor answers to, which is the whole point of the condition being the framework's.
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
+    }
+
+    @Test
+    void disablingHealthIndicatorsWholesaleAlsoRemovesThePush2uOne() {
+        // The behaviour the bespoke condition did not have, and the reason for the swap: a
+        // deployment that turns every contributor off by default meant to turn this one off too,
+        // and used to keep a probe that signs on every evaluation — against a remote signer, a real
+        // audited operation per poll that nobody asked for.
+        keyedRunner()
+                .withPropertyValues("management.health.defaults.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
+    }
+
+    @Test
+    void thePush2uKeyOutranksTheWholesaleDefault() {
+        // The other half of the same contract: off by default, on by name — the shape an operator
+        // uses to enumerate exactly the contributors they want. Without this, "defaults off" would
+        // be a one-way door for this indicator.
+        keyedRunner()
+                .withPropertyValues("management.health.defaults.enabled=false", "management.health.push2u.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                });
+    }
+
+    @Test
+    void theCacheTtlPropertyReachesTheIndicator() {
+        // The tuning moved to the framework's prefix with the switch, so pin that it still arrives:
+        // 0s is the value whose effect is observable from outside, since it disables caching
+        // entirely and every evaluation must then reach the signer. A bound-but-ignored property
+        // would leave the default 30s TTL in place and collapse three probes into one signature.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.cache-ttl=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .run(context -> {
+                    Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+                    for (int i = 0; i < 3; i++) {
+                        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+                    }
+                    assertThat(signer.signOperations())
+                            .as("cache-ttl: 0s means every evaluation probes the signer")
+                            .isEqualTo(3);
+                });
+    }
+
+    @Test
+    void theDefaultCacheTtlStillCollapsesRepeatedEvaluations() {
+        // The control for the test above, and the behaviour that must survive the property's move:
+        // with nothing configured the probe result is reused, so a burst of evaluations costs one
+        // signature. Written with no property at all, which is how the default is actually met.
+        CountingSigner signer = countingSigner();
+        keyedRunner().withBean(VapidSigner.class, () -> signer).run(context -> {
+            Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+            for (int i = 0; i < 3; i++) {
+                assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+            }
+            assertThat(signer.signOperations())
+                    .as("the default TTL is what keeps a polled endpoint off the signer's backend")
+                    .isEqualTo(1);
         });
     }
 
@@ -1049,14 +1132,57 @@ class Push2uAutoConfigurationTest {
     void negativeHealthCacheTtlFailsTheContextNamingTheProperty() {
         // Same convention as push2u.max-encrypted-body-bytes: the indicator's own validation
         // message cannot know the YAML property, so the autoconfiguration re-throws with the
-        // property prefixed.
-        keyedRunner().withPropertyValues("push2u.health.cache-ttl=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.health.cache-ttl:"))
-                    .hasMessageContaining("push2u.health.cache-ttl:")
-                    .hasMessageContaining("negative");
-        });
+        // property prefixed — and the property it names has to be the one the operator wrote, which
+        // is now the framework-prefixed key.
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.cache-ttl=-1s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "management.health.push2u.cache-ttl:"))
+                            .hasMessageContaining("management.health.push2u.cache-ttl:")
+                            .hasMessageContaining("negative");
+                });
+    }
+
+    @Test
+    void theContributorRegistersUnderTheNameTheSwitchAndGroupsUse() {
+        // Three things spell this contributor's name and only one of them is written down here: the
+        // condition's argument, the property prefix its tuning binds from, and whatever a
+        // deployment puts in a health group's include or exclude. The registry decides the third by
+        // stripping the standard suffix from the bean name, so the bean method's name is what keeps
+        // all three in step — rename it and the group entry silently names a contributor that no
+        // longer exists, which fails a context that is not this one.
+        keyedRunner()
+                .withConfiguration(AutoConfigurations.of(HealthContributorRegistryAutoConfiguration.class))
+                .run(context -> {
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                    HealthContributorRegistry registry = context.getBean(HealthContributorRegistry.class);
+                    assertThat(registry.getContributor("push2u"))
+                            .as("the registered name must be the string the condition and a group both use")
+                            .isSameAs(context.getBean(Push2uHealthIndicator.class));
+                    assertThat(registry.getContributor("push2uHealthIndicator"))
+                            .as("the bean name is not the contributor name — the suffix is stripped")
+                            .isNull();
+                });
+    }
+
+    @Test
+    void withoutSpringBootHealthOnTheClasspathTheContextStartsWithoutTheIndicator() {
+        // The starter is usable without Actuator, and the condition swap is where that could have
+        // broken: the indicator's factory method now carries an annotation from spring-boot-health
+        // itself. It is safe because the class-level condition is decided before the class is
+        // loaded, so the method is never examined — but nothing in the code says so, and a
+        // NoClassDefFoundError here would only ever appear in a consumer's application.
+        keyedRunner()
+                .withClassLoader(new FilteredClassLoader("org.springframework.boot.health"))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                });
     }
 
     @Test
@@ -1130,7 +1256,7 @@ class Push2uAutoConfigurationTest {
         julLogger.setLevel(Level.ALL);
         try {
             keyedRunner()
-                    .withPropertyValues("push2u.health.cache-ttl=0s")
+                    .withPropertyValues("management.health.push2u.cache-ttl=0s")
                     .withUserConfiguration(FailingSignerConfiguration.class)
                     .run(context -> {
                         Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);

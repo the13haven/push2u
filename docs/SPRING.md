@@ -39,10 +39,12 @@ property. The endpoint policy is required in the same way, from one of its two s
 [Endpoint policy](#endpoint-policy). Neither is required when the application supplies its own
 `PushSender` bean — that bean bypasses the starter's checks entirely.
 
-That is every key the sender itself takes — the health probe adds `push2u.health.*` below, and the
-Vault signer starter its own `push2u.signer.vault.*`. **There is no `push2u.retry.*` block**: the
-library performs one POST per send and schedules no repeat, so there is nothing under this prefix
-to configure — see [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
+That is every key the sender itself takes. The health probe's two keys are not under this prefix at
+all — they are Spring Boot's, under `management.health.push2u.*`, see
+[Health indicator](#health-indicator) — and the Vault signer starter carries its own
+`push2u.signer.vault.*`. **There is no `push2u.retry.*` block**: the library performs one POST per
+send and schedules no repeat, so there is nothing under this prefix to configure — see
+[The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
 **If you are upgrading from a version that had one, delete it from your YAML.** A key the starter
 does not bind is ignored rather than refused, so a context still carrying `push2u.retry.max-attempts`
@@ -338,17 +340,51 @@ whose providers offer no ES256 verification primitive at all, the probe degrades
 signature length only and says so in the payload with a fixed `verification: unavailable` detail
 (plus a one-time WARN); the detail's absence means the `UP` went through full verification.
 
+**What it asserts is exactly that, and nothing beyond it.** The signer signs, and what came back
+verifies against the public key that signer itself advertises — which catches a credential that no
+longer authorises signing (an expired or revoked token, a key renamed or deleted, a permission
+withdrawn) and a signature that does not belong to the advertised key. It asserts **nothing about
+push services**: not that any of them is reachable, not that a stored subscription is still valid,
+not that a send would be accepted. `UP` here means this application can produce a VAPID signature,
+and a push service can still refuse every message you send afterwards.
+
 Because the health endpoint is polled (Kubernetes probes commonly hit it every ~10 seconds per
 pod) and each probe of a remote signer is a full backend round-trip — against Vault Transit, one
 sign operation that is written to every audit device, counted against rate-limit quotas and, for
 `managed_key`-backed keys, billed as an HSM operation — the probe result is cached per process:
 
 ```yaml
-push2u:
+management:
   health:
-    enabled: true      # default — false removes the indicator, so health never touches the signer
-    cache-ttl: 30s     # default — how long a successful probe result is reused
+    push2u:
+      enabled: true      # default — the standard switch, see below
+      cache-ttl: 30s     # default — how long a successful probe result is reused
 ```
+
+**Both keys are where Spring Boot puts a health contributor's own settings**, and the switch is the
+framework's rather than one of ours: `enabled: false` removes the indicator entirely, so health
+never touches the signer, and `management.health.defaults.enabled: false` — the setting that turns
+every contributor off wholesale — reaches this one too. Both are answers to the coupling described
+below, at the cost of having no probe at all. Earlier versions spelled these two keys
+`push2u.health.enabled` and `push2u.health.cache-ttl`; **both now fail the context at startup**, in
+any spelling relaxed binding accepts, with a message naming the replacement. They are refused rather
+than ignored for the reason the removed `push2u.record-size` is: an ignored `enabled: false` would
+have the deployment that switched the probe off quietly probing its signer again, and an ignored
+`cache-ttl` would restore the default TTL under a deployment that had lengthened it. Both refusals
+are transition aids, carried for one minor release after the release that removed the properties,
+and then removed themselves. A context holding several removed keys at once — the released guide
+printed `record-size` beside the `push2u.health` block — is refused once, naming every one of them,
+so the whole of the edit is visible on the first failed start.
+
+**One change at the upgrade has no dead key to refuse, and it is the one to check by hand.** Earlier
+versions of this indicator ignored `management.health.defaults.enabled` entirely, so a deployment
+that turned every contributor off wholesale kept the push2u probe; it now honours that setting like
+any other contributor and the probe goes, silently, with nothing left in the configuration for a
+startup check to object to. If you were relying on it, name it back with
+`management.health.push2u.enabled: true`. Either way, check any health group that mentions `push2u`
+before upgrading: a group naming a contributor that is no longer registered stops the context
+starting, with the framework's validator message below — which names the group's entry and nothing
+about what removed the contributor, least of all a setting that was doing something else yesterday.
 
 A successful result is served from cache for `cache-ttl`; a *failed* result for at most 5 seconds
 (the shorter of `cache-ttl` and 5s), so recovery is noticed quickly even under a long TTL.
@@ -489,12 +525,14 @@ Health contributor 'push2u' defined in 'management.endpoint.health.group.contain
 ```
 
 By the conditions above, the `push2u` contributor is absent from a deployment that set
-`push2u.health.enabled: false`, from one that stopped configuring a signer, and from one that
-dropped the starter — and a group naming it stops all three from starting. The message names the
-framework's validator rather than anything done to push2u, which is why it is worth knowing in
-advance: a group that names this contributor is edited in the same change that removes it. The edit
-is the same one in every case, and it is the right one on its own terms — the exclusion was there to
-keep a signer probe out of the check, and there is no probe left to keep out.
+`management.health.push2u.enabled: false`, from one that set
+`management.health.defaults.enabled: false` and did not name this indicator back in, from one that
+stopped configuring a signer, and from one that dropped the starter — and a group naming it stops
+all four from starting. The message names the framework's validator rather than anything done to
+push2u, which is why it is worth knowing in advance: a group that names this contributor is edited
+in the same change that removes it. The edit is the same one in every case, and it is the right one
+on its own terms — the exclusion was there to keep a signer probe out of the check, and there is no
+probe left to keep out.
 
 **That assumes one party owns both, and an application distributing push2u is where it stops being
 true.** A health group shipped inside an image is a build artifact; the deployment that switches the

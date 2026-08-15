@@ -63,7 +63,6 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     index, exclusivity with an <em>application-supplied</em> {@code EndpointPolicy} bean, and an explicitly empty
  *     value as the per-property escape hatch — with every set property empty and no bean failing a sender-building
  *     context on both keys at once
- * @param health the Actuator health probe settings; always present, defaults apply when unset
  */
 @ConfigurationProperties("push2u")
 public record Push2uProperties(
@@ -80,8 +79,7 @@ public record Push2uProperties(
         @Nullable Duration defaultTtl,
         @Nullable Integer maxEncryptedBodyBytes,
         @Nullable List<String> allowedOrigins,
-        @Nullable List<String> allowedDomains,
-        @DefaultValue Health health) {
+        @Nullable List<String> allowedDomains) {
 
     /**
      * Snapshots each allowlist into an unmodifiable copy (when set), so the bound configuration cannot drift from the
@@ -130,20 +128,4 @@ public record Push2uProperties(
                     + ", subject=" + subject + "]";
         }
     }
-
-    /**
-     * The Actuator health probe ({@link Push2uHealthIndicator}). The probe exercises the configured signer, which for a
-     * remote signer (Vault Transit) is a full backend round-trip on an endpoint Kubernetes polls every few seconds —
-     * hence a result cache, and an off switch for deployments that do not want health tied to the signer at all.
-     *
-     * @param enabled whether the push2u health indicator is registered. {@code false} removes it entirely, so health
-     *     never touches the signer
-     * @param cacheTtl how long a successful probe result is served from cache before the signer is exercised again. A
-     *     <em>failed</em> result is cached for at most 5 seconds regardless (the shorter of this value and 5s), so
-     *     recovery is noticed quickly even under a long TTL. {@code 0s} disables caching; negative values are rejected
-     *     at startup
-     */
-    public record Health(
-            @DefaultValue("true") boolean enabled,
-            @DefaultValue("30s") Duration cacheTtl) {}
 }
