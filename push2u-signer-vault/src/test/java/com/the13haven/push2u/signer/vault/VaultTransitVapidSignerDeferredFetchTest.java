@@ -8,6 +8,7 @@ package com.the13haven.push2u.signer.vault;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -361,6 +362,47 @@ class VaultTransitVapidSignerDeferredFetchTest {
                 .hasValue(1);
     }
 
+    @Test
+    void aFailureWhoseDescriptionCannotBeTakenStillEndsTheFlight_andItsCallerKeepsIt() throws Exception {
+        // Describing a failure calls getCause(), getMessage(), status() and retryAfter() on an
+        // exception a replaceable transport produced — all overridable, which is why the declared
+        // values are snapshotted at all. One of them throwing must not leave the flight recorded as
+        // active (the waiters would park forever), and must not reach the fetching caller in place
+        // of the failure it was given: that failure is the classified thing, and the accessor's
+        // complaint is diagnostics about the exception object, which is where it is filed.
+        IllegalStateException accessorDefect = new IllegalStateException("status() is broken in this subclass");
+        UndescribableUnavailable outage =
+                new UndescribableUnavailable("Vault Transit key read must wait", accessorDefect);
+        CountDownLatch fetchArrived = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        ScriptedVaultTransport transport = new ScriptedVaultTransport()
+                .onGetGated(fetchArrived, releaseFetch, () -> {
+                    throw outage;
+                })
+                .onGet(VaultTransitVapidSignerDeferredFetchTest::healthyKeys);
+        VapidSigner signer = deferredSigner(transport);
+
+        Caller fetcher = Caller.start("fetcher", signer::publicKey);
+        awaitGate(fetchArrived);
+        Caller waiter = Caller.start("waiter", signer::publicKey);
+        awaitParkedOnFlight(waiter);
+        releaseFetch.countDown();
+
+        Throwable fetcherFailure = fetcher.awaitFailure();
+        assertThat(fetcherFailure)
+                .as("the caller that performed the fetch keeps the exception it was given")
+                .isSameAs(outage);
+        assertThat(fetcherFailure.getSuppressed())
+                .as("the accessor's own failure is filed on it rather than thrown in its place")
+                .contains(accessorDefect);
+        assertThat(waiter.awaitValue())
+                .as("nothing was shared, so the waiter retried instead of parking on a latch nobody opens")
+                .isEqualTo(HEALTHY_VAULT.publicKeyUncompressed());
+        assertThat(transport.keyReads())
+                .as("the flight was released, so a later caller could still start a read")
+                .isEqualTo(2);
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // Cancellation — caller-local in both directions
     // ---------------------------------------------------------------------------------------------------------------
@@ -502,6 +544,44 @@ class VaultTransitVapidSignerDeferredFetchTest {
         assertThat(transport.keyReads()).isEqualTo(2);
     }
 
+    @Test
+    void aCheckedThrowableOutOfTheTransportEndsTheFlightToo_andTheWaitersRetry() throws Exception {
+        // VaultHttpTransport declares no checked exceptions, but it is a seam an application
+        // implements: Kotlin has none to declare, and a signature-erasing helper throws an
+        // IOException straight through a Java method that declares none. It must end the flight
+        // exactly as a failure of neither contract type does — before this was so, the waiters
+        // parked forever and every later caller attached to the same dead flight, which turned one
+        // consumer's transport bug into a signer that never answers again.
+        IOException undeclared = new IOException("a consumer transport's undeclared I/O failure");
+        CountDownLatch fetchArrived = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        ScriptedVaultTransport transport = new ScriptedVaultTransport()
+                .onGetGated(fetchArrived, releaseFetch, () -> {
+                    throw sneakyThrow(undeclared);
+                })
+                .onGet(VaultTransitVapidSignerDeferredFetchTest::healthyKeys);
+        VapidSigner signer = deferredSigner(transport);
+
+        Caller fetcher = Caller.start("fetcher", signer::publicKey);
+        awaitGate(fetchArrived);
+        Caller waiter = Caller.start("waiter", signer::publicKey);
+        awaitParkedOnFlight(waiter);
+        releaseFetch.countDown();
+
+        assertThat(fetcher.awaitFailure())
+                .as("it reaches its own caller exactly as thrown, laundered into nothing")
+                .isSameAs(undeclared);
+        assertThat(waiter.awaitValue())
+                .as("the flight was released, so the waiter retried and one caller took the read over")
+                .isEqualTo(HEALTHY_VAULT.publicKeyUncompressed());
+        assertThat(transport.keyReads())
+                .as("the abandoned flight is followed by exactly one takeover read")
+                .isEqualTo(2);
+        assertThat(signer.publicKey())
+                .as("and the read that took over published the pair every later caller answers from")
+                .isEqualTo(HEALTHY_VAULT.publicKeyUncompressed());
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // The initialization guard never serializes signing
     // ---------------------------------------------------------------------------------------------------------------
@@ -573,9 +653,11 @@ class VaultTransitVapidSignerDeferredFetchTest {
     /**
      * Waits until {@code caller}'s thread is provably parked on the flight's latch — its only untimed wait point on
      * this path — so releasing the transport gate afterwards proves the caller was attached to the flight rather than
-     * merely racing it. State-based, not sleep-based: it converges on any runner, however loaded.
+     * merely racing it. The convergence criterion is the observed state, never elapsed time; the millisecond between
+     * looks only keeps three waiting observers off the cores the threads they are waiting for need, which on a
+     * four-vCPU runner is the difference between waiting for convergence and competing with it.
      */
-    private static void awaitParkedOnFlight(Caller caller) {
+    private static void awaitParkedOnFlight(Caller caller) throws InterruptedException {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
         while (caller.thread.getState() != Thread.State.WAITING) {
             if (caller.thread.getState() == Thread.State.TERMINATED) {
@@ -584,8 +666,17 @@ class VaultTransitVapidSignerDeferredFetchTest {
             if (System.nanoTime() > deadline) {
                 throw new AssertionError("caller never parked on the flight: " + caller.thread.getState());
             }
-            Thread.onSpinWait();
+            Thread.sleep(1);
         }
+    }
+
+    /**
+     * Throws {@code failure} through a signature that declares nothing — what {@link VaultHttpTransport#get}, which
+     * declares no checked exception, still receives from an implementation written in a language that has none.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> RuntimeException sneakyThrow(Throwable failure) throws T {
+        throw (T) failure;
     }
 
     /** A signer call on a dedicated platform thread, its value or failure captured for the test to read. */
@@ -636,6 +727,25 @@ class VaultTransitVapidSignerDeferredFetchTest {
                     .as("caller '%s' should have failed", thread.getName())
                     .isInstanceOf(Throwable.class);
             return (Throwable) result;
+        }
+    }
+
+    /**
+     * A subclass whose declared-value accessor throws instead of answering — a defective transport's exception, and the
+     * reason the description-taking cannot be assumed to return at all.
+     */
+    private static final class UndescribableUnavailable extends VapidSignerUnavailableException {
+
+        private final RuntimeException accessorFailure;
+
+        private UndescribableUnavailable(String message, RuntimeException accessorFailure) {
+            super(message);
+            this.accessorFailure = accessorFailure;
+        }
+
+        @Override
+        public java.util.OptionalInt status() {
+            throw accessorFailure;
         }
     }
 
