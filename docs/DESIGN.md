@@ -1108,7 +1108,11 @@ signer whose bytes do not verify reports `DOWN` instead of failing every real se
 `401`/`403`. Because a health endpoint is polled and each probe of a remote signer is a full
 backend round-trip — against Vault Transit, one operation written to every audit device, counted
 against rate-limit quotas and possibly billed — the result is cached per process, with a failed
-result held far more briefly than a successful one so that recovery is still noticed quickly. The
+result held far more briefly than a successful one so that recovery is still noticed quickly. Its
+switch and that cache's TTL are not in this library's namespace at all: they are
+`management.health.push2u.enabled` and `management.health.push2u.cache-ttl`, the prefix Spring Boot
+gives a contributor's own settings, so that the wholesale `management.health.defaults.enabled`
+reaches this indicator like any other and the operator has one place to look rather than two. The
 indicator stays out of both availability groups unless the operator declares one that includes it —
 Spring Boot builds `liveness` and `readiness` from the application's own state, and the starter
 registers no group customization: an unreachable Vault is not something a container restart fixes.

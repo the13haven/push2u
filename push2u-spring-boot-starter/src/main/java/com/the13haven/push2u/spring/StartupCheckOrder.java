@@ -34,6 +34,11 @@ final class StartupCheckOrder {
      * that no longer exists makes any reading of the configuration under it a reading of something the operator did not
      * mean to write. One position above it is reserved for the check on the activation switch's own value, which is not
      * implemented yet and therefore not declared here.
+     *
+     * <p>Several tombstones share this one position, since each is the same finding about a different key — which
+     * leaves the order <em>among</em> them undeclared, and deliberately so. Nothing should rest on which of two dead
+     * keys an operator holding both is told about first; what each tombstone owes is that its own key is named whenever
+     * it is the only one present, and each keeps that alone.
      */
     static final int REMOVED_PROPERTY_TOMBSTONE = Ordered.HIGHEST_PRECEDENCE + 200;
 

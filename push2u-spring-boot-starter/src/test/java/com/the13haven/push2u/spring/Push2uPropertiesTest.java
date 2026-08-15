@@ -7,8 +7,6 @@ package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Duration;
-
 import org.junit.jupiter.api.Test;
 
 /**
@@ -36,9 +34,7 @@ class Push2uPropertiesTest {
                 // bean instead, or fails the context — but that is its business; this record only
                 // carries the values.
                 null,
-                null,
-                // Values a binder could actually produce: cacheTtl is non-null (it carries a default).
-                new Push2uProperties.Health(true, Duration.ofSeconds(30)));
+                null);
 
         // Directly and through the enclosing record — the outer toString() embeds the inner one.
         for (String rendered : new String[] {vapid.toString(), properties.toString()}) {

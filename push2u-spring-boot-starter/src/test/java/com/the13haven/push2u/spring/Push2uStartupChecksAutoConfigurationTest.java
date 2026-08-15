@@ -12,6 +12,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -20,12 +21,12 @@ import org.springframework.core.env.SystemEnvironmentPropertySource;
 import com.the13haven.push2u.PushSender;
 
 /**
- * The tombstone over {@code push2u.record-size}: a key a release removed must fail the context at startup, in every
- * spelling relaxed binding accepts, naming the property and where its effect went — binding ignores an unknown key
- * silently, so without the refusal the setting would read as though it were in force. The refusal is raised from a
- * post-processor of the bean factory, so it precedes every bean-creation failure; and a context without the key starts
- * exactly as before, which the whole of {@link Push2uAutoConfigurationTest} also pins by running with this
- * autoconfiguration present.
+ * The tombstones over {@code push2u.record-size} and the {@code push2u.health.*} pair: a key a release removed must
+ * fail the context at startup, in every spelling relaxed binding accepts, naming the property and where its effect went
+ * — binding ignores an unknown key silently, so without the refusal the setting would read as though it were in force.
+ * The refusal is raised from a post-processor of the bean factory, so it precedes every bean-creation failure; and a
+ * context without the key starts exactly as before, which the whole of {@link Push2uAutoConfigurationTest} also pins by
+ * running with this autoconfiguration present.
  *
  * <p>{@link Push2uStartupChecksAutoConfiguration} hosts two more checks, both about the allowlist properties; those are
  * covered in {@link Push2uEndpointPolicyAutoConfigurationTest} beside the bean they guard, including that they survive
@@ -117,6 +118,109 @@ class Push2uStartupChecksAutoConfigurationTest {
                             .isInstanceOf(IllegalStateException.class)
                             .hasMessageContaining("push2u.record-size");
                 });
+    }
+
+    @Test
+    void aLeftoverHealthEnabledKeyFailsTheContextNamingItsReplacement() {
+        // The dangerous direction is the one this refusal exists for: an ignored push2u.health
+        // .enabled=false would leave the deployment that switched the probe OFF probing again after
+        // the upgrade — with a remote signer, a real audited signing operation on every poll,
+        // discovered in an audit log rather than by anything failing.
+        runner.withPropertyValues("push2u.health.enabled=false").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.health.enabled")
+                    .as("the message says where the switch went, so the operator has a move and not only a refusal")
+                    .hasMessageContaining("management.health.push2u.enabled")
+                    .hasMessageContaining("management.health.defaults.enabled");
+        });
+    }
+
+    @Test
+    void theRefusalFiresWhateverValueTheOldSwitchCarried() {
+        // The key is dead, not wrong: `true` was as much a statement about this probe as `false`,
+        // and reading the value would make the refusal depend on the one thing that no longer means
+        // anything.
+        runner.withPropertyValues("push2u.health.enabled=true").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("management.health.push2u.enabled");
+        });
+    }
+
+    @Test
+    void aLeftoverHealthCacheTtlKeyFailsTheContextNamingItsReplacement() {
+        // Same reasoning one key over: a tuned TTL silently reverting to the 30s default is six
+        // times the probes a 5s setting configured, and six times the signing operations with it.
+        runner.withPropertyValues("push2u.health.cache-ttl=5s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.health.cache-ttl")
+                    .hasMessageContaining("management.health.push2u.cache-ttl");
+        });
+    }
+
+    @Test
+    void bothHealthKeysAreReportedAtOnce() {
+        // They moved in one change and are fixed in one edit. An operator told about the first only
+        // to meet the second on the next start has been given half of what was known.
+        runner.withPropertyValues("push2u.health.enabled=false", "push2u.health.cache-ttl=5s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.health.enabled")
+                            .hasMessageContaining("push2u.health.cache-ttl")
+                            .hasMessageContaining("management.health.push2u.enabled")
+                            .hasMessageContaining("management.health.push2u.cache-ttl");
+                });
+    }
+
+    @Test
+    void theHealthRefusalCatchesTheCamelCaseSpellingRelaxedBindingAccepts() {
+        runner.withPropertyValues("push2u.health.cacheTtl=5s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.health.cache-ttl");
+        });
+    }
+
+    @Test
+    void theHealthRefusalCatchesTheEnvironmentVariableSpelling() {
+        // PUSH2U_HEALTH_ENABLED arrives through a SystemEnvironmentPropertySource, whose mapping is
+        // what Environment.getProperty("push2u.health.enabled") would NOT apply — the case that
+        // forces this check through Binder rather than a literal property lookup, exactly as the
+        // record-size tombstone above.
+        runner.withInitializer(environmentVariable("PUSH2U_HEALTH_ENABLED", "false"))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("management.health.push2u.enabled");
+                });
+    }
+
+    @Test
+    void theHealthRefusalSurvivesAClasspathWithoutSpringBootHealth() {
+        // The reason this tombstone is declared here rather than inside the autoconfiguration that
+        // registers the indicator. A deployment that dropped Actuator and kept the keys holds
+        // exactly the same dead configuration, and a check standing behind that class-level
+        // condition would let through the one case it was written for. The context must also still
+        // start without the keys — the same classpath, both answers.
+        ApplicationContextRunner withoutHealth =
+                runner.withClassLoader(new FilteredClassLoader("org.springframework.boot.health"));
+
+        withoutHealth.run(context -> assertThat(context).hasNotFailed());
+        withoutHealth.withPropertyValues("push2u.health.enabled=false").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("management.health.push2u.enabled");
+        });
     }
 
     @Test

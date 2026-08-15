@@ -26,8 +26,8 @@ import com.the13haven.push2u.EndpointRule;
 /**
  * This starter's startup checks — the refusals raised from post-processors of the bean factory, ahead of every
  * application singleton and every bean-creation failure, at the positions {@link StartupCheckOrder} declares — and
- * nothing else. Today that is a tombstone over a removed property, a malformed allowlist entry, and an allowlist stated
- * beside an application-supplied {@link EndpointPolicy} bean.
+ * nothing else. Today that is two tombstones over properties a release removed, a malformed allowlist entry, and an
+ * allowlist stated beside an application-supplied {@link EndpointPolicy} bean.
  *
  * <p><b>An auto-configuration that contributes a bean an operator might want to remove may not also host a check.</b>
  * Excluding an auto-configuration is the framework's ordinary tool for removing what it contributes, and a check riding
@@ -72,6 +72,22 @@ public final class Push2uStartupChecksAutoConfiguration {
     @Bean
     static RecordSizeTombstone push2uRecordSizeTombstone(Environment environment) {
         return new RecordSizeTombstone(environment);
+    }
+
+    /**
+     * The tombstone over the {@code push2u.health.*} pair, whose two keys moved to the prefix Spring Boot gives a
+     * health contributor's own settings.
+     *
+     * <p>{@code static}, and declaring the concrete class as its return type, for the reason the tombstone above gives:
+     * the framework fetches a post-processor bean before the configuration class is instantiated, and chooses the
+     * sorting bucket from the method's <em>declared</em> type.
+     *
+     * @param environment the environment whose bound {@code push2u.*} keys the tombstone inspects
+     * @return the check
+     */
+    @Bean
+    static HealthPropertiesTombstone push2uHealthPropertiesTombstone(Environment environment) {
+        return new HealthPropertiesTombstone(environment);
     }
 
     /**
@@ -138,6 +154,82 @@ public final class Push2uStartupChecksAutoConfiguration {
                                 + " plaintext capacity the ceiling admits. If record-size was raised to carry larger"
                                 + " payloads, raise push2u.max-encrypted-body-bytes instead; the derived record size"
                                 + " follows it.");
+            }
+        }
+
+        @Override
+        public int getOrder() {
+            return StartupCheckOrder.REMOVED_PROPERTY_TOMBSTONE;
+        }
+    }
+
+    /**
+     * Fails the context at startup while either key of the removed {@code push2u.health.*} pair is still present,
+     * naming each one and the key it moved to. The health indicator's switch and its tuning are now spelled the way
+     * Spring Boot spells every health contributor's — {@code management.health.push2u.enabled} and
+     * {@code management.health.push2u.cache-ttl} — so that the switch an operator already knows, including the
+     * wholesale {@code management.health.defaults.enabled}, is the one that works.
+     *
+     * <p>The refusal matters more here than a rename usually would, because binding drops an unknown key without a word
+     * and both of these keys were most often set in the direction the loss costs. A deployment that had switched the
+     * probe <em>off</em> would silently start probing again after the upgrade; one that had lengthened the result cache
+     * would get the default back. Where the signer is remote, both mean more real signing operations against whatever
+     * holds the key — written to an audit device, counted against a quota, billed where the key is HSM-backed — and
+     * both would be found by reading that log rather than by anything failing.
+     *
+     * <p>Like the tombstone above, the check reads the <em>bound environment</em> at context refresh, so it catches
+     * either key in every spelling relaxed binding accepts, and publishes nothing: no property component retained to be
+     * rejected, no public type, no public constant.
+     *
+     * <p><b>A tombstone has an end</b>: this one is carried for one minor release after the release that removed the
+     * two properties, and that release opens the work item that removes it. It exists to catch a configuration written
+     * against the previous release, not to accumulate for the life of the library, and the closing release is named in
+     * that work item once it exists rather than guessed at here.
+     *
+     * <p><b>It is declared here rather than inside the autoconfiguration that registers the indicator</b>, and the
+     * difference is not organisational. That autoconfiguration exists only where Spring Boot's health classes are on
+     * the classpath, while a deployment that dropped them and kept these keys holds exactly the same dead configuration
+     * — so a check standing behind that condition would let through the case it was written for. Nothing else may stand
+     * between it and the context either: whether a key still in the YAML configures anything is not a question about
+     * what this deployment sends, probes or wires.
+     *
+     * <p>{@link Ordered} is implemented on the class — not declared on the factory method — because the framework
+     * buckets a post-processor by what its class implements and would not read an annotation on the method.
+     */
+    static final class HealthPropertiesTombstone implements BeanFactoryPostProcessor, Ordered {
+
+        private static final String ENABLED = "push2u.health.enabled";
+        private static final String CACHE_TTL = "push2u.health.cache-ttl";
+
+        private final Environment environment;
+
+        HealthPropertiesTombstone(Environment environment) {
+            this.environment = environment;
+        }
+
+        @Override
+        public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+            // Binder.get(environment) applies relaxed matching against the canonical kebab-case
+            // name; Environment.getProperty would see only the literal spelling.
+            Binder binder = Binder.get(environment);
+            List<String> refusals = new ArrayList<>();
+            if (binder.bind(ENABLED, String.class).isBound()) {
+                refusals.add(ENABLED + " was removed and no longer configures anything — delete the key. The push2u"
+                        + " health indicator now takes the switch every Spring Boot health contributor takes, so set"
+                        + " management.health.push2u.enabled instead. That is also the key"
+                        + " management.health.defaults.enabled reaches when it turns contributors off wholesale, which"
+                        + " the removed one never did.");
+            }
+            if (binder.bind(CACHE_TTL, String.class).isBound()) {
+                refusals.add(CACHE_TTL + " was removed and no longer configures anything — delete the key. The probe's"
+                        + " result cache is configured beside that switch now: set"
+                        + " management.health.push2u.cache-ttl instead, with the same value and the same meaning.");
+            }
+            if (!refusals.isEmpty()) {
+                // Both keys are reported at once rather than one per startup: they moved in one
+                // change and are fixed in one edit, and an operator who deletes the first only to
+                // meet the second on the next start has been told half of what was known.
+                throw new IllegalStateException(String.join(" ", refusals));
             }
         }
 
