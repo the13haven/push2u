@@ -211,7 +211,16 @@ responses must not be.
 
 The Spring starters bind `push2u.*` / `push2u.signer.vault.*` and fail at startup with the YAML
 property name in the message rather than surfacing the builder's camelCase parameter. The Vault
-starter is ordered before the core starter and outranks the local signer.
+starter is ordered before the core starter and outranks the local signer, and ships a second
+auto-configuration ordered *after* it carrying its partial-configuration diagnostic — a starter's
+diagnostic cannot sit where its contribution does. `push2u.enabled` (ADR-025) is the statement a
+deployment makes about whether it sends: on by default, only `true`/`false`, and a context that is
+on while holding neither a `VapidSigner` nor a `PushSender` bean fails at startup. It gates the
+delivery path — signer, transport, sender, health indicator, every signer starter and its
+diagnostic — and deliberately not the endpoint policy's auto-configuration or the one hosting the
+startup checks. Those checks are one ordered list spanning both starters, and the order is pinned by
+the message that arrives rather than by a constant, since the numbers live in two modules that
+cannot see each other.
 
 ## Conventions
 

@@ -1,0 +1,5 @@
+# The analyzer that answers a missing PushSender in a context where this starter's own startup
+# refusal never ran. Its precedence over Spring Boot's own missing-bean analyzer is declared on the
+# class with @Order, not taken from this file's position on the classpath.
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+com.the13haven.push2u.spring.MissingPushSenderFailureAnalyzer

@@ -38,8 +38,11 @@ import com.the13haven.push2u.PushSender;
  * <p><b>Deliberately not part of {@link Push2uAutoConfiguration}.</b> A deployment that accepts subscriptions and
  * leaves the sending to another service holds this policy and has no sender — it validates each offered subscription's
  * endpoint against the same allowlist its sending counterpart enforces — and nothing that turns the delivery path off
- * may take the policy away from it. The class carrying the sender is where such a switch would apply; this class is
- * where it must not, so it carries no condition of its own.
+ * may take the policy away from it. That deployment is exactly the one that states {@code push2u.enabled: false}: it
+ * accepts subscriptions, holds a policy and sends nothing, and what it keeps by making that statement is the policy its
+ * allowlist states. So this class carries no {@code push2u.enabled} condition, and may never gain one. <b>Being outside
+ * the class that carries the sender is not what makes it safe</b> — the health indicator is outside it too and is gated
+ * all the same. What makes it safe is that the condition is not applied here.
  *
  * <p><b>And deliberately hosting no startup check.</b> The two refusals that guard these properties' values — a
  * malformed entry, and an allowlist stated beside an application-supplied policy bean — live in

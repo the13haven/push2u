@@ -40,13 +40,19 @@ import com.the13haven.push2u.PushSender;
  */
 class Push2uStartupChecksAutoConfigurationTest {
 
-    /** The full starter composition, exactly as the imports file ships it. */
+    /**
+     * The full starter composition, exactly as the imports file ships it, stating that this deployment does not send.
+     * The statement is what lets a context configuring no signer start at all, and it is deliberately the harder half
+     * of the pair to keep these cases on: every tombstone below therefore fires on the "off" side of the switch, which
+     * is the side its row in the decision requires it to run on and the one nothing else here would exercise.
+     */
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     Push2uAutoConfiguration.class,
                     Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
-                    Push2uStartupChecksAutoConfiguration.class));
+                    Push2uStartupChecksAutoConfiguration.class))
+            .withPropertyValues("push2u.enabled=false");
 
     @Test
     void aLeftoverRecordSizeKeyFailsTheContextNamingThePropertyAndItsReplacement() {
@@ -92,7 +98,11 @@ class Push2uStartupChecksAutoConfigurationTest {
         // that no longer exists makes every reading of the configuration under it suspect — which
         // is only possible because the check runs in the post-processor phase, before any bean is
         // created. A refusal left inside a bean factory method would lose this race.
+        //
+        // push2u.enabled=true overrides the runner's statement on purpose: with delivery off there
+        // is no signer bean to fail, and the test would pass without proving anything about order.
         runner.withPropertyValues(
+                        "push2u.enabled=true",
                         "push2u.record-size=8192",
                         "push2u.vapid.public-key=!!not-base64url!!",
                         "push2u.vapid.private-key=!!not-base64url!!",
