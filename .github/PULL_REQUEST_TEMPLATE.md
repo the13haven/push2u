@@ -27,4 +27,5 @@ dependencies / documentation, or ignore-for-release for housekeeping.
 - [ ] `docs/DESIGN.md` updated if the architecture moved, and a *new* file in `docs/adr/` if a
       decision did (an implemented ADR is never edited); `README.md` updated if the consumer-
       facing API or limits changed, `docs/SPRING.md` / `docs/VAULT.md` if a starter or Vault
-      property did, `docs/VAPID.md` if the key-generation recipe did.
+      property did, `docs/HEALTH.md` if the health indicator did, `docs/VAPID.md` if the
+      key-generation recipe did.

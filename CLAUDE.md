@@ -20,7 +20,16 @@ one with a moving part: its `jshell` block sits between the `vapid-keygen:begin`
 so the anchors, the fenced block and the heredoc wrapper are load-bearing and
 `.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
 matches the path, so moving or renaming the file silently switches that off unless the pattern moves
-with it. `docs/PUSH-SERVICES.md` is the operator-facing list of the four browser push services and
+with it. `docs/HEALTH.md` is the Spring Boot health indicator's own reference, split out of
+`docs/SPRING.md` once it had outgrown a section of a document whose subject is the starter's
+properties: what the probe asserts about the signer and what it deliberately does not, its two
+`management.health.push2u.*` keys with the cache and the startup refusals that replaced their
+`push2u.health.*` predecessors, and the health-group routes that keep a signer's backend out of a
+container health check. Its two parts are shaped by the asymmetry that made the split worth making —
+the indicator is this library's, while nearly all of the group material is Spring Boot's own
+behaviour and would read the same for any contributor at all. `docs/SPRING.md` keeps a short
+introduction and a link to it, in the shape README uses for `docs/SPRING.md` itself.
+`docs/PUSH-SERVICES.md` is the operator-facing list of the four browser push services and
 the allowlist entry each one needs, in both the Java and the YAML spelling — two origins, and two
 domains for Apple's and Microsoft's zones, which both vendors publish as the thing an application
 server should be allowed to reach. It also carries why no browser is missing from those four rows,
@@ -58,8 +67,9 @@ the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
-string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/VAPID.md`, `docs/MIGRATION.md` or
-anywhere else freezes at whatever version it was written with and starts lying at the next release.
+string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/VAPID.md`,
+`docs/MIGRATION.md` or anywhere else freezes at whatever version it was written with and starts
+lying at the next release.
 Those documents point at README's Installation section instead. The exception is a document that is
 *about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
 version on purpose, and a frozen coordinate there is correct.

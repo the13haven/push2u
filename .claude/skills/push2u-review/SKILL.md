@@ -260,8 +260,9 @@ Cheap to check, silently wrong when missed: the pull request carries a changelog
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
 a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
-`docs/SPRING.md` / `docs/VAULT.md` / `docs/VAPID.md` — is updated if consumer-facing API, properties
-or limits changed; a new suppression or rule exclusion states its reason next to it.
+`docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/VAPID.md` — is updated if
+consumer-facing API, properties or limits changed; a new suppression or rule exclusion states its
+reason next to it.
 
 ## 6. Calibrate before reporting
 

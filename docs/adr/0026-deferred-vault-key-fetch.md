@@ -373,8 +373,8 @@ lands, and that document deletes a sentence that no longer holds rather than let
 startup-supervisor contract is stated in three places that must stop reading as though it applied to
 every fetched builder — the builder's Javadoc, `docs/VAULT.md` and `docs/DESIGN.md`.
 
-**`docs/VAULT.md`'s deferred section links to the health section of `docs/SPRING.md` rather than
-answering for it.** That section is where a container check pointed at a group excluding push2u is
+**`docs/VAULT.md`'s deferred section links to `docs/HEALTH.md` rather than answering for it.** That
+document is where a container check pointed at a group excluding push2u is
 written out, and a deployment choosing this mode over a Vault that is brought up beside it is
 exactly the one that needs it — it has removed Vault from context refresh and will meet the same
 outage again through the primary health group, seconds later, if the check stays where it is. One
