@@ -46,11 +46,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     themselves). Without it the explicit mode signs with Vault's latest version, which breaks after a key rotation —
  *     set it whenever the Transit key may ever be rotated
  * @param publicKeyFetch when the fetched mode reads {@code transit/keys/<key>}: {@code eager} reads it at startup,
- *     inside context refresh, and {@code deferred} at first use, so a Vault that is still sealing or mounting while
- *     the application starts fails the first send (or health probe) instead of the boot; <b>optional</b> — unset (or
- *     blank, which reads as unset) means {@code eager}, today's behaviour. The two values are the only ones, and the
- *     key is only valid where the metadata read exists at all: writing it beside {@code publicKey} fails startup,
- *     because the supplied mode never performs that read
+ *     inside context refresh, and {@code deferred} at first use, so a Vault that is still sealing or mounting while the
+ *     application starts fails the first send (or health probe) instead of the boot; <b>optional</b> — unset (or blank,
+ *     which reads as unset) means {@code eager}, today's behaviour. The two values are the only ones, and the key is
+ *     only valid where the metadata read exists at all: writing it beside {@code publicKey} fails startup, because the
+ *     supplied mode never performs that read
  * @param requestTimeout the per-request timeout for every Vault call (default 30s; must be positive) — bounds the whole
  *     exchange, so a Vault that accepts the connection but never answers cannot hang application startup
  * @param connectTimeout the connect timeout of the default HTTP client (default 10s; must be positive)

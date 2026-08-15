@@ -80,42 +80,54 @@ class VaultSignerPublicKeyFetchModeTest {
 
     @Test
     void aBlankValueReadsAsUnset_soTheModeStaysEager() {
-        fetchedRunner().withPropertyValues("push2u.signer.vault.public-key-fetch=").run(context -> {
-            assertThat(context).hasSingleBean(VapidSigner.class);
-            assertThat(CountingTransitVaultConfiguration.vault().keyReads()).isEqualTo(1);
-        });
+        fetchedRunner()
+                .withPropertyValues("push2u.signer.vault.public-key-fetch=")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(CountingTransitVaultConfiguration.vault().keyReads())
+                            .isEqualTo(1);
+                });
     }
 
     @Test
     void eagerWrittenOutIsTheSameModeAsUnset() {
-        fetchedRunner().withPropertyValues("push2u.signer.vault.public-key-fetch=eager").run(context -> {
-            assertThat(context).hasSingleBean(VapidSigner.class);
-            assertThat(CountingTransitVaultConfiguration.vault().keyReads()).isEqualTo(1);
-        });
+        fetchedRunner()
+                .withPropertyValues("push2u.signer.vault.public-key-fetch=eager")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(CountingTransitVaultConfiguration.vault().keyReads())
+                            .isEqualTo(1);
+                });
     }
 
     @Test
     void deferredPerformsNoVaultCallAtStartup_andTheFirstUseReads() {
-        fetchedRunner().withPropertyValues("push2u.signer.vault.public-key-fetch=deferred").run(context -> {
-            assertThat(context).hasSingleBean(VapidSigner.class);
-            assertThat(CountingTransitVaultConfiguration.vault().calls())
-                    .as("the context refreshed without any Vault call")
-                    .isEmpty();
+        fetchedRunner()
+                .withPropertyValues("push2u.signer.vault.public-key-fetch=deferred")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(CountingTransitVaultConfiguration.vault().calls())
+                            .as("the context refreshed without any Vault call")
+                            .isEmpty();
 
-            byte[] advertised = context.getBean(VapidSigner.class).publicKey();
+                    byte[] advertised = context.getBean(VapidSigner.class).publicKey();
 
-            assertThat(advertised)
-                    .isEqualTo(CountingTransitVaultConfiguration.vault().publicKeyUncompressed());
-            assertThat(CountingTransitVaultConfiguration.vault().keyReads()).isEqualTo(1);
-        });
+                    assertThat(advertised)
+                            .isEqualTo(CountingTransitVaultConfiguration.vault().publicKeyUncompressed());
+                    assertThat(CountingTransitVaultConfiguration.vault().keyReads())
+                            .isEqualTo(1);
+                });
     }
 
     @Test
     void deferredIsMatchedTheWayTheBinderMatchesAnEnum_caseDoesNotDecide() {
-        fetchedRunner().withPropertyValues("push2u.signer.vault.public-key-fetch=DEFERRED").run(context -> {
-            assertThat(context).hasSingleBean(VapidSigner.class);
-            assertThat(CountingTransitVaultConfiguration.vault().calls()).isEmpty();
-        });
+        fetchedRunner()
+                .withPropertyValues("push2u.signer.vault.public-key-fetch=DEFERRED")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(VapidSigner.class);
+                    assertThat(CountingTransitVaultConfiguration.vault().calls())
+                            .isEmpty();
+                });
     }
 
     @Test
@@ -126,7 +138,8 @@ class VaultSignerPublicKeyFetchModeTest {
                 .withUserConfiguration(UnavailableTransportConfiguration.class)
                 .run(context -> {
                     assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure()).hasRootCauseInstanceOf(VapidSignerUnavailableException.class);
+                    assertThat(context.getStartupFailure())
+                            .hasRootCauseInstanceOf(VapidSignerUnavailableException.class);
                 });
         runner.withPropertyValues(vaultProperties())
                 .withPropertyValues("push2u.signer.vault.public-key-fetch=eager")
@@ -140,13 +153,15 @@ class VaultSignerPublicKeyFetchModeTest {
 
     @Test
     void aValueThatIsNeitherModeFailsTheContextNamingTheKey() {
-        fetchedRunner().withPropertyValues("push2u.signer.vault.public-key-fetch=lazy").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("push2u.signer.vault.public-key-fetch")
-                    .hasStackTraceContaining("'eager' or 'deferred'")
-                    .hasStackTraceContaining("'lazy'");
-        });
+        fetchedRunner()
+                .withPropertyValues("push2u.signer.vault.public-key-fetch=lazy")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasStackTraceContaining("push2u.signer.vault.public-key-fetch")
+                            .hasStackTraceContaining("'eager' or 'deferred'")
+                            .hasStackTraceContaining("'lazy'");
+                });
     }
 
     @Test
@@ -234,7 +249,8 @@ class VaultSignerPublicKeyFetchModeTest {
     // ---------------------------------------------------------------------------------------------------------------
 
     private ApplicationContextRunner fetchedRunner() {
-        return runner.withPropertyValues(vaultProperties()).withUserConfiguration(CountingTransitVaultConfiguration.class);
+        return runner.withPropertyValues(vaultProperties())
+                .withUserConfiguration(CountingTransitVaultConfiguration.class);
     }
 
     private ApplicationContextRunner deferredCompositionRunner() {

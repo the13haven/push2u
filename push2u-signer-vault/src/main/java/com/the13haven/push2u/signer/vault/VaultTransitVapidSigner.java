@@ -114,12 +114,12 @@ import com.the13haven.push2u.VapidSignerUnavailableException;
  * </ul>
  *
  * <p>Both Vault calls — the Transit {@code sign} POST and the fetched modes' one-time {@code transit/keys} read, at
- * startup or at first use — go
- * through this module's {@link VaultHttpTransport} seam (default {@link JdkVaultHttpTransport}), so an application's
- * mTLS, proxy, or observability transport applies to the metadata read as much as to signing. Deliberately
- * <em>not</em> push2u-core's {@code PushHttpClient}: push delivery talks to untrusted capability URLs and discards
- * response bodies, while Vault's responses must be read — buffered under the transport's size cap and per-request
- * timeout. The small Vault request/response JSON is built and parsed by hand — no JSON library.
+ * startup or at first use — go through this module's {@link VaultHttpTransport} seam (default
+ * {@link JdkVaultHttpTransport}), so an application's mTLS, proxy, or observability transport applies to the metadata
+ * read as much as to signing. Deliberately <em>not</em> push2u-core's {@code PushHttpClient}: push delivery talks to
+ * untrusted capability URLs and discards response bodies, while Vault's responses must be read — buffered under the
+ * transport's size cap and per-request timeout. The small Vault request/response JSON is built and parsed by hand — no
+ * JSON library.
  *
  * <p>Every factory method takes everything required — the Vault base address, the {@link TransitKeyName} and the
  * {@link VaultToken} — so an incomplete signer cannot be expressed and {@code build()} never refuses over a missing
@@ -136,30 +136,39 @@ import com.the13haven.push2u.VapidSignerUnavailableException;
  * read. Without the step no such header is sent at all, which is what Vault OSS (which has no namespaces) expects.
  *
  * <p><b>Key rotation:</b> the fetched modes capture the key version together with its public key — at construction, or
- * at first use in the deferred mode — and
- * pin that version on every {@code sign} call ({@code key_version} in the request body), so signatures always match
- * the advertised public key — rotating the Transit key in Vault does not break signing <em>by itself</em>. What the pin
- * does not survive is the operator raising the key's {@code min_encryption_version} above the pinned version: Vault
- * then rejects sign requests carrying that {@code key_version}, and every {@code sign} call fails loudly with a
- * {@link PushCryptoException}. Trimming old key versions (raising {@code min_available_version}) deletes the pinned
- * version outright and breaks signing the same way. Recover by recreating the signer (a fetched mode re-reads the
- * then-latest version and its public key) or, in the explicit mode, by supplying the new version's public key with the
- * matching {@code keyVersion}. The rotated key is also not picked up until the signer is recreated, which is the
- * behaviour VAPID wants: the public key is your published identity, and push subscriptions pin it at subscribe time.
- * There is deliberately no operation that re-reads the key on a live signer: swapping the advertised key under a live
- * sender would not adopt a new identity but invalidate every subscription taken out under the old one — RFC 8292 §4.2
- * entitles a push service to refuse a JWT whose key is not the one the subscription was created under — so adopting a
- * new key version is a migration built on a <em>new</em> signer and a new sender, run beside the old pair until the
- * subscriptions created under the previous key are gone.
- * The explicit mode pins whatever version {@link SuppliedPublicKeyBuilder#keyVersion(int)} was given. Omitting that
- * step sends no {@code key_version}, so Vault signs with the latest — that form is only safe if the Transit key is
- * never rotated; set {@code keyVersion} otherwise.
+ * at first use in the deferred mode — and pin that version on every {@code sign} call ({@code key_version} in the
+ * request body), so signatures always match the advertised public key — rotating the Transit key in Vault does not
+ * break signing <em>by itself</em>. What the pin does not survive is the operator raising the key's
+ * {@code min_encryption_version} above the pinned version: Vault then rejects sign requests carrying that
+ * {@code key_version}, and every {@code sign} call fails loudly with a {@link PushCryptoException}. Trimming old key
+ * versions (raising {@code min_available_version}) deletes the pinned version outright and breaks signing the same way.
+ * Recover by recreating the signer (a fetched mode re-reads the then-latest version and its public key) or, in the
+ * explicit mode, by supplying the new version's public key with the matching {@code keyVersion}. The rotated key is
+ * also not picked up until the signer is recreated, which is the behaviour VAPID wants: the public key is your
+ * published identity, and push subscriptions pin it at subscribe time. There is deliberately no operation that re-reads
+ * the key on a live signer: swapping the advertised key under a live sender would not adopt a new identity but
+ * invalidate every subscription taken out under the old one — RFC 8292 §4.2 entitles a push service to refuse a JWT
+ * whose key is not the one the subscription was created under — so adopting a new key version is a migration built on a
+ * <em>new</em> signer and a new sender, run beside the old pair until the subscriptions created under the previous key
+ * are gone. The explicit mode pins whatever version {@link SuppliedPublicKeyBuilder#keyVersion(int)} was given.
+ * Omitting that step sends no {@code key_version}, so Vault signs with the latest — that form is only safe if the
+ * Transit key is never rotated; set {@code keyVersion} otherwise.
  */
 // GodClass / complexity: the bulk of this class is the anchored JSON reader for Vault's responses
 // (see extractSignature). Keeping it here is what keeps the module free of an implementation
 // dependency — pulling a
 // JSON library in would trade these metrics for a transitive surface the library exists to avoid.
-@SuppressWarnings({"PMD.GodClass", "PMD.CyclomaticComplexity", "PMD.CognitiveComplexity"})
+// ExcessiveImports / CouplingBetweenObjects: the deferred mode's first-use initialization crossed
+// PMD's count thresholds. It lives in this class because the retained pair, the flight record and
+// the two Vault calls are one object's private state — a class of its own would either export that
+// state or grow a wider constructor than the coupling it removes.
+@SuppressWarnings({
+    "PMD.GodClass",
+    "PMD.CyclomaticComplexity",
+    "PMD.CognitiveComplexity",
+    "PMD.ExcessiveImports",
+    "PMD.CouplingBetweenObjects"
+})
 public final class VaultTransitVapidSigner implements VapidSigner {
 
     /**
@@ -374,15 +383,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // Unwrapped once, as in the canonical constructor: valid by construction, never printed.
         this.token = Objects.requireNonNull(token, "token").value();
         this.namespace = namespace;
-        this.metadata = null;
+        // The pair field stays unset here — the first successful read is its only writer.
         this.deferredInitialization =
                 new DeferredInitialization(vaultApiUri(vaultAddress, "/v1/" + mount + "/keys/" + keyName.value()));
         this.transport = Objects.requireNonNull(transport, "transport");
     }
 
     /**
-     * The signer's (version, public key) pair: the one it was built with, or — in the deferred mode — the one the
-     * first use reads from Vault, initializing if no successful read has published a pair yet.
+     * The signer's (version, public key) pair: the one it was built with, or — in the deferred mode — the one the first
+     * use reads from Vault, initializing if no successful read has published a pair yet.
      */
     private VaultKeyMetadata keyMetadata() {
         VaultKeyMetadata current = metadata;
@@ -399,12 +408,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * The deferred mode's first-use initialization: at most one metadata read in flight per signer, and only a
      * successful pair ever retained.
      *
-     * <p><b>At most one flight is active at a time</b> — the signer's own record of an active fetch, {@code
-     * activeFlight}, is what bounds the reads it starts. Without that bound, a cold fan-out of N concurrent senders
-     * would open N reads of one value against a custodian that audits every request; with it, one caller fetches and
-     * the rest wait on that caller's read, bounded by the transport's own connect and request timeouts and by nothing
-     * added here. The bound is over reads this signer <em>starts</em>: a transport whose request was abandoned may
-     * still be finishing I/O underneath, and nothing here reaches into that.
+     * <p><b>At most one flight is active at a time</b> — the signer's own record of an active fetch,
+     * {@code activeFlight}, is what bounds the reads it starts. Without that bound, a cold fan-out of N concurrent
+     * senders would open N reads of one value against a custodian that audits every request; with it, one caller
+     * fetches and the rest wait on that caller's read, bounded by the transport's own connect and request timeouts and
+     * by nothing added here. The bound is over reads this signer <em>starts</em>: a transport whose request was
+     * abandoned may still be finishing I/O underneath, and nothing here reaches into that.
      *
      * <p><b>A flight ends in one of four ways, and the three that do not succeed are distinct on purpose.</b> A
      * successful pair is published through the signer's one volatile field and kept for the signer's lifetime. A
@@ -514,6 +523,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * Cleared before the latch opens so that a waiter waking from an abandoned flight and retrying can only meet
          * the <em>next</em> flight or start one — never re-attach to this finished one and wait forever.
          */
+        // NullAssignment: null IS the recorded state here — "no fetch in flight" — and the whole
+        // single-flight bound is this field returning to it; a wrapper value would rename the null
+        // without removing it.
+        @SuppressWarnings("PMD.NullAssignment")
         private void finish(Flight flight, @Nullable Object outcome) {
             flight.outcome = outcome;
             synchronized (guard) {
@@ -571,9 +584,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * The immutable description of a flight's shared failure, taken once when the flight ends: the message, the
-     * fetch's own failure whole, and — for the unavailability, the only one of the two contract types that reports
-     * either — the custodian's status and declared delay.
+     * The immutable description of a flight's shared failure, taken once when the flight ends: the message, the fetch's
+     * own failure whole, and — for the unavailability, the only one of the two contract types that reports either — the
+     * custodian's status and declared delay.
      *
      * <p>Each waiter throws a <em>fresh</em> exception built from this, never the one instance the fetching caller was
      * given: one instance thrown from several threads would carry the fetching caller's stack, leave each waiter
@@ -582,11 +595,11 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * from an answered status often has no cause at all, and a waiter rebuilt from nothing would say nothing about the
      * read that failed. A cause reached from several chains is diagnostics; nothing here writes into one.
      *
-     * <p>Two details are deliberate. The reconstruction promises the <b>contract type</b> — {@code
-     * VapidSignerUnavailableException} or {@code PushCryptoException} — never the runtime class: both types are
+     * <p>Two details are deliberate. The reconstruction promises the <b>contract type</b> —
+     * {@code VapidSignerUnavailableException} or {@code PushCryptoException} — never the runtime class: both types are
      * extensible, a transport's subclass cannot be rebuilt without reflection, and no published contract lets a caller
-     * branch on it. And the two declared values are read <b>exactly once</b>, here, because the accessors are not
-     * final and an extending exception may answer differently on every call.
+     * branch on it. And the two declared values are read <b>exactly once</b>, here, because the accessors are not final
+     * and an extending exception may answer differently on every call.
      */
     private record SharedFailure(
             boolean unavailability,
@@ -634,10 +647,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * <p><b>The interruption test runs first, before any classification by type</b>, and it is the same disjunction the
      * sender applies before converting a failure into an outcome: the current thread's interrupt status — the fetching
      * caller's own thread, since this runs where the fetch failed — or an {@link InterruptedException} anywhere in the
-     * cause chain. Neither half is sound alone, and testing the type first would let a defective transport that
-     * wrapped an interruption in a recurring type share a cancellation with callers nobody interrupted. The fetching
-     * caller still receives such a failure exactly as it was labelled; refusing to <em>share</em> it is the whole of
-     * what this decides.
+     * cause chain. Neither half is sound alone, and testing the type first would let a defective transport that wrapped
+     * an interruption in a recurring type share a cancellation with callers nobody interrupted. The fetching caller
+     * still receives such a failure exactly as it was labelled; refusing to <em>share</em> it is the whole of what this
+     * decides.
      */
     private static @Nullable SharedFailure describeIfShareable(RuntimeException failure) {
         if (isInterruption(failure)) {
@@ -1881,8 +1894,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * unavailability, the status and any declared delay it reported — and the next caller after the failure simply
      * starts a new read. An interruption is never spread beyond the thread it belongs to: an interrupted fetching
      * caller keeps its own exception while the waiters retry the read among themselves, and an interrupted waiter
-     * receives its own {@link VapidSignerUnavailableException} with the {@link InterruptedException} beneath it and
-     * the interrupt flag re-set, while the read continues for everyone else.
+     * receives its own {@link VapidSignerUnavailableException} with the {@link InterruptedException} beneath it and the
+     * interrupt flag re-set, while the read continues for everyone else.
      */
     public static final class DeferredPublicKeyFetchBuilder {
 
@@ -2001,12 +2014,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * at the step that took the value.
          *
          * <p><b>This {@code build()} therefore throws neither {@link VapidSignerUnavailableException} nor
-         * {@link PushCryptoException}.</b> The contract the eagerly fetching builder documents for a startup
-         * supervisor — test the interruption, then the type — belongs to that builder alone, because it is about the
-         * read its {@code build()} performs; here there is no read to supervise and nothing of that kind to catch.
-         * Those failures surface at first use instead: inside a send, the sender reports an unavailable custodian as
-         * its signer-unavailable <em>outcome</em> and lets {@link PushCryptoException} propagate as itself; outside a
-         * send — a health probe, or an application asking for the key it publishes to browsers — the first call throws
+         * {@link PushCryptoException}.</b> The contract the eagerly fetching builder documents for a startup supervisor
+         * — test the interruption, then the type — belongs to that builder alone, because it is about the read its
+         * {@code build()} performs; here there is no read to supervise and nothing of that kind to catch. Those
+         * failures surface at first use instead: inside a send, the sender reports an unavailable custodian as its
+         * signer-unavailable <em>outcome</em> and lets {@link PushCryptoException} propagate as itself; outside a send
+         * — a health probe, or an application asking for the key it publishes to browsers — the first call throws
          * exactly what the eager {@code build()} would have thrown, and whoever supervises that call reads it in the
          * same order, interruption first.
          *
@@ -2018,7 +2031,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             // The one address rule that cannot live at the factory: the opt-in above is a builder
             // step, called only after the factory has returned.
             requirePlainHttpPermitted(address, allowInsecureHttp);
-            return new VaultTransitVapidSigner(address, mount, namespace, keyName, token, orDefaultTransport(transport));
+            return new VaultTransitVapidSigner(
+                    address, mount, namespace, keyName, token, orDefaultTransport(transport));
         }
     }
 

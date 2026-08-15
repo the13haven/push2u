@@ -15,11 +15,11 @@ import com.the13haven.push2u.VapidSigner;
 import com.the13haven.push2u.testkit.VapidSignerContractTest;
 
 /**
- * The published conformance kit against a <b>deferred-fetch</b> signer over a real Vault (dev mode): every fresh
- * signer the kit obtains has performed no Vault call yet, so {@code publicKey()} — the call the kit makes first —
- * performs the metadata read itself. A green run proves that a signer whose first answer costs a network round trip
- * still satisfies the whole {@code VapidSigner} contract, and that the lazily fetched public key matches the private
- * key Vault signs with. The eager fetched and explicit modes have their own contract run in
+ * The published conformance kit against a <b>deferred-fetch</b> signer over a real Vault (dev mode): every fresh signer
+ * the kit obtains has performed no Vault call yet, so {@code publicKey()} — the call the kit makes first — performs the
+ * metadata read itself. A green run proves that a signer whose first answer costs a network round trip still satisfies
+ * the whole {@code VapidSigner} contract, and that the lazily fetched public key matches the private key Vault signs
+ * with. The eager fetched and explicit modes have their own contract run in
  * {@link VaultTransitVapidSignerContractTest}.
  */
 class VaultTransitVapidSignerDeferredContractTest extends VapidSignerContractTest {

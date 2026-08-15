@@ -13,8 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -75,8 +75,7 @@ class VaultTransitVapidSignerDeferredFetchTest {
 
     @Test
     void deferredBuildAcceptsPlainHttpToALoopbackLiteral_andWithTheOptInToAnyHost() {
-        VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
-                        URI.create("http://127.0.0.1:8200"), KEY_NAME, TOKEN)
+        VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(URI.create("http://127.0.0.1:8200"), KEY_NAME, TOKEN)
                 .transport(new ScriptedVaultTransport())
                 .build();
         VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
@@ -175,7 +174,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
         signer.sign(SIGNING_INPUT);
 
         assertThat(second).isEqualTo(first).isNotSameAs(first);
-        assertThat(transport.keyReads()).as("one metadata read for the signer's lifetime").isEqualTo(1);
+        assertThat(transport.keyReads())
+                .as("one metadata read for the signer's lifetime")
+                .isEqualTo(1);
     }
 
     @Test
@@ -271,7 +272,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
         Throwable waiterOneFailure = waiterOne.awaitFailure();
         Throwable waiterTwoFailure = waiterTwo.awaitFailure();
 
-        assertThat(fetcherFailure).as("the fetching caller keeps the exception it was given").isSameAs(outage);
+        assertThat(fetcherFailure)
+                .as("the fetching caller keeps the exception it was given")
+                .isSameAs(outage);
         for (Throwable waiterFailure : List.of(waiterOneFailure, waiterTwoFailure)) {
             assertThat(waiterFailure)
                     .as("a waiter throws its own instance, never the fetching caller's")
@@ -286,7 +289,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
             assertThat(reconstructed.retryAfter()).contains(Duration.ofSeconds(7));
         }
         assertThat(waiterOneFailure).isNotSameAs(waiterTwoFailure);
-        assertThat(outage.getCause()).as("the shared failure itself had no cause of its own").isNull();
+        assertThat(outage.getCause())
+                .as("the shared failure itself had no cause of its own")
+                .isNull();
         assertThat(transport.keyReads()).isEqualTo(1);
     }
 
@@ -345,7 +350,8 @@ class VaultTransitVapidSignerDeferredFetchTest {
             assertThat(waiterFailure.getClass())
                     .as("the promise is the contract type, never the runtime class")
                     .isEqualTo(VapidSignerUnavailableException.class);
-            assertThat(((VapidSignerUnavailableException) waiterFailure).status()).hasValue(429);
+            assertThat(((VapidSignerUnavailableException) waiterFailure).status())
+                    .hasValue(429);
         }
         assertThat(subclassed.statusReads)
                 .as("status() read exactly once, when the description was taken")
@@ -365,10 +371,12 @@ class VaultTransitVapidSignerDeferredFetchTest {
         // must keep the failure from being shared.
         VapidSignerUnavailableException interruptedExchange =
                 new VapidSignerUnavailableException("Vault Transit key read produced no response", null);
-        fetchingCallerCancellationIsCallerLocal(() -> {
-            Thread.currentThread().interrupt();
-            throw interruptedExchange;
-        }, interruptedExchange);
+        fetchingCallerCancellationIsCallerLocal(
+                () -> {
+                    Thread.currentThread().interrupt();
+                    throw interruptedExchange;
+                },
+                interruptedExchange);
     }
 
     @Test
@@ -377,9 +385,11 @@ class VaultTransitVapidSignerDeferredFetchTest {
         // the chain half alone must keep the failure from being shared.
         VapidSignerUnavailableException interruptedExchange = new VapidSignerUnavailableException(
                 "Vault Transit key read produced no response", new InterruptedException("exchange interrupted"));
-        fetchingCallerCancellationIsCallerLocal(() -> {
-            throw interruptedExchange;
-        }, interruptedExchange);
+        fetchingCallerCancellationIsCallerLocal(
+                () -> {
+                    throw interruptedExchange;
+                },
+                interruptedExchange);
     }
 
     @Test
@@ -390,9 +400,11 @@ class VaultTransitVapidSignerDeferredFetchTest {
         // exactly as labelled.
         PushCryptoException mislabelled =
                 new PushCryptoException("read failed", new InterruptedException("exchange interrupted"));
-        fetchingCallerCancellationIsCallerLocal(() -> {
-            throw mislabelled;
-        }, mislabelled);
+        fetchingCallerCancellationIsCallerLocal(
+                () -> {
+                    throw mislabelled;
+                },
+                mislabelled);
     }
 
     private void fetchingCallerCancellationIsCallerLocal(
@@ -500,7 +512,8 @@ class VaultTransitVapidSignerDeferredFetchTest {
         CountDownLatch releaseFirstSign = new CountDownLatch(1);
         ScriptedVaultTransport transport = new ScriptedVaultTransport()
                 .onGet(VaultTransitVapidSignerDeferredFetchTest::healthyKeys)
-                .onPostGated(firstSignArrived, releaseFirstSign, VaultTransitVapidSignerDeferredFetchTest::healthySignature)
+                .onPostGated(
+                        firstSignArrived, releaseFirstSign, VaultTransitVapidSignerDeferredFetchTest::healthySignature)
                 .onPost(VaultTransitVapidSignerDeferredFetchTest::healthySignature);
         VapidSigner signer = deferredSigner(transport);
         signer.publicKey(); // initialize
@@ -603,7 +616,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
 
         private Object await() throws InterruptedException {
             thread.join(10_000);
-            assertThat(thread.isAlive()).as("caller '%s' finished", thread.getName()).isFalse();
+            assertThat(thread.isAlive())
+                    .as("caller '%s' finished", thread.getName())
+                    .isFalse();
             return outcome.get();
         }
 
@@ -617,7 +632,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
 
         Throwable awaitFailure() throws InterruptedException {
             Object result = await();
-            assertThat(result).as("caller '%s' should have failed", thread.getName()).isInstanceOf(Throwable.class);
+            assertThat(result)
+                    .as("caller '%s' should have failed", thread.getName())
+                    .isInstanceOf(Throwable.class);
             return (Throwable) result;
         }
     }
@@ -646,10 +663,9 @@ class VaultTransitVapidSignerDeferredFetchTest {
     }
 
     /**
-     * A transport whose every answer is scripted in advance, step by step: an unscripted call fails the test — which
-     * is what pins "no second read" as a hard assertion — and a gated step signals its arrival and then holds the
-     * calling thread until the test releases it, which is what makes the concurrent waves deterministic rather than
-     * probable.
+     * A transport whose every answer is scripted in advance, step by step: an unscripted call fails the test — which is
+     * what pins "no second read" as a hard assertion — and a gated step signals its arrival and then holds the calling
+     * thread until the test releases it, which is what makes the concurrent waves deterministic rather than probable.
      */
     private static final class ScriptedVaultTransport implements VaultHttpTransport {
 
@@ -669,7 +685,8 @@ class VaultTransitVapidSignerDeferredFetchTest {
             return this;
         }
 
-        ScriptedVaultTransport onGetGated(CountDownLatch arrived, CountDownLatch release, Supplier<VaultHttpResponse> action) {
+        ScriptedVaultTransport onGetGated(
+                CountDownLatch arrived, CountDownLatch release, Supplier<VaultHttpResponse> action) {
             gets.add(new Step(arrived, release, action));
             return this;
         }

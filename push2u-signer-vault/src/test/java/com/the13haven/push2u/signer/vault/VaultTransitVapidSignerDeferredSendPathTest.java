@@ -17,8 +17,8 @@ import java.security.spec.ECGenParameterSpec;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -71,9 +71,11 @@ class VaultTransitVapidSignerDeferredSendPathTest {
                 Duration.ofSeconds(9),
                 null);
         RecordingPushClient pushClient = new RecordingPushClient();
-        PushSender sender = sender(new SequencedVaultTransport(List.of(() -> {
-            throw outage;
-        })), pushClient);
+        PushSender sender = sender(
+                new SequencedVaultTransport(List.of(() -> {
+                    throw outage;
+                })),
+                pushClient);
 
         PushOutcome outcome = sender.send(subscription, PushMessage.of("hello".getBytes(StandardCharsets.UTF_8)));
 
@@ -88,9 +90,11 @@ class VaultTransitVapidSignerDeferredSendPathTest {
     void aFirstReadRecurringFailureLeavesSendAsItself() {
         PushCryptoException wrongKey = new PushCryptoException("Vault Transit key type is 'ed25519'");
         RecordingPushClient pushClient = new RecordingPushClient();
-        PushSender sender = sender(new SequencedVaultTransport(List.of(() -> {
-            throw wrongKey;
-        })), pushClient);
+        PushSender sender = sender(
+                new SequencedVaultTransport(List.of(() -> {
+                    throw wrongKey;
+                })),
+                pushClient);
 
         assertThatThrownBy(() -> sender.send(subscription, PushMessage.of("hello".getBytes(StandardCharsets.UTF_8))))
                 .isSameAs(wrongKey);
@@ -231,7 +235,9 @@ class VaultTransitVapidSignerDeferredSendPathTest {
         assertThat(waiterOutcome.get())
                 .as("the waiter's send was not handed the cancellation: it retried, took over, and delivered")
                 .isInstanceOf(PushOutcome.Accepted.class);
-        assertThat(transport.calls).as("the abandoned flight was followed by one takeover read").hasSize(3);
+        assertThat(transport.calls)
+                .as("the abandoned flight was followed by one takeover read")
+                .hasSize(3);
     }
 
     // ---------------------------------------------------------------------------------------------------------------

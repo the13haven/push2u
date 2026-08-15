@@ -24,12 +24,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * A healthy in-memory Transit engine behind the {@link VaultHttpTransport} seam: it holds a real P-256 key pair,
  * answers the {@code transit/keys/<name>} GET with that key's metadata, and answers the {@code sign} POST with a real
  * ES256 signature over the request's {@code input} — so everything downstream (the signer's validation, the health
- * probe's local verification) exercises genuine cryptography with no network and no container. Shared as a test
- * fixture between this module's tests and the Vault starter's, which need a Vault that works without Docker.
+ * probe's local verification) exercises genuine cryptography with no network and no container. Shared as a test fixture
+ * between this module's tests and the Vault starter's, which need a Vault that works without Docker.
  *
- * <p>Every call is recorded in order ({@code "GET <uri>"} / {@code "POST <uri>"}), which is what lets a test assert
- * not only how many reads happened but when — a deferred signer proves itself by the calls that did <em>not</em>
- * happen at construction. Thread-safe: concurrent senders are the normal case for everything holding a signer.
+ * <p>Every call is recorded in order ({@code "GET <uri>"} / {@code "POST <uri>"}), which is what lets a test assert not
+ * only how many reads happened but when — a deferred signer proves itself by the calls that did <em>not</em> happen at
+ * construction. Thread-safe: concurrent senders are the normal case for everything holding a signer.
  */
 public final class FakeTransitVault implements VaultHttpTransport {
 
