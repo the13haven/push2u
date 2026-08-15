@@ -498,10 +498,13 @@ on a live signer.
 fails loudly with a `PushCryptoException` — and the second cannot be undone.
 
 **A third needs no operator action at all, which is what makes it the one that catches people out:**
-in the fetched modes a signer takes `latest_version` every time one is built, so the next restart
-after a rotate advertises the new version fleet-wide while every stored subscription is still bound
-to the old one. Pin the version you have — the [explicit mode](#explicit-public-key), with
-`key-version` — *before* rotating anything.
+the fetched modes take `latest_version` from the read they perform, and neither persists it. An
+eager signer performs that read every time one is built, so the next restart after a rotate
+advertises the new version fleet-wide while every stored subscription is still bound to the old one;
+a deferred signer that has not been used yet has performed no read, so its *first send* does the
+same thing with nothing restarted at all. Pin the version you have — the
+[explicit mode](#explicit-public-key), with `key-version` — *before* rotating anything, and across
+the whole fleet before the rotate runs.
 
 There is also deliberately no `keyVersion()` accessor on the signer: it would answer what this
 process pinned, not what Vault now holds, and `latest != pinned` is the normal, safe state for VAPID

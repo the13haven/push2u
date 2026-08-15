@@ -78,6 +78,21 @@ cohort exists. Under Spring that is two beans and the starter autoconfigures one
 identities during a key rotation](SPRING.md#two-identities-during-a-key-rotation) has what that
 takes.
 
+**Both of those are about your application. One more thing is about the key itself: find out whether
+anything rotates it without you.** Every safety instruction below begins "before you rotate", and
+that assumes a person runs the rotation. Vault Transit ships a per-key scheduler that does not:
+`auto_rotate_period`, "the period at which this key should be rotated automatically", where `"0"` is
+the default and disables it and the shortest accepted period is one hour
+([Create key](https://developer.hashicorp.com/vault/api-docs/secret/transit#create-key)). It can
+also be set after the fact on the key's config endpoint, whose values "are returned during a read
+operation on the named key" ([Update key
+configuration](https://developer.hashicorp.com/vault/api-docs/secret/transit#update-key-configuration)),
+so `vault read transit/keys/<key>` is where you check it. A platform team's blanket policy setting
+it on every Transit key is enough to catch you: months later an unrelated deploy restarts the fleet
+onto a version nobody created by hand, and "pin before you rotate" never fired because nobody
+rotated. If the key is scheduled, clear the period — or accept that the pinning move in Part one is
+not optional maintenance but the only thing standing between you and a timer.
+
 If either precondition is missing, [When the migration is not possible
 yet](#when-the-migration-is-not-possible-yet) is the section to read instead.
 
@@ -97,17 +112,30 @@ version" ([Sign
 data](https://developer.hashicorp.com/vault/api-docs/secret/transit#sign-data)), and push2u's
 fetched modes never leave it unset.
 
-What that means for a running deployment depends on which mode built the signer:
+What that means for a running deployment depends on which mode built the signer, and — for one of
+them — on whether that signer has been used yet:
 
-- **A running fetched-mode signer is unaffected, and correctly so.** It captured `latest_version`
-  and that version's public key from one `transit/keys/<key>` response and sends that `key_version`
-  on every sign request, so a newer version accumulating beside it changes nothing it does.
-  `latest_version` running ahead of the pinned one is the normal, safe state for a VAPID key — not
-  drift, and not something push2u is failing to notice.
-- **The next process to start is another matter, and this is the trap.** A fetched-mode signer takes
-  `latest_version` *every time one is built*, and the version it took is persisted nowhere. So the
-  next restart, redeploy, scale-up or reschedule builds a signer on the new version and advertises
-  it — while every stored subscription is still bound to the old one. Nothing was rotated
+- **An eager fetched-mode signer that is running is unaffected, and correctly so.** It captured
+  `latest_version` and that version's public key from one `transit/keys/<key>` response inside
+  `build()`, and sends that `key_version` on every sign request, so a newer version accumulating
+  beside it changes nothing it does. `latest_version` running ahead of the pinned one is the normal,
+  safe state for a VAPID key — not drift, and not something push2u is failing to notice.
+- **A deferred fetched-mode signer that has not been used yet has captured nothing, and this is the
+  trap that needs no restart.** With `public-key-fetch: deferred` the read happens on the first
+  `sign`, `publicKey` or `publicKeyBase64Url` call, so a process that has not sent, and whose key
+  nothing has asked for, is pinned to no version at all. Rotate while it is in that state and the
+  first send — whenever it comes — initializes the whole fleet on the *new* version, with no restart
+  and no deploy anywhere near it. The deployment most likely to be sitting in exactly that state is
+  the one this mode was built for: push as a secondary channel, and a container check pointed at a
+  health group that excludes push2u, which is the routing
+  [`HEALTH.md`](HEALTH.md#keeping-the-probe-out-of-a-container-health-check) recommends here — so
+  nothing probes the signer and nothing initializes it. Once it *has* initialized, it behaves
+  exactly like the eager one above and is equally safe.
+- **The next process to start is a trap for both fetched modes.** A fetched-mode signer takes
+  `latest_version` from the read it performs — at `build()` in the eager mode, at first use in the
+  deferred one — and never persists it. So the next restart, redeploy, scale-up or reschedule reads
+  afresh, lands on the new version and advertises it — while every stored subscription is still
+  bound to the old one. Nothing was rotated
   deliberately at that moment; a `rotate` run weeks earlier is what armed it. During a rolling
   restart the fleet is split, and the same subscription succeeds on the pods that have not restarted
   yet and fails on the ones that have.
@@ -119,18 +147,33 @@ What that means for a running deployment depends on which mode built the signer:
   rotate breaks loudly, at once, instead of waiting for a restart.
 
 **Before you rotate, pin what you have.** A fetched-mode deployment cannot name two identities,
-because its configuration can only say "latest": the old sender's signer survives a rotate in
-memory and does not survive the next restart. So the first move of a Vault migration is to read the
-current version and its public key (`vault read transit/keys/<key>`) and rebuild the *existing*
-sender in the [explicit mode](VAULT.md#explicit-public-key) with that `key-version`. Only then does
-rotating become safe, and the new identity is best pinned the same way, so that a second rotate by
-someone else moves nothing.
+because its configuration can only say "latest". An eager signer that is already running survives a
+rotate in memory but not the next restart; a deferred one that has not been used yet survives
+nothing, since it has not read a version to keep. So the first move of a Vault migration is to move
+the *existing* sender to the [explicit mode](VAULT.md#explicit-public-key), pinning what it is
+serving today:
+
+- **the version** from `vault read transit/keys/<key>` — its `latest_version`, which is what a
+  fetched signer would take;
+- **the public key** from the running signer itself, `signer.publicKeyBase64Url()`. Take it there
+  and not from `vault read`, whose `public_key` is a PEM: `push2u.signer.vault.public-key` wants the
+  unpadded base64url of the 65-byte uncompressed point, nothing in this project converts between the
+  two, and `publicKeyBase64Url()` already returns exactly that — the same string your frontend is
+  being served as `applicationServerKey`, which is also the identifier this whole migration routes
+  on.
+
+**That rollout has to be finished before the rotate, everywhere.** One fetched-mode process left
+running is one process that will adopt the new version the moment anything restarts it — an
+autoscaler, a crash loop, a node drain — and by the paragraph above that is enough to split the
+fleet across two identities. No fetched-mode process may remain when the rotate runs. Pin the new
+identity the same way once it exists, so that a later rotate by someone else moves nothing either.
 
 **So "routine rotation for hygiene" is close to meaningless for a Transit key dedicated to VAPID.**
 The new version cannot be adopted transparently; adopting it *is* the migration in Part two, and
 running that migration is the only thing that makes having rotated worth anything. An operator
 rotating on a schedule out of habit is accumulating versions nobody will ever sign with, and is one
-unrelated restart — or one `min_available_version` — away from taking their subscribers off the air.
+unrelated restart — or one deferred signer's first send — away from taking their subscribers off the
+air.
 
 The two operations that destroy the old identity outright, and what each one is:
 
@@ -168,7 +211,7 @@ flowchart LR
     C["New signer K2"] --> D["New and migrated subscriptions: generation K2"]
     B --> E["Resubscription"]
     E --> D
-    D --> F["K1 cohort reaches zero"]
+    B --> F["K1 cohort reaches zero"]
     F --> G["Retire K1 and trim Vault version"]
 ```
 
@@ -230,11 +273,16 @@ remove the old key from configuration. Keep the routing branch for the old gener
 release, answering with a loud error, so that a row you missed is reported rather than sent under
 the wrong identity.
 
-**9. Only then make the old key unusable.** In Vault, raise `min_encryption_version` past the
-retired version and then trim it with `min_available_version`, in that order, the second
-irreversible. For a locally held pair, delete the private half from the secret store. Nothing before
-this step removes the ability to sign under the old identity, which is exactly what makes every step
-above reversible and this one not.
+**9. Only then make the old key unusable.** In Vault, raise `min_encryption_version` to the version
+the new identity uses — which is legal because it is now the latest — and that alone ends the old
+signer's ability to sign. Trimming is a second, separate step, and it needs **both** minimums
+raised: `min_available_version` is capped at the lesser of `min_decryption_version` and
+`min_encryption_version`, and `min_decryption_version` starts at `1` on every key
+([Read key](https://developer.hashicorp.com/vault/api-docs/secret/transit#read-key)), so raising
+only the encryption side leaves the cap at `1` and the trim is refused. Raise both, then trim, and
+note that the trim is the irreversible one. For a locally held pair, delete the private half from
+the secret store. Nothing before this step removes the ability to sign under the old identity, which
+is exactly what makes every step above reversible and this one not.
 
 ### Observability
 
@@ -256,6 +304,11 @@ it already has.
   `latest_version` with the version each sender was built against. That is the check that replaces
   the accessor push2u does not publish (see [Why there is no `refresh()`](#why-there-is-no-refresh))
   — and remember that a gap between the two is the expected state during a migration, not an alert.
+  **It is only performable once that version is in your own configuration**, because nothing exposes
+  what a running signer pinned: in a fetched mode there is no second number to compare against, so
+  this check begins working at the pinning move and not before — one more reason that move comes
+  first. The same read is where `auto_rotate_period` shows up, so a scheduler somebody set on the
+  key is visible in the answer you are already looking at.
 
 **What the health indicator does not tell you.** It asserts that a signer can sign and that the
 signature verifies against the key that signer itself advertises, and nothing beyond it
@@ -302,8 +355,12 @@ migration run this way is cheap to abandon: at no point did it remove anything.
   Trimming deletes the version outright — "Once trimmed, previous versions of the key cannot be
   recovered".
 - **Assuming a restart performs the migration.** It changes what the process advertises, never what
-  the push service recorded. In the Vault fetched mode it is how the trap in Part one springs; in
+  the push service recorded. In the Vault fetched modes it is how the trap in Part one springs; in
   every mode it is a way of doing step 3 to the entire population without doing steps 4, 5 or 6.
+- **Assuming that *not* restarting is therefore safe.** A deferred-fetch signer that has not been
+  used yet holds no version, so its first send adopts whatever is latest at that moment. Nothing
+  restarted, nothing deployed, and the outage still arrives — which is why the pinning move in Part
+  one is what makes a rotate safe, and a restart freeze is not.
 
 ## Emergency rotation when the key is compromised
 
@@ -332,14 +389,28 @@ or a fresh pair generated on a clean host.
 of the deploy. This is precisely the "switching a single sender to the new key" the planned recipe
 forbids, and here it is right.
 
-**3. Stop the old key signing, immediately.** In Vault, raise `min_encryption_version` above the
-compromised version; trim it with `min_available_version` once you are certain, remembering that
-trimming needs both minimums raised first ([Part
-one](#part-one-what-a-vault-transit-rotation-does)) and cannot be undone. For a local pair, destroy
-the private half everywhere it is stored. Be clear
-about what this does and does not achieve: it stops *your* infrastructure from using the key. It
-does nothing to an attacker holding the scalar, because the push services will keep honouring it
-until each subscription is replaced — which is why step 4 is urgent rather than tidy.
+**3. Stop the old key signing, immediately — and note that the planned migration's move does not
+work here.** Raising `min_encryption_version` is how step 9 of a planned migration retires an
+identity, and it works there because the new identity is a *newer version of the same key*, so the
+value being raised to is the latest one. In a compromise it usually is not: step 1 has you create a
+separate key, and the compromised key's bad version is its own latest. Vault refuses that —
+`min_encryption_version` can at most equal the key's latest version, and the config endpoint answers
+`cannot set min encryption version of %d, latest key version is %d`
+([`path_keys_config.go`](https://github.com/hashicorp/vault/blob/main/builtin/logical/transit/path_keys_config.go)).
+There is no value that stops the latest version of a Transit key from signing, so an operator who
+reaches for it mid-incident gets a flat refusal at exactly the wrong moment. Two moves that do work:
+
+- **Rotate the compromised key once, then raise `min_encryption_version` to that new version.** You
+  are not adopting the new version for anything — you are manufacturing a version to raise past,
+  because the ceiling has to exist before you can push the floor up to it.
+- **Or delete the key outright**, which first needs `deletion_allowed` set on its config: Vault
+  calls deletion "a potentially catastrophic operation" and requires that tunable
+  ([Delete key](https://developer.hashicorp.com/vault/api-docs/secret/transit#delete-key)).
+
+For a local pair, destroy the private half everywhere it is stored. Be clear about what any of this
+does and does not achieve: it stops *your* infrastructure from using the key. It does nothing to an
+attacker holding the scalar, because the push services will keep honouring it until each
+subscription is replaced — which is why step 4 is urgent rather than tidy.
 
 **4. Delete the old subscriptions and force resubscription.** Each row you keep is a client someone
 else can push to. Delete them, and have every client subscribe again under the new key at its next
