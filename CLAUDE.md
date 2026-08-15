@@ -29,6 +29,18 @@ container health check. Its two parts are shaped by the asymmetry that made the 
 the indicator is this library's, while nearly all of the group material is Spring Boot's own
 behaviour and would read the same for any contributor at all. `docs/SPRING.md` keeps a short
 introduction and a link to it, in the shape README uses for `docs/SPRING.md` itself.
+`docs/VAPID-KEY-ROTATION.md` is the operator runbook for replacing that pair on a running
+deployment, and it is a runbook rather than a design record throughout: what a Vault Transit
+`rotate` does and does not do to each of the three signer modes — including that a fetched-mode
+signer takes `latest_version` every time one is built, so the next restart after a rotate is what
+springs the trap — then the custodian-neutral two-cohort migration with its preconditions,
+observability, rollback and forbidden actions, the separately-shaped procedure for a compromised
+key, and why no `refresh()` or key-version accessor exists. It absorbed the five-step recipe
+`docs/VAULT.md` used to carry, which keeps only the warning and the link, so there is one recipe in
+the tree and not two; ADR-026's *Documents* section still names `docs/VAULT.md` as that recipe's
+home, correctly, as the record of where it was when the decision was taken. Its Vault claims carry
+first-party HashiCorp citations because that is where a wrong one costs an outage, and its
+`mermaid` block is the only one in the repository.
 `docs/PUSH-SERVICES.md` is the operator-facing list of the four browser push services and
 the allowlist entry each one needs, in both the Java and the YAML spelling — two origins, and two
 domains for Apple's and Microsoft's zones, which both vendors publish as the thing an application
@@ -68,8 +80,8 @@ the procedure.
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
 string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/VAPID.md`,
-`docs/MIGRATION.md` or anywhere else freezes at whatever version it was written with and starts
-lying at the next release.
+`docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md` or anywhere else freezes at whatever version it
+was written with and starts lying at the next release.
 Those documents point at README's Installation section instead. The exception is a document that is
 *about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
 version on purpose, and a frozen coordinate there is correct.

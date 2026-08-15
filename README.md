@@ -190,6 +190,12 @@ handed to it as configuration.
 The private key is a secret with no recovery path — lose it and every subscriber has to
 re-subscribe. The public key is not secret; it is published to browsers by design.
 
+Replacing the pair is therefore a migration run beside the old identity, and
+[`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) is the runbook for it — what a Vault Transit
+rotation does and does not do to a running deployment, the two-cohort procedure with its
+preconditions, rollback and forbidden actions, the counts that say when it is finished, and the
+separate and deliberately different procedure for a compromised key.
+
 ### Generate a pair
 
 The public key is the **65-byte uncompressed X9.62 point** that
@@ -600,8 +606,8 @@ coming up — see [`VAULT.md` → When boot must not depend on
 Vault](docs/VAULT.md#when-boot-must-not-depend-on-vault).
 
 [`VAULT.md`](docs/VAULT.md) is the reference — the three key modes and what each validates, the
-`push2u.signer.vault.*` properties, Vault namespaces on Enterprise/HCP, key rotation as a
-migration, and the transport seam every Vault call goes through.
+`push2u.signer.vault.*` properties, Vault namespaces on Enterprise/HCP, why a Transit key rotation
+is not a VAPID identity rotation, and the transport seam every Vault call goes through.
 
 ## Endpoint policy (SSRF hardening)
 

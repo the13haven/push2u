@@ -261,8 +261,10 @@ workflow derives `enhancement`/`bug`/`documentation` from the title, but `securi
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
 a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
 `docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/VAPID.md` — is updated if
-consumer-facing API, properties or limits changed; a new suppression or rule exclusion states its
-reason next to it.
+consumer-facing API, properties or limits changed, and `docs/VAPID-KEY-ROTATION.md` if the VAPID
+identity's lifecycle did — how a signer pins a key version, anything that re-reads a key on a live
+signer, a key-version accessor — each of which would falsify that runbook rather than merely date
+it; a new suppression or rule exclusion states its reason next to it.
 
 ## 6. Calibrate before reporting
 

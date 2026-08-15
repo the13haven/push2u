@@ -496,3 +496,39 @@ neither the switch nor anything else done to push2u.
 deliberately does not, the two keys with their cache and their startup refusals, when the indicator
 is registered and when it is not, and the health-group routes that keep a signer's backend out of a
 container health check.
+
+## Two identities during a key rotation
+
+Replacing the VAPID pair is a migration that runs two identities side by side until the
+subscriptions created under the old one are gone —
+[`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) is the runbook, and all of it applies here. What
+this starter adds is that it autoconfigures **one** signer and **one** sender, and both of the
+conditions it does that under work against a second identity added to a properties-configured
+context.
+
+**A second `VapidSigner` bean does not join the starter's — it replaces it.** The signer beans of
+both starters are conditional on *no* `VapidSigner` bean being present, and that condition asks
+whether a bean of the type exists, not whether it is the one they would have built. So a deployment
+that keeps `push2u.vapid.*` (or `push2u.signer.vault.*`) for the old identity and declares a bean
+for the new one ends up with the new one alone: the properties stop contributing, silently, and the
+old cohort is left with no signer at all — the one failure this migration exists to avoid, arriving
+through the framework rather than through a rotation. **Both identities are application beans for
+the duration**, with the properties that used to name one of them removed.
+
+**Two `VapidSigner` beans then need one marked `@Primary`.** Two injection points take a single
+`VapidSigner` by type: the autoconfigured `PushSender`, and the health indicator when Spring Boot
+health support is present. Declaring both `PushSender`s yourself removes the first — an application
+`PushSender` bean makes the starter's back off, and that is what you want anyway, since a sender the
+starter built would be signing with whichever bean won the injection. The indicator stays, so mark
+one signer primary; without it the context fails to start with an unsatisfied-dependency error
+naming both beans.
+
+**The indicator then probes that one signer.** `UP` says the primary identity can sign and says
+nothing about the other, so during a migration a green probe is not evidence that both senders are
+alive. If both matter to this deployment's health, that is the application's own contributor to add.
+
+**Everything except the signer is shared.** The contact address and the endpoint policy belong to
+the deployment rather than to an identity, so both senders take the same `EndpointPolicy` bean — the
+one [the allowlist properties publish](#the-policy-is-a-bean) — and the same `mailto:` contact. Only
+the `VapidSigner` differs between them, which is also why the routing that picks between the two
+senders is the application's and not a property.
