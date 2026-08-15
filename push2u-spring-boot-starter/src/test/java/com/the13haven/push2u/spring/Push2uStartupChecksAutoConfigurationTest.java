@@ -29,7 +29,7 @@ import com.the13haven.push2u.PushSender;
  * running with this autoconfiguration present.
  *
  * <p>They are raised together, from one check, and that is what
- * {@link #everyDeadKeyThisReleaseRemovedIsNamedInOneFailure()} exists for: the released guide printed all three of
+ * {@link #everyDeadKeyThisCheckKnowsAboutIsNamedInOneFailure()} exists for: the released guide printed all three of
  * these keys, so the deployment holding one commonly holds them all, and a refusal per startup would charge it a failed
  * start per key.
  *
@@ -192,9 +192,12 @@ class Push2uStartupChecksAutoConfigurationTest {
         // time, each key would hide the next and the upgrade would cost a failed start per key.
         //
         // The keys come from the check's own entries rather than from a list written out here, so an
-        // entry a later release adds is covered the day it lands, and one whose refusal forgets to
-        // name its own replacement fails here instead of in an operator's log. The values are
-        // arbitrary: the check asks whether a key is bound, never what it was bound to.
+        // entry a later release adds is covered the day it lands. What that buys is bounded, and
+        // worth stating exactly: every entry's refusal names its own key, and reaches the one joined
+        // failure whole. It does not check what a refusal *says* — the expected text is taken from
+        // the same entry the check emits, so it could not — and each entry's wording is pinned by its
+        // own test above. The values are arbitrary: the check asks whether a key is bound, never what
+        // it was bound to.
         var removedProperties = Push2uStartupChecksAutoConfiguration.RemovedPropertyTombstones.REMOVED_PROPERTIES;
         String[] everyDeadKey = removedProperties.stream()
                 .map(removed -> removed.key() + "=whatever-the-operator-wrote")
@@ -204,8 +207,12 @@ class Push2uStartupChecksAutoConfigurationTest {
             assertThat(context).hasFailed();
             assertThat(context.getStartupFailure()).isInstanceOf(IllegalStateException.class);
             for (var removed : removedProperties) {
+                assertThat(removed.refusal())
+                        .as("a refusal that never names its own key refuses an operator without telling"
+                                + " them which key to delete")
+                        .contains(removed.key());
                 assertThat(context.getStartupFailure())
-                        .as("%s is answered in full, with its own replacement, not merely listed", removed.key())
+                        .as("%s reaches the one failure whole, not trimmed to a list of names", removed.key())
                         .hasMessageContaining(removed.refusal());
             }
         });

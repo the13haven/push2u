@@ -122,10 +122,9 @@ public final class Push2uStartupChecksAutoConfiguration {
      * an entry opens the work item that removes it. Entries added by different releases therefore end at different
      * times. Each entry says what removed its key, which is what a reader needs in order to recognise it; <em>when</em>
      * that happened is deliberately not written here, because the release a window is counted from has no number until
-     * its tag exists — it is in the work item that release opened, and in this file's history. Retiring a key is
-     * deleting its entry, keys removed by one change go together, and the check goes when the last entry does. They
-     * exist to catch a configuration written against the previous release, not to accumulate for the life of the
-     * library.
+     * its tag exists. Once it does, the number is in the work item that release opened. Retiring a key is deleting its
+     * entry, keys removed by one change go together, and the check goes when the last entry does. They exist to catch a
+     * configuration written against the previous release, not to accumulate for the life of the library.
      *
      * <p><b>Every entry is declared here rather than beside the feature whose key it names</b>, and the difference is
      * not organisational. The health keys are the worked case: the autoconfiguration that owns that feature exists only
@@ -169,6 +168,9 @@ public final class Push2uStartupChecksAutoConfiguration {
                                 + " takes, so set management.health.push2u.enabled instead. That is also the key"
                                 + " management.health.defaults.enabled reaches when it turns contributors off"
                                 + " wholesale, which the removed one never did."),
+                // Removed by that same change: the two health keys moved together, and this entry
+                // carries its own note so that an entry inserted above it cannot leave it explained
+                // by a comment that is no longer next to it.
                 new RemovedProperty(
                         "push2u.health.cache-ttl",
                         "push2u.health.cache-ttl was removed and no longer configures anything — delete the key. The"
