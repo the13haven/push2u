@@ -105,6 +105,34 @@ class MissingPushSenderFailureAnalyzerTest {
     }
 
     @Test
+    void thatAnswerStaysTrueWhereTheSenderAutoConfigurationIsActiveAndSawNoSigner() {
+        // The second shape reaching that same branch, and the one an earlier wording claimed
+        // something false about. Here Push2uAutoConfiguration IS active — the signer simply arrived
+        // after it, which is what a signer starter declaring itself after the core starter rather
+        // than before it produces, and which leaves pushSender's @ConditionalOnBean unable to see a
+        // signer the context genuinely holds. A diagnostic that states something untrue about a
+        // deployment is this record's own subject one layer down, so the sentence has to cover both.
+        withFailedContext(
+                List.of(),
+                analysis -> {
+                    assertThat(analysis).isNotNull();
+                    assertThat(analysis.getDescription())
+                            .as("the claim is about the sender being missing, never about the class being absent")
+                            .contains("Either that auto-configuration is not active here")
+                            .contains("registered too late for it to see")
+                            .doesNotContain("which is not active here");
+                    assertThat(analysis.getAction())
+                            .contains("if it is active, order the auto-configuration contributing the signer before it")
+                            .contains("without depending on that order");
+                },
+                // Registration order is the auto-configuration order here: the sender's class is
+                // processed before the signer's, exactly as a mis-ordered signer starter would be.
+                Push2uAutoConfiguration.class,
+                ApplicationSignerConfiguration.class,
+                RequiresSenderConfiguration.class);
+    }
+
+    @Test
     void aMissingBeanOfSomeOtherTypeIsLeftToTheFrameworksOwnAnalyzer() {
         // The analyzer declines everything it has nothing to say about, which is what lets it hold
         // the first position in the list without swallowing unrelated failures.

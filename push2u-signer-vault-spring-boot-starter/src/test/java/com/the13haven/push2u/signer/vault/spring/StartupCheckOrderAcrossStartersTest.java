@@ -7,6 +7,13 @@ package com.the13haven.push2u.signer.vault.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.math.BigInteger;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECGenParameterSpec;
+import java.util.Base64;
+
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -14,6 +21,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import com.the13haven.push2u.EndpointPolicy;
+import com.the13haven.push2u.PushSender;
+import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 import com.the13haven.push2u.spring.Push2uAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
@@ -43,6 +53,9 @@ import com.the13haven.push2u.spring.Push2uStartupChecksAutoConfiguration;
  */
 class StartupCheckOrderAcrossStartersTest {
 
+    /** The Vault key the one positive case supplies, so that composition is asserted without a Vault round trip. */
+    private static String vaultPublicKeyB64;
+
     /** Every auto-configuration both starters ship, exactly as their two imports files do. */
     private static final AutoConfigurations BOTH_STARTERS = AutoConfigurations.of(
             VaultSignerAutoConfiguration.class,
@@ -54,6 +67,14 @@ class StartupCheckOrderAcrossStartersTest {
 
     /** A half-stated Vault block: present in every case below until the one that reads it. */
     private static final String PARTIAL_VAULT_BLOCK = "push2u.signer.vault.address=https://vault.example:8200";
+
+    @BeforeAll
+    static void generateVaultPublicKey() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new ECGenParameterSpec("secp256r1"));
+        vaultPublicKeyB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(uncompressed((ECPublicKey)
+                generator.generateKeyPair().getPublic()));
+    }
 
     @Test
     void theActivationSwitchsOwnValueIsReadFirst() {
@@ -164,6 +185,47 @@ class StartupCheckOrderAcrossStartersTest {
                 .run(context -> assertThat(context).hasNotFailed());
     }
 
+    @Test
+    void aVaultSignerDeploymentStartsUnderTheShippedComposition() {
+        // The deployment with the most to lose from this change, and the one no other test in either
+        // module puts under the whole shipped composition: delivery on, the only signer the Vault
+        // one, and every auto-configuration both starters ship — the general refusal's included.
+        //
+        // What could go wrong is not subtle. push2uMissingSignerRefusal stands down on a
+        // @ConditionalOnMissingBean decided while the auto-configurations are processed, so it needs
+        // the Vault contribution registered before the checks class is reached. If that ever stops
+        // holding, EVERY Vault deployment is refused at startup by this change's own new refusal,
+        // against a configuration that is completely correct.
+        //
+        // What this test does NOT do is catch the removal of an ordering declaration, and saying so
+        // is the point of the comment. Both Vault classes sort ahead of every core one by class name
+        // alone (…push2u.signer.vault.spring… before …push2u.spring…), and the checks class sorts
+        // last among the core ones, so dropping either the contribution's beforeName or the checks
+        // class's `after` leaves this green — verified by doing exactly that. It is the same
+        // coincidence VaultSignerAutoConfigurationTest already records for beforeName, and the
+        // declarations stay because relying on it would be worse than stating the order. The one
+        // ordering declaration in this family that IS load-bearing under the fallback is the
+        // diagnostics class's afterName, since that class sorts ahead of Push2uAutoConfiguration by
+        // name — and VaultSignerDiagnosticsAutoConfigurationTest fails without it.
+        //
+        // Explicit mode with a supplied public key, so the composition is asserted without a Vault
+        // round trip: what is under test is which beans exist, not what Vault would answer.
+        contextWith(
+                        "push2u.vapid.subject=mailto:ops@example.com",
+                        "push2u.allowed-origins=https://fcm.googleapis.com",
+                        "push2u.signer.vault.address=https://vault.example:8200",
+                        "push2u.signer.vault.key-name=vapid",
+                        "push2u.signer.vault.token=test-token",
+                        "push2u.signer.vault.public-key=" + vaultPublicKeyB64)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    assertThat(context.getBean(VapidSigner.class))
+                            .as("the signer under test is the Vault one, not a local fallback")
+                            .isInstanceOf(VaultTransitVapidSigner.class);
+                });
+    }
+
     private static ApplicationContextRunner contextWith(String... properties) {
         return new ApplicationContextRunner().withConfiguration(BOTH_STARTERS).withPropertyValues(properties);
     }
@@ -176,5 +238,27 @@ class StartupCheckOrderAcrossStartersTest {
         EndpointPolicy applicationPolicy() {
             return endpoint -> {};
         }
+    }
+
+    private static byte[] uncompressed(ECPublicKey key) {
+        byte[] out = new byte[65];
+        out[0] = 0x04;
+        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
+        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
+        return out;
+    }
+
+    private static byte[] toFixed32(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        if (bytes.length == 32) {
+            return bytes;
+        }
+        byte[] out = new byte[32];
+        if (bytes.length > 32) {
+            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
+        } else {
+            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
+        }
+        return out;
     }
 }

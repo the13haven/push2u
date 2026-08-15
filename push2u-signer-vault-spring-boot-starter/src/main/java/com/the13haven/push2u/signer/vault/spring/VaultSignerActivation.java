@@ -27,6 +27,17 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * name without depending on it, so the condition costs no dependency either. What it buys is that a deployment which
  * has declared the custodian unused never constructs the Vault signer, and so never pays for the metadata read its
  * fetched mode performs while the context starts.
+ *
+ * <p><b>One price comes with that, and it is stated rather than designed away.</b> Reading the switch is this module's;
+ * <em>refusing a value that is neither {@code true} nor {@code false}</em> is not — that refusal belongs to the module
+ * that owns the key, where it holds the first position in the one ordered list of startup checks the starter family
+ * declares. A second implementation of it here would be two definitions of one rule in two modules that cannot see each
+ * other, with nothing to guarantee which of them an operator reads: precisely the defect that list exists to prevent.
+ * So in a composition carrying this starter <em>without</em> the core one, a mistyped {@code push2u.enabled} is refused
+ * by nothing, and the condition below reads it the only way a condition can — as not {@code true}, therefore off — so
+ * the signer is silently withheld. That composition is unusual, since this starter supplies key custody and not a
+ * sender; where the core starter is present, which is every deployment that actually sends, the refusal is there and
+ * arrives ahead of everything else.
  */
 final class VaultSignerActivation {
 

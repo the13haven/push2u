@@ -339,24 +339,33 @@ class Push2uDeliverySwitchTest {
         // The rows of the table that are about a *value*: an entry that is not an origin is not an
         // origin in a context that sends nothing either, a contradiction does not become acceptable
         // there, and a key a release removed configures nothing on either side. Each is asserted
-        // with delivery off, which is the side where a check placed by where it happened to be
-        // implemented would have gone missing.
-        runner.withPropertyValues("push2u.enabled=false", "push2u.allowed-origins=http://push.example")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure()).hasMessageContaining("push2u.allowed-origins[0]:");
-                });
-        runner.withPropertyValues("push2u.enabled=false", "push2u.allowed-origins=https://push.example.test")
-                .withUserConfiguration(ApplicationPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure()).hasMessageContaining("Configure exactly one");
-                });
-        runner.withPropertyValues("push2u.enabled=false", "push2u.record-size=8192")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure()).hasMessageContaining("push2u.record-size");
-                });
+        // twice, once per side, because "runs / runs" is the claim and half of it is not the claim:
+        // off is the side where a check placed by where it happened to be implemented would have
+        // gone missing, and on is the side where a check gated by mistake would still have looked
+        // fine.
+        //
+        // On the "on" side these contexts also hold no signer, so the general refusal is registered
+        // beside each of them — and the value refusal is still what arrives, which is the declared
+        // order doing its work rather than an accident of this configuration.
+        for (String side : new String[] {"push2u.enabled=false", "push2u.enabled=true"}) {
+            runner.withPropertyValues(side, "push2u.allowed-origins=http://push.example")
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure())
+                                .as(side)
+                                .hasMessageContaining("push2u.allowed-origins[0]:");
+                    });
+            runner.withPropertyValues(side, "push2u.allowed-origins=https://push.example.test")
+                    .withUserConfiguration(ApplicationPolicyConfiguration.class)
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure()).as(side).hasMessageContaining("Configure exactly one");
+                    });
+            runner.withPropertyValues(side, "push2u.record-size=8192").run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure()).as(side).hasMessageContaining("push2u.record-size");
+            });
+        }
     }
 
     @Test

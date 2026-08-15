@@ -1020,6 +1020,16 @@ and goes stale; honouring a switch copies nothing — one fact about the namespa
 cannot drift — and the Vault starter already orders itself against the core starter by name without
 depending on it, so the condition costs no dependency either.
 
+**Reading the switch is a signer starter's; refusing a value of it that is neither is not.** That
+refusal is step 1 of the list below and belongs to the module owning the key: a second
+implementation in a module that cannot see the first would be one rule defined twice with nothing to
+guarantee which of them an operator reads, which is the defect the list exists to prevent. One price
+comes with that and is stated rather than designed away — in a composition carrying a signer starter
+*without* the core one, a mistyped `push2u.enabled` is refused by nothing and the signer starter's
+condition reads it the only way a condition can, as not `true` and therefore off, withholding the
+signer silently. Every deployment that actually sends carries the core starter, where the refusal
+is, and where it arrives ahead of everything else.
+
 **Blank counts as unset, for the properties that activate a signer.** `@ConditionalOnProperty`
 treats an empty value as present, so `public-key: ${VAPID_PUBLIC_KEY:}` beside a private key
 defaulted the same way would activate the local signer and then be refused for the length of a
@@ -1209,7 +1219,11 @@ something still required a sender, which is a contradiction in the application r
 signer; the check is absent because its auto-configuration was excluded; and everything else, which
 is the same enumeration the refusal gives — with a context that already holds a `VapidSigner` led
 with the piece that is actually missing. Answering "configure a signer" to all three would
-reintroduce the record's own subject one layer down, a deliberate "off" reported as a defect. The
+reintroduce the record's own subject one layer down, a deliberate "off" reported as a defect; and
+for the same reason no answer may state something false about the context it describes, so the
+signer-present branch names both shapes that reach it — `Push2uAutoConfiguration` inactive, and
+`Push2uAutoConfiguration` active but unable to see a signer an auto-configuration ordered after it
+registered — rather than claiming either. The
 framework ships an analyzer for the same failure, so this one declares `@Order(HIGHEST_PRECEDENCE)`
 rather than taking the position its `spring.factories` entry happens to give it, and a test pins that
 its text is the one that arrives — losing that race would leave no mark, since the output would be

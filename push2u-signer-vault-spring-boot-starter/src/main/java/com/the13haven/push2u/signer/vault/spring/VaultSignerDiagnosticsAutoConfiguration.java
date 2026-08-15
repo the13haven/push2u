@@ -38,7 +38,9 @@ import com.the13haven.push2u.VapidSigner;
  * existing {@link VapidSigner} or {@link PushSender} bean, and the switch is precisely what keeps those from existing —
  * so with delivery off the stand-down could not reach the case, and a deployment that switched delivery off with half a
  * {@code push2u.signer.vault.*} block left over would be refused over configuration nothing reads. That is the mistake
- * the stand-down exists to prevent, with the sign reversed.
+ * the stand-down exists to prevent, with the sign reversed. Reading that key is this module's; refusing a value of it
+ * that is neither {@code true} nor {@code false} belongs to the module that owns the key, and
+ * {@link VaultSignerActivation} states what that costs a composition carrying this starter without that one.
  *
  * <p>This class contributes nothing an application wires against, so excluding it says exactly what it does: it
  * switches this diagnostic off and leaves the signer's own auto-configuration untouched.

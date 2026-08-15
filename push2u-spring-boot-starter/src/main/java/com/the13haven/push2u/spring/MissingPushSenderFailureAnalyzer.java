@@ -38,6 +38,12 @@ import com.the13haven.push2u.VapidSigner;
  *       because restoring the checks would not change a thing a signer has already answered.
  * </ol>
  *
+ * <p><b>Nothing it says may be false about the context it is describing.</b> A startup diagnostic that states something
+ * untrue about a deployment is this starter's own subject one layer down, so where two shapes reach one branch the
+ * sentence names both rather than guessing between them — a context holding a signer and no sender is either one whose
+ * sender auto-configuration is inactive or one whose sender condition could not see that signer, and the answer covers
+ * each.
+ *
  * <p><b>Precedence is declared rather than taken.</b> The framework ships an analyzer for a missing bean of its own,
  * both recognise the same failure, and what the operator reads is whichever answers first in a sorted list. Losing that
  * race would leave no mark — the output would be correct, generic, and exactly what it was before this analyzer existed
@@ -91,13 +97,25 @@ final class MissingPushSenderFailureAnalyzer extends AbstractInjectionFailureAna
                     cause);
         }
         if (hasDefinition(factory, VapidSigner.class)) {
+            // Two shapes reach this branch and the message may not claim one of them. Either
+            // Push2uAutoConfiguration is not active, or it is active and its sender's condition did
+            // not see this signer — which happens when the auto-configuration contributing the
+            // signer is ordered after the one building the sender, since a condition sees only what
+            // is registered by the time it runs. Both are true statements about "no sender built
+            // from a signer this context holds", and the sentence says exactly that much.
             return new FailureAnalysis(
                     required + "This context holds a VapidSigner bean, so push2u's own refusal over a missing signer"
                             + " stood down — it asks only whether this deployment can sign, and something answered."
                             + " What is missing is the autoconfigured sender built from that signer, which"
-                            + " Push2uAutoConfiguration contributes and which is not active here.",
-                    "Restore Push2uAutoConfiguration, or define a PushSender bean of your own around the signer this"
-                            + " context already holds.",
+                            + " Push2uAutoConfiguration contributes. Either that auto-configuration is not active here,"
+                            + " or it is active and the signer was registered too late for it to see: a condition sees"
+                            + " only the beans registered by the time it runs, so an auto-configuration contributing a"
+                            + " VapidSigner has to declare itself before"
+                            + " com.the13haven.push2u.spring.Push2uAutoConfiguration.",
+                    "Restore Push2uAutoConfiguration if it was excluded; if it is active, order the auto-configuration"
+                            + " contributing the signer before it. Either way, defining a PushSender bean of your own"
+                            + " around the signer this context already holds answers it without depending on that"
+                            + " order.",
                     cause);
         }
         if (!hasDefinition(factory, Push2uStartupChecksAutoConfiguration.MissingSignerRefusal.class)) {

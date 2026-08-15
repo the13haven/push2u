@@ -70,9 +70,14 @@ import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
  * against Vault during context refresh is never performed either, a call no deployment that has declared the custodian
  * unused should pay for. Honouring a key another module owns is not the coupling this starter otherwise avoids: it
  * copies no activation rule and cannot go stale, and this class already orders itself against that starter by name
- * without depending on it. This class carries the contribution; the diagnostic over a half-stated
- * {@code push2u.signer.vault.*} block is {@link VaultSignerDiagnosticsAutoConfiguration}'s, and the two cannot share a
- * class because they belong at opposite ends of the ordering.
+ * without depending on it. <b>Reading that key is this module's; refusing a value of it that is neither {@code true}
+ * nor {@code false} is not</b> — that refusal belongs to the module owning the key, and a second implementation here
+ * would be one rule defined in two modules that cannot see each other. The price is stated rather than designed away,
+ * and {@link VaultSignerActivation} spells it out: in a composition carrying this starter without the core one, a
+ * mistyped switch is refused by nothing and the condition below withholds the signer silently. This class carries the
+ * contribution; the diagnostic over a half-stated {@code push2u.signer.vault.*} block is
+ * {@link VaultSignerDiagnosticsAutoConfiguration}'s, and the two cannot share a class because they belong at opposite
+ * ends of the ordering.
  */
 @AutoConfiguration(beforeName = "com.the13haven.push2u.spring.Push2uAutoConfiguration")
 @ConditionalOnProperty(
