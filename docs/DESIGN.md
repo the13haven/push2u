@@ -589,6 +589,21 @@ unset builder step appeared in none of them. Requiring the argument also removes
 mode instead of adding one — `build()` cannot refuse over a missing required value, since the
 compiler refuses first.
 
+**The policy is one value applied at both points of a subscription's life**
+([ADR-024](adr/0024-one-endpoint-policy-reachable-at-registration.md)): where a subscription is
+accepted, and before every send. A policy refusal is not a `410` — nothing expires the stored row —
+so a row whose endpoint the policy refuses fails once per notification forever while the
+subscriber's browser reports a healthy subscription; checking where the subscription is accepted
+keeps that row out of the store. The core gained no API for the second point, and that was the
+decision rather than an absence of work: `validate` is public and takes the endpoint URI alone,
+`EndpointRejectedException` is catchable at the application's own boundary (below), and a
+deployment that built its sender by hand holds the policy because it constructed it. The order at
+that boundary is the seam's own contract — `validate` documents its argument as an endpoint that
+already satisfies `Endpoints.requireSecure`, so the boundary builds the `Subscription` first,
+applies the policy to the endpoint it carries second, and stores the row only once both have
+passed. The registration check does not make the send's check redundant: the policy is deployment
+configuration and changes, so `send` validates every time and never trusts that a row once passed.
+
 The standard implementation is an allowlist of `EndpointRule` values
 ([ADR-017](adr/0017-domain-rule-in-the-endpoint-allowlist.md)). A rule is a value that carries its
 own kind, so the entries of one list say what each of them means instead of taking their meaning
@@ -962,10 +977,11 @@ Transport exception messages carry the HTTP method and the query-less request UR
 ## 8. Spring Boot integration
 
 `push2u-spring-boot-starter` binds `push2u.*` properties and conditionally creates a local
-`VapidSigner`, a default `JdkPushHttpClient`, an autoconfigured `PushSender`, and — when Spring
-Boot health support is present — a health indicator. Application beans of the same types override
-these defaults; an application-supplied `PushSender` bypasses the starter's factory method
-entirely, so everything below concerns the *autoconfigured* sender alone.
+`VapidSigner`, a default `JdkPushHttpClient`, an autoconfigured `PushSender`, an `EndpointPolicy`
+bean holding the allowlist the properties express, and — when Spring Boot health support is
+present — a health indicator. Application beans of the same types override these defaults; an
+application-supplied `PushSender` bypasses the starter's factory method entirely, so everything
+below concerns the *autoconfigured* sender alone.
 
 **A value the core rejects is re-thrown with the YAML property name in front of the core's own
 message.** The core is where a constraint is stated once, so the starter neither restates a bound
@@ -989,44 +1005,88 @@ probe to be attributed.
 **A property a release removed is refused, not ignored.** `push2u.record-size` went with
 [ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md), and binding would skip a leftover
 key silently — leaving the operator believing a limit is in force that nothing reads. So the
-starter carries a tombstone: a `BeanFactoryPostProcessor` in its own auto-configuration
-(`Push2uRemovedPropertiesAutoConfiguration`), which reads the bound environment at context refresh
+starter carries a tombstone: a `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
+which reads the bound environment at context refresh
 through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
 the key and where its effect went. It retains no properties component, publishes no type and no
-constant, and carries no condition of its own: a future delivery switch conditions the
-auto-configuration carrying the sender, and a dead key must be reported precisely in the deployment
-where nothing reads it. Running as a post-processor puts it ahead of every bean-creation failure;
+constant. Running as a post-processor puts it ahead of every bean-creation failure;
 its position among the starter family's declared startup checks is a package-private constant in
-`StartupCheckOrder`, numbered to leave room for the checks
-[ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around it. A tombstone is carried for one
-minor release after the release that removed its property, and the release adding one opens the
-work item that removes it.
+`StartupCheckOrder`, ahead of the two allowlist checks below and numbered to leave room for the
+checks [ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around them. A tombstone is carried
+for one minor release after the release that removed its property, and the release adding one opens
+the work item that removes it — the end belongs to that one check, not to the class hosting it.
+
+**Every startup check lives in `Push2uStartupChecksAutoConfiguration`, and that class contributes
+nothing else.** Two rules meet there. A check may be suppressed by nothing — not the delivery
+switch a future release puts on the class carrying the sender, and not a condition on a class, a
+bean or a property — so the hosting class carries no condition of any kind. And an
+auto-configuration that contributes a bean an operator might want to remove may not also host a
+check: excluding an auto-configuration is the framework's ordinary tool for removing its
+contribution, and a check riding beside the bean would vanish with it — the refusal would disappear
+in exactly the deployment whose operator reached for the standard tool. Excluding the checks' own
+class is therefore the one deliberate way to switch them off, visible in the exclusion line that
+names it, and it is the single route by which a stated allowlist can boot beside an application
+policy bean.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
 halves of one statement, unioned into a single allowlist, which is the shape a deployment naming
 both fixed-host and zone-published services needs. The decision is expressed when at least one of
-them is non-empty, and exclusivity holds between the properties and the bean, never between the
-two properties: expressing it while also supplying a bean fails the context, naming whichever
-property is non-empty and naming the bean, rather than silently preferring one and leaving the
-other believed-active. The escape hatch is per property — an explicitly *empty* value says the
-property is deliberately unused here, so a service can empty whichever key it inherited from shared
-configuration it cannot unset. Every set property empty with no bean is
-answered by the starter itself, naming both keys: the emptiness is then a statement about the pair,
-and no single core factory can speak for both. Expressing neither — both unset, no bean — fails the
-context as well, with a message naming the three ways to fix it: the sender the starter builds
-needs a policy like any other, and the decision has to come from the deployment.
+them is non-empty.
 
-Both components are nullable and neither carries a `@DefaultValue`, so an unset key stays
-distinguishable from an explicitly empty one; every rule above rests on that difference, and a
-default value would collapse "this deployment has not decided" into "this deployment cedes to a
+**The allowlist the properties express is a bean, in an auto-configuration of its own**
+([ADR-024](adr/0024-one-endpoint-policy-reachable-at-registration.md)):
+`Push2uEndpointPolicyAutoConfiguration` publishes `push2uEndpointPolicy` when the allowlist is
+expressed, `@ConditionalOnMissingBean` so an application bean suppresses it, and the autoconfigured
+sender resolves whichever the context holds through an `ObjectProvider`. It is not part of
+`Push2uAutoConfiguration` because the deployment the bean exists for — one that accepts
+subscriptions and leaves the sending to another service — has no sender, and nothing that later
+conditions the sender's class (ADR-025's delivery switch) may take the policy away from it; the
+policy's own auto-configuration therefore carries no condition at class level, and may never gain
+one. The bean's condition is the allowlist rather than a signer (a signer condition would withhold
+it from exactly that deployment) and rather than nothing (a deployment that merely carries the
+starter is owed no demand for an allowlist). The bean is built from the two properties alone, so no
+configuration-only path to unrestricted egress appears. The bean name is deliberately not published
+as a constant, because the starter's own bean is never identified by name: the exclusivity check
+below asks where a definition came from — the declaring class in its factory-method metadata — so
+an application naming its own bean `push2uEndpointPolicy` is still the application's, and a
+definition whose origin cannot be established counts as the application's too, erring towards a
+loud conflict rather than a silently dropped allowlist.
+
+**Two allowlist refusals are startup checks of the context, not of the sender**, hosted in
+`Push2uStartupChecksAutoConfiguration` — apart from the bean they guard, for the reason the
+tombstone section gives — and raised from bean-factory post-processors at declared positions in
+`StartupCheckOrder` (steps 3 and 4 of the
+one list [ADR-025](adr/0025-delivery-is-off-by-statement.md) carries), because both are about
+values and a value is wrong whether or not this context sends. A malformed entry — attributed
+exactly, by property name and index (`push2u.allowed-origins[2]`), since the starter builds each
+rule itself from one entry of one named property — is refused at step 3 by a check that performs
+the same rule construction the bean's factory method performs and discards it; the factory method
+still builds through the one implementation of each rule kind, and constructing a handful of rules
+twice at startup is the deliberate price of the message arriving ahead of every bean-creation
+failure. A non-empty property beside an application bean is refused at step 4, reading bean
+definitions rather than instances so nothing is forced into existence — left inside `pushSender`,
+that check was unreachable in precisely the registration-only context where the contradiction
+silently drops a stated allowlist. The Spring path still does not run through
+`EndpointPolicies.allowedOrigins`: what an operator sees for a bad entry is the rule's own refusal,
+wearing the property name and the index.
+
+**The two refusals about an unexpressed decision stay in `pushSender`**, because they are about an
+obligation and the obligation is the sender's: both properties unset with no bean fails naming the
+three ways to decide, and every set property empty with no bean fails naming both keys — the
+emptiness is a statement about the pair, and no single core factory can speak for both. A
+registration-only context that expresses nothing simply holds no policy bean and starts. The escape
+hatch is per property — an explicitly *empty* value says the property is deliberately unused here,
+so a service can empty whichever key it inherited from shared configuration it cannot unset, ceding
+to a bean or to the sibling property. `pushSender` never builds the policy from the properties
+itself; the one reachable state with a non-empty property and no bean — the policy
+auto-configuration excluded by hand — is refused naming that auto-configuration rather than
+silently rebuilt.
+
+Both properties' components are nullable and neither carries a `@DefaultValue`, so an unset key
+stays distinguishable from an explicitly empty one; every rule above rests on that difference, and
+a default value would collapse "this deployment has not decided" into "this deployment cedes to a
 bean" — the two cases the starter has to answer differently.
-
-A malformed entry is attributed exactly, by property name and index (`push2u.allowed-origins[2]`),
-and needs no machinery to be: the starter builds each rule itself from one entry of one named
-property, so at the moment the rule refuses, the property name and the index are both in hand. The
-Spring path therefore does not run through `EndpointPolicies.allowedOrigins`: what an operator sees
-for a bad entry is the rule's own refusal, wearing the property name and the index.
 
 There is no property for the unrestricted mode — under Spring it is an application
 `@Bean EndpointPolicy` returning `EndpointPolicies.unrestricted()`, by the same reasoning ADR-015

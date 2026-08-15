@@ -37,5 +37,21 @@ final class StartupCheckOrder {
      */
     static final int REMOVED_PROPERTY_TOMBSTONE = Ordered.HIGHEST_PRECEDENCE + 200;
 
+    /**
+     * A malformed allowlist entry — one that is not a well-formed origin or domain, named by property and index. The
+     * most specific finding of the family, so it precedes the contradiction below and every signer refusal: an entry
+     * that is not an origin is wrong whoever ends up reading it, and an operator holding several faults should meet the
+     * one that points at a value before any that describes the configuration around it.
+     */
+    static final int MALFORMED_ALLOWLIST_ENTRY = Ordered.HIGHEST_PRECEDENCE + 300;
+
+    /**
+     * A non-empty allowlist property beside an application-supplied {@code EndpointPolicy} bean. A contradiction
+     * between two well-formed statements, so it yields to the malformed-entry check above — a bad value is the sharper
+     * finding, and fixing or emptying that entry may be what resolves the contradiction — while preceding every refusal
+     * about signers and the delivery path, which the contradiction is not about.
+     */
+    static final int ALLOWLIST_BESIDE_POLICY_BEAN = Ordered.HIGHEST_PRECEDENCE + 400;
+
     private StartupCheckOrder() {}
 }

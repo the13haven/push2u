@@ -523,12 +523,16 @@ That is a complete configuration: everything else has a default. The allowlist i
 though — it is the [endpoint policy](#endpoint-policy-ssrf-hardening), and a context with neither
 of the two properties set nor an `EndpointPolicy` bean fails to start with a message naming every
 way to fix it. The two properties are not alternatives: they are unioned into one allowlist, and a
-deployment covering all four browser push services writes both. There is deliberately no property
+deployment covering all four browser push services writes both. The allowlist they express is
+published as an `EndpointPolicy` bean, so the code that accepts subscriptions injects it and
+validates each offered endpoint against the same rule every send will enforce — a service that
+registers subscriptions and leaves the sending to another one holds the bean without configuring a
+signer at all. There is deliberately no property
 for the unrestricted mode: under Spring it is an application `@Bean EndpointPolicy` returning
 `EndpointPolicies.unrestricted()`, so that turning the control off is a code change someone reviews
 rather than a line copied between profiles. [`SPRING.md`](docs/SPRING.md) is the reference — every
-`push2u.*` property and what a rejected value does to startup, the two allowlist properties beside
-an `EndpointPolicy` bean, and the health indicator with its cache.
+`push2u.*` property and what a rejected value does to startup, the policy bean with the
+registration recipe written against it, and the health indicator with its cache.
 
 ## Vault Transit signer
 
@@ -576,11 +580,16 @@ that address from inside your network, and the visible outcome — the status co
 variant carries versus an unanswered `PushOutcome.Indeterminate`, plus timing — is a blind SSRF
 oracle for internal host and port existence.
 
-Which endpoints a sender may POST to is therefore a decision the deployment has to make, and
-`PushSender` takes it as the third parameter of its factory method rather than as an optional
-builder step — there is no way to obtain a sender without naming a policy. For almost every
-deployment that policy is an allowlist naming the browser push services its users can actually
-arrive from:
+Which endpoints a deployment will contact is therefore a decision it has to make — one value,
+applied at both points of a subscription's life: where a subscription is accepted, before the row
+is stored, and before every send. `PushSender` takes it as the third parameter of its factory
+method rather than as an optional builder step — there is no way to obtain a sender without naming
+a policy — and the same object answers at the registration boundary, because you already hold it:
+you built it to build the sender. Validating there matters because a policy refusal is not a `410` —
+nothing ever expires the stored row, so a subscription accepted from an origin the policy refuses
+fails on every send, forever, while the subscriber's browser reports a healthy subscription. For
+almost every deployment that policy is an allowlist naming the browser push services its users can
+actually arrive from:
 
 ```java
 EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(

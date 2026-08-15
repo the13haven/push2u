@@ -46,6 +46,7 @@ import com.the13haven.push2u.signer.vault.VaultHttpResponse;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
 import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 import com.the13haven.push2u.spring.Push2uAutoConfiguration;
+import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthIndicator;
 
@@ -588,6 +589,7 @@ class VaultSignerAutoConfigurationTest {
                 .withConfiguration(AutoConfigurations.of(
                         VaultSignerAutoConfiguration.class,
                         Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class,
                         Push2uHealthAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
@@ -606,8 +608,10 @@ class VaultSignerAutoConfigurationTest {
     @Test
     void theVaultSignerOutranksTheCoreLocalSigner() {
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.public-key=" + publicKeyB64,
                         "push2u.vapid.private-key=" + privateKeyB64,
@@ -643,8 +647,10 @@ class VaultSignerAutoConfigurationTest {
         // private-key are set: that test's point is precedence between two signers, this one
         // reproduces the README scenario, where no local VAPID keys exist at all.
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
                         "push2u.allowed-origins=https://fcm.googleapis.com",
@@ -670,8 +676,10 @@ class VaultSignerAutoConfigurationTest {
         // public key, exactly as the real Vault Transit API would.
         FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
                         "push2u.allowed-origins=https://fcm.googleapis.com",
