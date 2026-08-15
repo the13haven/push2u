@@ -930,7 +930,16 @@ No traversal route through OSS Vault is claimed here.
   the facade's two conversion sites, so an interruption a defective transport wrapped in a
   recurring type is still not shared. And a failure of neither contract type reaches its own
   caller unchanged and abandons the flight the way a cancellation does — laundering it into a
-  contract type is what the exception taxonomy forbids. No signing `POST` ever runs while the
+  contract type is what the exception taxonomy forbids. The flight is released on **every** exit,
+  two of which the transport's own contract does not admit: a throwable that is not a
+  `RuntimeException` at all, which an implementation in a language without checked exceptions
+  delivers through a method declaring none, and a failure whose overridable accessors throw while
+  the description of it is being taken. Both abandon the flight, and both leave their caller the
+  failure it was given — the second with the accessor's complaint filed on that failure as a
+  suppressed exception rather than thrown in its place. Neither is a fine point: a flight left
+  recorded as active parks its waiters forever and then collects every later caller on the same
+  dead latch, which is one consumer's transport defect turned into a signer that never answers
+  again. No signing `POST` ever runs while the
   initialization guard is held — the guard protects the record of the active flight and nothing
   else, waiters block on the flight rather than on the guard, and an initialized signer takes a
   volatile fast path that touches neither — the same look-up-release-sign-publish discipline the

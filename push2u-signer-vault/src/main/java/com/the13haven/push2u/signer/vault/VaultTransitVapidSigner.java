@@ -426,7 +426,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * cancellations they never asked for — so the fetching caller keeps its own exception, the flight is abandoned, and
      * the waiters retry with one of them taking over. And a failure of neither contract type is a defect in a
      * replaceable transport: it reaches its own caller exactly as thrown, is never laundered into a contract type, and
-     * abandons the flight the way a cancellation does.
+     * abandons the flight the way a cancellation does — as does anything the transport lets out that is not a
+     * {@code RuntimeException} at all, since an implementation written in a language without checked exceptions can
+     * deliver one through a method that declares none, and a flight left recorded as active would be a signer that
+     * never answers again.
      *
      * <p><b>No signing request ever runs while this guard is held.</b> The monitor below protects only the record of
      * the active flight; the read itself runs on the fetching caller's thread outside it, waiters block on the flight's
@@ -492,7 +495,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         /**
          * Performs this flight's one metadata read, publishes a success for the signer's lifetime, and decides what the
          * flight leaves for its waiters. The fetching caller always keeps the exception it was given — rethrown here
-         * unchanged, whatever the waiters are handed.
+         * unchanged, whatever the waiters are handed — and the flight ends on <em>every</em> exit, since a flight left
+         * recorded as active is a signer that never signs again.
          */
         private VaultKeyMetadata fetch(Flight flight) {
             VaultKeyMetadata fetched;
@@ -504,17 +508,52 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 // published — the check moved from construction to first use, not out of the path.
                 P256PublicKeys.requireOnCurve(fetched.publicKey(), "publicKey");
             } catch (RuntimeException failure) {
-                finish(flight, describeIfShareable(failure));
+                endFailedFlight(flight, failure);
                 throw failure;
-            } catch (Error error) {
-                // Not this seam's to classify — but the flight must not stay recorded as active,
-                // or every waiter outlives it parked on a latch nobody will count down.
+            } catch (Throwable defect) {
+                // Anything else the read let out: an Error, or a checked exception through a method
+                // that declares none — the transport is a seam an application implements, and a
+                // language without checked exceptions, or a helper that erases them from a
+                // signature, delivers one here whatever this interface says. Neither is this seam's
+                // to classify, but both must still end the flight: a flight left recorded as active
+                // leaves its waiters parked on a latch nobody will count down, and every later
+                // caller attaches to that same dead flight — a transport defect turned into a
+                // signer that never answers again. The rethrow needs no throws clause: nothing the
+                // block above calls declares a checked exception, so the compiler knows this can be
+                // no more than an unchecked throwable.
                 finish(flight, null);
-                throw error;
+                throw defect;
             }
             metadata = fetched;
             finish(flight, fetched);
             return fetched;
+        }
+
+        /**
+         * Ends a flight whose read raised {@code failure}, taking the description of what to share <em>inside</em> the
+         * guarantee that the flight is released whatever that takes.
+         *
+         * <p>Describing a failure consults it — its cause chain, its message, and for an unavailability its status and
+         * declared delay — and every one of those is an overridable member of an exception a replaceable transport
+         * produced, so any of them may throw. Two things must survive that. The flight ends, because a description that
+         * threw is no reason to leave the waiters parked forever. And the caller keeps the failure it was given,
+         * because a defect in an exception's own accessors says nothing about what the read met: the secondary is
+         * attached to the failure as a suppressed exception — where a secondary raised while handling a primary belongs
+         * — and the failure travels on as the classified thing it is. A failure whose description could not be taken is
+         * shared with nobody, so the waiters retry, exactly as they do for a failure of neither contract type.
+         */
+        private void endFailedFlight(Flight flight, RuntimeException failure) {
+            SharedFailure shared = null;
+            try {
+                shared = describeIfShareable(failure);
+            } catch (Throwable secondary) {
+                // Everything above this line is consumer-supplied code called on a
+                // consumer-supplied failure, so the catch is as wide as what it stands in front
+                // of: whatever the description-taking does, the caller keeps its failure.
+                suppress(failure, secondary);
+            } finally {
+                finish(flight, shared);
+            }
         }
 
         /**
@@ -663,6 +702,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             return SharedFailure.of(recurring);
         }
         return null;
+    }
+
+    /**
+     * Records {@code secondary} on {@code failure} without ever letting it displace it. The recording is itself allowed
+     * to fail, because both throwables came from code this library does not own: an exception whose accessor threw the
+     * exception itself makes {@code addSuppressed} refuse the argument, and {@code addSuppressed} is as overridable as
+     * the accessor that failed. Either way the failure travels exactly as it was raised — a defective exception object
+     * may cost itself its own diagnostics, never the report of what the read met.
+     */
+    private static void suppress(Throwable failure, Throwable secondary) {
+        try {
+            failure.addSuppressed(secondary);
+        } catch (RuntimeException | Error refused) {
+            // Deliberately swallowed, and the last place it could be: the caller is owed the
+            // failure the read produced, not a complaint about the exception carrying it.
+        }
     }
 
     /**
