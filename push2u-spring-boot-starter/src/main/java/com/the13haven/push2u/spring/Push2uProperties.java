@@ -45,11 +45,12 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     leaving all three out fails such a context, because a sender with no policy POSTs wherever a subscription's
  *     endpoint points, which for client-registered subscriptions is a blind-SSRF surface. A malformed entry fails the
  *     context at startup whether or not a sender is built, naming this property and the index of the entry; a non-empty
- *     value beside an {@code EndpointPolicy} bean fails the same way, naming both, since the two express one security
- *     control. An explicitly <em>empty</em> value is the escape hatch for a service that inherits this property from
- *     shared configuration it cannot unset, and cedes either to a bean or to the sibling property. Emptying every
- *     property that is set, with no bean, fails a sender-building context naming both keys: with nothing left to cede
- *     to, the allowlist would reject every send
+ *     value beside an <em>application-supplied</em> {@code EndpointPolicy} bean fails the same way, naming both, since
+ *     the two express one security control — beside the starter's own bean it is no conflict but the ordinary
+ *     configuration, the property being exactly what that bean is built from. An explicitly <em>empty</em> value is the
+ *     escape hatch for a service that inherits this property from shared configuration it cannot unset, and cedes
+ *     either to a bean or to the sibling property. Emptying every property that is set, with no bean, fails a
+ *     sender-building context naming both keys: with nothing left to cede to, the allowlist would reject every send
  * @param allowedDomains the push-service domains this deployment may contact <em>together with every subdomain of each,
  *     at any depth</em>: {@code notify.windows.com} also admits {@code wns2-ln2p.notify.windows.com}. This is not an
  *     origin with the scheme left off — it is deliberately wider, and worth exactly what the DNS of each listed zone is
@@ -59,8 +60,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     instead. Each entry is a bare hostname of at least two labels, carrying no scheme, port, path or wildcard.
  *     Everything the sibling property says applies here identically: the union published as the {@code EndpointPolicy}
  *     bean, being one of the two ways to express the decision, startup rejection naming this property and the entry's
- *     index, exclusivity with an {@code EndpointPolicy} bean, and an explicitly empty value as the per-property escape
- *     hatch — with every set property empty and no bean failing a sender-building context on both keys at once
+ *     index, exclusivity with an <em>application-supplied</em> {@code EndpointPolicy} bean, and an explicitly empty
+ *     value as the per-property escape hatch — with every set property empty and no bean failing a sender-building
+ *     context on both keys at once
  * @param health the Actuator health probe settings; always present, defaults apply when unset
  */
 @ConfigurationProperties("push2u")

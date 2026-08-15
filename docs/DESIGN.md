@@ -1005,18 +1005,28 @@ probe to be attributed.
 **A property a release removed is refused, not ignored.** `push2u.record-size` went with
 [ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md), and binding would skip a leftover
 key silently — leaving the operator believing a limit is in force that nothing reads. So the
-starter carries a tombstone: a `BeanFactoryPostProcessor` in its own auto-configuration
-(`Push2uRemovedPropertiesAutoConfiguration`), which reads the bound environment at context refresh
+starter carries a tombstone: a `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
+which reads the bound environment at context refresh
 through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
 the key and where its effect went. It retains no properties component, publishes no type and no
-constant, and carries no condition of its own: a future delivery switch conditions the
-auto-configuration carrying the sender, and a dead key must be reported precisely in the deployment
-where nothing reads it. Running as a post-processor puts it ahead of every bean-creation failure;
+constant. Running as a post-processor puts it ahead of every bean-creation failure;
 its position among the starter family's declared startup checks is a package-private constant in
 `StartupCheckOrder`, ahead of the two allowlist checks below and numbered to leave room for the
 checks [ADR-025](adr/0025-delivery-is-off-by-statement.md) adds around them. A tombstone is carried
 for one minor release after the release that removed its property, and the release adding one opens
-the work item that removes it.
+the work item that removes it — the end belongs to that one check, not to the class hosting it.
+
+**Every startup check lives in `Push2uStartupChecksAutoConfiguration`, and that class contributes
+nothing else.** Two rules meet there. A check may be suppressed by nothing — not the delivery
+switch a future release puts on the class carrying the sender, and not a condition on a class, a
+bean or a property — so the hosting class carries no condition of any kind. And an
+auto-configuration that contributes a bean an operator might want to remove may not also host a
+check: excluding an auto-configuration is the framework's ordinary tool for removing its
+contribution, and a check riding beside the bean would vanish with it — the refusal would disappear
+in exactly the deployment whose operator reached for the standard tool. Excluding the checks' own
+class is therefore the one deliberate way to switch them off, visible in the exclusion line that
+names it, and it is the single route by which a stated allowlist can boot beside an application
+policy bean.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
@@ -1043,8 +1053,10 @@ an application naming its own bean `push2uEndpointPolicy` is still the applicati
 definition whose origin cannot be established counts as the application's too, erring towards a
 loud conflict rather than a silently dropped allowlist.
 
-**Two allowlist refusals are startup checks of the context, not of the sender**, raised from
-bean-factory post-processors at declared positions in `StartupCheckOrder` (steps 3 and 4 of the
+**Two allowlist refusals are startup checks of the context, not of the sender**, hosted in
+`Push2uStartupChecksAutoConfiguration` — apart from the bean they guard, for the reason the
+tombstone section gives — and raised from bean-factory post-processors at declared positions in
+`StartupCheckOrder` (steps 3 and 4 of the
 one list [ADR-025](adr/0025-delivery-is-off-by-statement.md) carries), because both are about
 values and a value is wrong whether or not this context sends. A malformed entry — attributed
 exactly, by property name and index (`push2u.allowed-origins[2]`), since the starter builds each

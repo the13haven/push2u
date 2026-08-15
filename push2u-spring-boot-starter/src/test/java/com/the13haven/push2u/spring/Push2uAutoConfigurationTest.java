@@ -80,7 +80,7 @@ class Push2uAutoConfigurationTest {
                     Push2uAutoConfiguration.class,
                     Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
-                    Push2uRemovedPropertiesAutoConfiguration.class));
+                    Push2uStartupChecksAutoConfiguration.class));
 
     @BeforeAll
     static void generateVapidKeys() throws Exception {
@@ -820,7 +820,71 @@ class Push2uAutoConfigurationTest {
                                     IllegalStateException.class,
                                     "Push2uEndpointPolicyAutoConfiguration"))
                             .hasMessageContaining("push2u.allowed-origins")
+                            .as("the property that is actually non-empty, not a slash-joined pair")
+                            .hasMessageNotContaining("push2u.allowed-domains")
                             .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
+    void theContradictionSurvivesExcludingThePolicyAutoConfigurationWithASenderConfigured() {
+        // The configuration that must not boot green: a fully configured sender, a non-empty
+        // allowlist property, an application EndpointPolicy bean, and the policy bean's
+        // auto-configuration excluded — the framework's standard tool, and the natural next move
+        // for an operator who just met the contradiction refusal. The check lives in a class of
+        // its own precisely so this exclusion removes only the bean: the contradiction still fails
+        // the context, naming the property and the bean, instead of the sender quietly enforcing
+        // the application bean while push2u.allowed-origins is read by nothing.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        Push2uAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class,
+                        Push2uStartupChecksAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.allowed-origins")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void excludingTheChecksAutoConfigurationIsTheOneRouteAroundTheContradiction() {
+        // The declared residual, pinned so it stays declared: excluding the auto-configuration
+        // whose name says "startup checks" is a deliberate, visible act of switching those checks
+        // off, and it is the only route by which a non-empty allowlist boots beside an application
+        // bean. The context starts and the sender enforces the application bean. This also pins
+        // that the contradiction has exactly ONE implementation — a second guard left inside
+        // pushSender would fail this context, and two implementations of one refusal is the drift
+        // the whole arrangement exists to prevent.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .as("the application bean is what the sender enforces")
+                            .contains("application policy");
                 });
     }
 

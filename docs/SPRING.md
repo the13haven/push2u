@@ -236,16 +236,37 @@ and a non-empty allowlist property beside it still fails the context.
 A malformed entry fails the context named exactly — the property it came from and its index in
 that property's list, `push2u.allowed-origins[2]`, since the starter builds each rule itself from
 one entry of one named property. It, too, fails **whether or not the deployment sends**, from a
-startup check that runs ahead of every other refusal the same context might raise, so the operator
-reads the message about the value to fix first. The entry appears in the message the way an
-endpoint appears in a rejection: an origin entry with its path and query stripped, because a
-pasted capability URL is precisely the mistake being reported, and a domain entry verbatim only
-when it is a plain host-shaped token.
+startup check that runs ahead of the property-beside-a-bean contradiction above and ahead of every
+bean-creation failure — so of the allowlist's own complaints, the value to fix is the message that
+arrives; only the refusal over a removed `push2u.*` key outranks it. The entry appears in the
+message the way an endpoint appears in a rejection: an origin entry with its path and query
+stripped, because a pasted capability URL is precisely the mistake being reported, and a domain
+entry verbatim only when it is a plain host-shaped token.
 
 Expressing **neither** — both properties unset, no bean — fails only a context that builds the
 autoconfigured sender, with a message naming the three ways to fix it: the obligation is the
 sender's, and a deployment that does not send is owed no demand for an allowlist it has no use
 for.
+
+One more refusal completes the list: a non-empty allowlist property in a context that has
+**excluded** the auto-configuration publishing the policy bean fails when the autoconfigured
+sender is built, naming the non-empty property and `Push2uEndpointPolicyAutoConfiguration`. The
+sender does not rebuild the policy from the properties — the allowlist is one definition, and a
+second construction inside the sender would be a second place the same rule is stated.
+
+**Excluding an auto-configuration removes its contribution, and the checks are placed so that this
+stays true.** The two value refusals above are hosted in `Push2uStartupChecksAutoConfiguration`,
+apart from the bean they guard, because a check riding in the bean's own class would vanish with
+the bean the moment an operator excluded it — silencing exactly the refusal they were owed. So
+excluding `Push2uEndpointPolicyAutoConfiguration` removes only the bean, and both checks keep
+running. Excluding `Push2uStartupChecksAutoConfiguration` is the one deliberate way to switch the
+checks off — visible in the exclusion line that names them — and what it leaves reachable is
+stated here rather than left to be discovered: with the checks excluded, a non-empty allowlist
+beside an application bean boots, the bean in force and the properties read by nothing, in sending
+contexts as well as registration-only ones; a malformed entry is then refused only where the
+policy bean is actually built, as that bean's creation failure, and in a context that builds no
+policy bean it goes unreported — which for a senderless context is exactly the behaviour that
+predates the bean, when nothing outside the sender read these properties at all.
 
 One escape hatch, and it is per property: a service that *inherits* `push2u.allowed-origins` from
 a shared configuration it does not own cannot unset the property, so setting it to an explicitly
@@ -260,9 +281,10 @@ zero-length value is no entries at all. A single space is one entry; a lone comm
 side of it. None of them is a name, but the property now *expresses* an allowlist, which is the
 opposite of what was meant by typing it. Wherever the blank lands, it is refused as the malformed
 entry it is, by property and index — `push2u.allowed-origins[0]`, an entry that shows nothing of
-itself but still has a position — and that refusal outranks every other complaint the same context
-could raise, the property-beside-a-bean contradiction included, so the message points at the blank
-rather than at a bean that was configured on purpose.
+itself but still has a position — and that refusal outranks the property-beside-a-bean
+contradiction and every bean-creation failure, so the message points at the blank rather than at a
+bean that was configured on purpose. Only a removed `push2u.*` key outranks the blank: a context
+carrying one of those too reads the tombstone first.
 
 ### No property turns the restriction off
 

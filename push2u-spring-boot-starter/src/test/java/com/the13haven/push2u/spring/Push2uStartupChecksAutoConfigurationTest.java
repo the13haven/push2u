@@ -26,8 +26,13 @@ import com.the13haven.push2u.PushSender;
  * post-processor of the bean factory, so it precedes every bean-creation failure; and a context without the key starts
  * exactly as before, which the whole of {@link Push2uAutoConfigurationTest} also pins by running with this
  * autoconfiguration present.
+ *
+ * <p>{@link Push2uStartupChecksAutoConfiguration} hosts two more checks, both about the allowlist properties; those are
+ * covered in {@link Push2uEndpointPolicyAutoConfigurationTest} beside the bean they guard, including that they survive
+ * the exclusion of the auto-configuration contributing that bean — the reason the checks live in this class rather than
+ * in that one.
  */
-class Push2uRemovedPropertiesAutoConfigurationTest {
+class Push2uStartupChecksAutoConfigurationTest {
 
     /** The full starter composition, exactly as the imports file ships it. */
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
@@ -35,7 +40,7 @@ class Push2uRemovedPropertiesAutoConfigurationTest {
                     Push2uAutoConfiguration.class,
                     Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
-                    Push2uRemovedPropertiesAutoConfiguration.class));
+                    Push2uStartupChecksAutoConfiguration.class));
 
     @Test
     void aLeftoverRecordSizeKeyFailsTheContextNamingThePropertyAndItsReplacement() {
@@ -104,7 +109,7 @@ class Push2uRemovedPropertiesAutoConfigurationTest {
         // protects, since the deployment most in need of it is one where nothing else reads the
         // namespace at all.
         new ApplicationContextRunner()
-                .withConfiguration(AutoConfigurations.of(Push2uRemovedPropertiesAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(Push2uStartupChecksAutoConfiguration.class))
                 .withPropertyValues("push2u.record-size=8192")
                 .run(context -> {
                     assertThat(context).hasFailed();

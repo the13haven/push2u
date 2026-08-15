@@ -142,11 +142,11 @@ public final class Push2uAutoConfiguration {
      * {@link Push2uEndpointPolicyAutoConfiguration} builds from {@code push2u.allowed-origins} and
      * {@code push2u.allowed-domains} when at least one of them has an entry, or an application-supplied bean, which
      * suppresses the starter's. The refusals about the allowlist's <em>values</em> — a malformed entry, and a non-empty
-     * property beside an application bean — are startup checks of that auto-configuration and have already run by the
-     * time this method does, whether or not the context builds a sender. What this method still refuses is the
-     * unexpressed <em>obligation</em>, which is the sender's own: a deployment that sends has to say which hosts it
-     * will POST to, because a sender built without that decision would POST to whatever endpoint an attacker-influenced
-     * subscription names.
+     * property beside an application bean — are startup checks hosted in {@link Push2uStartupChecksAutoConfiguration}
+     * and have already run by the time this method does, whether or not the context builds a sender. What this method
+     * still refuses is the unexpressed <em>obligation</em>, which is the sender's own: a deployment that sends has to
+     * say which hosts it will POST to, because a sender built without that decision would POST to whatever endpoint an
+     * attacker-influenced subscription names.
      *
      * <p>Two ways of expressing nothing fail differently, and deliberately. With no bean and both properties unset, the
      * failure names the three ways to fix it — either property, or a bean, including one returning
@@ -217,8 +217,9 @@ public final class Push2uAutoConfiguration {
      * Resolves the endpoint policy the sender requires, from the one the context holds: the starter's own bean, built
      * from the allowlist properties by {@link Push2uEndpointPolicyAutoConfiguration}, or an application-supplied
      * {@link EndpointPolicy} bean, which suppresses the starter's. The refusals about the allowlist's values — a
-     * malformed entry, and a non-empty property beside an application bean — live with that auto-configuration's
-     * startup checks and have already run by the time this method executes.
+     * malformed entry, and a non-empty property beside an application bean — are startup checks hosted in
+     * {@link Push2uStartupChecksAutoConfiguration}, apart from the bean they guard so that excluding the bean's class
+     * cannot silence them, and they have already run by the time this method executes.
      *
      * <p>What stays here is the <em>obligation</em>, because the obligation is the sender's: which hosts this
      * application server may POST to is a decision a sending deployment has to express — the endpoint a send POSTs to
@@ -255,7 +256,7 @@ public final class Push2uAutoConfiguration {
         if (!originsExpressed && !domainsExpressed) {
             throw everyConfiguredAllowlistEmpty();
         }
-        throw allowlistExpressedWithoutItsAutoConfiguration();
+        throw allowlistExpressedWithoutItsAutoConfiguration(originsExpressed, domainsExpressed);
     }
 
     /** Both allowlist properties unset and no bean: the decision was never made, so name every way to make it. */
@@ -289,12 +290,17 @@ public final class Push2uAutoConfiguration {
      * A non-empty allowlist property, but no policy bean in the context: reachable only when the auto-configuration
      * whose bean's condition is exactly a non-empty allowlist has been excluded. Refused rather than rebuilt here — the
      * allowlist is one definition, published where the code that accepts subscriptions can reach it, and a second
-     * construction inside the sender's factory would be a second place the same rule is stated.
+     * construction inside the sender's factory would be a second place the same rule is stated. The message names the
+     * property that is actually non-empty, as every sibling refusal does: with two of them, an unnamed one would leave
+     * half the search.
      */
-    private static IllegalStateException allowlistExpressedWithoutItsAutoConfiguration() {
-        return new IllegalStateException("push2u.allowed-origins / push2u.allowed-domains is non-empty, but no"
-                + " EndpointPolicy bean exists in this context — the allowlist becomes one only through"
-                + " Push2uEndpointPolicyAutoConfiguration, which is not active here (most likely excluded). Restore"
-                + " that auto-configuration, or supply an EndpointPolicy bean.");
+    private static IllegalStateException allowlistExpressedWithoutItsAutoConfiguration(
+            boolean originsExpressed, boolean domainsExpressed) {
+        String expressed = originsExpressed && domainsExpressed
+                ? "push2u.allowed-origins and push2u.allowed-domains are non-empty"
+                : (originsExpressed ? "push2u.allowed-origins" : "push2u.allowed-domains") + " is non-empty";
+        return new IllegalStateException(expressed + ", but no EndpointPolicy bean exists in this context — the"
+                + " allowlist becomes one only through Push2uEndpointPolicyAutoConfiguration, which is not active here"
+                + " (most likely excluded). Restore that auto-configuration, or supply an EndpointPolicy bean.");
     }
 }

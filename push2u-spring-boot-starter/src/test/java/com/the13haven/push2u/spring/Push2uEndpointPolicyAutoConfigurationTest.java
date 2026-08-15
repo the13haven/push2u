@@ -31,10 +31,13 @@ import com.the13haven.push2u.VapidSigner;
 /**
  * {@link Push2uEndpointPolicyAutoConfiguration} publishes the allowlist the properties express as an
  * {@link EndpointPolicy} bean — reachable by the application code that accepts subscriptions, with or without a sender
- * in the context — and carries the two startup checks about the allowlist's values: a malformed entry, named by
- * property and index, and a non-empty property beside an application-supplied policy bean. Both checks run from the
- * post-processor phase, ahead of every bean-creation failure, and neither depends on a signer, a sender or Actuator
- * being anywhere in sight.
+ * in the context. The two startup checks about the allowlist's values — a malformed entry, named by property and index,
+ * and a non-empty property beside an application-supplied policy bean — are covered here beside the bean they guard,
+ * although they are hosted in {@link Push2uStartupChecksAutoConfiguration}: an auto-configuration that contributes a
+ * bean an operator might want to remove may not also host a check, and the tests below include the scenario that rule
+ * exists for — excluding the bean's class must leave both checks running. Both checks run from the post-processor
+ * phase, ahead of every bean-creation failure, and neither depends on a signer, a sender or Actuator being anywhere in
+ * sight.
  *
  * <p>Most contexts here configure no VAPID keys on purpose: the deployment this autoconfiguration exists for accepts
  * subscriptions and leaves the sending to another service, so proving the bean and the checks in senderless contexts is
@@ -48,7 +51,7 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     Push2uAutoConfiguration.class,
                     Push2uEndpointPolicyAutoConfiguration.class,
                     Push2uHealthAutoConfiguration.class,
-                    Push2uRemovedPropertiesAutoConfiguration.class));
+                    Push2uStartupChecksAutoConfiguration.class));
 
     @Test
     void theBeanExistsWhenOriginsHaveAnEntry() {
@@ -158,14 +161,13 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     }
 
     @Test
-    void theBeanAndTheChecksDoNotDependOnAnyOtherConfiguration() {
+    void theBeanDoesNotDependOnAnyOtherConfiguration() {
         // Alone in the context, the autoconfiguration still binds the properties (it restates
-        // @EnableConfigurationProperties for exactly this composition) and still refuses a
-        // malformed entry: nothing standing between the checks and the context may narrow the set
-        // of deployments they protect.
-        ApplicationContextRunner alone = new ApplicationContextRunner()
-                .withConfiguration(AutoConfigurations.of(Push2uEndpointPolicyAutoConfiguration.class));
-        alone.withPropertyValues("push2u.allowed-origins=https://push.example.test")
+        // @EnableConfigurationProperties for exactly this composition) and still yields a working
+        // policy.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uEndpointPolicyAutoConfiguration.class))
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(EndpointPolicy.class);
@@ -173,12 +175,70 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                             .isThrownBy(() -> context.getBean(EndpointPolicy.class)
                                     .validate(URI.create("https://other.example/send/abc")));
                 });
-        alone.withPropertyValues("push2u.allowed-origins=http://push.example").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(context.getStartupFailure())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("push2u.allowed-origins[0]:");
-        });
+    }
+
+    @Test
+    void theChecksDoNotDependOnAnyOtherConfiguration() {
+        // The checks' own auto-configuration, alone in the context: both allowlist refusals still
+        // fire, with nothing else from the starter anywhere in sight — nothing standing between a
+        // check and the context may narrow the set of deployments it protects.
+        ApplicationContextRunner checksAlone = new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uStartupChecksAutoConfiguration.class));
+        checksAlone
+                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("push2u.allowed-origins[0]:");
+                });
+        checksAlone
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void theChecksSurviveExcludingTheAutoConfigurationThatContributesTheBean() {
+        // The scenario that decides where the checks live. An operator who meets the contradiction
+        // refusal reaches for the framework's standard tool and excludes the auto-configuration
+        // that publishes the policy bean. If a check rode in that same class, the exclusion would
+        // silence it, and the stated allowlist would be ignored without a word — the exact outcome
+        // the check exists to prevent. So the exclusion (modelled here as the shipped composition
+        // minus that one class) must remove only the bean: the contradiction still fails the
+        // context, naming the property and the bean, from the check's own phase.
+        ApplicationContextRunner withoutPolicyClass = new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        Push2uAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class,
+                        Push2uStartupChecksAutoConfiguration.class));
+        withoutPolicyClass
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .isNotInstanceOf(BeanCreationException.class)
+                            .hasMessageContaining("push2u.allowed-origins")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+        // The malformed-entry check survives the same exclusion, for the same reason.
+        withoutPolicyClass
+                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("push2u.allowed-origins[0]:");
+                });
     }
 
     @Test
