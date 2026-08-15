@@ -90,8 +90,11 @@ configuration](https://developer.hashicorp.com/vault/api-docs/secret/transit#upd
 so `vault read transit/keys/<key>` is where you check it. A platform team's blanket policy setting
 it on every Transit key is enough to catch you: months later an unrelated deploy restarts the fleet
 onto a version nobody created by hand, and "pin before you rotate" never fired because nobody
-rotated. If the key is scheduled, clear the period — or accept that the pinning move in Part one is
-not optional maintenance but the only thing standing between you and a timer.
+rotated. **If the key is scheduled, clear the period for the duration of the migration.** Leaving it
+and relying on the pinning move instead is not an equal choice: that move cannot protect the window
+in which it is itself being rolled out. Its check runs before the rollout starts, and un-migrated
+fetched-mode processes are still running behind it — so a timer firing mid-rollout is adopted by any
+of them that restarts for one of the ordinary reasons, with the check already passed.
 
 If either precondition is missing, [When the migration is not possible
 yet](#when-the-migration-is-not-possible-yet) is the section to read instead.
@@ -284,13 +287,43 @@ browser was handed. New rows are K2; every row already stored is K1. Store a lab
 fixed — the point of it is that it still says K1 after K1 has gone from your configuration — and
 never a pointer to "the current key".
 
-**Derive that label from the key you actually served, not from a second source that says which
-generation is current.** A flag in configuration, or a constant in the registration handler, is a
-different source from the signer the frontend was served out of, and the two can be deployed apart
-or rolled out at different speeds — which mislabels every row registered in the gap, and step 5 then
-routes those rows to the wrong sender for the rest of their lives. The same rule as the pinning move
-in Part one, in a different place: a version and the key it belongs to are one observation or they
-are a guess.
+**Derive that label from the key the browser actually got, not from a second source that says which
+generation is current.** Three second sources are within reach, and the third is the one this
+migration itself puts there:
+
+- **a flag in configuration**, or **a constant in the registration handler** — a different source
+  from the signer the frontend was served out of, and the two can be deployed apart or roll out at
+  different speeds;
+- **reading the live signer inside the registration handler.** This is the one a Spring deployment
+  reaches for first, and precondition 2 has just made it wrong: two `VapidSigner` beans with one
+  marked `@Primary` means an injected `VapidSigner` answers with the primary whatever key the
+  browser in front of you was handed. It is a second observation, separated from the serve by
+  however long the user took to decide, plus any deploy in between.
+
+The timing is ordinary rather than adversarial. K2 deploys at 10:00 and step 3 flips the frontend;
+a user who loaded the page at 09:58 was served K1's key, allows notifications at 10:01, and their
+browser creates a subscription restricted to **K1** — while the handler reads the primary signer and
+writes `k2`. Step 5 then routes that row to the K2 sender for the rest of its life.
+
+**A row mislabelled this way is invisible to the number that authorises the irreversible step.** The
+per-generation counts in [Observability](#observability) are computed from this same label, so the
+row counts against K2 and never against K1; step 8 sees no row carrying the old generation and
+authorises retirement; step 9 raises `min_encryption_version` and trims. The subscription was live
+and bound to K1 the whole time, and the trim strands it permanently.
+
+**The single observation is the client's.** The browser can report the key its own subscription was
+created with — `PushSubscriptionOptions.applicationServerKey`, reachable as
+`subscription.options.applicationServerKey` ([Push
+API](https://www.w3.org/TR/push-api/#dom-pushsubscriptionoptions-applicationserverkey)) — which is
+the same value your registration endpoint should label the row from. Two details decide whether that
+works: it is a **nullable `ArrayBuffer`**, not a string, so a client that puts it straight into
+`JSON.stringify` sends `{}` and you have silently gone back to guessing; base64url-encode it
+client-side, in the same shape the rest of this document uses. And null is possible — a subscription
+created without an application server key is not restricted at all — which is a row to reject or to
+flag, not one to label with whatever is current.
+
+The same rule as the pinning move in Part one, in a different place: an identity and the thing it
+belongs to are one observation, or they are a guess.
 
 **5. Route sends by that label.** Old rows through the sender holding the old signer, new rows
 through the new one. A send routed to the wrong sender is a `401`/`403`, and nothing in that answer
@@ -488,8 +521,9 @@ if processes started on both sides of that version appearing, the fleet is alrea
 
 The way out is not another ordering of these steps. Either you hold a record, kept outside push2u,
 of the version each running process was built against — in which case pin from that record and
-carry on — or the fleet's identity has to be re-established the expensive way: treat what is running
-as one cohort you can no longer name, and plan for the resubscription the
+carry on — or the fleet's identity has to be re-established the expensive way: treat every stored
+subscription as bound to an identity you cannot name, however many identities that turns out to be,
+and plan for the resubscription the
 [emergency procedure](#emergency-rotation-when-the-key-is-compromised) describes, without the
 urgency. Either way, the cheap fix is to stop being in this state: clear `auto_rotate_period`, and
 pin every process before anything rotates again.

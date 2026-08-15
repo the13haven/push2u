@@ -527,6 +527,14 @@ naming both beans.
 nothing about the other, so during a migration a green probe is not evidence that both senders are
 alive. If both matter to this deployment's health, that is the application's own contributor to add.
 
+**And `@Primary` makes one thing wrong that is otherwise the obvious thing to do: do not label a
+subscription by reading the injected `VapidSigner`.** It answers with the primary regardless of
+which key the browser being registered was actually handed, so every subscription created against
+the other identity is recorded under the wrong one — and because the retirement gate counts the same
+labels, those rows are invisible to it right up to the irreversible step.
+[`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md#the-migration-step-by-step) has the value to label
+from instead.
+
 **Everything except the signer is shared.** The contact address and the endpoint policy belong to
 the deployment rather than to an identity, so both senders take the same `EndpointPolicy` bean — the
 one [the allowlist properties publish](#the-policy-is-a-bean) — and the same `mailto:` contact. Only
