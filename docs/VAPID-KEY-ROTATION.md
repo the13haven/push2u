@@ -45,7 +45,7 @@ which key it was created under. The rest is ordering, and the operations that mu
 | The old subscriptions | kept, and migrated as clients return | deleted — they are the attacker's reach too |
 | Two senders at once | for as long as the old cohort exists | briefly, for the length of one deploy |
 | Resubscription | driven, at the clients' own pace | forced |
-| Raising the minimum, trimming | the last step, after the cohort is empty | early, on purpose — but see step 3 for what Vault will actually accept |
+| Ending the old key's use | raise the minimum, once the cohort is empty; trim only if a retention policy asks | early, on purpose — but see step 3 of [Emergency rotation](#emergency-rotation-when-the-key-is-compromised) for what Vault will actually accept |
 | Cost of getting it wrong | subscribers stop receiving, silently | the attacker keeps a working channel |
 
 **If the private key has leaked, stop here and read [Emergency rotation when the key is
@@ -250,7 +250,7 @@ flowchart LR
     B --> E["Resubscription"]
     E --> D
     B --> F["K1 cohort reaches zero"]
-    F --> G["Retire K1 and trim Vault version"]
+    F --> G["Retire K1: the old key stops signing"]
 ```
 
 **The arrows that are not drawn are the point.** Nothing runs from the old signer to the new cohort
@@ -291,9 +291,10 @@ never a pointer to "the current key".
 generation is current.** Three second sources are within reach, and the third is the one this
 migration itself puts there:
 
-- **a flag in configuration**, or **a constant in the registration handler** — a different source
-  from the signer the frontend was served out of, and the two can be deployed apart or roll out at
-  different speeds;
+- **a flag in configuration** — a different source from the signer the frontend was served out of,
+  and the two can be deployed apart or roll out at different speeds;
+- **a constant in the registration handler** — the same distance from the serve, now frozen into
+  code that ships on a schedule of its own;
 - **reading the live signer inside the registration handler.** This is the one a Spring deployment
   reaches for first, and precondition 2 has just made it wrong: two `VapidSigner` beans with one
   marked `@Primary` means an injected `VapidSigner` answers with the primary whatever key the
@@ -305,22 +306,90 @@ a user who loaded the page at 09:58 was served K1's key, allows notifications at
 browser creates a subscription restricted to **K1** — while the handler reads the primary signer and
 writes `k2`. Step 5 then routes that row to the K2 sender for the rest of its life.
 
-**A row mislabelled this way is invisible to the number that authorises the irreversible step.** The
+**A row mislabelled this way is invisible to the count that authorises retirement.** The
 per-generation counts in [Observability](#observability) are computed from this same label, so the
 row counts against K2 and never against K1; step 8 sees no row carrying the old generation and
-authorises retirement; step 9 raises `min_encryption_version` and trims. The subscription was live
-and bound to K1 the whole time, and the trim strands it permanently.
+authorises retirement, and step 9 ends K1's ability to sign while that subscription is still live
+and still bound to it. **Invisible to that count is not undetectable**, and the difference is worth
+holding on to: every send to that row goes out under the wrong identity and comes back `401`/`403`,
+which is exactly the `NonRetryableFailure`-on-a-working-generation signal
+[Observability](#observability) tells you to alert on. It fires from the first send to that row,
+long before the gate is read — and only from that send: a row nothing has pushed to yet emits
+nothing, which is the same month-old subscription step 8 says is still valid. So the counter narrows
+the risk rather than closing it. Watch it anyway, because the gate cannot see this at all.
 
-**The single observation is the client's.** The browser can report the key its own subscription was
-created with — `PushSubscriptionOptions.applicationServerKey`, reachable as
-`subscription.options.applicationServerKey` ([Push
-API](https://www.w3.org/TR/push-api/#dom-pushsubscriptionoptions-applicationserverkey)) — which is
-the same value your registration endpoint should label the row from. Two details decide whether that
-works: it is a **nullable `ArrayBuffer`**, not a string, so a client that puts it straight into
-`JSON.stringify` sends `{}` and you have silently gone back to guessing; base64url-encode it
-client-side, in the same shape the rest of this document uses. And null is possible — a subscription
-created without an application server key is not restricted at all — which is a row to reject or to
-flag, not one to label with whatever is current.
+**The single observation is the client's, and it has exactly one source.** The browser can report
+the key its own subscription was created with — `PushSubscriptionOptions.applicationServerKey`,
+reachable as `subscription.options.applicationServerKey` ([Push
+API](https://www.w3.org/TR/push-api/#dom-pushsubscriptionoptions-applicationserverkey)). **The label
+comes from that value and from nothing else: not from the key you are currently publishing, not from
+the argument passed to `subscribe(...)`, not from configuration, and not from an injected signer.**
+The last two are two of the second sources above; the first two are the same mistake made on the
+client, and all four read as correct in review, because the right value is usually in scope beside
+them.
+
+Two properties of that value decide whether a client can carry it across at all.
+
+**It does not survive `JSON.stringify(subscription)`, and not because it encodes badly.** `toJSON()`
+produces a `PushSubscriptionJSON` of `endpoint`, `expirationTime` and `keys`, and the Push API says
+the rest in as many words: "Note that the options to a `PushSubscription` are not serialized" ([Push
+API](https://www.w3.org/TR/push-api/#pushsubscription-interface)). So the most natural registration
+payload there is does not carry the field **at all** — a server reading it finds it absent rather
+than empty, a branch written for the missing case fires on every registration, and a `?? current`
+fallback labels the whole population with whatever is current, which is the failure this step exists
+to prevent. (Handing the `ArrayBuffer` itself to `JSON.stringify` produces `{}`, which is the same
+silence reached by a different road.) Put the key in the payload explicitly, beside the serialized
+subscription — the one you have just created, or the one already there when a returning client
+re-registers:
+
+```js
+const subscription = await registration.pushManager.getSubscription();
+const key = subscription?.options.applicationServerKey;
+
+if (!subscription || !key) {
+  throw new Error("Restricted push subscription required");
+}
+
+const payload = {
+  ...subscription.toJSON(),
+  vapidPublicKey: toBase64Url(new Uint8Array(key)),
+};
+```
+
+`toBase64Url` is your own — unpadded base64url in the URL-safe alphabet, the encoding the rest of
+this document means by the word. What matters more than the encoding is where `key` comes from: the
+subscription object the browser handed you, never the response of a `GET /vapid-key`-style endpoint.
+Those are two different observations, and only the first is about *this* subscription.
+
+**And it is nullable.** A subscription created without an application server key is not restricted
+at all, so there is no generation to record — the check above refuses one at the client, and refuses
+an absent value with it rather than trusting a browser to spell the empty case the way the interface
+definition does, and the server refuses it again rather than labelling it with whatever is current.
+
+**Check the reported key against the keys you actually serve.** The registration endpoint is public,
+so what arrives there is a client's assertion about its own subscription and not an observation of
+yours. Compare it against the exact set of identities registration may currently produce — during
+the migration, K1 and K2, and nothing else — and map a match to a stable server-side generation,
+`K1` or `K2`, rather than storing whatever string the client sent. Missing, `null`, malformed and
+unknown are one case with one answer: reject the registration, or flag the row for a person. Never
+`reportedKey ?? currentKey`; that one `??` is the population-wide mislabelling above, written on
+purpose.
+
+**That check is necessary and it is not full validation.** It takes arbitrary labels, and any
+fallback to "current", off the table. What it cannot do is establish that the endpoint in the same
+body was really created under the key being claimed: the push service holds that binding, publishes
+no interface for asking about it, and the only place a mismatch becomes visible is a send — where
+the service is obliged to reject a JWT whose public key is not the one included in the creation of
+the subscription, answering `401` or `403`
+([§4.2](https://datatracker.ietf.org/doc/html/rfc8292#section-4.2)). A client reporting K1 for a K2
+subscription, or the reverse, is therefore still making an assertion, and one you learn about at
+send time. The blast radius is normally that client's own rows — it misroutes its own deliveries and
+nobody else's — and the cost lands on the gate: a row claiming a generation it does not have holds
+that cohort's count above zero and delays retirement. So a plateau that
+[Observability](#observability) tells you to read as a resubscription drive that has stopped
+reaching people can also be a few rows asserting a generation they were never created under.
+Investigate one, with the `NonRetryableFailure` counter beside it; do not build anything that
+relabels rows automatically to make the count move.
 
 The same rule as the pinning move in Part one, in a different place: an identity and the thing it
 belongs to are one observation, or they are a guess.
@@ -339,6 +408,23 @@ check at page load comparing the key the subscription was created with against t
 now serves, a message asking the user to come back. The pace is the clients', and a subscriber who
 never opens the application again never migrates.
 
+**That page-load check holds two subscriptions and two keys, and the label comes from exactly one of
+them.** The key just fetched from the server is the *comparison target*, and then the argument to
+the `subscribe(...)` that follows; it is never the label. **The label always comes from the exact
+`PushSubscription` serialized in the same registration payload** — from `existingSubscription` where
+the check re-registers the subscription it found, and from `replacementSubscription` once it has
+dropped that one and created a new subscription under K2.
+
+Both other readings are reachable, and they fail in opposite directions. Post the fetched key and
+every returning visitor still on K1 relabels their own row as K2 — silently, on a page load, with no
+resubscription having happened. That drains the old count to zero across the whole returning
+population within days, step 8 then reads a gate that says the cohort is empty, and step 9 ends K1's
+signing under live subscriptions still bound to it; step 8's safety net does not catch it either,
+because the loud error it keeps for one release fires on the old generation and these rows no longer
+carry it. Take the label off the subscription the replacement replaced and the mirror happens: a row
+created under K2 is written as K1, every send to it goes out through the old signer and comes back
+`401`/`403`, and the old cohort never empties, because the migration itself keeps refilling it.
+
 **7. Watch the counts.** [Observability](#observability) below is what to count and where each
 number comes from. This step runs for as long as step 6 does.
 
@@ -347,21 +433,53 @@ the old generation — not "no send has used it lately", since a subscription no
 a month is still a valid subscription. Retiring is: stop building the old signer and sender, and
 remove the old key from configuration. Keep the routing branch for the old generation for one
 release, answering with a loud error, so that a row you missed is reported rather than sent under
-the wrong identity.
+the wrong identity. If you are taking the [optional K2-only registration
+phase](#optional-a-k2-only-registration-phase) below, it closes before this step rather than after
+it — a reinforcement that arrives once the gate has been read has protected nothing.
 
 **9. Only then make the old key unusable.** In Vault, raise `min_encryption_version` to the version
 the new identity uses — which is legal because it is now the latest — and that alone ends the old
-signer's ability to sign. Trimming is a second, separate step, and it needs **both** minimums
-raised: `min_available_version` is capped at the lesser of `min_decryption_version` and
-`min_encryption_version`, and `min_decryption_version` starts at `1` on every key. The parameter
-documentation reads `(int: 0)`, which is the default of the *request field* rather than the value a
-created key carries: Vault sets it on creation, "with new key creations min decryption version is
-set to 1 rather than the int default of 0, since keys start at 1"
+signer's ability to sign: Vault refuses every sign request naming a version below it, and push2u
+reports the refusal as a `PushCryptoException` out of `send`. That is the whole of retiring the old
+identity. For a locally held pair, the same move is deleting its private half from the secret store.
+Nothing before this step removes the ability to sign under the old identity, which is exactly what
+makes every step above cheap to abandon and this one the end of the migration.
+
+**Trimming is a separate step, and nothing in this migration asks for it.** `min_available_version`
+deletes the old versions outright — "Once trimmed, previous versions of the key cannot be recovered"
+— and the raise above has already ended their use, so the trim buys the migration nothing and cannot
+be taken back. Run it only where a retention policy requires the material itself to be gone, and
+then know two things about the mechanics. **First**, it needs **both** minimums raised:
+`min_available_version`
+is capped at the lesser of `min_decryption_version` and `min_encryption_version`, and
+`min_decryption_version` starts at `1` on every key. **Second**, the parameter documentation reads
+`(int: 0)`,
+which is the default of the *request field* rather than the value a created key carries: Vault sets
+it on creation, "with new key creations min decryption version is set to 1 rather than the int
+default of 0, since keys start at 1"
 ([`policy.go`](https://github.com/hashicorp/vault/blob/6a77206f1cc1b6cdb29a06fd0fb9c0e154083573/sdk/helper/keysutil/policy.go)).
-So raising only the encryption side leaves the cap at `1` and the trim is refused. Raise both, then trim, and
-note that the trim is the irreversible one. For a locally held pair, delete the private half from
-the secret store. Nothing before this step removes the ability to sign under the old identity, which
-is exactly what makes every step above reversible and this one not.
+So raising only the encryption side leaves the cap at `1` and the trim is refused.
+
+### Optional: a K2-only registration phase
+
+**This is a reinforcement and not part of the procedure above.** The nine steps stand as written and
+keep their numbering; what follows protects their final phase, at the price of a visibly longer
+runbook and one more state the registration endpoint can be in. It is worth taking where "no row
+carries K1" and "no client is still holding K1" are different claims — a large population, tabs left
+open for days, clients that go weeks between visits.
+
+Through the migration the registration endpoint accepts both identities: K2 for everything new, and
+K1 because a client legitimately re-registers a subscription it created months ago. Before
+retirement, close it — registration accepts K2 only, and a POST reporting K1 is answered with an
+explicit `migration required` rather than a stored row. A client receiving that drops its
+subscription and creates a new one under K2, which is the move step 6 was driving anyway, now
+demanded at the one moment a fresh K1 row would otherwise be created behind the gate. Then wait, and
+watch the right number. A K2-only endpoint stores no K1 row at all, so "no new K1 registration
+arrived" is true from the first minute and means nothing; what carries the signal is the
+`migration required` answers themselves. Count them, and let the window run until that count has
+stayed at zero. It is evidence step 8's count cannot give you, because a count of what exists says
+nothing about what is still on its way — a tab open since before step 3, a service worker that never
+updated, a device that was offline for a week.
 
 ### Observability
 
@@ -370,15 +488,22 @@ and the health indicator is not one. Every number below is the application's to 
 it already has.
 
 - **Active subscriptions per generation**, from the subscription store. This is the number that
-  decides when step 8 may run, and the only one that can. It should fall monotonically for the old
-  generation; a plateau means the resubscription drive has stopped reaching people, not that the
-  migration is finished.
+  decides when step 8 may run, and — unless you take the [optional K2-only
+  phase](#optional-a-k2-only-registration-phase) — the only one that can. It should fall
+  monotonically for the old generation; a plateau usually means the resubscription drive has stopped
+  reaching people, and never that the migration is finished — step 4 has the other reading, a row
+  asserting a generation it was never created under.
+- **`migration required` answers, where the [optional K2-only
+  phase](#optional-a-k2-only-registration-phase) is being taken**, counted at the registration
+  endpoint. It is the one number that sees a client still holding the old key, since a K2-only
+  endpoint stores no row for one and the count above therefore cannot. The observation window ends
+  when it has stayed at zero, and not before.
 - **Sends and outcomes per generation**, counted at your own call site. `PushOutcome` is a sealed
   type, so a switch over it where you already know which sender you routed to gives the whole
   classification. Two patterns are worth alerting on. `NonRetryableFailure` appearing on a
-  generation that was working is a routing defect — the wrong sender is signing for that cohort —
-  and not a user action. `SubscriptionExpired` (`404`/`410`) is the ordinary way the old cohort
-  shrinks without anyone resubscribing: delete the row, and the count falls honestly.
+  generation that was working is a routing or labelling defect — the wrong sender is signing for
+  that cohort — and not a user action. `SubscriptionExpired` (`404`/`410`) is the ordinary way the
+  old cohort shrinks without anyone resubscribing: delete the row, and the count falls honestly.
 - **The custodian's own view.** For Vault, `vault read transit/keys/<key>` and compare
   `latest_version` with the version each sender was built against. That is the check that replaces
   the accessor push2u does not publish (see [Why there is no `refresh()`](#why-there-is-no-refresh))
@@ -404,7 +529,8 @@ whole of a rollback.
 **Do not delete K2, and do not retire its sender.** Every subscription already created under K2 can
 be served by K2 and by nothing else: the push service recorded K2's public key at subscribe time and
 is obliged to reject a JWT signed under any other. Deleting the key or dropping the sender does not
-undo those subscriptions — it strands them, permanently, exactly as a premature trim would.
+undo those subscriptions — it strands them, permanently, exactly as retiring an identity whose
+cohort still had rows in it would.
 
 **Do not move migrated rows back to K1.** The generation label records a fact about the push
 service's record, not a preference of yours. Rewriting `k2` to `k1` on a row makes every send for it
@@ -428,11 +554,12 @@ migration run this way is cheap to abandon: at no point did it remove anything.
   fleet in one deploy. Every stored subscription then fails with `401`/`403` — `NonRetryableFailure`
   and never `SubscriptionExpired`, so nothing prunes the rows and no retry clears them — and the
   only recovery is every subscriber coming back to subscribe again.
-- **Trimming the old version, or raising the minimum, before the old cohort is gone.** Raising
+- **Raising the minimum, or trimming the old version, before the old cohort is gone.** Raising
   `min_encryption_version` above the pinned version ends the old signer's ability to sign at all:
   every send through it fails with a `PushCryptoException`, which is thrown rather than returned.
-  Trimming deletes the version outright — "Once trimmed, previous versions of the key cannot be
-  recovered".
+  Trimming does that and deletes the version outright — "Once trimmed, previous versions of the key
+  cannot be recovered" — which is why step 9 asks for the raise and leaves the trim to a retention
+  policy.
 - **Assuming a restart performs the migration.** It changes what the process advertises, never what
   the push service recorded. In the Vault fetched modes it is how the trap in Part one springs; in
   every mode it is a way of doing step 3 to the entire population without doing steps 4, 5 or 6.
