@@ -721,7 +721,7 @@ public final class PushSender {
          * @return this builder
          */
         public Builder httpClient(PushHttpClient httpClient) {
-            this.httpClient = httpClient;
+            this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
             return this;
         }
 

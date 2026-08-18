@@ -122,6 +122,10 @@ class PushSenderOptionsTest {
         assertThat(catchBuilderFailure(builder -> builder.defaultTtl(null))).isInstanceOf(NullPointerException.class);
         assertThat(catchBuilderFailure(builder -> builder.jwtRenewBefore(null)))
                 .isInstanceOf(NullPointerException.class);
+        // A kept null would not fail later at all: the constructor reads an unset transport as "no
+        // transport was configured" and quietly builds the default one, so a caller whose lookup
+        // returned null would send over a transport it never chose.
+        assertThat(catchBuilderFailure(builder -> builder.httpClient(null))).isInstanceOf(NullPointerException.class);
     }
 
     /**
