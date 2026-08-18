@@ -193,6 +193,15 @@ propagates unchanged rather than being laundered into a value. What `send` itsel
 `IllegalArgumentException`/`NullPointerException` for an argument that is not a legal value of its
 parameter ([ADR-022](adr/0022-one-type-per-programmatic-action.md)).
 
+The conversions trust the seam's classification, not its diagnostics: every member read while
+converting — the policy exception's message, the signer exception's status and retry hint, the
+cause chain the interruption walk traverses — is read inside a guard, so a defective accessor in a
+consumer's exception subclass costs the caller that one diagnostic, never the classified outcome.
+The defect is recorded as a suppressed exception where the outcome carries the seam's failure;
+`EndpointRejected` carries only strings, so a rejection whose `getMessage()` threw gets the
+sender's own fixed reason instead, carrying nothing the throwing accessor wrote. An `Error` out of
+any of those reads is not survived and propagates.
+
 The interruption test is the facade's rather than any seam's, written as a disjunction — an
 `InterruptedException` anywhere in the cause chain, *or* the current thread's interrupt status set —
 because neither half is sound alone: an interruption can surface as a `ClosedByInterruptException`

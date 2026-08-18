@@ -183,4 +183,135 @@ class PushOutcomeTest {
         assertThat(outcome.retryAfter()).contains(Duration.ofSeconds(5));
         assertThat(outcome.toString()).contains("custodian status 473").contains("retry after PT5S");
     }
+
+    // ---- the guarded reads: a broken accessor costs a component, never the outcome -------------
+    //
+    // Every test below calls the public constructor directly, which is what proves the guard lives
+    // in the constructor rather than only on PushSender's conversion path: a consumer building the
+    // outcome themselves gets the same protection.
+
+    @Test
+    void signerUnavailableSurvivesAThrowingStatusAndKeepsTheHint() {
+        IllegalStateException defect = new IllegalStateException("status accessor broke");
+        VapidSignerUnavailableException cause =
+                new VapidSignerUnavailableException("standby", 473, Duration.ofSeconds(5), null) {
+                    @Override
+                    public OptionalInt status() {
+                        throw defect;
+                    }
+                };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(cause);
+
+        assertThat(outcome.status()).isEmpty();
+        assertThat(outcome.retryAfter())
+                .as("the two reads are guarded independently: retryAfter() answered, and its answer is kept")
+                .contains(Duration.ofSeconds(5));
+        assertThat(cause.getSuppressed())
+                .as("the defect is recorded on the cause, so an empty component with a broken accessor"
+                        + " never reads as a custodian that declared nothing")
+                .containsExactly(defect);
+    }
+
+    @Test
+    void signerUnavailableSurvivesAThrowingHintAndKeepsTheStatus() {
+        IllegalStateException defect = new IllegalStateException("retryAfter accessor broke");
+        VapidSignerUnavailableException cause =
+                new VapidSignerUnavailableException("standby", 473, Duration.ofSeconds(5), null) {
+                    @Override
+                    public Optional<Duration> retryAfter() {
+                        throw defect;
+                    }
+                };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(cause);
+
+        assertThat(outcome.status())
+                .as("the mirror of the independence claim: status() was read first and its answer survives"
+                        + " the later read breaking")
+                .hasValue(473);
+        assertThat(outcome.retryAfter()).isEmpty();
+        assertThat(cause.getSuppressed()).containsExactly(defect);
+    }
+
+    @Test
+    void signerUnavailableTreatsANullStatusAsTheSameBreachAsAThrow() {
+        // The accessor's declared way of saying "nothing declared" is the empty optional; null is
+        // a contract breach that would otherwise sit in an OptionalInt-typed field and break later,
+        // somewhere with nothing left to name the culprit.
+        VapidSignerUnavailableException cause =
+                new VapidSignerUnavailableException("standby", 473, Duration.ofSeconds(5), null) {
+                    @Override
+                    public OptionalInt status() {
+                        return null;
+                    }
+                };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(cause);
+
+        assertThat(outcome.status()).isEmpty();
+        assertThat(outcome.retryAfter()).contains(Duration.ofSeconds(5));
+        assertThat(cause.getSuppressed()).hasSize(1);
+        assertThat(cause.getSuppressed()[0])
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("status()");
+    }
+
+    @Test
+    void signerUnavailableTreatsANullHintAsTheSameBreachAsAThrow() {
+        VapidSignerUnavailableException cause =
+                new VapidSignerUnavailableException("standby", 473, Duration.ofSeconds(5), null) {
+                    @Override
+                    public Optional<Duration> retryAfter() {
+                        return null;
+                    }
+                };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(cause);
+
+        assertThat(outcome.status()).hasValue(473);
+        assertThat(outcome.retryAfter()).isEmpty();
+        assertThat(cause.getSuppressed()).hasSize(1);
+        assertThat(cause.getSuppressed()[0])
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("retryAfter()");
+    }
+
+    @Test
+    void signerUnavailableSurvivesAnAccessorThrowingTheExceptionItself() {
+        // The one refusal recording a defect can meet: an accessor that throws the exception
+        // carrying it hands addSuppressed its own argument, which the platform rejects as
+        // self-suppression. The guard swallows that rejection — the outcome still exists, the
+        // component is still empty, and nothing is recorded, because nothing can be.
+        VapidSignerUnavailableException cause = new VapidSignerUnavailableException("self-throwing", 473, null, null) {
+            @Override
+            public OptionalInt status() {
+                throw this;
+            }
+        };
+
+        PushOutcome.SignerUnavailable outcome = new PushOutcome.SignerUnavailable(cause);
+
+        assertThat(outcome.status()).isEmpty();
+        assertThat(outcome.retryAfter()).isEmpty();
+        assertThat(outcome.cause()).isSameAs(cause);
+        assertThat(cause.getSuppressed()).isEmpty();
+    }
+
+    @Test
+    void signerUnavailableLetsAnErrorOutOfAnAccessorPropagate() {
+        // The guard's boundary is RuntimeException, pinned here as a boundary rather than an
+        // untested preference: an AssertionError is a failed invariant, not a diagnostic to
+        // survive, and laundering it into an outcome would hide it.
+        VapidSignerUnavailableException cause = new VapidSignerUnavailableException("standby", 473, null, null) {
+            @Override
+            public OptionalInt status() {
+                throw new AssertionError("invariant failed inside an accessor");
+            }
+        };
+
+        assertThatThrownBy(() -> new PushOutcome.SignerUnavailable(cause))
+                .isInstanceOf(AssertionError.class)
+                .hasMessage("invariant failed inside an accessor");
+    }
 }

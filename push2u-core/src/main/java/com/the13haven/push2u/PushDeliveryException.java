@@ -21,6 +21,13 @@ import java.io.Serial;
  * for one is {@link PushInterruptedException}, which promises the interrupt status and the cause chain this type
  * promises nothing about. So an implementation of the transport seam reads this sentence as its own, and an application
  * catching a cancellation reads the other type.
+ *
+ * <p><b>{@link #getCause()} must not throw.</b> It is the one member {@link PushSender#send} reads while converting
+ * this exception — walking the cause chain for the interruption test — and the contract names that single method
+ * deliberately, asking nothing of accessors the library never reads. A subclass whose {@code getCause()} throws a
+ * {@code RuntimeException} does not cost the caller the classification: the walk stops, the defect is recorded on this
+ * exception as a suppressed one, and the send stays {@link PushOutcome.Indeterminate} unless the thread's interrupt
+ * status says otherwise — but an {@link InterruptedException} sitting beyond the break can then no longer be seen.
  */
 public class PushDeliveryException extends RuntimeException {
 

@@ -42,6 +42,15 @@ import org.jspecify.annotations.Nullable;
  * a client library that surfaces a delay and no code — therefore reports the delay rather than inventing a number to
  * carry it or dropping the one value a caller can schedule against.
  *
+ * <p><b>Three members must stay readable, and they are named one by one rather than as a class of methods:</b>
+ * {@link #status()} and {@link #retryAfter()} must not throw and must not return {@code null} — the empty optional is
+ * each one's declared way of saying "nothing declared" — and {@link #getCause()} must not throw. Those three are
+ * exactly what {@link PushSender#send} reads while converting this exception into the outcome a caller is promised, and
+ * the contract deliberately asks for nothing wider. A subclass that breaks one of them does not cost the caller the
+ * classification: the sender guards each read, reports the broken value as absent and records the defect as a
+ * suppressed exception on this exception — but what the accessor was meant to say is then lost, and an {@code Error}
+ * out of one of them propagates out of the send.
+ *
  * <p><b>The custodian's status is never a push service's</b>, and reading the two as one number is a mistake worth
  * naming: a {@code 503} here is a sealed or overloaded custodian and no push message left this process, where a
  * {@code 503} from a push service is a delivery it refused.

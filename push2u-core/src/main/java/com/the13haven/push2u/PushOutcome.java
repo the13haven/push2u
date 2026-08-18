@@ -235,12 +235,63 @@ public sealed interface PushOutcome {
          * read exactly once, here: what this outcome answers is fixed at construction, and nothing the exception
          * computes or changes afterwards can move it.
          *
+         * <p>Each of the two reads is guarded, and guarded independently of the other, because the accessor being read
+         * is consumer-overridable code standing between a failure the signer already classified and the value a caller
+         * was promised. An accessor that throws a {@code RuntimeException}, or answers {@code null} where its contract
+         * requires a value, costs this outcome that one component and nothing else: the component stays empty, the
+         * other read's answer is kept, and the defect — the thrown exception, or a {@code NullPointerException}
+         * describing the null — is recorded as a suppressed exception on {@code cause}, so an empty component with a
+         * broken accessor never reads as a custodian that declared nothing. An {@code Error} is not survived: it leaves
+         * this constructor as it arrived. The guard lives here, on the public constructor, so a caller constructing the
+         * outcome directly gets it too.
+         *
          * @param cause what the {@link VapidSigner} raised
+         * @throws NullPointerException if {@code cause} is {@code null}
          */
         public SignerUnavailable(VapidSignerUnavailableException cause) {
             this.cause = Objects.requireNonNull(cause, "cause");
-            this.status = cause.status();
-            this.retryAfter = cause.retryAfter();
+            this.status = readStatus(cause);
+            this.retryAfter = readRetryAfter(cause);
+        }
+
+        /**
+         * The one read of {@code status()}, guarded: the accessor's answer, or empty — with the defect recorded as a
+         * suppressed exception on {@code cause} — where the accessor threw or answered {@code null}.
+         */
+        private static OptionalInt readStatus(VapidSignerUnavailableException cause) {
+            try {
+                OptionalInt status = cause.status();
+                if (status != null) {
+                    return status;
+                }
+                Suppression.suppress(
+                        cause,
+                        new NullPointerException("status() returned null; its contract has it answer an empty"
+                                + " OptionalInt where the custodian answered no number"));
+            } catch (RuntimeException defect) {
+                Suppression.suppress(cause, defect);
+            }
+            return OptionalInt.empty();
+        }
+
+        /**
+         * The one read of {@code retryAfter()}, guarded: the accessor's answer, or empty — with the defect recorded as
+         * a suppressed exception on {@code cause} — where the accessor threw or answered {@code null}.
+         */
+        private static Optional<Duration> readRetryAfter(VapidSignerUnavailableException cause) {
+            try {
+                Optional<Duration> retryAfter = cause.retryAfter();
+                if (retryAfter != null) {
+                    return retryAfter;
+                }
+                Suppression.suppress(
+                        cause,
+                        new NullPointerException("retryAfter() returned null; its contract has it answer an empty"
+                                + " Optional where the custodian declared no delay"));
+            } catch (RuntimeException defect) {
+                Suppression.suppress(cause, defect);
+            }
+            return Optional.empty();
         }
 
         /**
@@ -250,7 +301,8 @@ public sealed interface PushOutcome {
          * {@code 503} here is a sealed or overloaded custodian and no POST was made, where a {@code 503} on
          * {@link RetryableFailure} is the push service refusing a delivery. Empty for a key held locally, for a PKCS#11
          * token, and for the whole half where nothing answered at all. Snapshotted from the signer's signal when this
-         * outcome was constructed, so every read answers the same.
+         * outcome was constructed, so every read answers the same — and empty where the signal's accessor broke at that
+         * moment, with the defect recorded as a suppressed exception on {@link #cause()}.
          *
          * @return the custodian's status, or empty where nothing answered a number
          */
@@ -261,7 +313,8 @@ public sealed interface PushOutcome {
         /**
          * How long the custodian declared it would be before it can serve again, empty unless it declared one — most
          * custodians never do. Reported exactly as it arrived, <b>with no ceiling applied</b>, so the only ceiling is
-         * the one whoever schedules the next attempt chooses.
+         * the one whoever schedules the next attempt chooses. Also empty where the signal's accessor broke when this
+         * outcome was constructed, with the defect recorded as a suppressed exception on {@link #cause()}.
          *
          * <p><b>Nor is it a floor: this value is not checked, and a scheduler reading it guards it.</b> The duration is
          * whatever the {@link VapidSigner} put on its signal, read once when this outcome was constructed and handed
@@ -358,7 +411,11 @@ public sealed interface PushOutcome {
      *     capability path or query — safe to log and enough to find the row
      * @param reason the policy's own account of the refusal. The policy seam's contract requires it to render any
      *     endpoint it mentions in the same redacted form, so this string carries no capability URL from any policy that
-     *     honours its contract
+     *     honours its contract. One string here is not the policy's account: where that account could not be read — the
+     *     exception's {@code getMessage()} threw — {@link PushSender#send} substitutes the fixed text {@code "endpoint
+     *     policy rejected the endpoint; reason unavailable"}, this library's own rendering, safe whatever the throwing
+     *     accessor would have written; a policy whose message was merely {@code null} renders as {@code ""}, so the two
+     *     stay distinguishable
      */
     record EndpointRejected(String redactedEndpoint, String reason) implements NotAttempted {
 

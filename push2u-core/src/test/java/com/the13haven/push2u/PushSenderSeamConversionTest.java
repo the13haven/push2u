@@ -29,7 +29,9 @@ import org.junit.jupiter.api.Test;
  * {@code RuntimeException} out of a consumer seam propagates as the defect it is. Plus the interruption discipline the
  * enumeration exists for: the conversion is refused, on the push and signer paths alike, when the cause chain carries
  * an {@link InterruptedException} <b>or</b> the thread's interrupt status is set, and what leaves is
- * {@link PushInterruptedException} with the contracts ADR-022 fixes for each send method.
+ * {@link PushInterruptedException} with the contracts ADR-022 fixes for each send method. Plus the guards on the
+ * members those conversions read (issue #155): a defective accessor on a seam's exception costs the caller a
+ * diagnostic, never the classification.
  */
 class PushSenderSeamConversionTest {
 
@@ -218,6 +220,161 @@ class PushSenderSeamConversionTest {
         assertThat(Thread.currentThread().isInterrupted())
                 .as("the flag on the thread reading the future is not promised — it was never interrupted")
                 .isFalse();
+    }
+
+    // ---- the guarded reads of seam-exception members -------------------------------------------
+
+    @Test
+    void aRejectionWhoseGetMessageThrowsFallsBackToTheLibrarysOwnReason() {
+        IllegalStateException defect =
+                new IllegalStateException("policy bug mentioning " + ENDPOINT + "/secret-capability-token");
+        EndpointRejectedException raised = new EndpointRejectedException("never read") {
+            @Override
+            public String getMessage() {
+                throw defect;
+            }
+        };
+        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
+                    throw raised;
+                })
+                .httpClient(new CountingClient())
+                .build();
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+        PushOutcome.EndpointRejected rejected = (PushOutcome.EndpointRejected) outcome;
+        assertThat(rejected.reason())
+                .as("the fallback is the library's own fixed text, distinguishable from the empty string"
+                        + " a null message renders as")
+                .isEqualTo("endpoint policy rejected the endpoint; reason unavailable");
+        // The accessor's complaint was written by nobody who accepted the policy seam's redaction
+        // contract — here it carries the raw capability URL — so nothing of it may travel: not its
+        // message, not its class name, not its rendering.
+        assertThat(rejected.reason())
+                .doesNotContain("secret-capability-token")
+                .doesNotContain("policy bug")
+                .doesNotContain(defect.getClass().getSimpleName())
+                .doesNotContain(defect.toString());
+        assertThat(rejected.redactedEndpoint()).startsWith("https://push.example/…#");
+    }
+
+    @Test
+    void aRejectionWithANullMessageStillRendersTheEmptyReason() {
+        // The other half of the distinguishability claim above: a policy that wrote no message at
+        // all renders as "", not as the fallback text reserved for a broken accessor.
+        EndpointRejectedException raised = new EndpointRejectedException("replaced by the override") {
+            @Override
+            public String getMessage() {
+                return null;
+            }
+        };
+        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
+                    throw raised;
+                })
+                .httpClient(new CountingClient())
+                .build();
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(((PushOutcome.EndpointRejected) outcome).reason()).isEmpty();
+    }
+
+    @Test
+    void anErrorOutOfASeamAccessorLeavesSendUnclassified() {
+        // The guard's boundary is RuntimeException, pinned at the send level: an AssertionError
+        // out of consumer code is neither survived nor laundered into an outcome.
+        EndpointRejectedException raised = new EndpointRejectedException("never read") {
+            @Override
+            public String getMessage() {
+                throw new AssertionError("invariant failed inside an accessor");
+            }
+        };
+        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
+                    throw raised;
+                })
+                .httpClient(new CountingClient())
+                .build();
+        Subscription subscription = subscription();
+        PushMessage message = message();
+
+        assertThatThrownBy(() -> sender.send(subscription, message))
+                .isInstanceOf(AssertionError.class)
+                .hasMessage("invariant failed inside an accessor");
+    }
+
+    @Test
+    void aSignerFailureWhoseGetCauseThrowsKeepsItsClassificationAndRecordsTheDefect() {
+        IllegalStateException defect = new IllegalStateException("getCause broke");
+        VapidSignerUnavailableException raised =
+                new VapidSignerUnavailableException("custodian sealed", 503, Duration.ofSeconds(30), null) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        throw defect;
+                    }
+                };
+        PushSender sender = PushSender.builder(
+                        new FailingSigner(raised), "mailto:ops@example.com", EndpointPolicies.unrestricted())
+                .httpClient(new CountingClient())
+                .build();
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(outcome).isInstanceOf(PushOutcome.SignerUnavailable.class);
+        PushOutcome.SignerUnavailable unavailable = (PushOutcome.SignerUnavailable) outcome;
+        assertThat(unavailable.cause()).isSameAs(raised);
+        assertThat(unavailable.status()).hasValue(503);
+        assertThat(raised.getSuppressed())
+                .as("the interruption walk stopped on the defect and recorded it where the caller can see it"
+                        + " — on the exception the outcome carries")
+                .containsExactly(defect);
+    }
+
+    @Test
+    void aTransportFailureWhoseGetCauseThrowsStaysIndeterminateAndRecordsTheDefect() {
+        IllegalStateException defect = new IllegalStateException("getCause broke");
+        PushDeliveryException raised = new PushDeliveryException("no answer") {
+            @Override
+            public synchronized Throwable getCause() {
+                throw defect;
+            }
+        };
+        PushSender sender = sender((endpoint, headers, body) -> {
+            throw raised;
+        });
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(outcome).isInstanceOf(PushOutcome.Indeterminate.class);
+        assertThat(((PushOutcome.Indeterminate) outcome).cause()).isSameAs(raised);
+        assertThat(raised.getSuppressed()).containsExactly(defect);
+    }
+
+    @Test
+    void anInterruptArrivingDuringTheCauseWalkStillLeavesAsPushInterrupted() {
+        // The walk's tail asks the flag once more, however the walk ended — so an interruption
+        // that lands while consumer code inside getCause() runs is not missed.
+        PushDeliveryException raised = new PushDeliveryException("exchange stopped") {
+            @Override
+            public synchronized Throwable getCause() {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        };
+        PushSender sender = sender((endpoint, headers, body) -> {
+            throw raised;
+        });
+        Subscription subscription = subscription();
+        PushMessage message = message();
+
+        try {
+            assertThatThrownBy(() -> sender.send(subscription, message))
+                    .isInstanceOf(PushInterruptedException.class)
+                    .hasCause(raised);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     private static PushSender sender(PushHttpClient client) {
