@@ -88,8 +88,18 @@ the published artifact. `docs/MIGRATION.md` is now the guide for an application 
 moving between versions of it — what a release breaks, and in its own section what it breaks
 *silently*, which is the half no compiler and no generated release note reports. It names the
 version it moves *from*, because that one has a tag; it never names the version it moves *to*, for
-the reason `.claude/rules/workflow.md` gives. ADR-023 names `docs/MIGRATION-FROM-WEB-PUSH.md`
-because that is the document it meant, under the name it now has — the rename allowance below, and
+the reason `.claude/rules/workflow.md` gives. **It accumulates: one `##` section per migration,
+newest first, a new one inserted directly under the `## Migrations` index with its row added at the
+top of that index.** Every heading inside a migration section has to be unique across the whole
+file, and by construction rather than by care — GitHub derives a heading's `id` from its text alone,
+with no part played by the level it sits at or the section it sits under, and numbers a repeat by
+document order, so a second *Checklist* added at the top would take the clean anchor and push the
+older one to `checklist-1`, redirecting that section's own links into the new migration without
+breaking anything a reader would notice, and with no link check in CI to catch it. A heading naming
+a type, a method or a property key is unique on its own; one naming a role in the document carries
+its source version, as *Checklist for the `0.1.0` move* does. ADR-023 names
+`docs/MIGRATION-FROM-WEB-PUSH.md` because that is the document it meant, under the name it now has —
+the rename allowance below, and
 not the same thing as ADR-026 naming `docs/VAULT.md` as a home the material has since left.
 `docs/RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of
 the conventions below, and `SECURITY.md` the vulnerability policy.
@@ -98,12 +108,11 @@ the conventions below, and `SECURITY.md` the vulnerability policy.
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
 and the superseded one keeps its number, title and body while its status line becomes
 `Superseded by ADR-NNN` — the only edit its argument ever takes, beside the link repair below. A
-decision that moves only in part
-takes the same one-line edit in a narrower form, `Accepted; one clause superseded by ADR-NNN`,
-beside the full form rather than in place of it — ADR-004's status line, superseded in part by
-ADR-019, is the worked example. The description of how things currently work belongs in
-`docs/DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md` carries
-the procedure.
+decision that moves only in part takes the same one-line edit in a narrower form, `Accepted; one
+clause superseded by ADR-NNN`, beside the full form rather than in place of it — ADR-004's status
+line, superseded in part by ADR-019, is the worked example. The description of how things currently
+work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
+`docs/adr/README.md` carries the procedure.
 
 **One other edit is allowed, and only one: a link whose target document was renamed.** The same
 document under a new name is the same artefact, and the ADR's own text is untouched — only the path
@@ -123,10 +132,10 @@ nowhere else.** The pre-release hook rewrites every one of them, in that file on
 string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/SIGNER.md`,
 `docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md`,
 `docs/MIGRATION-FROM-WEB-PUSH.md` or anywhere else freezes at whatever version it was written with
-and starts lying at the next release.
-Those documents point at README's Installation section instead. The exception is a document that is
-*about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
-version on purpose, and a frozen coordinate there is correct.
+and starts lying at the next release. Those documents point at README's Installation section
+instead. The exception is a document that is *about* one version and is never read as current:
+`.github/release-notes/vX.Y.Z.md` names its own version on purpose, and a frozen coordinate there is
+correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
 approves a merge into `main` and how work that started from a tracker issue references it. It loads

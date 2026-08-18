@@ -351,7 +351,8 @@ Also update, when your change touches them:
   changed default, a value that used to be an exception, a stricter constructor: each of those
   compiles unchanged at the call site, so this document is the only warning anyone gets. Say what to
   do, not only what moved. The release notes are generated from pull request labels and cannot carry
-  this.
+  this. It holds one section per migration, newest first; the document's own introduction carries
+  how a new one is added and why every heading in it has to be unique across the whole file.
 - **A new file under `docs/`** — plus its row in the *Documentation* table of `README.md`, right
   after *Installation*. That table is the index of everything under `docs/`, and an index that skips
   one document is worse than no index.

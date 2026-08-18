@@ -49,9 +49,8 @@ status line becomes:
 ```
 
 That line is the only edit its argument ever takes, beside the link repair below. A superseded ADR
-is not deleted: its number is
-referenced from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered
-decision that vanishes leaves those references dangling.
+is not deleted: its number is referenced from other ADRs, from `docs/DESIGN.md` and from the review
+procedure, and a numbered decision that vanishes leaves those references dangling.
 
 **A decision that moves only in part — one clause superseded while the rest of the ADR still
 stands — takes the same one-line edit, in a form beside the full one rather than in place of it:**
