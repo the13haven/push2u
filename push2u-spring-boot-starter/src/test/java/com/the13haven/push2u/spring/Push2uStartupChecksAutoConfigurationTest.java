@@ -21,17 +21,17 @@ import org.springframework.core.env.SystemEnvironmentPropertySource;
 import com.the13haven.push2u.PushSender;
 
 /**
- * The tombstones over {@code push2u.record-size} and the {@code push2u.health.*} pair: a key a release removed must
- * fail the context at startup, in every spelling relaxed binding accepts, naming the property and where its effect went
- * — binding ignores an unknown key silently, so without the refusal the setting would read as though it were in force.
- * The refusal is raised from a post-processor of the bean factory, so it precedes every bean-creation failure; and a
- * context without the key starts exactly as before, which the whole of {@link Push2uAutoConfigurationTest} also pins by
- * running with this autoconfiguration present.
+ * The tombstones over {@code push2u.record-size}, the {@code push2u.health.*} pair and the {@code push2u.retry.*}
+ * block: a key a release removed must fail the context at startup, in every spelling relaxed binding accepts, naming
+ * the property and where its effect went — binding ignores an unknown key silently, so without the refusal the setting
+ * would read as though it were in force. The refusal is raised from a post-processor of the bean factory, so it
+ * precedes every bean-creation failure; and a context without the key starts exactly as before, which the whole of
+ * {@link Push2uAutoConfigurationTest} also pins by running with this autoconfiguration present.
  *
  * <p>They are raised together, from one check, and that is what
- * {@link #everyDeadKeyThisCheckKnowsAboutIsNamedInOneFailure()} exists for: the released guide printed all three of
- * these keys, so the deployment holding one commonly holds them all, and a refusal per startup would charge it a failed
- * start per key.
+ * {@link #everyDeadKeyThisCheckKnowsAboutIsNamedInOneFailure()} exists for: the released guide printed all of these
+ * keys, so the deployment holding one commonly holds several, and a refusal per startup would charge it a failed start
+ * per key.
  *
  * <p>{@link Push2uStartupChecksAutoConfiguration} hosts two more checks, both about the allowlist properties; those are
  * covered in {@link Push2uEndpointPolicyAutoConfigurationTest} beside the bean they guard, including that they survive
@@ -195,11 +195,101 @@ class Push2uStartupChecksAutoConfigurationTest {
     }
 
     @Test
+    void aLeftoverRetryMaxAttemptsKeyFailsTheContextNamingWhereTheDecisionWent() {
+        // The retry keys are the removal whose silent ignoring changes delivery rather than a
+        // diagnostic: a deployment that configured three attempts would start clean and then send
+        // once per message, and every message a push service dropped under load would be gone with
+        // nothing said about it. So the refusal has to hand the operator the replacement — not a
+        // property, but the outcome the caller now schedules from.
+        runner.withPropertyValues("push2u.retry.max-attempts=3").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.retry.max-attempts")
+                    .as("the message says where the decision went, so the operator has a move and not only a refusal")
+                    .hasMessageContaining("one POST")
+                    .hasMessageContaining("RetryableFailure")
+                    .hasMessageContaining("Retry-After");
+        });
+    }
+
+    @Test
+    void aLeftoverRetryInitialBackoffKeyFailsTheContextNamingWhereTheWaitWent() {
+        runner.withPropertyValues("push2u.retry.initial-backoff=2s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.retry.initial-backoff")
+                    .hasMessageContaining("RetryableFailure")
+                    .hasMessageContaining("Retry-After");
+        });
+    }
+
+    @Test
+    void aLeftoverRetryMaxBackoffKeyFailsTheContextSayingWhereABoundNowBelongs() {
+        // This one's operator had decided a bound was needed, and the value they were bounding is
+        // now reported with no ceiling applied — so the refusal says where to apply it rather than
+        // only that the key is dead.
+        runner.withPropertyValues("push2u.retry.max-backoff=60s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.retry.max-backoff")
+                    .hasMessageContaining("no ceiling applied")
+                    .hasMessageContaining("where the repeat is scheduled");
+        });
+    }
+
+    @Test
+    void allThreeRetryKeysAreReportedAtOnce() {
+        // They were one block in the released guide, they went in one change, and they are deleted
+        // in one edit. An operator told about the first only to meet the second on the next start
+        // has been given a third of what was known.
+        runner.withPropertyValues(
+                        "push2u.retry.max-attempts=3",
+                        "push2u.retry.initial-backoff=1s",
+                        "push2u.retry.max-backoff=60s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.retry.max-attempts")
+                            .hasMessageContaining("push2u.retry.initial-backoff")
+                            .hasMessageContaining("push2u.retry.max-backoff");
+                });
+    }
+
+    @Test
+    void theRetryRefusalCatchesTheCamelCaseSpellingRelaxedBindingAccepts() {
+        runner.withPropertyValues("push2u.retry.maxAttempts=3").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("push2u.retry.max-attempts");
+        });
+    }
+
+    @Test
+    void theRetryRefusalCatchesTheEnvironmentVariableSpelling() {
+        // PUSH2U_RETRY_INITIAL_BACKOFF arrives through a SystemEnvironmentPropertySource, whose
+        // mapping is what Environment.getProperty("push2u.retry.initial-backoff") would NOT apply —
+        // the same case the record-size and health tombstones above are held to, one prefix deeper.
+        runner.withInitializer(environmentVariable("PUSH2U_RETRY_INITIAL_BACKOFF", "1s"))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.retry.initial-backoff");
+                });
+    }
+
+    @Test
     void everyDeadKeyThisCheckKnowsAboutIsNamedInOneFailure() {
         // Why one failure at all: the configuration an operator upgrading from the released guide
         // holds is every one of these at once, because the guide printed them together — record-size
-        // in the defaults block and the push2u.health block beside it. Refused one startup at a
-        // time, each key would hide the next and the upgrade would cost a failed start per key.
+        // in the defaults block, the push2u.health block beside it and the push2u.retry block under
+        // both. Refused one startup at a time, each key would hide the next and the upgrade would
+        // cost a failed start per key.
         //
         // The keys come from the check's own entries rather than from a list written out here, so an
         // entry a later release adds is covered the day it lands. What that buys is bounded, and

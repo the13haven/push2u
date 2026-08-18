@@ -64,11 +64,15 @@ that list. **There is no `push2u.retry.*` block**: the library performs one POST
 send and schedules no repeat, so there is nothing under this prefix to configure — see
 [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
-**If you are upgrading from a version that had one, delete it from your YAML.** A key the starter
-does not bind is ignored rather than refused, so a context still carrying `push2u.retry.max-attempts`
-and its siblings starts cleanly and then sends without a single retry — nothing at startup or at run
-time will tell you that the block stopped meaning anything, and it goes on reading like configuration
-that is in force.
+**If you are upgrading from a version that had one, delete it from your YAML — the context will not
+start until you do.** All three of `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and
+`push2u.retry.max-backoff` fail the context at startup, in any spelling relaxed binding accepts,
+with a message naming the key and where the decision it configured went. They are refused rather
+than ignored for the sharpest of the reasons any removed key is: ignored, a context still carrying
+the block would start cleanly and then send without a single repeat, so a deployment that had
+configured three attempts would quietly be making one, and nothing at startup or at run time would
+say that the block had stopped meaning anything. The refusals are transition aids, carried for one
+minor release after the release that removed the properties, and then removed themselves.
 
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
@@ -85,7 +89,7 @@ Java parameter, and the operator wrote the property.
 
 **`push2u.record-size` no longer exists, and leaving it in your YAML fails the context at
 startup** — in any spelling relaxed binding accepts (`push2u.record-size`, `push2u.recordSize`,
-`PUSH2U_RECORD_SIZE`), with a message naming the key and where its effect went. Unlike the retry
+`PUSH2U_RECORD_SIZE`), with a message naming the key and where its effect went. Like the retry
 block above, this key is refused rather than ignored: it named a limit, and a limit silently out of
 force is exactly what an operator must not go on believing in. Delete the key; if it was raised to
 carry larger payloads, raise `max-encrypted-body-bytes` instead, which the derived record size now
