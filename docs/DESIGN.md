@@ -944,11 +944,21 @@ No traversal route through OSS Vault is claimed here.
   produced) and leaves the flight running for everyone else. The flight applies the interruption
   disjunction to every failure *before* classifying it by type, deliberately broader in scope than
   the facade's two conversion sites, so an interruption a defective transport wrapped in a
-  recurring type is still not shared. And a failure of neither contract type reaches its own
-  caller unchanged and abandons the flight the way a cancellation does — laundering it into a
-  contract type is what the exception taxonomy forbids. The flight is released on **every** exit,
-  two of which the transport's own contract does not admit: a throwable that is not a
-  `RuntimeException` at all, which an implementation in a language without checked exceptions
+  recurring type is still not shared. Its chain half carries the same two guards the facade's does
+  — an identity set against a cycle, a depth ceiling of 1000 against a chain fabricated fresh on
+  every read — and here they hold more than one caller's diagnostic, since the walk runs inside the
+  flight and a chain that never ends would hold the release with it. The two ends differ in what
+  they leave known: a cycle is walked to its end, so the answer is sound and the failure is
+  classified, while the ceiling leaves the tail unread, so the failure is shared with nobody and
+  the waiters retry — an interruption beyond the cut being exactly what cannot be ruled out — with
+  the cut filed on that failure the way an accessor's complaint is. The flag is asked again after
+  the walk however it ended, since the walk runs a consumer's `getCause()` and a cancellation can
+  land while it does: with the first look alone, a cancellation the fetching caller had already
+  taken would be shared with waiters nobody interrupted. And a failure of neither contract type
+  reaches its own caller unchanged and abandons the flight the way a cancellation does — laundering
+  it into a contract type is what the exception taxonomy forbids. The flight is released on
+  **every** exit, two of which the transport's own contract does not admit: a throwable that is not
+  a `RuntimeException` at all, which an implementation in a language without checked exceptions
   delivers through a method declaring none, and a failure whose overridable accessors throw while
   the description of it is being taken. Both abandon the flight, and both leave their caller the
   failure it was given — the second with the accessor's complaint filed on that failure as a

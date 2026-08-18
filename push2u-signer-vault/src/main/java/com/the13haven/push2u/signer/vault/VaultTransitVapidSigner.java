@@ -228,6 +228,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * otherwise pass a check at seven and record anyway.
      */
     private static final int SUPPRESSED_RECORDING_CEILING = 8;
+    /**
+     * How far the interruption test walks a failure's cause chain before it stops. A chain a defective transport
+     * fabricates fresh on every read is acyclic and endless, so the identity set that ends a cycle never fires on it:
+     * without this bound the walk spins and allocates until the process dies, and the one flight it runs inside is
+     * never released — which parks every caller of a deferred signer on a latch nobody counts down. High on purpose, so
+     * that reaching it cannot mean an honest chain was cut short: a real diagnostic is a handful of elements deep, and
+     * this sits two orders of magnitude beyond that.
+     */
+    private static final int CAUSE_CHAIN_CEILING = 1000;
 
     private final VaultHttpTransport transport;
     private final URI signUri;
@@ -551,19 +560,20 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          *
          * <p>Describing a failure consults it — its cause chain, its message, and for an unavailability its status and
          * declared delay — and every one of those is an overridable member of an exception a replaceable transport
-         * produced, so any of them may throw. Two things must survive that. The flight ends, because a description that
-         * threw is no reason to leave the waiters parked forever — and it ends even if recording that secondary fails
-         * in turn, since the release sits in the {@code finally} below rather than beside the recording. And the caller
-         * keeps the failure it was given, because a defect in an exception's own accessors says nothing about what the
-         * read met: the secondary is filed on the failure as a suppressed exception — where a secondary raised while
-         * handling a primary belongs — and the failure travels on as the classified thing it is. Filing it has three
-         * limits, all deliberate: nothing can suppress itself, so an accessor that threw the failure itself leaves
-         * nothing to record and the failure travels alone; the filing is bounded per exception instance, so a transport
-         * reusing one preallocated exception for every failed read of a long outage stops accumulating copies of the
-         * same diagnostic rather than growing a list for as long as the custodian is down; and a machine failure out of
-         * the recording is not swallowed, so that one reaches the caller in place of the failure rather than being
-         * hidden behind it. A failure whose description could not be taken is shared with nobody, so the waiters retry,
-         * exactly as they do for a failure of neither contract type.
+         * produced, so any of them may throw; the walk over that chain raises a complaint of its own where the chain
+         * does not end within the depth an honest diagnostic reaches. Two things must survive that. The flight ends,
+         * because a description that threw is no reason to leave the waiters parked forever — and it ends even if
+         * recording that secondary fails in turn, since the release sits in the {@code finally} below rather than
+         * beside the recording. And the caller keeps the failure it was given, because a defect in an exception's own
+         * accessors says nothing about what the read met: the secondary is filed on the failure as a suppressed
+         * exception — where a secondary raised while handling a primary belongs — and the failure travels on as the
+         * classified thing it is. Filing it has three limits, all deliberate: nothing can suppress itself, so an
+         * accessor that threw the failure itself leaves nothing to record and the failure travels alone; the filing is
+         * bounded per exception instance, so a transport reusing one preallocated exception for every failed read of a
+         * long outage stops accumulating copies of the same diagnostic rather than growing a list for as long as the
+         * custodian is down; and a machine failure out of the recording is not swallowed, so that one reaches the
+         * caller in place of the failure rather than being hidden behind it. A failure whose description could not be
+         * taken is shared with nobody, so the waiters retry, exactly as they do for a failure of neither contract type.
          */
         private void endFailedFlight(Flight flight, RuntimeException failure) {
             SharedFailure shared = null;
@@ -714,7 +724,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * cause chain. Neither half is sound alone, and testing the type first would let a defective transport that wrapped
      * an interruption in a recurring type share a cancellation with callers nobody interrupted. The fetching caller
      * still receives such a failure exactly as it was labelled; refusing to <em>share</em> it is the whole of what this
-     * decides.
+     * decides. A chain that cannot be walked to its end is refused in the same direction, by the test raising rather
+     * than answering: nothing is classified and nothing is shared, an interruption beyond the cut being exactly what
+     * cannot be ruled out.
      */
     private static @Nullable SharedFailure describeIfShareable(RuntimeException failure) {
         if (isInterruption(failure)) {
@@ -787,8 +799,24 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * The same interruption disjunction the sender applies, for the same reason neither half is sound alone: an
      * interruption can surface as an {@link java.io.InterruptedIOException} with no {@link InterruptedException}
      * beneath it (the flag half catches those), and a transport can attach a cause without re-setting the flag (the
-     * chain half catches that). The walk guards against a cyclic chain — constructible by a defective transport
-     * overriding {@code getCause()} — because a fetch must not spin over someone else's broken diagnostics.
+     * chain half catches that). The walk carries a guard against each of the two ways a chain a defective transport
+     * built by overriding {@code getCause()} can fail to end, because a fetch must not spin over someone else's broken
+     * diagnostics: an identity set ends a cycle, and a depth ceiling ends an acyclic chain that never runs out, which a
+     * read fabricating a fresh wrapper every time produces and no identity test can detect.
+     *
+     * <p>The two ends differ in what they leave known. A cycle is walked to its end — every element of it was seen — so
+     * the answer is sound and the failure goes on to be classified. The ceiling leaves the tail unread, so whether an
+     * {@link InterruptedException} sat beyond the cut cannot be known by anybody; rather than guess, the walk raises
+     * its own diagnostic, which the caller files on the failure and treats exactly as it treats an accessor that threw:
+     * the flight is abandoned, its waiters retry, and the fetching caller keeps the failure it was given. Guessing the
+     * other way and sharing the failure would risk handing a cancellation to callers nobody interrupted, which is the
+     * one thing this test exists to prevent.
+     *
+     * <p>The flag is asked once more after the walk, however the walk ended, and that second look is the method's exit:
+     * the walk runs consumer code, so an interruption can land between the first look and the last element read — and
+     * with the first look alone, a cancellation the fetching caller had already taken would be shared with waiters
+     * nobody interrupted. A walk cut at the ceiling reaches the same abandonment by the other route, since what it
+     * raises is not answered with a classification at all.
      */
     private static boolean isInterruption(RuntimeException failure) {
         if (Thread.currentThread().isInterrupted()) {
@@ -799,8 +827,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             if (cause instanceof InterruptedException) {
                 return true;
             }
+            if (seen.size() >= CAUSE_CHAIN_CEILING) {
+                throw new IllegalStateException("cause chain still unfinished after " + CAUSE_CHAIN_CEILING
+                        + " elements; a chain this deep is being generated, not walked, so the walk stops here");
+            }
         }
-        return false;
+        return Thread.currentThread().isInterrupted();
     }
 
     @Override

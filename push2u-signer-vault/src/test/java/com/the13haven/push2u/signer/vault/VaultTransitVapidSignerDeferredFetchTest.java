@@ -443,6 +443,92 @@ class VaultTransitVapidSignerDeferredFetchTest {
         assertThat(transport.keyReads()).isEqualTo(2);
     }
 
+    @Test
+    @Timeout(value = 30, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void anEndlesslyFabricatedCauseChainIsCutAtTheCeiling_andTheFlightStillEnds() throws Exception {
+        // A getCause() manufacturing a fresh wrapper on every read is an acyclic infinite chain:
+        // every element is new, so the identity set that ends a cycle never fires on it and the
+        // depth ceiling is the only thing that ends the walk. Without it the interruption test
+        // never returns, and here that is worse than a spinning send — the walk runs inside the
+        // flight, so its release is never reached, every waiter parks on a latch nobody counts
+        // down, and every later caller attaches to that same dead flight. The separate-thread mode
+        // is what makes the timeout the assertion's teeth: the default mode only interrupts the
+        // test thread, while the walk is a CPU-bound loop on another one that never reads the
+        // flag. The cost of a regression is a spinning zombie thread until this forked JVM exits,
+        // accepted for a failure that fails in seconds and names this test.
+        EndlesslyCausedFailure endless = new EndlesslyCausedFailure("Vault Transit key metadata read failed");
+        CountDownLatch fetchArrived = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        ScriptedVaultTransport transport = new ScriptedVaultTransport()
+                .onGetGated(fetchArrived, releaseFetch, () -> {
+                    throw endless;
+                })
+                .onGet(VaultTransitVapidSignerDeferredFetchTest::healthyKeys);
+        VapidSigner signer = deferredSigner(transport);
+
+        Caller fetcher = Caller.start("fetcher", signer::publicKey);
+        awaitGate(fetchArrived);
+        Caller waiter = Caller.start("waiter", signer::publicKey);
+        awaitParkedOnFlight(waiter);
+        releaseFetch.countDown();
+
+        Throwable fetcherFailure = fetcher.awaitFailure();
+        assertThat(fetcherFailure)
+                .as("the caller that performed the fetch keeps the exception it was given")
+                .isSameAs(endless);
+        assertThat(fetcherFailure.getSuppressed())
+                .as("with the cut filed on it as a diagnostic rather than thrown in its place")
+                .hasSize(1);
+        assertThat(fetcherFailure.getSuppressed()[0])
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cause chain");
+        assertThat(waiter.awaitValue())
+                .as("nothing was shared, though the failure was of a contract type: an interruption beyond"
+                        + " the cut is exactly what could not be ruled out, so the waiter retried")
+                .isEqualTo(HEALTHY_VAULT.publicKeyUncompressed());
+        assertThat(transport.keyReads())
+                .as("the flight was released, so a later caller could still start a read")
+                .isEqualTo(2);
+    }
+
+    @Test
+    @Timeout(value = 30, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void aCyclicCauseChainIsWalkedToItsEnd_andTheFailureIsStillShared() throws Exception {
+        // The other way a chain fails to end, and the one where the answer stays sound: two
+        // exceptions closed onto each other are walked to the identity set's stop having shown
+        // every element they hold, so nothing is unknown and the failure is shared as the
+        // recurring one it is. Nothing recorded on it is what tells this apart from the same loop
+        // cut by the depth ceiling a thousand elements later.
+        IllegalStateException other = new IllegalStateException("the other half of the cycle");
+        CyclicallyCausedFailure cyclic = new CyclicallyCausedFailure("Vault Transit key type is 'ed25519'", other);
+        other.initCause(cyclic);
+        CountDownLatch fetchArrived = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        ScriptedVaultTransport transport = new ScriptedVaultTransport().onGetGated(fetchArrived, releaseFetch, () -> {
+            throw cyclic;
+        });
+        VapidSigner signer = deferredSigner(transport);
+
+        Caller fetcher = Caller.start("fetcher", signer::publicKey);
+        awaitGate(fetchArrived);
+        Caller waiter = Caller.start("waiter", signer::publicKey);
+        awaitParkedOnFlight(waiter);
+        releaseFetch.countDown();
+
+        Throwable fetcherFailure = fetcher.awaitFailure();
+        assertThat(fetcherFailure).isSameAs(cyclic);
+        assertThat(fetcherFailure.getSuppressed())
+                .as("the cycle was recognised as a cycle: nothing was filed on the failure")
+                .isEmpty();
+        Throwable waiterFailure = waiter.awaitFailure();
+        assertThat(waiterFailure)
+                .as("and the failure was shared, the walk having answered rather than refused")
+                .isNotSameAs(cyclic)
+                .isInstanceOf(PushCryptoException.class)
+                .hasMessage(cyclic.getMessage());
+        assertThat(transport.keyReads()).as("a shared failure is not retried").isEqualTo(1);
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // The recording of an accessor's complaint is bounded per exception instance
     // ---------------------------------------------------------------------------------------------------------------
@@ -565,6 +651,23 @@ class VaultTransitVapidSignerDeferredFetchTest {
                     throw mislabelled;
                 },
                 mislabelled);
+    }
+
+    @Test
+    void anInterruptArrivingDuringTheCauseWalkIsStillNotShared() throws Exception {
+        // The disjunction's flag half is asked before the walk and again after it, and this is the
+        // window between the two: consumer code inside getCause() is where a cancellation can land
+        // while the chain is being read. Asking only before it would share a failure the fetching
+        // caller had already taken as its own cancellation with waiters nobody interrupted.
+        InterruptingCausedFailure interruptedMidWalk =
+                new InterruptingCausedFailure("Vault Transit key metadata read failed");
+        // Nothing to clear afterwards: the flag is set on the fetching caller's own thread, inside
+        // the read it performs there, and that thread ends with the failure.
+        fetchingCallerCancellationIsCallerLocal(
+                () -> {
+                    throw interruptedMidWalk;
+                },
+                interruptedMidWalk);
     }
 
     private void fetchingCallerCancellationIsCallerLocal(
@@ -864,6 +967,69 @@ class VaultTransitVapidSignerDeferredFetchTest {
         @Override
         public java.util.OptionalInt status() {
             throw accessorFailure;
+        }
+    }
+
+    /**
+     * A recurring failure whose cause chain never ends: every read builds a fresh link, and every link does the same,
+     * so the chain is acyclic and infinite and no identity test can recognise it for what it is.
+     */
+    private static final class EndlesslyCausedFailure extends PushCryptoException {
+
+        private EndlesslyCausedFailure(String message) {
+            super(message);
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            return new FabricatedLink();
+        }
+    }
+
+    /**
+     * A recurring failure whose cause chain sets the reading thread's interrupt flag while it is being walked — the
+     * cancellation that arrives after the walk's first look at the flag, and is missed by a walk that never looks
+     * again.
+     */
+    private static final class InterruptingCausedFailure extends PushCryptoException {
+
+        private InterruptingCausedFailure(String message) {
+            super(message);
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** One link of the chain above, fabricating its own successor exactly as the failure that starts it does. */
+    private static final class FabricatedLink extends RuntimeException {
+
+        private FabricatedLink() {
+            super("a freshly fabricated link");
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            return new FabricatedLink();
+        }
+    }
+
+    /** A recurring failure whose cause chain closes onto itself — the finite way a chain fails to end. */
+    private static final class CyclicallyCausedFailure extends PushCryptoException {
+
+        private final Throwable half;
+
+        private CyclicallyCausedFailure(String message, Throwable half) {
+            super(message);
+            this.half = half;
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            return half;
         }
     }
 
