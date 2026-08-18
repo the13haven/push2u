@@ -207,7 +207,10 @@ The interruption test is the facade's rather than any seam's, written as a disju
 because neither half is sound alone: an interruption can surface as a `ClosedByInterruptException`
 or an `InterruptedIOException` with no `InterruptedException` beneath it, and a transport can attach
 a cause without re-setting the flag. It runs on the signer path as well as the transport path, and
-the cause-chain walk is guarded against a cycle a defective seam could construct. The interrupt
+the cause-chain walk carries two guards against a chain a defective seam could keep from ending — an
+identity set against a cycle, and a depth ceiling of 1000 against an acyclic chain fabricated fresh
+on every `getCause()` read — so the chain half of the disjunction strictly covers the first 1000
+elements, which every honestly built chain fits with two orders of magnitude to spare. The interrupt
 status is re-set before the throw, which on the async path means the worker's flag is re-set before
 the future completes.
 

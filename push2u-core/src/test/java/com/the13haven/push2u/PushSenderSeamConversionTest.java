@@ -379,11 +379,14 @@ class PushSenderSeamConversionTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(value = 5, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void aCyclicCauseChainStillYieldsAClassifiedOutcome() {
         // Two exceptions closed onto each other through getCause(): the identity set is what ends
-        // the walk. The timeout is the assertion's teeth — without it a regression here is a hung
-        // run, not a red test.
+        // the walk. The separate-thread mode is what makes the timeout the assertion's teeth: the
+        // default mode only interrupts the test thread, and the walk is a CPU-bound loop that
+        // never reads the flag mid-walk, so a regression would hang the run instead of failing it.
+        // In a separate thread the timeout fails the test and names it; the cost — a spinning
+        // zombie thread until this forked test JVM exits — is accepted for that attribution.
         IllegalStateException other = new IllegalStateException("the other half of the cycle");
         PushDeliveryException raised = new PushDeliveryException("no answer") {
             @Override
@@ -403,11 +406,15 @@ class PushSenderSeamConversionTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(value = 5, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void anEndlesslyFabricatedCauseChainIsCutAtTheCeilingAndStaysClassified() {
         // A getCause() that manufactures a fresh wrapper on every call is an acyclic infinite
         // chain — every element is new, so no identity test can end it; the depth ceiling does,
-        // and hitting it is recorded the same way a throwing read is.
+        // and hitting it is recorded the same way a throwing read is. The separate-thread mode is
+        // what makes the timeout the teeth here too: without the ceiling this loop would spin
+        // allocating until an eventual OOM, which fails without saying what broke, where a timeout
+        // in a separate thread fails in seconds and names this test. Same accepted cost: a zombie
+        // thread until this forked test JVM exits.
         final class Fabricating extends RuntimeException {
             Fabricating() {
                 super("freshly fabricated cause");
