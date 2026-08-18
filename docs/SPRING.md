@@ -461,21 +461,20 @@ restriction off. The asymmetry above still argues, as it always does, that withh
 the cheap default, and what overrides it here is the pressure withholding puts on a Spring
 deployment serving the two services that publish a zone rather than a host — Safari's and Edge's, a
 major browser's users each. A bean is exclusive with the properties, so reaching for one to express
-those two zones costs every ordinary origin its place in YAML too: what
-is left is a `@Bean` carrying the hostnames *and* the matching rules, or one of two bad answers the
-starter can otherwise give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an
-origins-only allowlist, which can express neither zone.
+those two zones costs every ordinary origin its place in YAML too: what is left is a `@Bean`
+carrying the hostnames *and* the matching rules, or one of two bad answers the starter can otherwise
+give — `EndpointPolicies.unrestricted()`, which is unrestricted egress, or an origins-only
+allowlist, which can express neither zone.
 
 That second answer is the quieter failure, and it is quiet in two different ways. Edge's endpoints
 sit on varying subdomains, so an origins-only allowlist refuses them now: the subscription is
 registered and then refused at every send for the rest of its life, and the application sees an
 `EndpointRejected` outcome per send and nothing else, since the core has no logger of its own — a
-value it may well be discarding, which makes this quieter still.
-Safari's sit on one host today, so naming that host works — until Apple uses the rest of the zone
-its own documentation reserves, and those subscriptions then fail the same way. Neither is unsafe
-and neither fails a startup, so there is nothing in a review to notice; the feature simply stops
-working for those users. The property exists so that the safe answer is reachable by the route
-operators already use.
+value it may well be discarding, which makes this quieter still. Safari's sit on one host today, so
+naming that host works — until Apple uses the rest of the zone its own documentation reserves, and
+those subscriptions then fail the same way. Neither is unsafe and neither fails a startup, so there
+is nothing in a review to notice; the feature simply stops working for those users. The property
+exists so that the safe answer is reachable by the route operators already use.
 
 ## Health indicator
 
@@ -531,9 +530,11 @@ alive. If both matter to this deployment's health, that is the application's own
 subscription by reading the injected `VapidSigner`.** It answers with the primary regardless of
 which key the browser being registered was actually handed, so every subscription created against
 the other identity is recorded under the wrong one — and because the retirement gate counts the same
-labels, those rows are invisible to it right up to the irreversible step.
-[`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md#the-migration-step-by-step) has the value to label
-from instead.
+labels, those rows are invisible to it right up to the moment the old identity stops signing. The
+label comes from `subscription.options.applicationServerKey`, reported by the client and checked
+against the keys you serve, and from nothing on the server that says which generation is current.
+[`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md#the-migration-step-by-step) has the whole of it,
+including what the check can and cannot establish.
 
 **Everything except the signer is shared.** The contact address and the endpoint policy belong to
 the deployment rather than to an identity, so both senders take the same `EndpointPolicy` bean — the
