@@ -56,6 +56,26 @@ dependencies {
 }
 ```
 
+## Documentation
+
+The reference documents live under `docs/`. Most of them are introduced below where their subject
+comes up; this is the whole list.
+
+| Document | What it carries |
+|---|---|
+| [`DESIGN.md`](docs/DESIGN.md) | The architecture as it stands — the send pipeline, the three seams, and why it is shaped this way. |
+| [`adr/README.md`](docs/adr/README.md) | Index of the architecture decision records, one file per decision. |
+| [`SPRING.md`](docs/SPRING.md) | Every `push2u.*` property the core starter binds, and what a rejected value does to startup. |
+| [`HEALTH.md`](docs/HEALTH.md) | The starter's health indicator — what its probe asserts, its two keys, and the health-group routes. |
+| [`VAULT.md`](docs/VAULT.md) | The Vault Transit signer — the three key modes, the `push2u.signer.vault.*` properties, namespaces, and its transport seam. |
+| [`SIGNER.md`](docs/SIGNER.md) | Writing a `VapidSigner` over an HSM, a KMS or a remote custodian, and the conformance kit that checks one. |
+| [`VAPID.md`](docs/VAPID.md) | The one-time recipe for generating a VAPID key pair. |
+| [`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) | The operator runbook for replacing that pair on a running deployment. |
+| [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) | The browser push services and the allowlist entry each one needs, in both spellings. |
+| [`MIGRATION.md`](docs/MIGRATION.md) | Moving an application from `nl.martijndwars:web-push`. |
+| [`PERFORMANCE.md`](docs/PERFORMANCE.md) | What one message costs, step by step, per JCE provider, with the machine it was measured on. |
+| [`RELEASING.md`](docs/RELEASING.md) | The release procedure, for maintainers. |
+
 ## Quick start
 
 The browser supplies the endpoint, `p256dh`, and `auth` values — the endpoint at the top level of
@@ -826,44 +846,17 @@ An external `VapidSigner` controls its own signing provider.
 A public key that does not correspond to the configured private scalar is therefore rejected at
 startup instead of producing repeated `401`/`403` responses at send time.
 
-Whatever the signer, its two outputs are checked wherever a new one enters a send: the signature
-must be the raw 64-byte `r || s` pair (RFC 7518 §3.4) and the key the 65-byte uncompressed point
-(RFC 8292 §3.2). Under the default token reuse that is every send that signs — a reused
-`Authorization` value was checked when it was signed, and `sign` is not called for it again — so a
-misencoded signer is still caught the first time it is asked, on the send that asks. A violation
-raises `PushCryptoException` saying what was returned; otherwise it would surface as an opaque
-`401`/`403`, with nothing pointing at the signer. If your implementation signs through JCA, note
-that `SHA256withECDSA` produces DER: ask for `SHA256withECDSAinP1363Format` or convert before
-returning, and the rejection message will say so if you forget.
+Whatever the signer, its two outputs are also checked by shape wherever a new one enters a send —
+the raw 64-byte `r || s` signature and the 65-byte uncompressed point, or a `PushCryptoException`
+naming what came back instead. [`SIGNER.md`](docs/SIGNER.md) carries that contract and the rest of
+what writing a signer takes.
 
-**A signer failure leaves in one of two types, and this is the split an implementation is most
-likely to get wrong.** A key custodian that cannot sign *now* — unreachable, timed out, sealed, not
-yet initialized, still catching up, rate-limiting — raises `VapidSignerUnavailableException`, from
-`sign` and `publicKey` alike, carrying the status the custodian answered with and any moment it
-declared for coming back where it declared either. That is what the sender converts into the
-`SignerUnavailable` outcome. Everything else raises `PushCryptoException`: a defect, a substrate
-that cannot perform the cryptography, an answer no custodian could have meant, and a
-misconfiguration that answers the same way until a person edits it. Nothing checks which one an
-implementation chose — the conformance kit asserts no exception types on purpose — so a signer that
-reports its custodian's outages as a cryptographic failure passes every test it has while turning
-each of those outages into a permanent failure for its callers. **If you wrote a signer over a
-network, an HSM or a KMS against an older reading of this contract, it keeps compiling unchanged**;
-every `throw` in it is worth a look.
+## Writing a VapidSigner
 
-**The key a signer advertises must stay the same for that signer's lifetime.** VAPID's public key
-is your application server's published identity: a browser subscription is bound to the
-`applicationServerKey` it was created with, and RFC 8292 §4.2 lets a push service refuse a JWT
-whose key is not the one that subscription was created under. So a signer that starts answering
-`publicKey()` differently has already broken every restricted subscription taken out before the
-change — rotation is a re-subscription event that produces a *new* signer, not a new answer from
-the existing one. The library cannot check this from outside, since two equal answers say nothing
-about the next one, and states it as contract instead.
-
-## Conformance kit for a custom signer
-
-The two shape checks above are what your signer meets on the sends that reach it; `push2u-testkit`
-is how it finds out in its own test suite instead. It is a test-scoped artifact holding one
-abstract JUnit Jupiter class:
+`VapidSigner` is the seam for key custody: an implementation over an HSM, a KMS or a remote
+custodian keeps the private key wherever it belongs and answers with a raw 64-byte `r || s` ES256
+signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published conformance
+kit that holds one to that contract in its own test suite:
 
 ```kotlin
 dependencies {
@@ -871,28 +864,10 @@ dependencies {
 }
 ```
 
-```java
-class MySignerContractTest extends VapidSignerContractTest {
-
-    @Override
-    protected VapidSigner signer() {
-        return new MySigner(...);
-    }
-}
-```
-
-Six checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
-coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
-by the JCA without complaint), `publicKeyBase64Url()` is exactly the unpadded URL-safe base64 of
-those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than
-one the signer keeps — two successive calls must not return the same object — and a signature is
-the raw 64-byte `r || s` that verifies against that key. Verification uses the JDK alone and runs
-on a FIPS-only JVM: the kit prefers
-`SHA256withECDSAinP1363Format` and, where a provider registers only DER-form `SHA256withECDSA`
-(BC-FIPS), re-encodes the raw signature to minimal DER and verifies through that name — the same
-fallback the library itself makes. It is the same contract `LocalEcVapidSigner` and the Vault
-Transit signer are held to. The kit brings JUnit Jupiter and AssertJ with it, which is why it is a
-separate artifact and never a dependency of `push2u-core`.
+[`SIGNER.md`](docs/SIGNER.md) is the reference — the two shape checks every signature and key
+passes on its way into a send, the split between `VapidSignerUnavailableException` and
+`PushCryptoException` an implementation is most likely to get wrong, why the key a signer
+advertises may never change, and the six checks the kit runs.
 
 ## Modules
 

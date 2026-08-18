@@ -592,8 +592,7 @@ class MySignerContractTest extends VapidSignerContractTest {
 ```
 
 `push2u-signer-vault` is a ready-made implementation over HashiCorp Vault Transit, so the private
-key never enters the JVM at all. The kit is documented under
-[Conformance kit for a custom signer](../README.md#conformance-kit-for-a-custom-signer), the Vault
+key never enters the JVM at all. The kit is documented in [`SIGNER.md`](SIGNER.md), the Vault
 signer in [`VAULT.md`](VAULT.md).
 
 ## Migration checklist
