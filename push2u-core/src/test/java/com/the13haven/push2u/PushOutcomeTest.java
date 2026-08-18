@@ -14,11 +14,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * The {@link PushOutcome} hierarchy's own contract: the validation each variant applies, the {@code NotAttempted}
@@ -321,31 +323,58 @@ class PushOutcomeTest {
     }
 
     @Test
+    @Timeout(value = 30, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void aSharedExceptionUnderAConcurrentFanOutStillStopsAtTheCeiling() throws Exception {
         // The ceiling is a check followed by a record, and a fan-out is where the two can come
         // apart: threads building outcomes from one preallocated exception all read a length below
         // the limit and all record. Held as one critical section, the count is what it says it is.
-        // This test cannot fail falsely — a correct implementation lands on the limit exactly, for
-        // any interleaving — while a torn one only sometimes exceeds it, so a green run here is
-        // weaker evidence than a red one.
-        VapidSignerUnavailableException shared = new VapidSignerUnavailableException("sealed", 503, null, null) {
-            @Override
-            public OptionalInt status() {
-                return null;
-            }
-        };
+        //
+        // The gate is what makes the attempt worth making. Submitted without one, the first eight
+        // tasks can finish while the loop is still submitting, and every later thread then reads a
+        // length already at the limit — which a torn implementation passes as comfortably as a
+        // sound one. Held at the gate, they all arrive at the check together. Several rounds,
+        // because one interleaving is one sample.
+        //
+        // What it can and cannot show, measured rather than assumed: a correct implementation lands
+        // on the limit exactly for any interleaving, so a red run here is real. A torn one exceeds
+        // it only rarely — one run in roughly fifteen across sizes from 256 to 10000 builders,
+        // gated and ungated alike — because the window it has to hit is the gap between two
+        // acquisitions of one monitor, and nothing a test can write goes in between: both members
+        // are final on Throwable. So a green run is close to no evidence at all, and this stands as
+        // a statement of the invariant that occasionally catches a regression, not as the pin. The
+        // sequential test below is the one that pins the ceiling itself. The timeout covers the
+        // gate: a rendezvous that never completes has to fail the test rather than hang the run.
+        for (int round = 0; round < 4; round++) {
+            VapidSignerUnavailableException shared = new VapidSignerUnavailableException("sealed", 503, null, null) {
+                @Override
+                public OptionalInt status() {
+                    return null;
+                }
+            };
+            int builders = 256;
+            CountDownLatch ready = new CountDownLatch(builders);
+            CountDownLatch start = new CountDownLatch(1);
 
-        try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<?>> started = new ArrayList<>();
-            for (int i = 0; i < 512; i++) {
-                started.add(threads.submit(() -> new PushOutcome.SignerUnavailable(shared)));
+            try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
+                List<Future<?>> started = new ArrayList<>();
+                for (int i = 0; i < builders; i++) {
+                    started.add(threads.submit(() -> {
+                        ready.countDown();
+                        start.await();
+                        return new PushOutcome.SignerUnavailable(shared);
+                    }));
+                }
+                ready.await();
+                start.countDown();
+                for (Future<?> built : started) {
+                    built.get();
+                }
             }
-            for (Future<?> built : started) {
-                built.get();
-            }
+
+            assertThat(shared.getSuppressed())
+                    .as("round %d: every builder was released at the same moment", round)
+                    .hasSize(8);
         }
-
-        assertThat(shared.getSuppressed()).hasSize(8);
     }
 
     @Test
