@@ -10,8 +10,9 @@ answers instead.
 
 The document is what the contract requires and how a violation of it surfaces: the two checks every
 signature and key passes on its way into a send, the split between the two failure types an
-implementation is most likely to get wrong, the one thing that may never change about a signer, and
-the kit that holds all of it in your own test suite.
+implementation is most likely to get wrong, the thread safety a shared sender takes for granted,
+the one thing that may never change about a signer, and the kit that holds what can be held in your
+own test suite.
 
 ## The two shape checks
 
@@ -40,6 +41,14 @@ reports its custodian's outages as a cryptographic failure passes every test it 
 each of those outages into a permanent failure for its callers. **If you wrote a signer over a
 network, an HSM or a KMS against an older reading of this contract, it keeps compiling unchanged**;
 every `throw` in it is worth a look.
+
+## The signer must be thread-safe
+
+**Implementations must be thread-safe.** One `PushSender` is shared across threads and
+`sendAsync` makes concurrent calls the normal case. This is not checkable by the conformance kit,
+and the natural mistake is silent: `java.security.Signature` is not thread-safe, so one held in a
+field corrupts signatures under concurrency instead of failing. Obtain per-call instances, or
+confine them to a thread.
 
 ## The advertised key never changes
 
