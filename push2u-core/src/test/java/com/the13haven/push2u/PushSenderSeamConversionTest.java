@@ -403,6 +403,10 @@ class PushSenderSeamConversionTest {
 
         assertThat(outcome).isInstanceOf(PushOutcome.Indeterminate.class);
         assertThat(((PushOutcome.Indeterminate) outcome).cause()).isSameAs(raised);
+        assertThat(raised.getSuppressed())
+                .as("the cycle was recognised as a cycle: nothing was recorded, which is what tells this apart"
+                        + " from the same loop being cut by the depth ceiling a thousand elements later")
+                .isEmpty();
     }
 
     @Test

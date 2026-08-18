@@ -197,9 +197,12 @@ The conversions trust the seam's classification, not its diagnostics: every memb
 converting — the policy exception's message, the signer exception's status and retry hint, the
 cause chain the interruption walk traverses — is read inside a guard, so a defective accessor in a
 consumer's exception subclass costs the caller that one diagnostic, never the classified outcome.
-The defect is recorded as a suppressed exception where the outcome carries the seam's failure;
-`EndpointRejected` carries only strings, so a rejection whose `getMessage()` threw gets the
-sender's own fixed reason instead, carrying nothing the throwing accessor wrote. An `Error` out of
+The defect is recorded as a suppressed exception where the outcome carries the seam's failure —
+bounded per exception instance, because preallocating one exception and throwing it for every call
+is ordinary, and one such instance with a broken accessor would otherwise grow a suppressed entry
+per send for as long as a fan-out runs. `EndpointRejected` carries only strings, so a rejection
+whose `getMessage()` threw gets the sender's own fixed reason instead, carrying nothing the
+throwing accessor wrote. An `Error` out of
 any of those reads is not survived and propagates.
 
 The interruption test is the facade's rather than any seam's, written as a disjunction — an

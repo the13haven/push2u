@@ -314,4 +314,31 @@ class PushOutcomeTest {
                 .isInstanceOf(AssertionError.class)
                 .hasMessage("invariant failed inside an accessor");
     }
+
+    @Test
+    void oneReusedExceptionDoesNotGrowItsSuppressedListWithEveryOutcome() {
+        // Preallocating one exception and throwing it for every call is an ordinary thing for a
+        // signer to do — a custodian refusing everything while a breaker is open builds nothing
+        // per call — so a fan-out over a subscription store hands the same instance to this
+        // constructor over and over. With a broken accessor on it, an unbounded recording would
+        // turn one defect into a list that grows for as long as the fan-out runs.
+        VapidSignerUnavailableException reused = new VapidSignerUnavailableException("sealed", 503, null, null) {
+            @Override
+            public OptionalInt status() {
+                return null;
+            }
+        };
+
+        for (int i = 0; i < 1000; i++) {
+            assertThat(new PushOutcome.SignerUnavailable(reused).status()).isEmpty();
+        }
+
+        assertThat(reused.getSuppressed())
+                .as("the recording is bounded, and every outcome still answered from a guarded read")
+                .hasSizeLessThanOrEqualTo(8);
+        assertThat(reused.getSuppressed()[0])
+                .as("what was recorded is still the diagnostic, not something the ceiling substituted")
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("status()");
+    }
 }
