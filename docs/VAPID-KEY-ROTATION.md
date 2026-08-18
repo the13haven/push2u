@@ -408,15 +408,22 @@ check at page load comparing the key the subscription was created with against t
 now serves, a message asking the user to come back. The pace is the clients', and a subscriber who
 never opens the application again never migrates.
 
-**That page-load check holds both keys at once, and only one of them may reach the POST.** The key
-just fetched from the server is the *comparison target* and nothing else; the label on any
-registration the check sends is `existingSubscription.options.applicationServerKey`, the key that
-subscription was actually created under. Post the fetched one instead and every returning visitor
-still on K1 relabels their own row as K2 — silently, on a page load, with no resubscription having
-happened. That drains the old count to zero across the whole returning population within days, step
-8 then reads a gate that says the cohort is empty, and step 9 ends K1's signing under live
-subscriptions still bound to it. Step 8's safety net does not catch it either: the loud error it
-keeps for one release fires on the old generation, and these rows no longer carry it.
+**That page-load check holds two subscriptions and two keys, and the label comes from exactly one of
+them.** The key just fetched from the server is the *comparison target*, and then the argument to
+the `subscribe(...)` that follows; it is never the label. **The label always comes from the exact
+`PushSubscription` serialized in the same registration payload** — from `existingSubscription` where
+the check re-registers the subscription it found, and from `replacementSubscription` once it has
+dropped that one and created a new subscription under K2.
+
+Both other readings are reachable, and they fail in opposite directions. Post the fetched key and
+every returning visitor still on K1 relabels their own row as K2 — silently, on a page load, with no
+resubscription having happened. That drains the old count to zero across the whole returning
+population within days, step 8 then reads a gate that says the cohort is empty, and step 9 ends K1's
+signing under live subscriptions still bound to it; step 8's safety net does not catch it either,
+because the loud error it keeps for one release fires on the old generation and these rows no longer
+carry it. Take the label off the subscription the replacement replaced and the mirror happens: a row
+created under K2 is written as K1, every send to it goes out through the old signer and comes back
+`401`/`403`, and the old cohort never empties, because the migration itself keeps refilling it.
 
 **7. Watch the counts.** [Observability](#observability) below is what to count and where each
 number comes from. This step runs for as long as step 6 does.
