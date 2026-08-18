@@ -486,10 +486,13 @@ class Push2uHealthIndicatorTest {
     }
 
     /**
-     * A signer that hands back the provider's DER-encoded ECDSA signature instead of the raw {@code r||s} pair the
-     * contract requires: a well-formed answer of the wrong shape, and never 64 bytes. Each half is written as a 33-byte
-     * INTEGER — the leading zero a value whose high bit is set needs — so the length is a fixed 72. Named rather than
-     * anonymous because the probe reports the signer's simple name, and an anonymous class has none.
+     * A signer that hands back an ASN.1-encoded ECDSA signature instead of the raw {@code r||s} pair the contract
+     * requires: a well-formed answer of the wrong shape, and never 64 bytes. Each half is written as a 33-byte INTEGER
+     * with an unconditional leading zero, which a real provider would emit only for a value whose high bit is set — so
+     * this blob is BER rather than strict DER about half the time, and a provider's would be 70 to 72 bytes. The point
+     * of writing it this way is the fixed 72: the length the probe reports is then the same on every run, whatever
+     * signature the freshly generated key produced. Named rather than anonymous because the probe reports the signer's
+     * simple name, and an anonymous class has none.
      */
     private static final class DerSigner implements VapidSigner {
 
@@ -499,7 +502,7 @@ class Push2uHealthIndicatorTest {
             byte[] der = new byte[72];
             der[0] = 0x30; // SEQUENCE
             der[1] = 70; // of everything that follows
-            der[2] = 0x02; // INTEGER r, 33 bytes, leading zero at index 4
+            der[2] = 0x02; // INTEGER r: 33 bytes, the zero at index 4 written whether or not it is needed
             der[3] = 33;
             System.arraycopy(raw, 0, der, 5, 32);
             der[37] = 0x02; // INTEGER s, the same shape
