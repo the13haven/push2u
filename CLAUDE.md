@@ -12,13 +12,15 @@ Every reference document lives under `docs/`; the repository root keeps only wha
 GitHub's community profile looks for there — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
 `CODE_OF_CONDUCT.md`, `LICENSE` and this file.
 
-`README.md` documents the public API for consumers; `docs/VAULT.md` and `docs/SPRING.md` carry the
-reference for the two integrations, and `docs/VAPID.md` the one-time recipe for generating a VAPID
-key pair — all three are what README introduces in a few lines and links to. `docs/VAPID.md` is the
-one with a moving part: its `jshell` block sits between the `vapid-keygen:begin` /
-`vapid-keygen:end` anchors and is executed by `VapidGuideKeyGenerationTest` out of the file itself,
-so the anchors, the fenced block and the heredoc wrapper are load-bearing and
-`.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
+`README.md` documents the public API for consumers, and its *Documentation* table right after
+*Installation* is the index of everything under `docs/` — a new document there is added to that
+table too, since an index that skips one is worse than none. `docs/VAULT.md` and `docs/SPRING.md`
+carry the reference for the two integrations, and `docs/VAPID.md` the one-time recipe for
+generating a VAPID key pair — all three are what README introduces in a few lines and links to.
+`docs/VAPID.md` is the one with a moving part: its `jshell` block sits between the
+`vapid-keygen:begin` / `vapid-keygen:end` anchors and is executed by `VapidGuideKeyGenerationTest`
+out of the file itself, so the anchors, the fenced block and the heredoc wrapper are load-bearing
+and `.github/workflows/detect-changes.yml` treats an edit there as a build change — its `case` block
 matches the path, so moving or renaming the file silently switches that off unless the pattern moves
 with it. `docs/HEALTH.md` is the Spring Boot health indicator's own reference, split out of
 `docs/SPRING.md` once it had outgrown a section of a document whose subject is the starter's
@@ -57,6 +59,16 @@ none of them as a default and the document is there to be copied out of, so its 
 of what the vendors publish rather than anything this repository verifies; it says so itself, and
 names the two rows whose vendor page carries the host but not the last step to Web Push — those
 clauses are load-bearing rather than caveats, and a citation swapped for a weaker one undoes them.
+`docs/SIGNER.md` is the reference for README's other reader — not the one sending a push but the one
+writing a `VapidSigner` over an HSM, a KMS or a remote custodian: the two shape checks every
+signature and key passes on its way into a send, the `VapidSignerUnavailableException` /
+`PushCryptoException` split an implementation is most likely to get wrong, why the key a signer
+advertises may never change for that signer's lifetime, and the six checks `push2u-testkit` runs.
+It took that material out of the tail of README's *JCE provider selection* and out of the whole of
+its conformance-kit section, which leaves the first about choosing a provider and turns the second
+into the short *Writing a VapidSigner* introduction README gives `docs/SPRING.md` and
+`docs/VAULT.md`. The testkit coordinate stayed behind in README, under the rule below, and
+`docs/SIGNER.md` links to it rather than repeating it.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…026) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
@@ -86,9 +98,9 @@ the procedure.
 
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
-string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/VAPID.md`,
-`docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md` or anywhere else freezes at whatever version it
-was written with and starts lying at the next release.
+string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/SIGNER.md`,
+`docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md` or anywhere else freezes at
+whatever version it was written with and starts lying at the next release.
 Those documents point at README's Installation section instead. The exception is a document that is
 *about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
 version on purpose, and a frozen coordinate there is correct.

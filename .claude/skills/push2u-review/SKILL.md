@@ -260,15 +260,19 @@ Cheap to check, silently wrong when missed: the pull request carries a changelog
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
 a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
-`docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/VAPID.md` — is updated if
-consumer-facing API, properties or limits changed, and `docs/VAPID-KEY-ROTATION.md` if the VAPID
-identity's lifecycle did — how or *when* a signer pins a key version (a new fetch mode moves that
-moment as surely as a new accessor would), anything that re-reads a key on a live signer, a
-key-version accessor — or if outcome classification moved, since that runbook diagnoses a wrong
-identity by `401`/`403` arriving as `NonRetryableFailure` and never as `SubscriptionExpired`, and
-reclassifying either would falsify its whole diagnosis section without touching a signer. Each of
-those falsifies that document rather than merely dating it; a new suppression or rule exclusion
-states its reason next to it.
+`docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/SIGNER.md` / `docs/VAPID.md` — is
+updated if consumer-facing API, properties or limits changed, `docs/SIGNER.md` in particular if the
+`VapidSigner` contract moved, since it and not README is where the shape checks, the split between
+`VapidSignerUnavailableException` and `PushCryptoException` and the conformance kit's assertions
+are stated — a seam-taxonomy change that updates README's one sentence and leaves that document
+alone leaves the signer author reading a contract that no longer holds — and
+`docs/VAPID-KEY-ROTATION.md` if the VAPID identity's lifecycle did — how or *when* a signer pins a
+key version (a new fetch mode moves that moment as surely as a new accessor would), anything that
+re-reads a key on a live signer, a key-version accessor — or if outcome classification moved, since
+that runbook diagnoses a wrong identity by `401`/`403` arriving as `NonRetryableFailure` and never
+as `SubscriptionExpired`, and reclassifying either would falsify its whole diagnosis section
+without touching a signer. Each of those falsifies that document rather than merely dating it; a
+new suppression or rule exclusion states its reason next to it.
 
 ## 6. Calibrate before reporting
 
