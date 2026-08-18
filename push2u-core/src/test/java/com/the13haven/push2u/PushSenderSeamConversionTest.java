@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * The facade's seam-signal conversions (ADR-021): exactly three exception types convert to outcomes —
@@ -375,6 +376,87 @@ class PushSenderSeamConversionTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    @Test
+    @Timeout(5)
+    void aCyclicCauseChainStillYieldsAClassifiedOutcome() {
+        // Two exceptions closed onto each other through getCause(): the identity set is what ends
+        // the walk. The timeout is the assertion's teeth — without it a regression here is a hung
+        // run, not a red test.
+        IllegalStateException other = new IllegalStateException("the other half of the cycle");
+        PushDeliveryException raised = new PushDeliveryException("no answer") {
+            @Override
+            public synchronized Throwable getCause() {
+                return other;
+            }
+        };
+        other.initCause(raised);
+        PushSender sender = sender((endpoint, headers, body) -> {
+            throw raised;
+        });
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(outcome).isInstanceOf(PushOutcome.Indeterminate.class);
+        assertThat(((PushOutcome.Indeterminate) outcome).cause()).isSameAs(raised);
+    }
+
+    @Test
+    @Timeout(5)
+    void anEndlesslyFabricatedCauseChainIsCutAtTheCeilingAndStaysClassified() {
+        // A getCause() that manufactures a fresh wrapper on every call is an acyclic infinite
+        // chain — every element is new, so no identity test can end it; the depth ceiling does,
+        // and hitting it is recorded the same way a throwing read is.
+        final class Fabricating extends RuntimeException {
+            Fabricating() {
+                super("freshly fabricated cause");
+            }
+
+            @Override
+            public synchronized Throwable getCause() {
+                return new Fabricating();
+            }
+        }
+        PushDeliveryException raised = new PushDeliveryException("no answer") {
+            @Override
+            public synchronized Throwable getCause() {
+                return new Fabricating();
+            }
+        };
+        PushSender sender = sender((endpoint, headers, body) -> {
+            throw raised;
+        });
+
+        PushOutcome outcome = sender.send(subscription(), message());
+
+        assertThat(outcome).isInstanceOf(PushOutcome.Indeterminate.class);
+        assertThat(((PushOutcome.Indeterminate) outcome).cause()).isSameAs(raised);
+        assertThat(raised.getSuppressed()).hasSize(1);
+        assertThat(raised.getSuppressed()[0])
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cause chain");
+    }
+
+    @Test
+    void anErrorOutOfGetCauseLeavesSendUnclassified() {
+        // The RuntimeException boundary, pinned on the walk as it is on the other two guarded
+        // reads: an Error out of getCause() is neither survived nor laundered into an outcome.
+        PushDeliveryException raised = new PushDeliveryException("no answer") {
+            @Override
+            public synchronized Throwable getCause() {
+                throw new AssertionError("invariant failed inside getCause");
+            }
+        };
+        PushSender sender = sender((endpoint, headers, body) -> {
+            throw raised;
+        });
+        Subscription subscription = subscription();
+        PushMessage message = message();
+
+        assertThatThrownBy(() -> sender.send(subscription, message))
+                .isInstanceOf(AssertionError.class)
+                .hasMessage("invariant failed inside getCause");
     }
 
     private static PushSender sender(PushHttpClient client) {

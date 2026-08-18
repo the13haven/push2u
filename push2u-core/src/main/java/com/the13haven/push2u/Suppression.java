@@ -12,6 +12,12 @@ package com.the13haven.push2u;
  * both owe the caller the seam's own failure, never a complaint about how its diagnostics were written. The recording
  * form lives once, in a class of its own, because neither of those two is a natural home for the other's need and a
  * second copy of this logic is a second chance to get the one reachable refusal wrong.
+ *
+ * <p>Recording mutates the consumer's exception. A shared, preallocated instance whose accessor breaks on every read
+ * would therefore accumulate one diagnostic per constructed outcome — a retry schedule building outcomes from the same
+ * instance grows its suppressed list with each one. That takes two defects at once, and an exception built for sharing
+ * is conventionally constructed with suppression disabled, which turns every recording here into a silent no-op —
+ * stated so the trade does not have to be rediscovered.
  */
 final class Suppression {
 
