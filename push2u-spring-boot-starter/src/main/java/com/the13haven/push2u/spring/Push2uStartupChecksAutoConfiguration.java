@@ -357,7 +357,52 @@ public final class Push2uStartupChecksAutoConfiguration {
                         "push2u.health.cache-ttl was removed and no longer configures anything — delete the key. The"
                                 + " probe's result cache is configured beside that switch now: set"
                                 + " management.health.push2u.cache-ttl instead, with the same value and the same"
-                                + " meaning."));
+                                + " meaning."),
+                // Removed when the repeat decision became the caller's: the retry loop went, and
+                // send now performs exactly one POST and publishes what a repeat decision needs on
+                // the outcome. These three are the removal whose silent ignoring changes delivery
+                // rather than a diagnostic — a deployment that configured three attempts starts
+                // clean and then sends once per message, with nothing at startup or at run time
+                // saying so, and the messages a push service dropped under load are simply gone.
+                // Each of the three carries its own note for the same reason the health pair does:
+                // an entry inserted between them must not leave one explained by a comment that is
+                // no longer next to it.
+                new RemovedProperty(
+                        "push2u.retry.max-attempts",
+                        "push2u.retry.max-attempts was removed and no longer configures anything — delete the key."
+                                + " Nothing here counts attempts any more: a send performs exactly one POST and"
+                                + " reports what became of it, and deciding whether to repeat it is the caller's."
+                                + " The outcome carries what that decision needs — a RetryableFailure names the"
+                                + " status code the push service answered with and the Retry-After it asked for —"
+                                + " so schedule the repeat where your application already schedules work, and mind"
+                                + " that a repeat is not free of duplicates: a 502 or a 504 may cover a POST that"
+                                + " was applied."),
+                // The two backoff keys configured a wait between attempts; with no second attempt
+                // there is no wait to configure, and what a repeat should wait for now comes from
+                // the push service's own answer rather than from a curve set in advance.
+                new RemovedProperty(
+                        "push2u.retry.initial-backoff",
+                        "push2u.retry.initial-backoff was removed and no longer configures anything — delete the"
+                                + " key. Nothing here waits between attempts any more, because nothing here makes a"
+                                + " second one: a send performs exactly one POST and the repeat is the caller's."
+                                + " What a repeat should wait for comes from the push service itself — a"
+                                + " RetryableFailure outcome carries the Retry-After it answered with, exactly as it"
+                                + " arrived — and the waiting belongs to whatever schedules the repeat in your"
+                                + " application."),
+                // The ceiling is the one of the three whose loss is not only a lost repeat: an
+                // application that adopts the reported Retry-After without a bound of its own has
+                // taken a delay named by the push service, which is a value this library never
+                // caps. Worth saying in the refusal, since the operator holding this key is by
+                // definition someone who had decided a bound was needed.
+                new RemovedProperty(
+                        "push2u.retry.max-backoff",
+                        "push2u.retry.max-backoff was removed and no longer configures anything — delete the key. It"
+                                + " bounded a wait nothing here performs any more: a send makes one POST, and the"
+                                + " repeat, with its schedule, is the caller's. The Retry-After a RetryableFailure"
+                                + " outcome carries is reported exactly as the push service sent it, with no ceiling"
+                                + " applied — so if a delay needs bounding, and a value named by a remote service"
+                                + " usually does, apply the bound where the repeat is scheduled, which is the only"
+                                + " place that knows what the delay is competing with."));
 
         private final Environment environment;
 
