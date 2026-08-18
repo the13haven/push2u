@@ -43,6 +43,14 @@ improves. What it should have done instead:
   [ADR-NNN](NNNN-slug.md)`. *Which* clause is superseded belongs in the new ADR, not in this one's
   status line — naming it here would smuggle the new decision's reasoning into a file that may not
   carry it. ADR-004's status line, pointing at ADR-019, is the case to check this against;
+- a link whose *target document was renamed*: the one other edit an implemented ADR takes, because
+  the same document under a new name is the same artefact and only the path moves. It is worth the
+  exception because a rename can leave the old path still resolving, at a document that is now
+  something else — `docs/MIGRATION.md` was renamed to `docs/MIGRATION-FROM-WEB-PUSH.md` and a new
+  `docs/MIGRATION.md` took the freed name, so ADR-023's reference had to follow. Material that
+  merely *moved* into another document is the opposite case and takes no edit: the reference stays
+  as the record of where that material was when the decision was taken, which is why ADR-026 still
+  names `docs/VAULT.md` as the rotation recipe's home;
 - a description of how things now *work*: that belongs in `docs/DESIGN.md`, the document meant to
   be rewritten as the code moves. An ADR describing the present tense goes stale and may not be
   edited to catch up, which is precisely why the split exists;

@@ -223,8 +223,10 @@ it leaves the documents describing a design the code no longer follows.
 Two edits are findings on sight: an ADR whose decision is implemented being reworded or amended
 (immutable — a moved decision is a new ADR, and the old one only ever gets `Superseded by ADR-NNN`
 on its status line, or, for a decision superseded only in part, `Accepted; one clause superseded
-by ADR-NNN` beside the full form — either is legal, a third spelling is not), and a description of
-how the code currently works being added to an ADR instead of to `docs/DESIGN.md`.
+by ADR-NNN` beside the full form — either is legal, a third spelling is not; the one edit that is
+not a status line is a link repointed at a document that was *renamed*, never at one the material
+moved to), and a description of how the code currently works being added to an ADR instead of to
+`docs/DESIGN.md`.
 
 ### 5.7 Dependencies and supply chain
 

@@ -80,27 +80,50 @@ this tree**: they live on the long-running `perf/hot-path-measurements` branch, 
 measurement into `check` reports a shared runner's noise as a regression, and because a harness has
 not earned a place in the build configuration of two published modules. A number in that document
 that no longer holds is deleted rather than left to age.
-`docs/MIGRATION.md` is the guide for consumers coming from `nl.martijndwars:web-push` — it states
-the other library's API and dependency set as verified facts, so anything added there must be
-checked against the published artifact. `docs/RELEASING.md` covers the release procedure,
-`CONTRIBUTING.md` the contributor-facing form of the conventions below, and `SECURITY.md` the
-vulnerability policy.
+Two documents carry migrations and they are not the same journey. `docs/MIGRATION-FROM-WEB-PUSH.md`
+is the guide for consumers coming from `nl.martijndwars:web-push` — the former `docs/MIGRATION.md`
+under a name that says which move it describes, with its own rule unchanged: it states the other
+library's API and dependency set as verified facts, so anything added there must be checked against
+the published artifact. `docs/MIGRATION.md` is now the guide for an application already on push2u
+moving between versions of it — what a release breaks, and in its own section what it breaks
+*silently*, which is the half no compiler and no generated release note reports. It names the
+version it moves *from*, because that one has a tag; it never names the version it moves *to*, for
+the reason `.claude/rules/workflow.md` gives. ADR-023 names `docs/MIGRATION-FROM-WEB-PUSH.md`
+because that is the document it meant, under the name it now has — the rename allowance below, and
+not the same thing as ADR-026 naming `docs/VAULT.md` as a home the material has since left.
+`docs/RELEASING.md` covers the release procedure, `CONTRIBUTING.md` the contributor-facing form of
+the conventions below, and `SECURITY.md` the vulnerability policy.
 
 **An ADR is immutable once its decision is implemented.** It is not reworded, not brought up to date
 with the code, and not amended. A decision that moves gets a *new* ADR with the next free number,
 and the superseded one keeps its number, title and body while its status line becomes
-`Superseded by ADR-NNN` — the only edit its body ever takes. A decision that moves only in part
+`Superseded by ADR-NNN` — the only edit its argument ever takes, beside the link repair below. A
+decision that moves only in part
 takes the same one-line edit in a narrower form, `Accepted; one clause superseded by ADR-NNN`,
 beside the full form rather than in place of it — ADR-004's status line, superseded in part by
 ADR-019, is the worked example. The description of how things currently work belongs in
 `docs/DESIGN.md`, which is the document that may be rewritten freely; `docs/adr/README.md` carries
 the procedure.
 
+**One other edit is allowed, and only one: a link whose target document was renamed.** The same
+document under a new name is the same artefact, and the ADR's own text is untouched — only the path
+that reaches it. What makes this worth doing rather than tolerating a dangling link is that a
+rename can leave the old path *resolving*, at a document that is now something else entirely:
+`docs/MIGRATION.md` became `docs/MIGRATION-FROM-WEB-PUSH.md` while a new `docs/MIGRATION.md` took
+the name, so ADR-023's unedited reference would have pointed at a document the parameter it names
+never appeared in — worse than a broken link, because nothing about it looks broken. **Material
+that moved is the opposite case and takes no edit**: a fragment carried into another document
+leaves the ADR's reference correct as the record of where that material was when the decision was
+taken, which is why ADR-026 still names `docs/VAULT.md` as the rotation recipe's home although the
+recipe now lives in `docs/VAPID-KEY-ROTATION.md`. Renamed artefact, fix the path; relocated
+material, leave it.
+
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
 string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/SIGNER.md`,
-`docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md` or anywhere else freezes at
-whatever version it was written with and starts lying at the next release.
+`docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md`,
+`docs/MIGRATION-FROM-WEB-PUSH.md` or anywhere else freezes at whatever version it was written with
+and starts lying at the next release.
 Those documents point at README's Installation section instead. The exception is a document that is
 *about* one version and is never read as current: `.github/release-notes/vX.Y.Z.md` names its own
 version on purpose, and a frozen coordinate there is correct.
@@ -364,7 +387,7 @@ cannot see each other.
   package-private access to `EcKeys`/`Jca`. `test` and `fipsTest` each depend on it as ordinary
   consumers, which is what keeps the two BouncyCastle flavours apart; the fixtures themselves name
   neither provider. They are **not** published: the variants are skipped from the publication, as
-  `push2u-signer-vault` does with its internal `RecordingHttpClient`.
+  `push2u-signer-vault` does with its internal `RecordingHttpClient` and `FakeTransitVault`.
 - `push2u-testkit` is the published `VapidSignerContractTest` conformance kit and nothing else —
   every signer implementation extends it, from this build or outside it. Its package
   `com.the13haven.push2u.testkit` is separate from the core's because the core is an explicit JPMS

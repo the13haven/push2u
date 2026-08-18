@@ -36,7 +36,9 @@ endpoint allowlist names, and the Javadoc for individual contracts.
 The library exists to replace `nl.martijndwars:web-push`, the JVM's usual answer for Web Push,
 whose transitive surface and BouncyCastle-typed public API are what
 [ADR-002](adr/0002-zero-dependency-core.md) records as the motive for the dependency posture.
-[`MIGRATION.md`](MIGRATION.md) maps the two APIs onto each other for consumers making the move.
+[`MIGRATION-FROM-WEB-PUSH.md`](MIGRATION-FROM-WEB-PUSH.md) maps the two APIs onto each other for
+consumers making the move; [`MIGRATION.md`](MIGRATION.md) is the other journey, an application
+already on push2u moving between versions of it.
 
 ### Goals
 
@@ -367,9 +369,9 @@ named would be handed to a caller with nothing left to wait for.
 
 ### Facade
 
-`PushSender` is the primary facade. Its two required values — exactly one VAPID key source, plus
-the contact — are the factory method's parameters, so an incomplete sender does not compile and
-`build()` has nothing left to refuse:
+`PushSender` is the primary facade. Its three required values — exactly one VAPID key source, the
+contact, and the endpoint policy — are the factory method's parameters, so an incomplete sender does
+not compile and `build()` has nothing left to refuse:
 
 - `builder(VapidKeys, String contact, EndpointPolicy)` creates `LocalEcVapidSigner`; or
 - `builder(VapidSigner, String contact, EndpointPolicy)` delegates signing and public-key
@@ -1145,7 +1147,14 @@ probe to be attributed.
 **A property a release removed is refused, not ignored.** `push2u.record-size` went with
 [ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md); `push2u.health.enabled` and
 `push2u.health.cache-ttl` went to `management.health.push2u.*` when the health indicator took Spring
-Boot's own switch for a contributor. Binding would skip any leftover key silently — leaving the
+Boot's own switch for a contributor; and `push2u.retry.max-attempts`, `push2u.retry.initial-backoff`
+and `push2u.retry.max-backoff` went nowhere at all — they were handed to the caller with the retry
+loop ([ADR-021](adr/0021-retry-belongs-to-the-caller.md)), since a send now performs exactly one
+POST and publishes what a repeat decision needs on the outcome, `RetryableFailure` carrying the
+status the push service answered with and the `Retry-After` it asked for, uncapped. Those three are
+also the entries whose silent ignoring would change delivery rather than a diagnostic: a deployment
+that configured three attempts would start clean and then send once per message, with nothing at
+startup or at run time saying so. Binding would skip any leftover key silently — leaving the
 operator believing a setting is in force that nothing reads. So the starter carries a tombstone per
 removed key: entries in one `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
 which reads the bound environment at context refresh
