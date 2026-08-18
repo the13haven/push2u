@@ -653,6 +653,23 @@ class VaultTransitVapidSignerDeferredFetchTest {
                 mislabelled);
     }
 
+    @Test
+    void anInterruptArrivingDuringTheCauseWalkIsStillNotShared() throws Exception {
+        // The disjunction's flag half is asked before the walk and again after it, and this is the
+        // window between the two: consumer code inside getCause() is where a cancellation can land
+        // while the chain is being read. Asking only before it would share a failure the fetching
+        // caller had already taken as its own cancellation with waiters nobody interrupted.
+        InterruptingCausedFailure interruptedMidWalk =
+                new InterruptingCausedFailure("Vault Transit key metadata read failed");
+        // Nothing to clear afterwards: the flag is set on the fetching caller's own thread, inside
+        // the read it performs there, and that thread ends with the failure.
+        fetchingCallerCancellationIsCallerLocal(
+                () -> {
+                    throw interruptedMidWalk;
+                },
+                interruptedMidWalk);
+    }
+
     private void fetchingCallerCancellationIsCallerLocal(
             Supplier<VaultHttpResponse> firstReadOutcome, RuntimeException expectedFetcherFailure) throws Exception {
         CountDownLatch fetchArrived = new CountDownLatch(1);
@@ -966,6 +983,24 @@ class VaultTransitVapidSignerDeferredFetchTest {
         @Override
         public synchronized Throwable getCause() {
             return new FabricatedLink();
+        }
+    }
+
+    /**
+     * A recurring failure whose cause chain sets the reading thread's interrupt flag while it is being walked — the
+     * cancellation that arrives after the walk's first look at the flag, and is missed by a walk that never looks
+     * again.
+     */
+    private static final class InterruptingCausedFailure extends PushCryptoException {
+
+        private InterruptingCausedFailure(String message) {
+            super(message);
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            Thread.currentThread().interrupt();
+            return null;
         }
     }
 

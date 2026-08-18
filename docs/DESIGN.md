@@ -951,11 +951,14 @@ No traversal route through OSS Vault is claimed here.
   they leave known: a cycle is walked to its end, so the answer is sound and the failure is
   classified, while the ceiling leaves the tail unread, so the failure is shared with nobody and
   the waiters retry — an interruption beyond the cut being exactly what cannot be ruled out — with
-  the cut filed on that failure the way an accessor's complaint is. And a failure of neither contract type reaches its own
-  caller unchanged and abandons the flight the way a cancellation does — laundering it into a
-  contract type is what the exception taxonomy forbids. The flight is released on **every** exit,
-  two of which the transport's own contract does not admit: a throwable that is not a
-  `RuntimeException` at all, which an implementation in a language without checked exceptions
+  the cut filed on that failure the way an accessor's complaint is. The flag is asked again after
+  the walk however it ended, since the walk runs a consumer's `getCause()` and a cancellation can
+  land while it does: with the first look alone, a cancellation the fetching caller had already
+  taken would be shared with waiters nobody interrupted. And a failure of neither contract type
+  reaches its own caller unchanged and abandons the flight the way a cancellation does — laundering
+  it into a contract type is what the exception taxonomy forbids. The flight is released on
+  **every** exit, two of which the transport's own contract does not admit: a throwable that is not
+  a `RuntimeException` at all, which an implementation in a language without checked exceptions
   delivers through a method declaring none, and a failure whose overridable accessors throw while
   the description of it is being taken. Both abandon the flight, and both leave their caller the
   failure it was given — the second with the accessor's complaint filed on that failure as a

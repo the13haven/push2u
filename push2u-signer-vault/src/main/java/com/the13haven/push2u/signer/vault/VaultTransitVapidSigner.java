@@ -811,6 +811,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * the flight is abandoned, its waiters retry, and the fetching caller keeps the failure it was given. Guessing the
      * other way and sharing the failure would risk handing a cancellation to callers nobody interrupted, which is the
      * one thing this test exists to prevent.
+     *
+     * <p>The flag is asked once more after the walk, however the walk ended, and that second look is the method's exit:
+     * the walk runs consumer code, so an interruption can land between the first look and the last element read — and
+     * with the first look alone, a cancellation the fetching caller had already taken would be shared with waiters
+     * nobody interrupted. A walk cut at the ceiling reaches the same abandonment by the other route, since what it
+     * raises is not answered with a classification at all.
      */
     private static boolean isInterruption(RuntimeException failure) {
         if (Thread.currentThread().isInterrupted()) {
@@ -826,7 +832,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                         + " elements; a chain this deep is being generated, not walked, so the walk stops here");
             }
         }
-        return false;
+        return Thread.currentThread().isInterrupted();
     }
 
     @Override
