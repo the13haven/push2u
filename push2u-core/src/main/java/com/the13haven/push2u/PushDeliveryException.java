@@ -26,8 +26,9 @@ import java.io.Serial;
  * this exception — walking the cause chain for the interruption test — and the contract names that single method
  * deliberately, asking nothing of accessors the library never reads. A subclass whose {@code getCause()} throws a
  * {@code RuntimeException} does not cost the caller the classification: the walk stops, the defect is recorded on this
- * exception as a suppressed one, and the send stays {@link PushOutcome.Indeterminate} unless the thread's interrupt
- * status says otherwise — but an {@link InterruptedException} sitting beyond the break can then no longer be seen.
+ * exception as a suppressed one — bounded per instance, so one exception thrown for every call collects a handful of
+ * these and no more — and the send stays {@link PushOutcome.Indeterminate} unless the thread's interrupt status says
+ * otherwise, but an {@link InterruptedException} sitting beyond the break can then no longer be seen.
  */
 public class PushDeliveryException extends RuntimeException {
 

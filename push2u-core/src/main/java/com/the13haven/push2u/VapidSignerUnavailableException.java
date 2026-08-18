@@ -49,7 +49,8 @@ import org.jspecify.annotations.Nullable;
  * the contract deliberately asks for nothing wider. A subclass that breaks one of them does not cost the caller the
  * classification: the sender guards each read, reports the broken value as absent and records the defect as a
  * suppressed exception on this exception — but what the accessor was meant to say is then lost, and an {@code Error}
- * out of one of them propagates out of the send.
+ * out of one of them propagates out of the send. That recording is bounded per instance, so one exception preallocated
+ * and thrown for every call collects a handful of these and no more, however long a fan-out runs.
  *
  * <p><b>The custodian's status is never a push service's</b>, and reading the two as one number is a mistake worth
  * naming: a {@code 503} here is a sealed or overloaded custodian and no push message left this process, where a

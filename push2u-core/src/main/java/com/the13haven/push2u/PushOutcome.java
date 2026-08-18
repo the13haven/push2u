@@ -241,9 +241,12 @@ public sealed interface PushOutcome {
          * requires a value, costs this outcome that one component and nothing else: the component stays empty, the
          * other read's answer is kept, and the defect — the thrown exception, or a {@code NullPointerException}
          * describing the null — is recorded as a suppressed exception on {@code cause}, so an empty component with a
-         * broken accessor never reads as a custodian that declared nothing. An {@code Error} is not survived: it leaves
-         * this constructor as it arrived. The guard lives here, on the public constructor, so a caller constructing the
-         * outcome directly gets it too.
+         * broken accessor does not read as a custodian that declared nothing. That recording is bounded per exception
+         * instance, since one preallocated exception thrown for every call would otherwise collect one entry per
+         * outcome built from it: an exception already carrying a handful of suppressed entries takes no more, and there
+         * the empty component is all the caller gets. An {@code Error} is not survived: it leaves this constructor as
+         * it arrived. The guard lives here, on the public constructor, so a caller constructing the outcome directly
+         * gets it too.
          *
          * @param cause what the {@link VapidSigner} raised
          * @throws NullPointerException if {@code cause} is {@code null}
@@ -256,7 +259,8 @@ public sealed interface PushOutcome {
 
         /**
          * The one read of {@code status()}, guarded: the accessor's answer, or empty — with the defect recorded as a
-         * suppressed exception on {@code cause} — where the accessor threw or answered {@code null}.
+         * suppressed exception on {@code cause}, so far as that exception can still carry one — where the accessor
+         * threw or answered {@code null}.
          */
         private static OptionalInt readStatus(VapidSignerUnavailableException cause) {
             try {
@@ -276,7 +280,8 @@ public sealed interface PushOutcome {
 
         /**
          * The one read of {@code retryAfter()}, guarded: the accessor's answer, or empty — with the defect recorded as
-         * a suppressed exception on {@code cause} — where the accessor threw or answered {@code null}.
+         * a suppressed exception on {@code cause}, so far as that exception can still carry one — where the accessor
+         * threw or answered {@code null}.
          */
         private static Optional<Duration> readRetryAfter(VapidSignerUnavailableException cause) {
             try {
@@ -302,7 +307,8 @@ public sealed interface PushOutcome {
          * {@link RetryableFailure} is the push service refusing a delivery. Empty for a key held locally, for a PKCS#11
          * token, and for the whole half where nothing answered at all. Snapshotted from the signer's signal when this
          * outcome was constructed, so every read answers the same — and empty where the signal's accessor broke at that
-         * moment, with the defect recorded as a suppressed exception on {@link #cause()}.
+         * moment, with the defect recorded as a suppressed exception on {@link #cause()} so far as it can still carry
+         * one.
          *
          * @return the custodian's status, or empty where nothing answered a number
          */
@@ -314,7 +320,8 @@ public sealed interface PushOutcome {
          * How long the custodian declared it would be before it can serve again, empty unless it declared one — most
          * custodians never do. Reported exactly as it arrived, <b>with no ceiling applied</b>, so the only ceiling is
          * the one whoever schedules the next attempt chooses. Also empty where the signal's accessor broke when this
-         * outcome was constructed, with the defect recorded as a suppressed exception on {@link #cause()}.
+         * outcome was constructed, with the defect recorded as a suppressed exception on {@link #cause()} so far as it
+         * can still carry one.
          *
          * <p><b>Nor is it a floor: this value is not checked, and a scheduler reading it guards it.</b> The duration is
          * whatever the {@link VapidSigner} put on its signal, read once when this outcome was constructed and handed

@@ -404,8 +404,9 @@ public final class PushSender {
      *
      * <p>The chain half runs on consumer-overridable code — {@code getCause()} — and is guarded: where a read throws a
      * {@code RuntimeException}, or the chain outgrows any depth honest diagnostics reach, the walk stops and the defect
-     * is recorded as a suppressed exception on the seam's own failure, which both conversions that reach this test hand
-     * to the caller inside the outcome. What is lost at that point is unknowable by anybody: whether an
+     * is recorded as a suppressed exception on the seam's own failure — bounded per instance, so a preallocated
+     * exception thrown for every call does not collect one of these per send — which both conversions that reach this
+     * test hand to the caller inside the outcome. What is lost at that point is unknowable by anybody: whether an
      * {@link InterruptedException} sat beyond the break in the chain. The conservative answer is chosen — invent
      * nothing, and keep the seam's classification unless the thread's interrupt flag says otherwise. That flag is the
      * method's single exit, asked after the walk however the walk ended, so an interruption arriving while an ordinary
