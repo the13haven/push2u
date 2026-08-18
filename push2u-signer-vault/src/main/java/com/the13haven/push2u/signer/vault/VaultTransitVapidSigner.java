@@ -216,6 +216,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final String TOKEN_HEADER = "X-Vault-Token";
     /** The header addressing a Vault Enterprise/HCP namespace — sent only when {@code namespace(...)} was set. */
     private static final String NAMESPACE_HEADER = "X-Vault-Namespace";
+    /**
+     * How many suppressed entries one failed read's exception may carry before this signer stops adding to it. Small on
+     * purpose: the recordings made here come in at most a handful of distinct shapes for one failure, so a few of them
+     * carry every distinct thing that can be said, and anything beyond that is the same sentence repeated by a defect
+     * that repeats. Entries a consumer recorded itself count towards it, which is the conservative direction — an
+     * exception already carrying that many diagnostics is not one this signer has to add a further one to. The bound
+     * holds under concurrent recording, which takes holding the exception's own monitor across the check and the
+     * recording together: one flight per signer serialises the description within a signer and not across several, so
+     * several signers over one transport can describe one shared instance at the same moment, and each of them would
+     * otherwise pass a check at seven and record anyway.
+     */
+    private static final int SUPPRESSED_RECORDING_CEILING = 8;
 
     private final VaultHttpTransport transport;
     private final URI signUri;
@@ -544,12 +556,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
          * in turn, since the release sits in the {@code finally} below rather than beside the recording. And the caller
          * keeps the failure it was given, because a defect in an exception's own accessors says nothing about what the
          * read met: the secondary is filed on the failure as a suppressed exception — where a secondary raised while
-         * handling a primary belongs — and the failure travels on as the classified thing it is. Filing it has two
-         * limits, both deliberate: nothing can suppress itself, so an accessor that threw the failure itself leaves
-         * nothing to record and the failure travels alone; and a machine failure out of the recording is not swallowed,
-         * so that one reaches the caller in place of the failure rather than being hidden behind it. A failure whose
-         * description could not be taken is shared with nobody, so the waiters retry, exactly as they do for a failure
-         * of neither contract type.
+         * handling a primary belongs — and the failure travels on as the classified thing it is. Filing it has three
+         * limits, all deliberate: nothing can suppress itself, so an accessor that threw the failure itself leaves
+         * nothing to record and the failure travels alone; the filing is bounded per exception instance, so a transport
+         * reusing one preallocated exception for every failed read of a long outage stops accumulating copies of the
+         * same diagnostic rather than growing a list for as long as the custodian is down; and a machine failure out of
+         * the recording is not swallowed, so that one reaches the caller in place of the failure rather than being
+         * hidden behind it. A failure whose description could not be taken is shared with nobody, so the waiters retry,
+         * exactly as they do for a failure of neither contract type.
          */
         private void endFailedFlight(Flight flight, RuntimeException failure) {
             SharedFailure shared = null;
@@ -724,14 +738,44 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * the machine and not the diagnostics, so it is left to leave: the caller then receives it in place of the failure,
      * and the flight is released regardless, because the release sits in the caller's {@code finally} rather than
      * beside this record.
+     *
+     * <p>Recording mutates an exception a replaceable transport produced, so the number of recordings one instance can
+     * take is bounded here. Preallocating a single exception and throwing it for every failed read is an ordinary thing
+     * for a transport to do — a custodian refusing every call while a breaker is open gives it no reason to build a new
+     * instance each time — and the accessors this guards against are the ones that break on every read. A failed flight
+     * is forgotten rather than cached, so the next caller starts a fresh one: a custodian down for an hour, with
+     * signing called in a loop, would otherwise grow one instance's suppressed list by one entry per read for as long
+     * as the outage lasts, without limit and for no gain, since the hundredth copy of the same diagnostic says nothing
+     * the first did not. Neither of the two exception types this is called on can opt out of the accumulation either,
+     * because every constructor they offer reaches a superclass constructor that leaves suppression enabled. So the
+     * first few recordings are kept and the rest are dropped, which costs a diagnostic nothing and keeps a defective
+     * accessor from turning memory into the failure mode. Entries the consumer recorded itself count towards the same
+     * bound.
+     *
+     * <p>The check and the recording are one critical section, because several flights describing one shared exception
+     * at the same moment would otherwise pass the check together and record past the limit. The monitor is the
+     * exception's own — the one {@code addSuppressed} takes anyway, so nothing new is locked here, only held across
+     * both steps, and it is reentrant, so the members called inside may take it again. What deliberately does not
+     * happen inside it is a call to anything a consumer wrote: {@code addSuppressed} and {@code getSuppressed} are both
+     * {@code final} on {@code Throwable}, so this section cannot be made to wait on consumer code while holding a
+     * monitor that consumer code can also take, and neither of them can be made to throw or to lie about the count.
+     *
+     * @param failure the primary failure, which stays what the caller receives
+     * @param secondary the defect worth recording beside it
      */
     private static void suppress(Throwable failure, Throwable secondary) {
-        try {
-            failure.addSuppressed(secondary);
-        } catch (IllegalArgumentException selfSuppression) {
-            // The failure was offered as its own suppressor, which only its own accessor throwing
-            // it can produce. There is nothing to record and nothing to report: the caller is owed
-            // the failure the read produced, not a complaint about the exception carrying it.
+        synchronized (failure) {
+            if (failure.getSuppressed().length >= SUPPRESSED_RECORDING_CEILING) {
+                return;
+            }
+            try {
+                failure.addSuppressed(secondary);
+            } catch (IllegalArgumentException selfSuppression) {
+                // The failure was offered as its own suppressor, which only its own accessor
+                // throwing it can produce. There is nothing to record and nothing to report: the
+                // caller is owed the failure the read produced, not a complaint about the
+                // exception carrying it.
+            }
         }
     }
 
