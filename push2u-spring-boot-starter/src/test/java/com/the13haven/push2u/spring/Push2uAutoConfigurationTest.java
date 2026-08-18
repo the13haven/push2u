@@ -834,6 +834,57 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
+    void anExpressedDomainsAllowlistWithoutThePolicyAutoConfigurationNamesThatProperty() {
+        // The mirror of the case above, and the reason that branch names a property at all: with
+        // two allowlist keys, a refusal naming the wrong one sends the operator to the half of the
+        // configuration they never wrote. Domains is the half a deployment reaches for when the
+        // service operator documents varying hostnames rather than one origin.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-domains=notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalStateException.class,
+                                    "Push2uEndpointPolicyAutoConfiguration"))
+                            .hasMessageContaining("push2u.allowed-domains is non-empty")
+                            .as("the property that is actually non-empty, not its neighbour")
+                            .hasMessageNotContaining("push2u.allowed-origins")
+                            .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
+    void bothAllowlistPropertiesWithoutThePolicyAutoConfigurationNameBoth() {
+        // The plural branch of the same refusal. Naming which property was expressed is the whole
+        // point of it, so with both non-empty the answer has to be both: an operator told about one
+        // of them would move that one into a bean, restart, and meet the refusal again over the
+        // other.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test",
+                        "push2u.allowed-domains=notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalStateException.class,
+                                    "Push2uEndpointPolicyAutoConfiguration"))
+                            .hasMessageContaining("push2u.allowed-origins and push2u.allowed-domains are non-empty")
+                            .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
     void theContradictionSurvivesExcludingThePolicyAutoConfigurationWithASenderConfigured() {
         // The configuration that must not boot green: a fully configured sender, a non-empty
         // allowlist property, an application EndpointPolicy bean, and the policy bean's
