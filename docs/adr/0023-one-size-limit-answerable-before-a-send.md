@@ -274,7 +274,7 @@ byte-for-byte unchanged.
 
 Removing a builder step and a Spring property is a breaking change, in the window `0.x` was
 declared for. The release note names the transition; `README.md`, `docs/SPRING.md`,
-`docs/DESIGN.md` and `docs/MIGRATION.md` lose the parameter with it.
+`docs/DESIGN.md` and `docs/MIGRATION-FROM-WEB-PUSH.md` lose the parameter with it.
 
 The parameter is also load-bearing as an *example*: `.claude/skills/push2u-implement/SKILL.md` uses
 `recordSize` / `push2u.record-size` as the worked case for both the one-rule-one-implementation

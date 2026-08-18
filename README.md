@@ -17,11 +17,14 @@ auto-configuration.
 [Spring Boot](#spring-boot) · [Vault Transit signer](#vault-transit-signer) ·
 [Endpoint policy](#endpoint-policy-ssrf-hardening) · [Modules](#modules)
 
-Coming from `nl.martijndwars:web-push`? [`MIGRATION.md`](docs/MIGRATION.md) maps the two APIs onto
-each other, lists the 26 transitive artifacts and the BouncyCastle provider registration a migration
-removes, and is explicit about where push2u is stricter — `https`-only endpoints, up-front size
-limits, `aes128gcm` only, and a VAPID private key that has to be exactly 32 bytes.
-[`DESIGN.md`](docs/DESIGN.md) has the architecture and the decisions behind it.
+Coming from `nl.martijndwars:web-push`?
+[`MIGRATION-FROM-WEB-PUSH.md`](docs/MIGRATION-FROM-WEB-PUSH.md) maps the two APIs onto each other,
+lists the 26 transitive artifacts and the BouncyCastle provider registration a migration removes,
+and is explicit about where push2u is stricter — `https`-only endpoints, up-front size limits,
+`aes128gcm` only, and a VAPID private key that has to be exactly 32 bytes. Already on push2u and
+moving to a newer version? [`MIGRATION.md`](docs/MIGRATION.md) is that one — what breaks, what
+breaks silently, and what to do about each. [`DESIGN.md`](docs/DESIGN.md) has the architecture and
+the decisions behind it.
 
 ## Features
 
@@ -72,7 +75,8 @@ comes up; this is the whole list.
 | [`VAPID.md`](docs/VAPID.md) | The one-time recipe for generating a VAPID key pair. |
 | [`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) | The operator runbook for replacing that pair on a running deployment. |
 | [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) | The browser push services and the allowlist entry each one needs, in both spellings. |
-| [`MIGRATION.md`](docs/MIGRATION.md) | Moving an application from `nl.martijndwars:web-push`. |
+| [`MIGRATION.md`](docs/MIGRATION.md) | Upgrading an application already on push2u to a newer version — what breaks, and what breaks silently. |
+| [`MIGRATION-FROM-WEB-PUSH.md`](docs/MIGRATION-FROM-WEB-PUSH.md) | Moving an application from `nl.martijndwars:web-push` to push2u. |
 | [`PERFORMANCE.md`](docs/PERFORMANCE.md) | What one message costs, step by step, per JCE provider, with the machine it was measured on. |
 | [`RELEASING.md`](docs/RELEASING.md) | The release procedure, for maintainers. |
 
@@ -403,8 +407,7 @@ token is held to its last second, with the skew consequences of saying so — an
 `jwtCacheSize(0)` is rejected rather than read as "cache nothing": the bound is not a second
 spelling of the switch below, and the two mean different things.
 
-**`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token, exactly as
-this library always did:
+**`jwtReuse(false)` switches reuse off**, and every send builds and signs its own token:
 
 ```java
 PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
@@ -422,9 +425,8 @@ own `exp`, which `jwtRenewBefore` does not move. *Raising* the margin retires an
 lowering it holds one longer — the margin is subtracted from the life an entry is served for — but
 either way the change is noticed only by a later send to that origin, so a bigger margin shortens
 residency only where traffic keeps arriving to notice. `jwtReuse(false)` is what puts a token in
-the process for the length of one send and no longer, which is what this library did before. And it
-makes a signer whose signing key rotates under an unchanged advertised key fail at once rather than
-up to `jwtExpiry` later.
+the process for the length of one send and no longer. And it makes a signer whose signing key
+rotates under an unchanged advertised key fail at once rather than up to `jwtExpiry` later.
 
 ### Asynchronous sending
 
@@ -553,10 +555,8 @@ way to fix it.
 **And a deployment that does *not* send says so.** `push2u.enabled` defaults to `true`, and a
 context where it is on while neither a `VapidSigner` nor a `PushSender` bean exists fails at
 startup, naming every way to answer it: the switch, this starter's two `push2u.vapid.*` keys, a
-signer starter's own configuration, or an application bean of either type. That refusal is the one
-behaviour change a deployment upgrading into this version can meet — a context that boots without
-web push today and does not know it now fails, which is exactly the state the refusal exists to
-make impossible.
+signer starter's own configuration, or an application bean of either type. A context that boots
+without web push and does not know it is exactly the state the refusal exists to make impossible.
 
 ```yaml
 push2u:
@@ -569,6 +569,12 @@ one keeps the policy its allowlist states, and every startup refusal guarding th
 keeps running. Only `true` and `false` are values — anything else fails the context naming the
 property, because this is the one key where a typo would otherwise mean the opposite of what was
 typed.
+
+An application arriving from an earlier push2u meets that refusal along with several other changes
+— removed properties that now fail the context rather than being ignored, a `catch` clause that
+quietly stops catching, an endpoint length a `Subscription` no longer accepts.
+[`MIGRATION.md`](docs/MIGRATION.md) is the reference for the whole move, version to version; this
+README describes the API as it stands and nothing about where it came from.
 
 The two allowlist properties are not alternatives: they are unioned into one allowlist, and a
 deployment covering all four browser push services writes both. The allowlist they express is
