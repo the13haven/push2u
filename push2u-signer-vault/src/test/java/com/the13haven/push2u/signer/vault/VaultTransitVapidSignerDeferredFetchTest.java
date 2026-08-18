@@ -514,8 +514,10 @@ class VaultTransitVapidSignerDeferredFetchTest {
             }
 
             assertThat(shared.getSuppressed())
-                    .as("round %d: the bound holds while several flights describe one instance at once", round)
-                    .hasSizeLessThanOrEqualTo(8);
+                    .as(
+                            "round %d: many flights describing one instance leave exactly the bound, not one entry more",
+                            round)
+                    .hasSize(8);
         }
     }
 

@@ -957,7 +957,7 @@ No traversal route through OSS Vault is claimed here.
   filing is bounded per exception instance, so a transport reusing one preallocated exception across
   an outage does not grow its suppressed list one entry per read for as long as the outage lasts;
   and a machine failure out of the recording reaches the caller in place of the failure rather than
-  being hidden behind it. Neither is a fine point: a flight left
+  being hidden behind it. Neither exit is a fine point: a flight left
   recorded as active parks its waiters forever and then collects every later caller on the same
   dead latch, which is one consumer's transport defect turned into a signer that never answers
   again. No signing `POST` ever runs while the

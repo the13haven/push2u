@@ -746,8 +746,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * is forgotten rather than cached, so the next caller starts a fresh one: a custodian down for an hour, with
      * signing called in a loop, would otherwise grow one instance's suppressed list by one entry per read for as long
      * as the outage lasts, without limit and for no gain, since the hundredth copy of the same diagnostic says nothing
-     * the first did not. Neither of the two exception types this is called on can opt out of the accumulation either,
-     * because every constructor they offer reaches a superclass constructor that leaves suppression enabled. So the
+     * the first did not. Neither of the two exception types a description can be taken from can opt out of the
+     * accumulation, because every constructor they offer reaches a superclass constructor that leaves suppression
+     * enabled. Any other type reaches this too — the cause-chain walk that begins a description runs before any test by
+     * type — and one of those built with suppression disabled records nothing here at all, so it grows nothing. So the
      * first few recordings are kept and the rest are dropped, which costs a diagnostic nothing and keeps a defective
      * accessor from turning memory into the failure mode. Entries the consumer recorded itself count towards the same
      * bound.
@@ -758,7 +760,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * both steps, and it is reentrant, so the members called inside may take it again. What deliberately does not
      * happen inside it is a call to anything a consumer wrote: {@code addSuppressed} and {@code getSuppressed} are both
      * {@code final} on {@code Throwable}, so this section cannot be made to wait on consumer code while holding a
-     * monitor that consumer code can also take, and neither of them can be made to throw or to lie about the count.
+     * monitor that consumer code can also take, nor can a consumer type make either of them refuse for reasons of its
+     * own: the only refusal reachable here is {@code addSuppressed}'s own, caught below, and the count the check reads
+     * is one {@code getSuppressed} can neither withhold nor misstate.
      *
      * @param failure the primary failure, which stays what the caller receives
      * @param secondary the defect worth recording beside it
