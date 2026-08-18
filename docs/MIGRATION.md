@@ -5,42 +5,64 @@ document beside it, [`MIGRATION-FROM-WEB-PUSH.md`](MIGRATION-FROM-WEB-PUSH.md), 
 journey — arriving from `nl.martijndwars:web-push`, a different library with a different API. If you
 are already calling `PushSender`, this is your document.
 
-**Everything below is the move from `0.1.0` to this release.** `0.1.0` is named because it is where
-the upgrade starts and that version exists; the version it ends at is named nowhere here, because a
-release has no number until its tag is cut. Where you need a coordinate to paste into a build file,
-take it from [README's *Installation*](../README.md#installation) — the released version is written
-there and nowhere else in this tree.
+One section per migration, **newest first**, so an application skipping several versions reads
+upwards from the release it is on. No section names the version it moves *to*: a release has no
+number until its tag is cut, and each section is written while the release it describes is still
+being prepared. Each one does name the version it moves *from*, which has a tag and cannot move.
+Where you need a coordinate to paste into a build file, take it from
+[README's *Installation*](../README.md#installation) — the released version is written there and
+nowhere else in this tree.
+
+**Adding a migration:** the new section goes directly under [Migrations](#migrations), above the one
+that was newest, and its row goes at the top of that index. Every heading inside it must be unique
+across the whole file, and by construction rather than by care: GitHub derives a heading's `id` from
+its text alone — the level it sits at and the section it sits under are not part of it — and
+numbers a repeat by the order it appears in, so a second *Checklist* added at the top would take the
+clean anchor and silently push the older one to `checklist-1`, breaking nothing visibly while
+sending that section's own links into the new one. A heading naming a type, a method or a property
+key is unique on its own; one naming a role in the document carries its source version, the way
+*Checklist for the `0.1.0` move* does.
+
+## Migrations
+
+| Moving from | What that release changed |
+|---|---|
+| [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
+
+## From `0.1.0`
+
+`0.1.0` is where this upgrade starts. It is the version this section is written against, and the
+one it names throughout; the release it lands in is deliberately unnamed, for the reason above.
 
 This release is the largest break the library has taken, and by design: `0.1.0`'s own release note
 declared `0.x` the window in which names and constructor shapes are revised once real integrations
 exist. Most of what landed stops your code compiling, which is the cheap kind. Some of it does not,
-and that has a section of its own.
+and that has a chapter of its own.
 
-## Contents
-
-- [Do these first](#do-these-first)
-- [What stops compiling](#what-stops-compiling)
+- [Do these first when coming from `0.1.0`](#do-these-first-when-coming-from-010)
+- [What stops compiling on the way from `0.1.0`](#what-stops-compiling-on-the-way-from-010)
   - [`PushResult` is now `PushOutcome`](#pushresult-is-now-pushoutcome)
   - [Retry left the library](#retry-left-the-library)
   - [`recordSize` left the builder](#recordsize-left-the-builder)
-  - [What is new beside them](#what-is-new-beside-them)
-- [What changes without a compiler error](#what-changes-without-a-compiler-error)
-  - [Three `catch` clauses stop catching](#three-catch-clauses-stop-catching)
-  - [If you wrote your own `VapidSigner`](#if-you-wrote-your-own-vapidsigner)
-  - [A subscription that used to construct may now be refused](#a-subscription-that-used-to-construct-may-now-be-refused)
+  - [`PayloadSizeAssessment`, `EndpointRule` and the other new types](#payloadsizeassessment-endpointrule-and-the-other-new-types)
+- [What changes without a compiler error, coming from `0.1.0`](#what-changes-without-a-compiler-error-coming-from-010)
+  - [`PushCryptoException` narrows, and three `catch` clauses stop catching](#pushcryptoexception-narrows-and-three-catch-clauses-stop-catching)
+  - [If you wrote your own `VapidSigner`: an outage changes type](#if-you-wrote-your-own-vapidsigner-an-outage-changes-type)
+  - [An eager Vault `build()` raises a different type when Vault is down](#an-eager-vault-build-raises-a-different-type-when-vault-is-down)
+  - [`Subscription` now bounds the endpoint's length](#subscription-now-bounds-the-endpoints-length)
   - [VAPID tokens are reused by default](#vapid-tokens-are-reused-by-default)
-- [Spring Boot](#spring-boot)
-  - [Removed properties fail the context](#removed-properties-fail-the-context)
+- [Spring Boot, coming from `0.1.0`](#spring-boot-coming-from-010)
+  - [The `push2u.*` keys that `0.1.0` had and this release refuses](#the-push2u-keys-that-010-had-and-this-release-refuses)
   - [`push2u.enabled`: a context that boots without web push now fails](#push2uenabled-a-context-that-boots-without-web-push-now-fails)
   - [The health probe moved under `management.health.push2u`](#the-health-probe-moved-under-managementhealthpush2u)
   - [The endpoint policy is a bean, and its refusals moved](#the-endpoint-policy-is-a-bean-and-its-refusals-moved)
-  - [Recompile against the starters](#recompile-against-the-starters)
+  - [`Push2uProperties` and `VaultSignerProperties` changed shape](#push2uproperties-and-vaultsignerproperties-changed-shape)
   - [Vault: a third construction mode](#vault-a-third-construction-mode)
-- [Checklist](#checklist)
+- [Checklist for the `0.1.0` move](#checklist-for-the-010-move)
 
-## Do these first
+### Do these first when coming from `0.1.0`
 
-Four steps, in this order, before you read the rest:
+Five steps, in this order, before you read the rest:
 
 1. **Rebuild against the new version and read every compiler error.** They are the map: `PushResult`,
    `RetryPolicy`, `Sleeper` and `recordSize(int)` are gone, so nothing that used them survives the
@@ -48,19 +70,23 @@ Four steps, in this order, before you read the rest:
 2. **Grep your own sources for `catch (PushCryptoException`, `catch (PushDeliveryException` and
    `catch (EndpointRejectedException`.** Each of those still compiles and each now catches strictly
    less than it did — two of them catch nothing at all from a send. See
-   [Three `catch` clauses stop catching](#three-catch-clauses-stop-catching).
+   [`PushCryptoException` narrows](#pushcryptoexception-narrows-and-three-catch-clauses-stop-catching).
 3. **If you implement `VapidSigner` yourself** — over an HSM, a KMS, or any remote custodian — read
-   [If you wrote your own `VapidSigner`](#if-you-wrote-your-own-vapidsigner) before anything else.
-   That implementation keeps compiling and its outages change meaning, and the conformance kit does
-   not catch it.
-4. **If you run the Spring starters, do not upgrade the jar without recompiling and re-reading your
+   [an outage changes type](#if-you-wrote-your-own-vapidsigner-an-outage-changes-type) before
+   anything else. That implementation keeps compiling and its outages change meaning, and the
+   conformance kit does not catch it.
+4. **If you build `VaultTransitVapidSigner` by hand** — outside the Vault starter — the same
+   narrowing reaches the `build()` that reads Vault, and a `catch` written to retry a sealed Vault
+   at startup stops catching one:
+   [an eager Vault `build()`](#an-eager-vault-build-raises-a-different-type-when-vault-is-down).
+5. **If you run the Spring starters, do not upgrade the jar without recompiling and re-reading your
    YAML.** Six `push2u.*` keys now fail the context at startup rather than being ignored, the health
    probe answers to different keys, and a deployment that quietly holds no signer now refuses to
-   start. All of it is in [Spring Boot](#spring-boot).
+   start. All of it is in [Spring Boot](#spring-boot-coming-from-010).
 
-## What stops compiling
+### What stops compiling on the way from `0.1.0`
 
-### `PushResult` is now `PushOutcome`
+#### `PushResult` is now `PushOutcome`
 
 `send` and `sendAsync` used to answer `PushResult` — a record of a `Status` enum, a status code and
 an attempt count. They now answer `PushOutcome`, a sealed hierarchy. The type is not a rename: the
@@ -81,8 +107,9 @@ The mapping from the old `Status` values, with what the old shape could not expr
 | a thrown `PushCryptoException`, where the custodian was merely down | `SignerUnavailable`, carrying the custodian's `status()` and `retryAfter()` |
 
 The last four rows are the ones to read twice: each was an *exception* in `0.1.0` and is a *value*
-now. That is the whole of the change described in
-[Three `catch` clauses stop catching](#three-catch-clauses-stop-catching), seen from the other side.
+now. That is the whole of the change
+[`PushCryptoException` narrows](#pushcryptoexception-narrows-and-three-catch-clauses-stop-catching)
+describes, seen from the other side.
 
 The three `NotAttempted` leaves — `SignerUnavailable`, `PayloadRejected`, `EndpointRejected` —
 implement a shared marker interface, so one `switch` picks its own grain:
@@ -105,7 +132,7 @@ later release fails your compilation instead of falling into a branch written fo
 Take the exhaustive `switch` rather than a chain of `instanceof` with a fallback: the fallback is
 precisely what forfeits that warning.
 
-### Retry left the library
+#### Retry left the library
 
 `RetryPolicy`, `Sleeper` and `PushSender.Builder.retryPolicy(...)` are removed, and nothing replaces
 them. **`send` performs exactly one POST.** There is no configuration that restores the loop, and
@@ -189,7 +216,7 @@ probably running, and branch on the outcome. If it does not, this release is whe
 loop, and [README's send reference](../README.md#what-a-send-reports-and-what-it-still-throws) is
 the status matrix to write it against.
 
-### `recordSize` left the builder
+#### `recordSize` left the builder
 
 `PushSender.Builder.recordSize(int)` is removed. The `aes128gcm` record size (RFC 8188 `rs`) is now
 **derived** from `maxEncryptedBodyBytes`, which is the one size knob left. There were two, they
@@ -205,7 +232,7 @@ The plaintext a sender carries is `maxEncryptedBodyBytes` less the fixed **103**
 derives. That is the number `PayloadRejected.maximumPayloadBytes()` reports, and the number
 `assessPayloadSize` compares against.
 
-### What is new beside them
+#### `PayloadSizeAssessment`, `EndpointRule` and the other new types
 
 None of these break anything; they are what the sections above hand the work to.
 
@@ -229,12 +256,14 @@ None of these break anything; they are what the sections above hand the work to.
   which is what lets a custodian holding a pre-encoded key advertise it without a round trip through
   bytes.
 
-## What changes without a compiler error
+### What changes without a compiler error, coming from `0.1.0`
 
-This section is the reason this document exists. Nothing in your build fails; the behaviour under it
-moves.
+This chapter is the reason this document exists. Nothing in your build fails; the behaviour under it
+moves. Two of the five below are a narrowed exception type reaching code that still catches the old
+one, and they are one seam apart: the first is what `send` no longer throws, the second what a
+hand-wired Vault signer's `build()` throws instead.
 
-### Three `catch` clauses stop catching
+#### `PushCryptoException` narrows, and three `catch` clauses stop catching
 
 `send`'s failure surface was re-sorted: an operational condition is now a **value**, and only a
 defect or a condition that recurs is an **exception**. Three `catch` clauses survive that unchanged
@@ -265,7 +294,7 @@ no others** — `EndpointRejectedException`, `VapidSignerUnavailableException`,
 `PushDeliveryException`. Any other `RuntimeException` out of a seam you wrote is read as a defect in
 that implementation and propagates unchanged.
 
-### If you wrote your own `VapidSigner`
+#### If you wrote your own `VapidSigner`: an outage changes type
 
 **Read this even if nothing in your build broke — especially then.** If your VAPID key lives in an
 HSM, a KMS or any remote custodian, you implemented `VapidSigner` against a contract that changed
@@ -297,12 +326,71 @@ missing mount, a token without the capability.
 signature and key pass, the split above stated in full, why the advertised key may never change for
 a signer's lifetime, and the six checks the kit runs. Do not re-derive it from this page.
 
-Two more things a signer implementation gains, both optional: `publicKeyBase64Url()` has a `default`
-implementation, so overriding it is worth it only for a custodian holding a pre-encoded key; and an
-interruption during a signer's own startup read is tested for *before* the exception's type is read,
-since a boot interrupted while fetching a key is a cancellation and not a custodian's verdict.
+Three smaller things, and the first two are worth keeping apart, because only one of them is
+something an implementation *does*.
 
-### A subscription that used to construct may now be refused
+**What the implementation gains:** `publicKeyBase64Url()` has a `default` implementation, so
+overriding it is worth it only for a custodian holding a pre-encoded key.
+
+**What the implementation owes, on an interruption:** not the sorting. An implementation is never
+asked to tell an interrupted exchange apart from any other exchange that produced no answer — both
+raise `VapidSignerUnavailableException`. What it owes is what any code catching an
+`InterruptedException` owes: re-set the interrupt status on its own thread, and keep that exception
+in the cause chain of what it raises. The *caller* is what tests for the interruption before it
+reads the exception's type — `PushSender.send` does it on every send, and a startup supervisor
+around a signer that reads its key in `build()` must do it there — and an interruption swallowed
+without the flag is the one defect that leaves that test unable to see a cancellation at all.
+
+**And if you wrote your own `VaultHttpTransport`** — the Vault module's transport seam, not
+`PushHttpClient` — `VaultHttpResponse` gained a third component, `retryAfter`, while keeping its
+two-argument constructor. Your transport therefore compiles and works exactly as before, and never
+fills the hint: `PushOutcome.SignerUnavailable.retryAfter()` is permanently empty for that
+deployment, because the header stops at the transport unless the transport hands it on. Read
+`Retry-After` and pass it to the three-argument constructor if the deployment schedules anything on
+that value.
+
+#### An eager Vault `build()` raises a different type when Vault is down
+
+The same narrowing, met outside a send, by a deployment that wires `VaultTransitVapidSigner` by hand
+rather than through the starter. In `0.1.0`, `builderWithFetchedPublicKey(...).build()` documented
+exactly one failure type for the Vault read it performs: `PushCryptoException`, "if the key read
+fails or the key is not a usable P-256 key". A
+sealed Vault, a refused connection and a token without the capability all arrived as that one type,
+which is why the natural thing to write around it was one `catch` that scheduled a retry:
+
+```java
+try {
+    signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(address, keyName, token).build();
+} catch (PushCryptoException e) {
+    scheduleAnotherAttempt(e);           // in 0.1.0 this caught a sealed Vault
+}
+```
+
+That `catch` compiles unchanged and no longer catches the case it was written for. A Vault that
+cannot serve the read *now* — unreachable, sealed, not initialized, standing by, not caught up,
+rate-limited — is `VapidSignerUnavailableException`, and `PushCryptoException` is left with the
+half that recurs until a person changes something: a token without the capability, a mount or key
+that is not there, a key that is not on P-256, an answer Vault could not have meant. The block above
+now lets a sealed Vault through, and the process dies at startup where it used to wait and try
+again.
+
+**Nothing converts it for you here, because no send is involved.** The three seam-signal conversions
+in the [chapter's first section](#pushcryptoexception-narrows-and-three-catch-clauses-stop-catching)
+happen inside `PushSender.send`; a `build()` is outside the sender entirely, so what it raises is
+what your code catches. The same holds for a direct `publicKey()` or `publicKeyBase64Url()` call —
+the ordinary way an application publishes its `applicationServerKey` to a frontend. On an eager
+signer that call answers from what `build()` already read and raises nothing, which is why the
+`catch` above is the whole of the exposure today; adopt the deferred mode below and it becomes the
+call that performs the read, with the same two types and the same order to test them in.
+
+Catch both, and in the order the contract fixes: the interruption first (the thread's interrupt
+status set, *or* an `InterruptedException` in the cause chain), then
+`VapidSignerUnavailableException` as a boot worth retrying with backoff and not before any moment
+its `retryAfter()` names, then `PushCryptoException` as a deployment to fail and a person to fetch.
+[`VAULT.md` → What the signer throws](VAULT.md#what-the-signer-throws) is the reference, with the
+Vault status codes that decide which of the two a response becomes.
+
+#### `Subscription` now bounds the endpoint's length
 
 `Subscription` refuses an endpoint longer than **2048 characters**, with an
 `IllegalArgumentException` naming the limit and the actual length — and not the endpoint, not even
@@ -330,7 +418,7 @@ store for rows whose endpoint exceeds 2048 characters. A row that fails it was e
 the endpoint's origin is embedded in the `Authorization` header of every POST, so an oversized one
 was being paid for on every send.
 
-### VAPID tokens are reused by default
+#### VAPID tokens are reused by default
 
 A signed VAPID token is now held per push-service origin and reused for later sends to that origin
 until it nears its `exp` — `jwtReuse` defaults to `true`, with a 5-minute renewal margin
@@ -355,13 +443,13 @@ A deployment that treats process memory as reachable should also know that a cac
 bearer credential resident in the heap, and that nothing sweeps the cache — an entry leaves it when
 a later send to that origin finds it stale, or when the bound evicts it.
 
-## Spring Boot
+### Spring Boot, coming from `0.1.0`
 
 Everything above applies to a Spring deployment too; this section is what the starters add on top of
 it. [`SPRING.md`](SPRING.md) is the reference for every property as it stands now, and
 [`HEALTH.md`](HEALTH.md) for the probe.
 
-### Removed properties fail the context
+#### The `push2u.*` keys that `0.1.0` had and this release refuses
 
 Six keys are gone, and none of them is ignored. Each fails the context at startup with a message
 naming the key, saying it configures nothing now, and saying what to write instead — because a
@@ -388,7 +476,7 @@ against the previous release, not to accumulate for the life of the library — 
 of saying that skipping this step now and returning to it two releases later is a state nothing will
 warn you about.
 
-### `push2u.enabled`: a context that boots without web push now fails
+#### `push2u.enabled`: a context that boots without web push now fails
 
 `push2u.enabled` is the statement a deployment makes about whether it sends. It defaults to `true`
 and takes only `true` or `false` — an unrecognised value, blank included, fails the context naming
@@ -448,7 +536,7 @@ its conditions.
 carries the routes in full, including the wildcard's effect on that validation and the separate
 refusal that meets a group named after a contributor.
 
-### The health probe moved under `management.health.push2u`
+#### The health probe moved under `management.health.push2u`
 
 Beyond the two renamed keys in the table above, one behaviour is new:
 **`management.health.defaults.enabled` now reaches this indicator.** It never did before —
@@ -460,7 +548,7 @@ is why it is worth checking rather than discovering.
 [`HEALTH.md`](HEALTH.md) is the reference: what the probe asserts about the signer, what it
 deliberately does not, and its two keys.
 
-### The endpoint policy is a bean, and its refusals moved
+#### The endpoint policy is a bean, and its refusals moved
 
 The allowlist expressed by `push2u.allowed-origins` and `push2u.allowed-domains` is now published as
 an `EndpointPolicy` bean, so the code that accepts subscriptions can inject it and validate each
@@ -488,12 +576,16 @@ is a code change someone reviews rather than a line copied between profiles.
 [`SPRING.md` → Endpoint policy](SPRING.md#endpoint-policy) carries the registration recipe written
 against the bean.
 
-### Recompile against the starters
+#### `Push2uProperties` and `VaultSignerProperties` changed shape
 
 `Push2uProperties`' canonical constructor changed several times in this release and
-`VaultSignerProperties`' once, so **code compiled against `0.1.0`'s starters and run against this
-release's fails with `NoSuchMethodError`.** Dropping the new jars in beside old application classes
-is not an upgrade path; recompile.
+`VaultSignerProperties`' once. **Application code that names either record — constructing one,
+holding one, or binding it in a test — and is run against these starters without being recompiled
+fails with `NoSuchMethodError`**, because the constructor it was compiled against no longer exists.
+Most applications never name these types: they are the starters' binding surface, not API anyone was
+meant to hold, and code that only injects a `PushSender` or an `EndpointPolicy` is untouched by
+this. But swapping the jars underneath classes you did not rebuild is not an upgrade path in either
+case; recompile, and this stops being a question.
 
 Concretely, on `Push2uProperties`: `recordSize`, `retry` and `health` are gone as components, the
 nested `Push2uProperties.Retry` and `Push2uProperties.Health` records are gone as types, and
@@ -501,15 +593,14 @@ nested `Push2uProperties.Retry` and `Push2uProperties.Health` records are gone a
 in their own `Push2uHealthProperties`, bound from `management.health.push2u`. On
 `VaultSignerProperties`, one component was inserted: `publicKeyFetch`.
 
-Most applications never name these types — they are the starters' binding surface, not API anyone
-was meant to hold. If yours does, that is where to look first.
-
-### Vault: a third construction mode
+#### Vault: a third construction mode
 
 `VaultTransitVapidSigner` gains `builderWithDeferredPublicKeyFetch(address, keyName, token)` beside
-the two it had, selected under Spring by `push2u.signer.vault.public-key-fetch: deferred`. Nothing
-about the existing two changed and `eager` remains what an unset or blank value means, so this is
-purely additive — it is listed here because it answers a question this upgrade tends to raise.
+the two it had, selected under Spring by `push2u.signer.vault.public-key-fetch: deferred`. The two
+existing builders keep their names and their parameters, and `eager` remains what an unset or blank
+value means, so nothing here has to be edited to keep working — but the eager builder's `build()`
+did change what it *throws*, which is the silent half and is
+[in the chapter above](#an-eager-vault-build-raises-a-different-type-when-vault-is-down).
 
 The eager fetched builder reads Vault inside `build()`, which under Spring is during context
 refresh: a Vault that is sealed or not yet reachable fails the boot. The deferred builder performs
@@ -526,7 +617,7 @@ built and the next restart after a rotate is where that is discovered.
 [`VAULT.md` → When boot must not depend on Vault](VAULT.md#when-boot-must-not-depend-on-vault)
 covers the deferred mode itself.
 
-## Checklist
+### Checklist for the `0.1.0` move
 
 - [ ] Rebuild; replace `PushResult` with an exhaustive `switch` over `PushOutcome`.
 - [ ] Delete `retryPolicy(...)`, and `push2u.retry.*` from every YAML file and profile.
@@ -538,6 +629,11 @@ covers the deferred mode itself.
       need.
 - [ ] If you implement `VapidSigner`: raise `VapidSignerUnavailableException` for an outage, and
       re-read [`SIGNER.md`](SIGNER.md).
+- [ ] If you implement `VaultHttpTransport`: read `Retry-After` and pass it to `VaultHttpResponse`'s
+      three-argument constructor, or accept a permanently empty hint.
+- [ ] If you build `VaultTransitVapidSigner` by hand: catch the interruption, then
+      `VapidSignerUnavailableException`, then `PushCryptoException` — in that order, around the
+      eager `build()`, and around the first `publicKey()` too if you adopt the deferred mode.
 - [ ] Check the subscription store for endpoints above 2048 characters.
 - [ ] Decide whether VAPID token reuse is what you want; `jwtReuse(false)` restores per-send
       signing.
