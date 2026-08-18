@@ -74,9 +74,9 @@ hundred. So "strip the sign byte" is wrong half the time, and "strip but do not 
 once in two hundred — the worse of the two, because the key looks perfectly fine right up to the
 point where a signature does not verify. That second defect is exactly the one
 `nl.martijndwars:web-push`'s own generator has (see
-[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)); copying the block whole avoids both. push2u's
-own test suite runs this block out of this file, so a snippet that stops printing a usable pair
-fails the build.
+[`MIGRATION-FROM-WEB-PUSH.md`](MIGRATION-FROM-WEB-PUSH.md#vapid-key-encoding)); copying the block
+whole avoids both. push2u's own test suite runs this block out of this file, so a snippet that stops
+printing a usable pair fails the build.
 
 ## With npm `web-push`
 

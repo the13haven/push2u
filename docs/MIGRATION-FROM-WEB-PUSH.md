@@ -1,0 +1,633 @@
+# Migrating from `nl.martijndwars:web-push`
+
+push2u exists because the JVM's usual answer for Web Push, [`nl.martijndwars:web-push`][webpush-java],
+pulls a large transitive surface into the graph of anything that depends on it, and puts
+BouncyCastle types in its own public API. This guide is for teams already on that library: what
+the two APIs look like side by side, what leaves the dependency graph, and — the part that decides
+whether a straight port is safe — where push2u behaves differently on purpose.
+
+Everything below about the other library was read from the published artifact and its sources:
+**`nl.martijndwars:web-push:5.1.2`**, its latest release (published 2025-02-17), together with its
+POM, its Gradle module metadata and its `README`. Where a statement could not be verified from
+those, it is marked as such rather than guessed.
+
+Nothing here is a criticism of a library that solved this problem for the JVM years before push2u
+existed. It is a map, not a verdict.
+
+## Contents
+
+- [What a migration removes](#what-a-migration-removes)
+- [What stays the same](#what-stays-the-same)
+- [Side by side](#side-by-side)
+- [Type and method mapping](#type-and-method-mapping)
+- [Differences that change behaviour](#differences-that-change-behaviour)
+- [If you wrote your own signing](#if-you-wrote-your-own-signing)
+- [Migration checklist](#migration-checklist)
+
+## What a migration removes
+
+`web-push` declares five dependencies; resolved, its runtime graph is **26 artifacts** beyond the
+library itself. Reproduce the list with `mvn dependency:tree`, and the size below with
+`mvn dependency:copy-dependencies -DincludeScope=runtime`, on a POM whose only dependency is
+`nl.martijndwars:web-push:5.1.2`:
+
+| What it brings | Artifacts |
+|---|---|
+| Apache HttpComponents (the `PushService` transport) | `httpasyncclient`, `httpcore`, `httpcore-nio`, `httpclient`, `commons-codec`, `commons-logging` |
+| AsyncHttpClient and Netty (the `PushAsyncService` transport) | `async-http-client`, `async-http-client-netty-utils`, `netty-buffer`, `netty-codec`, `netty-codec-http`, `netty-codec-socks`, `netty-common`, `netty-handler`, `netty-handler-proxy`, `netty-resolver`, `netty-transport`, `netty-transport-native-epoll` (`linux-x86_64`), `netty-transport-native-kqueue` (`osx-x86_64`), `netty-transport-native-unix-common`, `netty-reactive-streams`, `reactive-streams`, `jakarta.activation`, `slf4j-api` |
+| JOSE (the VAPID JWT) | `jose4j` |
+| The library's own CLI argument parser | `jcommander` |
+
+Both HTTP stacks arrive whichever one you use — `PushService` needs Apache, `PushAsyncService`
+needs Netty, and the dependencies are declared unconditionally. Together with `web-push` itself
+that is 27 jars and 6,406,226 bytes on the classpath, two of them platform-specific native
+transports.
+
+**BouncyCastle is the one you have to add yourself, and it does not leave silently.**
+`org.bouncycastle:bcprov-jdk15on:1.70` is declared `<optional>true</optional>` in the POM (and in
+the Gradle metadata it appears only in the shaded `shadowRuntimeElements` variant), so it is not
+transitive — a consumer declares it. It is nevertheless mandatory: `Utils.loadPublicKey`,
+`Utils.loadPrivateKey` and the ephemeral key generation all resolve through the provider *by name*
+(`KeyFactory.getInstance("ECDH", "BC")`), so the application must register the provider before the
+first send:
+
+```java
+Security.addProvider(new BouncyCastleProvider());   // required by web-push
+```
+
+That line, and the jar behind it, disappear on push2u. Worth knowing about the jar: the
+`bcprov-jdk15on` artifact line ends at 1.70 (December 2021) — BouncyCastle's maintained
+distribution moved to `bcprov-jdk18on` — so a graph pinned by `web-push`'s POM version is pinned to
+an artifact that receives no further releases.
+
+push2u's side of the same table: `push2u-core` declares exactly one dependency,
+[JSpecify][jspecify] — annotations, no code — carried as `api` so the nullness contract reaches
+consumers, and as `requires static` on the module path so nothing resolves it at runtime
+([ADR-002](adr/0002-zero-dependency-core.md) and
+[ADR-012](adr/0012-nullness-declared-with-jspecify.md)). The Vault signer
+and the Spring Boot starters are separate optional modules; neither can reach the core.
+
+```diff
+ dependencies {
+-    implementation("nl.martijndwars:web-push:5.1.2")
+-    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
++    implementation("com.the13haven:push2u-core:<version>")
+ }
+```
+
+See [`README.md` → Installation](../README.md#installation) for the current coordinates; this file
+deliberately carries no version number, so it cannot go stale against a release.
+
+## What stays the same
+
+- **Your VAPID key pair.** The public key is what browsers subscribed with
+  (`applicationServerKey`), so keeping it means existing subscriptions keep working. Changing it
+  would require every user to re-subscribe. The *encoding* needs one check — see
+  [VAPID key encoding](#vapid-key-encoding).
+- **Your stored subscriptions.** `endpoint`, `p256dh` and `auth` come from the browser and are
+  unchanged. Both libraries leave the parsing of the browser's `PushSubscription` JSON to the
+  application; push2u brings no JSON parser either.
+- **The wire protocol**, when you were already sending `aes128gcm`. Same RFC 8291 encryption, same
+  RFC 8292 VAPID header — a push service validates the body and the authorization identically. The
+  requests are not byte-identical, though: web-push also sets `Content-Type` and a `Crypto-Key`
+  header, and rewrites FCM's legacy `fcm/send` path (below), while push2u sets only
+  `Authorization`, `Content-Encoding`, `TTL` and the optional `Urgency`/`Topic`. (Both leave the
+  transport to add its own `Host`, `Content-Length` and `User-Agent`.)
+
+## Side by side
+
+### Constructing the sender
+
+```java
+// web-push
+Security.addProvider(new BouncyCastleProvider());
+
+PushService pushService = new PushService(
+        vapidPublicKey, vapidPrivateKey, "mailto:ops@example.com");   // throws GeneralSecurityException
+```
+
+```java
+// push2u
+EndpointPolicy pushServices = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
+
+PushSender sender = PushSender.builder(
+                VapidKeys.fromBase64(vapidPublicKey, vapidPrivateKey), "mailto:ops@example.com",
+                pushServices)
+        .build();
+```
+
+The key source, the contact and the endpoint policy are required, so they are parameters of the
+factory method rather than builder steps — `build()` has no missing value left to refuse.
+Everything else (`httpClient`, `defaultTtl`, `jwtExpiry`, `jwtReuse`, `jwtRenewBefore`,
+`jwtCacheSize`, `maxEncryptedBodyBytes`, `executor`, `cryptoProvider`) is optional and
+lives on the builder. A `PushSender` is thread-safe once built, with final configuration and one
+internal cache of the VAPID tokens it has signed; build it once and share it, as you would a
+`PushService`.
+
+The third parameter has no counterpart in `web-push`, and it is the one that will stop a
+mechanical port: see [`EndpointPolicy` — a decision you now have to
+make](#endpointpolicy--a-decision-you-now-have-to-make) for what to pass.
+
+`PushSender.builder(signer, contact, policy)` takes a `VapidSigner` instead of the keys, which is
+how the Vault Transit signer is plugged in. `web-push` has no equivalent seam —
+`AbstractPushService` signs with a `java.security.PrivateKey` it holds.
+
+### Turning a browser subscription into the library's type
+
+```java
+// web-push
+Subscription subscription = new Subscription(
+        endpoint, new Subscription.Keys(p256dh, auth));   // fields are public and mutable, nothing is validated
+```
+
+```java
+// push2u
+Subscription subscription = Subscription.fromBase64(endpoint, p256dh, auth);
+```
+
+`push2u`'s `Subscription` is a record that validates on construction: an absolute `https` endpoint
+with a host and at most 2048 characters, a 65-byte uncompressed `p256dh` (`0x04` prefix) that must
+be a real point on the P-256 curve, a 16-byte `auth`. A bad subscription fails where it is
+registered instead of on every later send, and the failure message never contains the endpoint's
+path or query — a push endpoint is a capability URL. The length bound matters to a migration with
+stored subscriptions: nothing in `web-push`'s published sources checks the endpoint's length — its
+`Subscription` assigns its public fields as given (above), and no such check exists anywhere on
+its send path either — so an oversized endpoint may be sitting in your store, and constructing a
+`Subscription` from it now throws. A hostname above
+RFC 1035's 253-character cap cannot resolve, so a subscription refused for its host was never
+deliverable; a refusal over a capability path longer than roughly 1780 characters is the deliberate
+cost of bounding attacker-chosen endpoint size. `Endpoints.requireSecure` and
+`P256PublicKeys.requireOnCurve` are public so you can apply the same checks at your own
+registration boundary before persisting (the length bound is a plain `endpoint.length()`
+comparison and needs no helper).
+
+### Sending
+
+```java
+// web-push — synchronous
+HttpResponse response = pushService.send(
+        new Notification(endpoint, p256dh, auth, payloadBytes),
+        Encoding.AES128GCM);
+// throws GeneralSecurityException, IOException, JoseException, ExecutionException, InterruptedException
+```
+
+```java
+// push2u
+PushMessage message = PushMessage.builder(payloadBytes)
+        .ttl(Duration.ofHours(1))
+        .urgency(Urgency.NORMAL)
+        .topic("account_update")
+        .build();
+
+PushOutcome outcome = sender.send(subscription, message);
+```
+
+`PushMessage.of(payloadBytes)` is the shorthand when no header is being set. TTL, urgency and topic
+belong to the message in both libraries; in push2u a message carries no endpoint, so one
+`PushMessage` can be sent to many subscriptions.
+
+### Handling the result
+
+```java
+// web-push — you map the status yourself
+int status = response.getStatusLine().getStatusCode();
+if (status >= 200 && status < 300) {
+    // delivered
+} else if (status == 404 || status == 410) {
+    subscriptionStore.delete(subscription);
+} else {
+    // decide whether to retry, and implement it
+}
+```
+
+```java
+// push2u — the mapping is already made, and the switch is exhaustive
+switch (sender.send(subscription, message)) {
+    case PushOutcome.Accepted a -> { }                                   // 2xx — accepted for delivery
+    case PushOutcome.SubscriptionExpired e -> subscriptionStore.delete(subscription);   // 404 / 410
+    case PushOutcome.RetryableFailure f ->   // a 507 that a user action produced waits for a fresh one
+        retrier.scheduleIfAllowed(subscription, message, f);
+    case PushOutcome.NonRetryableFailure f -> log.warn("Push refused: HTTP {}", f.statusCode());
+    case PushOutcome.NotAttempted n -> log.warn("Not sent: {}", n);      // nothing left this process
+    case PushOutcome.Indeterminate i -> retrier.scheduleIfADuplicateIsAcceptable(subscription, message);
+}
+```
+
+`PushOutcome` is a sealed hierarchy, so that `switch` needs no `default`. Four variants report what
+the push service answered; three more — grouped under the `NotAttempted` marker used above, and
+separable into `SignerUnavailable`, `PayloadRejected` and `EndpointRejected` when you want the
+detail — report that no POST was made at all, so no repeat of one can duplicate a notification; and
+`Indeterminate` reports a POST that went out and was never answered. Neither rescheduling branch
+is an unconditional repeat, and the retryable one hands over the whole outcome because it has one
+more rule to apply than `Indeterminate` does. Both price a possible duplicate: `RetryableFailure`
+says a repeat may be *useful* — the service answered about its own moment — and says nothing about
+whether it is *safe*, since a `502` or `504` is an intermediary that got no answer from an upstream
+which may still have applied the POST. The retryable branch alone also reads the status, which is
+why `f` travels whole rather than as its hint: the comment on it is RFC 4918 §11.5's own condition
+on a `507` — a request it refused, where a user action produced that request, is not repeated until
+a separate user action asks for it — and only `f.statusCode()` beside your own record of what
+produced the send can apply that. `Indeterminate` carries no status, so its branch has nothing to
+pass but the decision.
+
+The exception channel is narrower than the five checked exceptions on `PushService.send`, and none
+of them has a counterpart: a `try`/`catch` written for them will not compile. What `send` still
+throws is `PushCryptoException` for a failure that recurs (an unusable provider, a signer answering
+something that is not a signature, a key-service misconfiguration), `PushInterruptedException` for
+an interrupted send, and `IllegalArgumentException`/`NullPointerException` for an illegal argument —
+all unchecked, all extending `RuntimeException` directly. Note that `PushDeliveryException` and
+`EndpointRejectedException` are *not* among them: both are still what a transport and a policy
+throw, but `send` converts them into `Indeterminate` and `EndpointRejected` rather than rethrowing.
+[`README.md` → What a send reports](../README.md#what-a-send-reports-and-what-it-still-throws) has
+the whole table.
+
+### Asynchronous sending
+
+```java
+// web-push
+CompletableFuture<Response> future = new PushAsyncService(...).send(notification);   // AsyncHttpClient/Netty
+int status = future.join().getStatusCode();
+```
+
+```java
+// push2u
+CompletableFuture<PushOutcome> future = sender.sendAsync(subscription, message);
+```
+
+One `PushSender` serves both modes — there is no second service class, and no second HTTP stack.
+The blocking pipeline runs on a library-owned virtual-thread-per-task executor, never on the common
+`ForkJoinPool`; `.executor(myExecutor)` on the builder substitutes your own, which the library will
+not shut down. Note that `PushAsyncService` constructs an `AsyncHttpClient` in a field and exposes
+no way to close it; nothing equivalent is left running by push2u, whose default `HttpClient` is a
+JDK one.
+
+## Type and method mapping
+
+| `nl.martijndwars.webpush` | push2u | Note |
+|---|---|---|
+| `PushService` | `PushSender` | Immutable, built once; both sync and async |
+| `PushAsyncService` | `PushSender.sendAsync` | No separate class, no second HTTP stack |
+| `PushService.send(Notification, Encoding)` | `PushSender.send(Subscription, PushMessage)` | No encoding parameter — see below |
+| `Subscription` / `Subscription.Keys` | `Subscription` (record) | Validating, immutable, defensive copies |
+| `Notification` | `PushMessage` + `Subscription` | The target and the message are separate values |
+| `Notification.builder()` | `PushMessage.builder(payload)` | Payload is required, so it is a factory parameter |
+| `Encoding.AES128GCM` | (implicit) | `aes128gcm` is the only content coding |
+| `Encoding.AESGCM` | — | Not supported ([ADR-006](adr/0006-aes128gcm-only.md)) |
+| `Urgency.NORMAL`, `.getHeaderValue()` | `Urgency.NORMAL`, `.headerValue()` | Same four values |
+| `org.apache.http.HttpResponse` / `org.asynchttpclient.Response` | `PushOutcome` | Status interpreted, body never read |
+| `Utils.loadPublicKey`, `Utils.loadPrivateKey` | `VapidKeys.fromBase64` / `VapidKeys.of` | No BouncyCastle types in the API |
+| `AbstractPushService.setSubject` | `PushSender.builder(…, contact)` | Required, not optional |
+| `setGcmApiKey`, `Notification.isGcm()` | — | Legacy GCM is not supported |
+| — | `VapidSigner` | External key custody (Vault Transit, KMS) |
+| — | `EndpointPolicy` | Egress rule, required by `PushSender.builder(…)` |
+
+## Differences that change behaviour
+
+These are the ones that bite on day one of a port. Read them before deleting the old dependency.
+
+### The default content encoding differs, and push2u supports only one
+
+`PushService.send(Notification)` — the single-argument overload — defaults to `Encoding.AESGCM`,
+the legacy content coding, not `aes128gcm`. (The other entry points differ:
+`PushService.sendAsync(Notification)` and `PushAsyncService.send(Notification)` both default to
+`AES128GCM`.) If your code calls the blocking single-argument `send`, you are on `aesgcm` today
+whether or not you meant to be.
+
+push2u implements `aes128gcm` only, deliberately and permanently: RFC 8291 is the standard, and
+there is no builder option to change it ([ADR-006](adr/0006-aes128gcm-only.md)). For
+anything running a current browser this is a no-op — `aes128gcm` is what the user agents that
+matter negotiate. But the encryption is end-to-end to the *user agent*, so if you knowingly serve
+clients old enough to understand only `aesgcm`, push2u cannot reach them and is not a drop-in for
+that traffic. We have not measured which user agents in the wild still require `aesgcm`; if that
+population matters to you, measure it before switching rather than trusting either library's docs.
+
+### Endpoints must be `https`, with no loopback exception
+
+`web-push` never inspects the endpoint: `Notification.getOrigin()` takes whatever `new URL(...)`
+parses and derives `protocol + "://" + host` from it, so an `http://localhost:8080/...` endpoint
+works end to end.
+
+push2u rejects it. `Subscription` requires an absolute `https` URL with a host (RFC 8030 mandates
+TLS between application server and push service) and grants loopback no exception. **A local test
+setup that pointed the endpoint at a plain-HTTP mock server stops working at construction time**,
+with `IllegalArgumentException`. Terminate TLS in front of the mock — the library's own suite runs
+a loopback HTTPS receiver rather than relaxing the rule.
+
+### Expired subscriptions are a result, and so is every other status
+
+Neither library throws on `404`/`410`. The difference is who interprets the status: `web-push`
+hands back the transport's response object and you write the mapping; push2u has already made it,
+and expiry is deliberately not an exception so that pruning a dead subscription stays ordinary
+control flow ([ADR-007](adr/0007-expired-subscription-is-a-result.md)). push2u extends the same
+treatment to every operational outcome
+([ADR-021](adr/0021-retry-belongs-to-the-caller.md)): a policy refusal, a payload that does not fit,
+a key custodian that cannot sign right now and an unanswered POST are values too, so a fan-out over
+a subscription store meets all of them in one `switch` rather than in a `catch` block beside it.
+
+Three consequences for a port:
+
+- Any `switch` on status codes you kept around is replaced by a `switch` on `PushOutcome`, which the
+  compiler checks for exhaustiveness. It is not a straight substitution: the variants tell a status
+  the service answered about *its own moment* apart from one it answered about *the request*, which
+  is the distinction your retry logic was making by hand.
+- **The number is the one POST's status, not a final code after retries** — there are no retries to
+  be final after. Each variant carries the `statusCode` of the answer it describes.
+- **You cannot read the response body.** `PushResponse` carries the status and headers only, and
+  `JdkPushHttpClient` discards the body without buffering it, because the endpoint is a capability
+  URL from an untrusted subscription and a hostile server must not be able to feed the sender an
+  arbitrarily large response. If you were logging the push service's error text for diagnostics,
+  that goes away — a custom `PushHttpClient` could reinstate it, but the SPI contract asks you not
+  to.
+
+### Retrying stays yours — keep the loop you have
+
+`web-push` performs no retries: one POST per `send`, and `Retry-After` is not read. Most production
+integrations therefore wrapped it in a retry loop of their own.
+
+**push2u does the same, so keep yours.** One `send` is one POST, and nothing in the library
+schedules a second: the repeat decision, its budget, its dead-letter path and what survives a
+restart are the caller's, which is what a job engine, a queue with redelivery or a resilience
+library already knows and a loop inside a library never could
+([ADR-021](adr/0021-retry-belongs-to-the-caller.md)). A retry loop written around `PushService` is
+therefore a thing to port rather than to delete, and its arithmetic is unchanged: each of your
+attempts still costs exactly one POST, bounded by `JdkPushHttpClient`'s 30-second per-request
+timeout (or your own, if you supply a client).
+
+What your loop gains is the part it had to write blind. `web-push` never read `Retry-After`; push2u
+parses it — delta-seconds or any of the three RFC 9110 HTTP-date forms — and hands it to you on
+`RetryableFailure`, **with no ceiling applied**, so the only bound on the wait is the one your
+scheduler chooses. And the classification comes with it: `RetryableFailure` against
+`NonRetryableFailure` says whether the service answered about its own moment or about the request,
+which is the judgement a hand-written loop usually approximates with "`429` or `5xx`". That
+approximation is wrong in both directions — it misses `408` and `421`, which RFC 9110 marks
+repeatable, and it repeats `501`, `505`, `506`, `508` and `511`, which answer identically every
+time.
+
+Two variants are worth wiring into the loop rather than folding into "failed". `Indeterminate` — the
+POST went out and nothing answered — is the case where nothing bounds the duplicate risk at all,
+since nobody knows whether the service applied the POST; push2u refuses to call it retryable and
+leaves the pricing to you. The pricing does not disappear on `RetryableFailure` either: *useful* is
+that name's whole verdict, not *safe* — a `502` or `504` is an intermediary reporting it got no
+answer from an upstream that may still have applied the POST — and a `507` that refused a request a
+user action produced is, per RFC 4918 §11.5, not repeated until a separate user action asks.
+`SignerUnavailable` means no POST was made at all, so a repeat duplicates nothing,
+but a fan-out that meets one should **stop** rather than carry on: with signing failing, every
+remaining row makes its own round trip to a custodian that is already down.
+
+### The default TTL is different by a factor of 28
+
+`web-push`'s `Notification` defaults to `28 * 86400` seconds — 28 days — when no TTL is given.
+push2u's default is **one day**, and it is a property of the sender rather than the message:
+
+```java
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices)
+        .defaultTtl(Duration.ofDays(28))    // only if you were relying on the old default
+        .build();
+```
+
+A per-message `ttl(...)` on `PushMessage` still wins over it. If your code always set a TTL
+explicitly, nothing changes.
+
+### Payload size is checked before anything is sent
+
+`web-push` performs no size checks; an oversized payload is encrypted, POSTed, and refused by the
+push service (typically `413`) — you pay the cryptography and the round trip to find out.
+
+push2u checks first, before encryption or network I/O, and reports the refusal as the
+`PayloadRejected` outcome. One number configures the limit: the **encrypted body is capped at 4096
+bytes** by default, the size RFC 8030 §7.2 lets a push service refuse beyond. The single-record
+`aes128gcm` body adds a fixed 103 bytes to the plaintext, so the default admits **3993 bytes of
+plaintext** — the figure RFC 8291 §4 derives. Raise it with `.maxEncryptedBodyBytes(…)` only for an
+endpoint documented to accept more; the record size (`rs`) the RFC 8188 header advertises is
+derived from the ceiling, so there is no second parameter to raise in step.
+
+Both of the outcome's numbers are plaintext octets — the plaintext you handed over, and the largest
+this sender's configuration would have carried. A payload that used to squeeze through at 4000-odd
+bytes now comes back as `PayloadRejected` where it used to draw a `413` from the push service, so
+the branch that handled that status is where it belongs: the remedy is the same, a notification
+rendered smaller. The same question is also answerable *before* a send —
+`sender.assessPayloadSize(serializedPayload)` returns `WithinLimit` or
+`ExceedsLimit(payloadBytes, maximumPayloadBytes)` — so an application that renders notifications
+can shorten one against the reported budget instead of discovering the limit by outcome; `web-push`
+has no counterpart.
+
+### VAPID `sub` is required
+
+RFC 8292 §2.1 leaves the `sub` claim optional, and `web-push` treats it that way: construct a
+`PushService` without a subject and the JWT simply carries no `sub`. push2u requires a contact —
+it is a parameter of `PushSender.builder(…)`, omitting it does not compile, and a blank value is
+rejected with `IllegalArgumentException`. Use the `mailto:` or `https:` URI a push service could
+actually reach you at.
+
+### VAPID key encoding
+
+`VapidKeys.fromBase64` expects base64url (padded or not) of a **65-byte uncompressed public point**
+and a **32-byte private scalar**. Two encoding details of the old library's keys matter here:
+
+- **The private key may be 33 bytes.** `web-push`'s key generator prints
+  `privateKey.getD().toByteArray()` — a `BigInteger` two's-complement encoding, which carries a
+  leading `0x00` whenever the scalar's high bit is set (and is *shorter* than 32 bytes when the
+  scalar has leading zero bytes). The example key in that library's own README decodes to 33 bytes
+  beginning with `0x00`. push2u requires exactly 32 and rejects anything else with
+  `IllegalArgumentException: VAPID private key must be a 32-byte P-256 scalar`. Strip a leading
+  zero byte, or left-pad with zeros to 32 — the scalar value is unchanged, so this is a re-encoding
+  and not a new key. Roughly half of all generated keys are affected, so a key that imports cleanly
+  on one environment is no evidence about the next one.
+- **Padded base64 is fine, standard base64 is not.** The old CLI prints with `=` padding, which
+  push2u's decoder tolerates. It decodes URL-safe base64 (`-`, `_`) only; a key stored in standard
+  base64 (`+`, `/`) must be converted.
+
+The public key needs no conversion: both sides use the 65-byte uncompressed X9.62 point. (Strictly,
+`web-push` also accepts a *compressed* point, because it decodes through BouncyCastle's
+`decodePoint`; push2u requires the uncompressed form. No browser or key generator emits compressed
+VAPID keys, so this only matters if something in your pipeline compressed them deliberately.)
+
+The same applies to the browser's `p256dh`: push2u requires the 65-byte uncompressed point browsers
+actually send, where `web-push` would have accepted a compressed one.
+
+None of this is a reason to generate a fresh pair: re-encoding keeps every existing subscription
+alive, and a new pair kills all of them. For a genuinely new application,
+[`VAPID.md`](VAPID.md) has a generator that emits the 32-byte scalar directly.
+
+### `Topic` is validated locally
+
+`web-push` puts whatever string you pass into the `Topic` header. push2u validates it first: 1–32
+characters from the URL-safe base64 alphabet, the RFC 8030 §5.4 grammar. A topic outside that shape
+— a colon, a slash, 40 characters — now throws `IllegalArgumentException` at `PushMessage.build()`
+instead of drawing an HTTP `400`.
+
+### An empty payload is still encrypted
+
+`web-push` sends no body and no `Content-Encoding` when the payload is zero-length. push2u always
+encrypts and always sends a body — an empty payload produces a 103-byte `aes128gcm` record. If you
+were sending payload-less "tickle" pushes deliberately, the request shape changes (the message
+still arrives; the service worker's `event.data` becomes an empty payload rather than absent).
+
+### Legacy GCM support is gone
+
+`setGcmApiKey`, `Notification.isGcm()`, the `Authorization: key=…` header, and the rewriting of
+`https://fcm.googleapis.com/fcm/send/…` to `…/wp/…` under `aes128gcm` have no counterpart. push2u
+sends the endpoint the browser gave it, with a VAPID `Authorization` header and nothing else. Modern
+FCM endpoints work as ordinary RFC 8030 endpoints; if you still hold pre-VAPID GCM registrations,
+they are not migrated by this library.
+
+### `EndpointPolicy` — a decision you now have to make
+
+`web-push` does not restrict where a send may POST, and has no seam for it. push2u makes the rule a
+required argument of `PushSender.builder(…)`, so this is the one difference a port cannot skip past:
+existing call sites will not compile until each one names a policy.
+
+The exposure behind it is real. The endpoint inside a `Subscription` is attacker-influenced data,
+since a typical integration accepts the browser's subscription JSON at a public registration
+endpoint. Nothing stops a client posting a hand-crafted subscription pointing into your own network,
+and the visible outcome — the status code an answered variant carries versus an unanswered
+`Indeterminate`, plus timing — then works as a blind SSRF oracle for internal host and port
+existence.
+
+For almost every deployment the answer is an allowlist of the push services its users arrive from:
+
+```java
+EndpointPolicy pushServices = EndpointPolicies.allowedEndpoints(
+        EndpointRule.origin("https://fcm.googleapis.com"),                // Chrome and Chromium
+        EndpointRule.origin("https://updates.push.services.mozilla.com"), // Firefox
+        EndpointRule.domain("push.apple.com"),                            // Safari, through APNs
+        EndpointRule.domain("notify.windows.com"));                       // Edge, through WNS
+
+PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServices).build();
+```
+
+Two of the four services issue endpoints on one fixed host, so an origin entry says everything
+there is to say about them. The other two publish a zone, and publish it as what a sending server
+should be allowed to reach:
+[Apple](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
+tells a server in control of its push endpoints to "allow URLs from `*.push.apple.com`", and
+[Microsoft](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/firewall-allowlist-config)
+gives `*.notify.windows.com` as the FQDN a cloud service sending to WNS — where Edge's endpoints
+live — must be allowed to reach. That is what a domain entry is for, and why an entry carries its
+kind rather than taking it from the factory it was passed to.
+[`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the four services and this same allowlist in the Spring
+YAML form as well, with what each vendor's page does and does not say and why no browser is missing
+from it.
+
+The policy runs before encryption, before the VAPID signature and before any I/O; a rejection costs
+none of them and comes back as the `EndpointRejected` outcome, carrying the endpoint redacted and
+the policy's own reason, so one hostile row is a line in your log rather than an aborted fan-out.
+(`EndpointRejectedException` is what the policy seam throws and what you catch if you call
+`EndpointPolicy.validate` yourself at a registration boundary.) An origin entry is exact and
+fail-closed — subdomains of an allowed origin are not included. A domain entry matches at a label
+boundary and over `https` on the default port only, so `notify.windows.com` admits
+`cloud.notify.windows.com` at any depth and refuses `evilnotify.windows.com`; it is worth exactly
+what the DNS of that zone is worth, and belongs only where the service operator publishes the zone
+rather than the host, as Apple and Microsoft each do. A malformed entry of either kind fails at
+construction, so the mistake surfaces at deployment.
+
+`EndpointPolicies.unrestricted()` reproduces exactly what you have today: any absolute `https`
+endpoint is sent to, loopback and private-range addresses included. It is a reasonable first move
+if you are porting under time pressure and your subscriptions do not come from untrusted clients —
+and unlike the behaviour it replaces, it is a line in your own source that a later review can find.
+See [`README.md` → Endpoint policy](../README.md#endpoint-policy-ssrf-hardening) for the limits of a
+URI-level check — it is a coarse filter, not a sandbox.
+
+### Redirects are never followed
+
+push2u's transports refuse to follow a `3xx`, and both `JdkPushHttpClient` and the Vault transport
+reject an `HttpClient` whose `followRedirects()` is anything but `Redirect.NEVER`. A redirect would
+carry the encrypted body and the request headers to a host `EndpointPolicy` never saw. If you
+supply your own `java.net.http.HttpClient` or implement `PushHttpClient` over another stack, turn
+redirect following off explicitly — several stacks are permissive by default. We did not audit what
+`web-push`'s two transports do here, so treat this as a contract push2u adds rather than as a
+statement about the other library.
+
+## If you wrote your own signing
+
+Nothing in `web-push` is pluggable at the key-custody boundary — `AbstractPushService` signs with a
+`PrivateKey` it holds, so a team keeping VAPID keys in an HSM or KMS had to fork or wrap the
+library. push2u makes that a supported SPI:
+
+```java
+public interface VapidSigner {
+    byte[] sign(byte[] signingInput);   // raw 64-byte r || s (RFC 7518 §3.4)
+    byte[] publicKey();                 // 65-byte uncompressed P-256 point (RFC 8292 §3.2)
+}
+```
+
+The contract is narrow, and push2u checks both halves of it *before* the POST goes out, on every
+send that signs: a signature that is not 64 bytes is refused with a `PushCryptoException` that names
+DER when the bytes start with `0x30`, and a public key that is not a 65-byte uncompressed point is
+refused the same way. So a *wrongly encoded* signer fails loudly at the first send rather than
+collecting opaque `401`/`403` answers. (Signed VAPID tokens are reused per push-service origin
+until they near expiry, so a send served from that cache calls neither `sign` nor the checks — the
+first send to an origin is the one that runs them, and it is the one a broken signer fails at.)
+What those checks cannot see is a signer whose output is well-formed but wrong — one signing with a
+key that does not match the public point it advertises, the mistake `builderWithSuppliedPublicKey`
+invites. That one still collects `401`/`403`, and it is why the conformance kit verifies the
+signature against the advertised key rather than only measuring it.
+
+**A signer over a network signals in two types**, and this is the half a migration is least likely
+to look for. A custodian that cannot sign *now* — unreachable, timed out, sealed, still catching up,
+rate-limiting — raises `VapidSignerUnavailableException`, which the sender turns into the
+`SignerUnavailable` outcome and which may carry the status the custodian answered and any moment it
+declared for coming back. Everything that recurs until a person changes something — an unusable
+provider, an answer no custodian could have meant, a token without the capability — raises
+`PushCryptoException`, which `send` rethrows. Nothing checks which one you chose either: the
+conformance kit asserts no exception types on purpose, so a signer that reports outages as
+cryptographic failures passes its whole suite while turning every outage into a permanent failure
+for its callers.
+
+Extend the kit in your own test suite instead:
+
+```kotlin
+dependencies {
+    testImplementation("com.the13haven:push2u-testkit:<version>")
+}
+```
+
+```java
+class MySignerContractTest extends VapidSignerContractTest {
+
+    @Override
+    protected VapidSigner signer() {
+        return new MySigner(...);
+    }
+}
+```
+
+`push2u-signer-vault` is a ready-made implementation over HashiCorp Vault Transit, so the private
+key never enters the JVM at all. The kit is documented in [`SIGNER.md`](SIGNER.md), the Vault
+signer in [`VAULT.md`](VAULT.md).
+
+## Migration checklist
+
+1. Replace the two dependencies with `com.the13haven:push2u-core`, and delete the
+   `Security.addProvider(new BouncyCastleProvider())` call.
+2. Re-encode the VAPID private key to a 32-byte scalar if the stored one decodes to 33 bytes
+   (or fewer). The key itself does not change — do **not** generate a new pair, or every subscriber
+   has to re-subscribe.
+3. Replace `PushService` with a single shared `PushSender`, built once with the keys and the
+   contact.
+4. Replace `Notification` with `Subscription` + `PushMessage`; move the endpoint and the browser
+   keys into the subscription, the payload and headers into the message.
+5. Rewrite result handling as an exhaustive `switch` over `PushOutcome`, and replace the `catch`
+   blocks for the five checked exceptions with `PushCryptoException` and
+   `PushInterruptedException` — a transport failure and a policy refusal are outcomes now, not
+   exceptions.
+6. **Keep your retry loop.** push2u makes one POST per `send` and schedules nothing, exactly as
+   `web-push` did. Feed it `RetryableFailure` whole: the `Retry-After` it carries is the schedule,
+   and its `statusCode()` is what lets the loop hold a `507` that answered a user action until a
+   fresh one asks — a repeat there is *useful*, not promised *safe*, so it shares `Indeterminate`'s
+   duplicate pricing. Decide for yourself what to do with `Indeterminate`, and stop the fan-out on
+   `SignerUnavailable`.
+7. Set `defaultTtl` explicitly if you were relying on the old 28-day default.
+8. Check that every endpoint you send to — test fixtures included — is `https`.
+9. Check payload sizes against the 3993-byte plaintext default, and topics against the
+   RFC 8030 §5.4 shape.
+10. Pass an `EndpointPolicy` to every `PushSender.builder(…)` —
+    `EndpointPolicies.allowedEndpoints(…)` naming the push services your users arrive from, with a
+    domain rule for each service that publishes a zone rather than a host
+    ([`PUSH-SERVICES.md`](PUSH-SERVICES.md) has the list), or
+    `EndpointPolicies.unrestricted()` if this deployment deliberately restricts nothing.
+11. On Spring Boot, consider `push2u-spring-boot-starter` — it binds `push2u.*`, builds the
+    `PushSender` bean and adds an Actuator health indicator that signs a probe and verifies it. See
+    [`SPRING.md`](SPRING.md).
+
+[webpush-java]: https://github.com/web-push-libs/webpush-java
+[jspecify]: https://jspecify.dev

@@ -338,9 +338,28 @@ Also update, when your change touches them:
   `com.the13haven:<module>:X.Y.Z`; a release hook rewrites every such coordinate to the released
   version, matching any `X.Y.Z` — so do not write one to name a historical version.
 - `docs/DESIGN.md` — the architecture, whenever the change moves it.
+- **The reference document that owns the subject**, which is where most of a change's prose belongs:
+  `docs/SPRING.md` for a `push2u.*` property, `docs/HEALTH.md` for the health indicator,
+  `docs/VAULT.md` for the Vault Transit signer, `docs/SIGNER.md` for the `VapidSigner` contract and
+  the conformance kit, `docs/VAPID.md` for key generation, `docs/VAPID-KEY-ROTATION.md` for
+  replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a browser push service's allowlist
+  entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a reader arriving from
+  `nl.martijndwars:web-push` compares against — that document states the other library's API and
+  dependency set as verified facts, so an addition there is checked against the published artifact.
+- `docs/MIGRATION.md` — whenever the change breaks a consumer upgrading from the previous release,
+  and *especially* when it breaks one without breaking their compilation. A narrowed exception, a
+  changed default, a value that used to be an exception, a stricter constructor: each of those
+  compiles unchanged at the call site, so this document is the only warning anyone gets. Say what to
+  do, not only what moved. The release notes are generated from pull request labels and cannot carry
+  this. It holds one section per migration, newest first; the document's own introduction carries
+  how a new one is added and why every heading in it has to be unique across the whole file.
+- **A new file under `docs/`** — plus its row in the *Documentation* table of `README.md`, right
+  after *Installation*. That table is the index of everything under `docs/`, and an index that skips
+  one document is worse than no index.
 - `docs/adr/` — a *new* file, plus its row in `docs/adr/README.md`, when the change settles
   something the existing ADRs do not cover or replaces a decision one of them records. Never an edit
-  to an ADR that is already implemented.
+  to an ADR that is already implemented, beyond the two the procedure there allows: the status line
+  of a superseded one, and a link to a document that has been renamed.
 
 ## Public API
 

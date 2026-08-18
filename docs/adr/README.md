@@ -48,9 +48,9 @@ status line becomes:
 **Status:** Superseded by [ADR-NNN](NNNN-the-new-decision.md)
 ```
 
-That line is the only edit its body ever takes. A superseded ADR is not deleted: its number is
-referenced from other ADRs, from `docs/DESIGN.md` and from the review procedure, and a numbered
-decision that vanishes leaves those references dangling.
+That line is the only edit its argument ever takes, beside the link repair below. A superseded ADR
+is not deleted: its number is referenced from other ADRs, from `docs/DESIGN.md` and from the review
+procedure, and a numbered decision that vanishes leaves those references dangling.
 
 **A decision that moves only in part — one clause superseded while the rest of the ADR still
 stands — takes the same one-line edit, in a form beside the full one rather than in place of it:**
@@ -61,11 +61,27 @@ stands — takes the same one-line edit, in a form beside the full one rather th
 
 and the index's status cell follows, in the index's own link spelling:
 `Accepted; one clause superseded by [NNN](NNNN-the-new-decision.md)`. That line is likewise the
-only edit the superseded ADR's body ever takes — *which* clause it is stays out of it and lives in
+only edit the superseded ADR's argument takes — *which* clause it is stays out of it and lives in
 the superseding ADR instead, because naming it in the old file's status line would put the new
 decision's reasoning into a document that may not carry it. ADR-004 and ADR-019 are the worked
 example: ADR-019 supersedes one sentence of ADR-004 and says which one; ADR-004's status line says
 only that a clause was superseded and by what.
+
+**One other edit is allowed, and only one: a link whose target document was renamed.** The same
+document under a new name is the same artefact; the ADR's own text does not move, only the path
+that reaches it. The reason this is worth an exception is that a rename can leave the old path
+still *resolving*, at a document that is now something else — `docs/MIGRATION.md` became
+[`MIGRATION-FROM-WEB-PUSH.md`](../MIGRATION-FROM-WEB-PUSH.md) while a new
+[`MIGRATION.md`](../MIGRATION.md) took the freed name, so ADR-023's unedited reference would have
+sent a reader to a document the parameter it names never appeared in. A dangling link announces
+itself; that one does not.
+
+**Material that moved is the opposite case, and takes no edit.** A fragment carried into another
+document leaves the ADR's reference correct as the record of where that material was when the
+decision was taken. ADR-026 is the worked example: it names [`VAULT.md`](../VAULT.md) as the home
+of the key-rotation recipe, which has since moved to
+[`VAPID-KEY-ROTATION.md`](../VAPID-KEY-ROTATION.md), and that reference stays exactly as it is.
+Renamed artefact, fix the path; relocated material, leave it.
 
 Before the decision is implemented, an ADR is still a draft and can be revised freely — the status
 line says so (`Proposed`).
