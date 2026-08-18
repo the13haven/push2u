@@ -30,12 +30,10 @@ final class Suppression {
      * recordings made here come in at most a handful of distinct shapes for one failure, so a few of them carry every
      * distinct thing that can be said, and anything beyond that is the same sentence repeated by a defect that repeats.
      * Entries a consumer recorded itself count towards it, which is the conservative direction — an exception already
-     * carrying that many diagnostics is not one this library has to add a further one to. The bound is approximate
-     * under concurrent construction: the check and the recording are two separate acquisitions of the exception's own
-     * monitor with a window between them, so threads of one fan-out sharing an exception can pass the check together
-     * and take it a few entries past this number. It stays a bound — once it is crossed, nothing passes the check again
-     * — and closing the window would mean synchronizing on a consumer's exception, a monitor that consumer's own code
-     * may hold as well, which is not a trade worth making for a diagnostic.
+     * carrying that many diagnostics is not one this library has to add a further one to. The bound holds under
+     * concurrent construction, which takes holding the exception's own monitor across the check and the recording
+     * together: a fan-out sharing one exception across threads would otherwise have every thread pass the check at
+     * seven and record anyway.
      */
     private static final int RECORDING_CEILING = 8;
 
@@ -54,19 +52,29 @@ final class Suppression {
      * read of that count is safe for the same reason the recording is: {@code getSuppressed} is {@code final} on
      * {@code Throwable} too, so no consumer type can make it throw or lie.
      *
+     * <p>The check and the recording are one critical section, because a fan-out sharing one exception across threads
+     * would otherwise pass the check together and record past the limit. The monitor is the exception's own — the one
+     * {@code addSuppressed} takes anyway, so nothing new is locked here, only held across both steps, and it is
+     * reentrant, so the members called inside may take it again. What deliberately does not happen inside it is a call
+     * to anything a consumer wrote: both members are {@code final} on {@code Throwable}, so this section cannot be made
+     * to wait on consumer code while holding a monitor that consumer code can also take.
+     *
      * @param failure the primary failure, which stays what the caller receives
      * @param secondary the defect worth recording beside it
      */
     static void suppress(Throwable failure, Throwable secondary) {
-        if (failure.getSuppressed().length >= RECORDING_CEILING) {
-            return;
-        }
-        try {
-            failure.addSuppressed(secondary);
-        } catch (IllegalArgumentException selfSuppression) {
-            // The failure was offered as its own suppressor, which only its own accessor throwing
-            // it can produce. There is nothing to record and nothing to report: the caller is owed
-            // the failure the read produced, not a complaint about the exception carrying it.
+        synchronized (failure) {
+            if (failure.getSuppressed().length >= RECORDING_CEILING) {
+                return;
+            }
+            try {
+                failure.addSuppressed(secondary);
+            } catch (IllegalArgumentException selfSuppression) {
+                // The failure was offered as its own suppressor, which only its own accessor
+                // throwing it can produce. There is nothing to record and nothing to report: the
+                // caller is owed the failure the read produced, not a complaint about the
+                // exception carrying it.
+            }
         }
     }
 }

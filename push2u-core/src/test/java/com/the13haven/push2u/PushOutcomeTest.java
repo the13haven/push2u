@@ -10,8 +10,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.Test;
 
@@ -313,6 +318,34 @@ class PushOutcomeTest {
         assertThatThrownBy(() -> new PushOutcome.SignerUnavailable(cause))
                 .isInstanceOf(AssertionError.class)
                 .hasMessage("invariant failed inside an accessor");
+    }
+
+    @Test
+    void aSharedExceptionUnderAConcurrentFanOutStillStopsAtTheCeiling() throws Exception {
+        // The ceiling is a check followed by a record, and a fan-out is where the two can come
+        // apart: threads building outcomes from one preallocated exception all read a length below
+        // the limit and all record. Held as one critical section, the count is what it says it is.
+        // This test cannot fail falsely — a correct implementation lands on the limit exactly, for
+        // any interleaving — while a torn one only sometimes exceeds it, so a green run here is
+        // weaker evidence than a red one.
+        VapidSignerUnavailableException shared = new VapidSignerUnavailableException("sealed", 503, null, null) {
+            @Override
+            public OptionalInt status() {
+                return null;
+            }
+        };
+
+        try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<?>> started = new ArrayList<>();
+            for (int i = 0; i < 512; i++) {
+                started.add(threads.submit(() -> new PushOutcome.SignerUnavailable(shared)));
+            }
+            for (Future<?> built : started) {
+                built.get();
+            }
+        }
+
+        assertThat(shared.getSuppressed()).hasSize(8);
     }
 
     @Test
