@@ -12,15 +12,20 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.VapidSigner;
@@ -439,6 +444,84 @@ class VaultTransitVapidSignerDeferredFetchTest {
     }
 
     // ---------------------------------------------------------------------------------------------------------------
+    // The recording of an accessor's complaint is bounded per exception instance
+    // ---------------------------------------------------------------------------------------------------------------
+
+    @Test
+    void oneReusedUndescribableFailureDoesNotGrowItsSuppressedListWithEveryFlight() {
+        // A transport preallocating one exception and throwing it for every failed read is
+        // ordinary — a custodian refusing everything while a breaker is open builds nothing per
+        // call — and a failed flight is forgotten rather than cached, so every later caller starts
+        // a fresh flight that fails the same way. With a broken accessor on that one instance, an
+        // unbounded recording would grow its suppressed list by one entry per read for as long as
+        // the custodian stays down.
+        IllegalStateException accessorDefect = new IllegalStateException("status() is broken in this subclass");
+        UndescribableUnavailable reused =
+                new UndescribableUnavailable("Vault Transit key read must wait", accessorDefect);
+        VapidSigner signer = deferredSigner(new AlwaysFailingTransport(reused));
+
+        for (int i = 0; i < 1000; i++) {
+            assertThatThrownBy(signer::publicKey)
+                    .as("every flight still ends with its caller keeping the failure it was given")
+                    .isSameAs(reused);
+        }
+
+        assertThat(reused.getSuppressed())
+                .as("the recording is bounded rather than one entry per read")
+                .hasSizeLessThanOrEqualTo(8);
+        assertThat(reused.getSuppressed()[0])
+                .as("what was recorded is still the diagnostic, not something the ceiling substituted")
+                .isSameAs(accessorDefect);
+    }
+
+    @Test
+    @Timeout(value = 60, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void severalSignersDescribingOneSharedFailureAtOnceStayWithinTheBound() throws Exception {
+        // Single-flight serialises the description within one signer and not across several, so
+        // several deferred signers over one transport are where the recording is genuinely
+        // concurrent. Be honest about what a green run proves: a probe on the core's copy of this
+        // recording found the ungated form exceeding its limit only about one run in fifteen, even
+        // at 2000 concurrent describers, because the window is the gap between two acquisitions of
+        // one monitor and nothing a test can write goes in between — both members are final on
+        // Throwable. So this is a regression net rather than a proof that the critical section is
+        // there; the sequential test above is what pins the ceiling. The timeout covers the start
+        // gate: a rendezvous that never completes must fail the test rather than hang the run.
+        for (int round = 0; round < 4; round++) {
+            IllegalStateException accessorDefect = new IllegalStateException("status() is broken in this subclass");
+            UndescribableUnavailable shared =
+                    new UndescribableUnavailable("Vault Transit key read must wait", accessorDefect);
+            AlwaysFailingTransport transport = new AlwaysFailingTransport(shared);
+            int signers = 512;
+            CountDownLatch ready = new CountDownLatch(signers);
+            CountDownLatch start = new CountDownLatch(1);
+
+            try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
+                List<Future<?>> flights = new ArrayList<>();
+                for (int i = 0; i < signers; i++) {
+                    VapidSigner signer = deferredSigner(transport);
+                    flights.add(threads.submit(() -> {
+                        ready.countDown();
+                        start.await();
+                        assertThatThrownBy(signer::publicKey).isSameAs(shared);
+                        return null;
+                    }));
+                }
+                ready.await();
+                start.countDown();
+                for (Future<?> flight : flights) {
+                    flight.get();
+                }
+            }
+
+            assertThat(shared.getSuppressed())
+                    .as(
+                            "round %d: many flights describing one instance leave exactly the bound, not one entry more",
+                            round)
+                    .hasSize(8);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
     // Cancellation — caller-local in both directions
     // ---------------------------------------------------------------------------------------------------------------
 
@@ -820,6 +903,29 @@ class VaultTransitVapidSignerDeferredFetchTest {
         public java.util.Optional<Duration> retryAfter() {
             retryAfterReads.incrementAndGet();
             return super.retryAfter();
+        }
+    }
+
+    /**
+     * A transport whose every read fails with the one exception it was handed — the preallocated-instance shape a
+     * consumer's transport takes while a breaker is open, and the one this signer must not accumulate diagnostics on.
+     */
+    private static final class AlwaysFailingTransport implements VaultHttpTransport {
+
+        private final RuntimeException failure;
+
+        private AlwaysFailingTransport(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public VaultHttpResponse get(URI uri, Map<String, String> headers) {
+            throw failure;
+        }
+
+        @Override
+        public VaultHttpResponse post(URI uri, Map<String, String> headers, byte[] body) {
+            throw new AssertionError("no signing call is reachable: the metadata read never succeeds");
         }
     }
 
