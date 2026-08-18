@@ -14,6 +14,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContextInitializer;
@@ -370,6 +372,44 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     }
 
     @Test
+    void aPolicyRegisteredAsASingletonWithNoDefinitionCountsAsTheApplications() {
+        // A policy put straight into the factory, with no bean definition behind it at all — what
+        // registerSingleton leaves, and what an application assembling part of its context by hand
+        // or through another framework's integration produces. There is nothing there to establish
+        // where it came from, so it counts as the application's and the stated allowlist beside it
+        // is the contradiction: the alternative reading would take an unattributable bean for the
+        // starter's own and let a stated allowlist be dropped without a word.
+        runner.withPropertyValues("push2u.allowed-origins=https://push.example.test")
+                .withInitializer(policyRegisteredAsSingleton("handRegisteredPolicy"))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.allowed-origins")
+                            .hasMessageContaining("'handRegisteredPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void aPolicyDefinitionCarryingNoAnnotationMetadataCountsAsTheApplications() {
+        // The other shape of the same question: a definition registered programmatically, which is
+        // no annotated definition and so carries no factory method for the check to read a
+        // declaring class from. Same answer, and it has to be the same answer — a registrar
+        // contributing a policy this way is supplying one exactly as a @Bean method does.
+        runner.withPropertyValues("push2u.allowed-domains=notify.windows.com")
+                .withInitializer(policyRegisteredAsDefinition("programmaticPolicy"))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.allowed-domains")
+                            .hasMessageContaining("'programmaticPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
     void theContradictionIsDetectedWithoutCreatingTheBean() {
         // The check reads bean definitions, not instances: a policy bean whose factory would blow
         // up if invoked stays uninvoked, and the operator reads the contradiction — proof that
@@ -590,6 +630,28 @@ class Push2uEndpointPolicyAutoConfigurationTest {
         return context -> context.getEnvironment()
                 .getPropertySources()
                 .addFirst(new MapPropertySource("blank-allowlist", Map.of("push2u.allowed-origins", " ")));
+    }
+
+    /** Puts a policy into the bean factory as a bare singleton — the registration that leaves no definition. */
+    private static ApplicationContextInitializer<ConfigurableApplicationContext> policyRegisteredAsSingleton(
+            String name) {
+        return context -> context.getBeanFactory().registerSingleton(name, (EndpointPolicy) endpoint -> {});
+    }
+
+    /** Registers a policy as a plain bean definition — one carrying no annotation or factory-method metadata. */
+    private static ApplicationContextInitializer<ConfigurableApplicationContext> policyRegisteredAsDefinition(
+            String name) {
+        return context -> ((BeanDefinitionRegistry) context.getBeanFactory())
+                .registerBeanDefinition(name, new RootBeanDefinition(ProgrammaticPolicy.class));
+    }
+
+    /** The policy behind that definition. Never instantiated: the check reads definitions, not instances. */
+    static class ProgrammaticPolicy implements EndpointPolicy {
+
+        @Override
+        public void validate(URI endpoint) {
+            throw new EndpointRejectedException("application policy rejects all endpoints");
+        }
     }
 
     /** An application-supplied policy that rejects everything, distinguishable by identity and message. */

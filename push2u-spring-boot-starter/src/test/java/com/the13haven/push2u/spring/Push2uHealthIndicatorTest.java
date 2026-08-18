@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -106,6 +107,47 @@ class Push2uHealthIndicatorTest {
         assertThat(signer.signOperations())
                 .as("once the TTL has fully elapsed the next evaluation probes the signer again")
                 .isEqualTo(2);
+    }
+
+    @Test
+    void thePublishedSingleArgumentConstructorCachesOnTheDefaultTtl() {
+        // The constructor a consumer holding the artifact writes — `new Push2uHealthIndicator(
+        // signer)` — has to arrive at the shipped default rather than at no caching at all: a
+        // health endpoint is polled, and with a remote signer an uncached probe is one audited
+        // backend signing operation per poll per pod. The TTL itself is not observable, so what is
+        // asserted is what a second poll costs. This one runs on the system clock, which the 30s
+        // default leaves ample room for.
+        CountingSigner signer = new CountingSigner(realSigner);
+        Push2uHealthIndicator indicator = new Push2uHealthIndicator(signer);
+
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+
+        assertThat(signer.signOperations())
+                .as("the second poll is served from the cache the default TTL established")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void aTtlTooLargeForMillisMeansForeverRatherThanFailingOrExpiringAtOnce() {
+        // Two quiet defects hide behind an absurd cache-ttl, and they fail in opposite directions.
+        // Duration.toMillis() throws above ~292 million years, which would refuse to build an
+        // indicator over a value saying nothing worse than "cache it"; and an unsaturated now + ttl
+        // wraps negative, putting the expiry in the past so that every poll re-probes the backend —
+        // the exact load the cache exists to prevent, produced by the setting that asked for the
+        // most caching. The clock starts at a real epoch millis so the sum can overflow at all, and
+        // the second poll is a century later so a cache hit cannot be an ordinary one.
+        clock.advance(Duration.ofMillis(System.currentTimeMillis()));
+        CountingSigner signer = new CountingSigner(realSigner);
+        Push2uHealthIndicator indicator = new Push2uHealthIndicator(signer, ChronoUnit.FOREVER.getDuration(), clock);
+
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+        clock.advance(Duration.ofDays(36_500));
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+
+        assertThat(signer.signOperations())
+                .as("the clamped TTL means forever, and the saturated expiry keeps it in the future")
+                .isEqualTo(1);
     }
 
     @Test
@@ -247,6 +289,28 @@ class Push2uHealthIndicatorTest {
         assertThat(health.getStatus()).isEqualTo(Status.DOWN);
         assertThat(String.valueOf(health.getDetails().get("reason")))
                 .contains("does not verify against the advertised public key");
+    }
+
+    @Test
+    void aSignatureOfTheWrongLengthIsDownNamingWhatArrivedAndWhatWasExpected() {
+        // The commonest way an implementation gets the signer contract wrong: it returns the
+        // provider's DER-encoded ECDSA signature instead of the raw r||s pair a VAPID JWT carries.
+        // Nothing throws and nothing is malformed — every push service simply answers 401 with no
+        // diagnostic — so this is the shape the probe has to catch by measuring. Both lengths go
+        // into the reason on purpose: "produced 72, expected 64" tells the implementer they are one
+        // conversion away from correct, where "the signer probe failed" would not.
+        Health health = new Push2uHealthIndicator(new DerSigner(), Duration.ZERO, clock).health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+        assertThat(String.valueOf(health.getDetails().get("reason")))
+                .contains("72 bytes")
+                .contains("expected 64");
+        assertThat(health.getDetails())
+                .as("the signer type, so the payload says which implementation answered")
+                .containsEntry("signer", "DerSigner");
+        assertThat(health.getDetails())
+                .as("nothing was thrown, so there is no exception type to report")
+                .doesNotContainKey("error");
     }
 
     @Test
@@ -418,6 +482,38 @@ class Push2uHealthIndicatorTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new AssertionError("interrupted while waiting", e);
+        }
+    }
+
+    /**
+     * A signer that hands back an ASN.1-encoded ECDSA signature instead of the raw {@code r||s} pair the contract
+     * requires: a well-formed answer of the wrong shape, and never 64 bytes. Each half is written as a 33-byte INTEGER
+     * with an unconditional leading zero, which a real provider would emit only for a value whose high bit is set — so
+     * this blob is BER rather than strict DER about half the time, and a provider's would be 70 to 72 bytes. The point
+     * of writing it this way is the fixed 72: the length the probe reports is then the same on every run, whatever
+     * signature the freshly generated key produced. Named rather than anonymous because the probe reports the signer's
+     * simple name, and an anonymous class has none.
+     */
+    private static final class DerSigner implements VapidSigner {
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            byte[] raw = realSigner.sign(signingInput);
+            byte[] der = new byte[72];
+            der[0] = 0x30; // SEQUENCE
+            der[1] = 70; // of everything that follows
+            der[2] = 0x02; // INTEGER r: 33 bytes, the zero at index 4 written whether or not it is needed
+            der[3] = 33;
+            System.arraycopy(raw, 0, der, 5, 32);
+            der[37] = 0x02; // INTEGER s, the same shape
+            der[38] = 33;
+            System.arraycopy(raw, 32, der, 40, 32);
+            return der;
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return realSigner.publicKey();
         }
     }
 

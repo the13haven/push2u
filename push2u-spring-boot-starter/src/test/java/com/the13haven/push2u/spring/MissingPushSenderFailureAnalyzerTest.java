@@ -10,10 +10,15 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.apache.commons.logging.LogFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.boot.diagnostics.FailureAnalysis;
 import org.springframework.boot.diagnostics.FailureAnalyzer;
 import org.springframework.boot.test.util.TestPropertyValues;
@@ -21,6 +26,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.support.SpringFactoriesLoader;
 import org.springframework.core.io.support.SpringFactoriesLoader.ArgumentResolver;
 import org.springframework.core.io.support.SpringFactoriesLoader.FailureHandler;
@@ -146,6 +152,94 @@ class MissingPushSenderFailureAnalyzerTest {
     }
 
     @Test
+    void aNonUniquePushSenderIsLeftToTheFrameworksOwnAnalyzerToo() {
+        // The other half of "everything not about a missing PushSender is declined". Two sender
+        // beans raise the same exception type — a subclass of it, carrying a count and the
+        // candidates — and there the framework's own analyzer, which lists those candidates, is the
+        // answer that helps. This one's enumeration of ways to configure a signer would be plainly
+        // untrue of a context holding two of them, and stating something untrue about a deployment
+        // is what this analyzer exists to stop.
+        MissingPushSenderFailureAnalyzer analyzer =
+                new MissingPushSenderFailureAnalyzer(new DefaultListableBeanFactory(), new StandardEnvironment());
+
+        assertThat(analyzer.analyze(
+                        new NoUniqueBeanDefinitionException(PushSender.class, List.of("firstSender", "secondSender"))))
+                .as("a bean found twice is not a bean not found")
+                .isNull();
+    }
+
+    @Test
+    void withoutTheContextsCollaboratorsTheAnalysisIsDeclined() {
+        // Both are supplied by the framework only where there is a context to ask, and a failure
+        // early enough has neither. Declining is what leaves the framework's own report standing;
+        // anything else would be this analyzer describing a context it cannot read. A BeanFactory
+        // that is not a ConfigurableListableBeanFactory is the same case rather than a lesser one —
+        // the bean definitions every branch of the analysis reads are not reachable through it.
+        NoSuchBeanDefinitionException cause = new NoSuchBeanDefinitionException(PushSender.class);
+
+        assertThat(new MissingPushSenderFailureAnalyzer(null, null).analyze(cause))
+                .as("no context to ask")
+                .isNull();
+        assertThat(new MissingPushSenderFailureAnalyzer(new StaticListableBeanFactory(), new StandardEnvironment())
+                        .analyze(cause))
+                .as("a BeanFactory that cannot be asked for definitions is no better than none")
+                .isNull();
+        assertThat(new MissingPushSenderFailureAnalyzer(new DefaultListableBeanFactory(), null).analyze(cause))
+                .as("without an environment, what the deployment stated cannot be read")
+                .isNull();
+    }
+
+    @Test
+    void aFailureWithNoInjectionPointToDescribeStillReadsAsASentence() {
+        // The framework supplies the description of the injection point that went unsatisfied, and
+        // supplies null where the failure carries none — an application asking the context for a
+        // PushSender itself rather than having one injected, say. The answer still has to open as a
+        // sentence, which is why "A component" stands in: an operator reading "null required a
+        // PushSender bean" learns nothing and doubts the rest of the message.
+        withAnalyzerOfFailedContext(
+                List.of("push2u.enabled=false"),
+                analyzer -> {
+                    FailureAnalysis analysis = analyzer.analyze(new NoSuchBeanDefinitionException(PushSender.class));
+                    assertThat(analysis).isNotNull();
+                    assertThat(analysis.getDescription())
+                            .startsWith("A component required a PushSender bean that could not be found.")
+                            .as("the context is still read, and still answered for what it states")
+                            .contains("contradiction inside the application");
+                },
+                Push2uAutoConfiguration.class,
+                Push2uStartupChecksAutoConfiguration.class,
+                RequiresSenderConfiguration.class);
+    }
+
+    @Test
+    void theRouteNobodyHasFoundYetStillCarriesTheEnumeration() {
+        // push2u on — stated rather than defaulted, which is the other way a deployment says it —
+        // no signer, and the refusal registered, which means the refusal fired and this context
+        // failed with its message rather than with a missing bean. Nothing should reach this
+        // branch, and the point of pinning it is that a diagnostic nobody predicted must still say
+        // something: the same enumeration the refusal publishes, from the same constant, so the two
+        // texts cannot drift into two different answers to one question.
+        withAnalyzerOfFailedContext(
+                List.of("push2u.enabled=true"),
+                analyzer -> {
+                    FailureAnalysis analysis = analyzer.analyze(new NoSuchBeanDefinitionException(PushSender.class));
+                    assertThat(analysis).isNotNull();
+                    assertThat(analysis.getDescription())
+                            .startsWith("A component required a PushSender bean that could not be found.")
+                            .contains("push2u is on and this context holds no signer");
+                    assertThat(analysis.getAction())
+                            .isEqualTo(Push2uStartupChecksAutoConfiguration.MissingSignerRefusal.WAYS_TO_ANSWER)
+                            .as("and that enumeration really is one, rather than an empty string")
+                            .contains("push2u.enabled=false")
+                            .contains("push2u.vapid.public-key")
+                            .contains("VapidSigner bean");
+                },
+                Push2uAutoConfiguration.class,
+                Push2uStartupChecksAutoConfiguration.class,
+                RequiresSenderConfiguration.class);
+    }
+
+    @Test
     void thisAnalyzersTextIsTheOneThatArrives() {
         // The framework ships an analyzer for the same failure and both recognise it, so what the
         // operator reads is whichever answers first in the sorted list the framework builds from
@@ -210,6 +304,26 @@ class MissingPushSenderFailureAnalyzerTest {
             MissingPushSenderFailureAnalyzer analyzer =
                     new MissingPushSenderFailureAnalyzer(context.getBeanFactory(), context.getEnvironment());
             assertions.accept(analyzer.analyze(Objects.requireNonNull(failure)));
+        }
+    }
+
+    /**
+     * Refreshes a context that is expected to fail and hands the analyzer built from it — that context's own bean
+     * factory and environment — to {@code assertions}, which supply the failure to analyse themselves. The framework
+     * runs its analyzers over whatever startup failure arrives, and the failures below are ones the refresh that
+     * establishes the context does not itself raise.
+     */
+    private static void withAnalyzerOfFailedContext(
+            List<String> properties,
+            Consumer<MissingPushSenderFailureAnalyzer> assertions,
+            Class<?>... configurations) {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            TestPropertyValues.of(properties.toArray(String[]::new)).applyTo(context);
+            context.register(configurations);
+            assertThat(catchThrowable(context::refresh))
+                    .as("the context was expected to fail")
+                    .isNotNull();
+            assertions.accept(new MissingPushSenderFailureAnalyzer(context.getBeanFactory(), context.getEnvironment()));
         }
     }
 
