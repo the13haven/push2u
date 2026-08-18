@@ -2,7 +2,7 @@
 
 `VapidSigner` is the key-custody seam: an implementation over an HSM, a KMS or a remote custodian
 answers with a raw 64-byte `r || s` ES256 signature and the 65-byte uncompressed P-256 point, and
-nothing else about how the key is held reaches the library. This is the reference for writing one —
+the private key itself never reaches the library. This is the reference for writing one —
 [`README.md` → Writing a VapidSigner](../README.md#writing-a-vapidsigner) carries the conformance
 kit's dependency coordinate, and [`README.md` → JCE provider
 selection](../README.md#jce-provider-selection) the provider question a signer that signs locally
