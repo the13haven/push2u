@@ -120,9 +120,10 @@
         <!-- The JSON field names Vault returns ("data") repeat by necessity; hoisting protocol
              literals into constants buys nothing here -->
         <exclude name="AvoidDuplicateLiterals"/>
-        <!-- Catching RuntimeException is the documented fallback in exactly two places (Origin's
-             IDN conversion, the health indicator): neither may let a defect anywhere below it turn
-             into a failed send or a thrown health check -->
+        <!-- Catching RuntimeException is the documented fallback where a defect below must not
+             displace the answer the caller is owed: Origin's IDN conversion, the health indicator,
+             and the sender's guarded reads of seam-exception accessors (the outcome constructor,
+             the rejection-reason read, the interruption walk) -->
         <exclude name="AvoidCatchingGenericException"/>
     </rule>
 

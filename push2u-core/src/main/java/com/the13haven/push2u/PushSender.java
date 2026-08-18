@@ -65,6 +65,14 @@ import org.jspecify.annotations.Nullable;
 @SuppressWarnings({"PMD.CouplingBetweenObjects", "PMD.GodClass"})
 public final class PushSender {
 
+    /**
+     * How many cause-chain elements the interruption walk visits before declaring the chain manufactured. Real chains
+     * count their elements in ones and tens — a handful of wrappers around one root failure — so a thousand is not a
+     * chain being walked but one being generated, and generous by two orders of magnitude costs no honest diagnostics
+     * anything.
+     */
+    private static final int CAUSE_CHAIN_CEILING = 1000;
+
     private final VapidSigner signer;
     private final String contact;
     private final WebPushEncryptor encryptor;
@@ -269,8 +277,21 @@ public final class PushSender {
         } catch (EndpointRejectedException e) {
             // The policy's contract keeps the raw endpoint out of its message; the redacted form
             // beside it is this library's own rendering, safe whatever the policy wrote.
-            return new PushOutcome.EndpointRejected(
-                    Endpoints.redact(subscription.endpoint()), Objects.requireNonNullElse(e.getMessage(), ""));
+            String reason;
+            try {
+                reason = Objects.requireNonNullElse(e.getMessage(), "");
+            } catch (RuntimeException defect) {
+                // The read is consumer-overridable code, and a rejection the policy already
+                // classified must not leave as the accessor's complaint. Nor may that complaint
+                // travel: it was written by nobody who accepted the policy seam's redaction
+                // contract, so its message, its class name and its rendering may all carry the raw
+                // capability URL. The fixed text below is this library's own, distinguishable from
+                // "" — what a null message renders as — and there is nowhere to record the defect:
+                // this outcome keeps two strings, and the exception is discarded with this
+                // conversion.
+                reason = "endpoint policy rejected the endpoint; reason unavailable";
+            }
+            return new PushOutcome.EndpointRejected(Endpoints.redact(subscription.endpoint()), reason);
         }
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         String authorization;
@@ -380,20 +401,46 @@ public final class PushSender {
      * {@link InterruptedException} beneath it (the flag half catches those), and a transport can attach a cause without
      * re-setting the flag (the chain half catches that). Kept here rather than obliged onto the seams, so that no
      * transport has to recognise a cancellation.
+     *
+     * <p>The chain half runs on consumer-overridable code — {@code getCause()} — and is guarded: where a read throws a
+     * {@code RuntimeException}, or the chain outgrows any depth honest diagnostics reach, the walk stops and the defect
+     * is recorded as a suppressed exception on the seam's own failure — bounded per instance, so a preallocated
+     * exception thrown for every call does not collect one of these per send — which both conversions that reach this
+     * test hand to the caller inside the outcome. What is lost at that point is unknowable by anybody: whether an
+     * {@link InterruptedException} sat beyond the break in the chain. The conservative answer is chosen — invent
+     * nothing, and keep the seam's classification unless the thread's interrupt flag says otherwise. That flag is the
+     * method's single exit, asked after the walk however the walk ended, so an interruption arriving while an ordinary
+     * walk runs is seen through the same door.
      */
     private static boolean isInterruption(RuntimeException failure) {
         if (Thread.currentThread().isInterrupted()) {
             return true;
         }
-        // The walk guards against a cyclic chain — constructible by a defective seam overriding
-        // getCause() — because a send must not spin over someone else's broken diagnostics.
+        // The walk guards against a defective seam's getCause() in both ways a chain can fail to
+        // end — a send must neither spin nor grow the seen-set without bound over someone else's
+        // broken diagnostics. The identity set ends a cyclic chain; the ceiling ends an acyclic
+        // one that never runs out, which a getCause() fabricating a fresh wrapper on every call
+        // produces and no identity test can detect. Hitting the ceiling is treated exactly like a
+        // throwing read: record the defect, stop, and let the tail below ask the flag.
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
-            if (cause instanceof InterruptedException) {
-                return true;
+        try {
+            for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+                if (cause instanceof InterruptedException) {
+                    return true;
+                }
+                if (seen.size() >= CAUSE_CHAIN_CEILING) {
+                    Suppression.suppress(
+                            failure,
+                            new IllegalStateException("cause chain still unfinished after " + CAUSE_CHAIN_CEILING
+                                    + " elements; a chain this deep is being generated, not walked, so the walk"
+                                    + " stops here"));
+                    break;
+                }
             }
+        } catch (RuntimeException defect) {
+            Suppression.suppress(failure, defect);
         }
-        return false;
+        return Thread.currentThread().isInterrupted();
     }
 
     /**

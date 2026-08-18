@@ -193,12 +193,27 @@ propagates unchanged rather than being laundered into a value. What `send` itsel
 `IllegalArgumentException`/`NullPointerException` for an argument that is not a legal value of its
 parameter ([ADR-022](adr/0022-one-type-per-programmatic-action.md)).
 
+The conversions trust the seam's classification, not its diagnostics: every member read while
+converting — the policy exception's message, the signer exception's status and retry hint, the
+cause chain the interruption walk traverses — is read inside a guard, so a defective accessor in a
+consumer's exception subclass costs the caller that one diagnostic, never the classified outcome.
+The defect is recorded as a suppressed exception where the outcome carries the seam's failure —
+bounded per exception instance, because preallocating one exception and throwing it for every call
+is ordinary, and one such instance with a broken accessor would otherwise grow a suppressed entry
+per send for as long as a fan-out runs. `EndpointRejected` carries only strings, so a rejection
+whose `getMessage()` threw gets the sender's own fixed reason instead, carrying nothing the
+throwing accessor wrote. An `Error` out of
+any of those reads is not survived and propagates.
+
 The interruption test is the facade's rather than any seam's, written as a disjunction — an
 `InterruptedException` anywhere in the cause chain, *or* the current thread's interrupt status set —
 because neither half is sound alone: an interruption can surface as a `ClosedByInterruptException`
 or an `InterruptedIOException` with no `InterruptedException` beneath it, and a transport can attach
 a cause without re-setting the flag. It runs on the signer path as well as the transport path, and
-the cause-chain walk is guarded against a cycle a defective seam could construct. The interrupt
+the cause-chain walk carries two guards against a chain a defective seam could keep from ending — an
+identity set against a cycle, and a depth ceiling of 1000 against an acyclic chain fabricated fresh
+on every `getCause()` read — so the chain half of the disjunction strictly covers the first 1000
+elements, which every honestly built chain fits with two orders of magnitude to spare. The interrupt
 status is re-set before the throw, which on the async path means the worker's flag is re-set before
 the future completes.
 

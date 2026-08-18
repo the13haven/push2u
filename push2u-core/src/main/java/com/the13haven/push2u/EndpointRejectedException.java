@@ -26,6 +26,13 @@ import java.io.Serial;
  * any other shape: the deployment that opts in is exactly the one that should decide what a rejection means for its
  * subscription store.
  *
+ * <p><b>{@link #getMessage()} must not throw.</b> It is the one member {@link PushSender#send} reads while converting
+ * this exception, and its text becomes the outcome's {@code reason} — the contract names that single method
+ * deliberately, asking nothing of accessors the library never reads. A subclass whose {@code getMessage()} throws a
+ * {@code RuntimeException} does not cost the caller the classification: the sender substitutes a fixed reason of its
+ * own, carrying nothing the throwing accessor wrote — but the policy's own account of the refusal, the thing this type
+ * exists to deliver, is then lost.
+ *
  * <p>There is deliberately no cause-taking constructor: the parse and validation exceptions a policy might be tempted
  * to wrap ({@code URISyntaxException} above all) carry the raw endpoint in their message, and a push endpoint is a
  * capability URL that must never travel inside an exception (RFC 8030 §8.3; see {@link Endpoints#redact}).
