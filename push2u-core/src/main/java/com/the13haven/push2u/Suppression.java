@@ -31,10 +31,11 @@ final class Suppression {
      * distinct thing that can be said, and anything beyond that is the same sentence repeated by a defect that repeats.
      * Entries a consumer recorded itself count towards it, which is the conservative direction — an exception already
      * carrying that many diagnostics is not one this library has to add a further one to. The bound is approximate
-     * under concurrent construction: the count is read and the entry added under separate locks, so threads of one
-     * fan-out sharing an exception can pass the check together and take it a few entries past this number. It stays a
-     * bound — once it is crossed, nothing passes the check again — and buying exactness would mean holding a lock of
-     * this library's own across a consumer's exception, which is not a trade worth making for a diagnostic.
+     * under concurrent construction: the check and the recording are two separate acquisitions of the exception's own
+     * monitor with a window between them, so threads of one fan-out sharing an exception can pass the check together
+     * and take it a few entries past this number. It stays a bound — once it is crossed, nothing passes the check again
+     * — and closing the window would mean synchronizing on a consumer's exception, a monitor that consumer's own code
+     * may hold as well, which is not a trade worth making for a diagnostic.
      */
     private static final int RECORDING_CEILING = 8;
 
