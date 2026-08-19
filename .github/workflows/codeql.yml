@@ -57,6 +57,8 @@ jobs:
   # checks their real names and a passing conclusion.
   analyze:
     needs: changes
+    # Starts although `needs` did not, for the reason the step conditions below spell out.
+    if: ${{ !cancelled() }}
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -85,19 +87,25 @@ jobs:
             build-mode: none
 
     steps:
+      # `!= 'false'` and not `== 'true'`: a `changes` job that dies leaves its outputs empty, and
+      # an empty output must mean "analyse". Under `== 'true'` an infrastructure failure skipped
+      # every step, the job still reported green, and the required check passed on a scan that
+      # never ran. A documentation-only change sets `code=false` explicitly and still skips —
+      # the steps are conditional rather than the job so that the required check reports passed
+      # rather than skipped in that ordinary case.
       - name: Check out repository
-        if: ${{ needs.changes.outputs.code == 'true' }}
+        if: ${{ needs.changes.outputs.code != 'false' }}
         uses: actions/checkout@v7
 
       - name: Initialize CodeQL
-        if: ${{ needs.changes.outputs.code == 'true' }}
+        if: ${{ needs.changes.outputs.code != 'false' }}
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - name: Perform CodeQL analysis
-        if: ${{ needs.changes.outputs.code == 'true' }}
+        if: ${{ needs.changes.outputs.code != 'false' }}
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"

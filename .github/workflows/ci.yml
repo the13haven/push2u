@@ -36,7 +36,14 @@ jobs:
 
   quality:
     needs: changes
-    if: ${{ needs.changes.outputs.build == 'true' }}
+    # `!= 'false'` and not `== 'true'`, with `!cancelled()` so the job starts although `needs`
+    # did not: a `changes` job that dies — a failed checkout, a lost runner, the five-minute
+    # timeout — leaves its outputs empty, and an empty output must mean "run the gate". Under
+    # `== 'true'` it meant the opposite: the job was skipped, a skipped required check counts as
+    # passed, and a pull request could merge without the gate ever running. The filter's own
+    # fail-open lives inside the step and cannot cover the step not running at all. A
+    # documentation-only change still sets `build=false` explicitly and is still skipped.
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
