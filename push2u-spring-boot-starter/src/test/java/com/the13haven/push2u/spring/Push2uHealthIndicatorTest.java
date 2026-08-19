@@ -6,6 +6,7 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.security.KeyPair;
@@ -472,6 +473,19 @@ class Push2uHealthIndicatorTest {
                     .allSatisfy(message -> assertThat(message).contains("push2u health check failed"));
             assertThat(logs.count(Level.FINE)).isEqualTo(1);
         }
+    }
+
+    @Test
+    void aNullSignerIsRefusedWhereItIsHandedOver() {
+        // Spring cannot deliver null here: the bean method takes the signer as a required
+        // parameter, so a context without one fails to start rather than building an indicator
+        // over nothing. The constructors are public, though, and documented as the way to build
+        // this by hand — and without the check the NPE arrives on the first health() call, at
+        // signer.getClass() outside the try that turns a failing probe into DOWN. An endpoint
+        // whose whole job is to report trouble would throw instead of reporting it.
+        assertThatThrownBy(() -> new Push2uHealthIndicator(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("signer");
     }
 
     private static void await(CountDownLatch latch) {

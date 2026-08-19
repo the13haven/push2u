@@ -8,6 +8,7 @@ package com.the13haven.push2u.spring;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
@@ -143,6 +144,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * Creates the indicator over the configured signer with the default cache TTL ({@link #DEFAULT_CACHE_TTL}).
      *
      * @param signer the configured VAPID signer
+     * @throws NullPointerException if {@code signer} is {@code null}
      */
     public Push2uHealthIndicator(VapidSigner signer) {
         this(signer, DEFAULT_CACHE_TTL);
@@ -155,6 +157,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * @param cacheTtl how long a successful probe result is served from cache; a failed result is cached for at most
      *     {@link #MAX_FAILURE_CACHE_TTL} regardless. {@link Duration#ZERO} disables caching entirely
      * @throws IllegalArgumentException if {@code cacheTtl} is negative
+     * @throws NullPointerException if {@code signer} is {@code null}
      */
     public Push2uHealthIndicator(VapidSigner signer, Duration cacheTtl) {
         this(signer, cacheTtl, Clock.systemUTC());
@@ -177,7 +180,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
         if (cacheTtl.isNegative()) {
             throw new IllegalArgumentException("the cache TTL must not be negative: " + cacheTtl);
         }
-        this.signer = signer;
+        this.signer = Objects.requireNonNull(signer, "signer");
         this.successTtlMillis = toMillisClamped(cacheTtl);
         this.failureTtlMillis = Math.min(this.successTtlMillis, MAX_FAILURE_CACHE_TTL.toMillis());
         this.clock = clock;
