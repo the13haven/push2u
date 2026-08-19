@@ -17,7 +17,9 @@ import org.junit.jupiter.api.Test;
  * {@link VaultHttpResponse}'s own guarantees: the two-argument constructor reports no hint (the ordinary case, and the
  * whole constructor for a transport that does not read the {@code Retry-After} header), and the hint's floor — a
  * negative delay reads to a scheduler as "repeat immediately" against a Vault that just declared it cannot serve, so a
- * transport passing one is refused at this boundary rather than believed.
+ * transport passing one is refused at this boundary rather than believed. Beside those two, the printed form: it
+ * describes the body rather than reproducing it, which is what keeps a transport's own logging from putting a whole
+ * service answer, and the control characters in it, into a log line.
  */
 class VaultHttpResponseTest {
 

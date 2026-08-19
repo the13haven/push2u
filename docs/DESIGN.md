@@ -1025,7 +1025,10 @@ signer copies it into the exception it raises, which is the only route by which 
 able to act on it — the caller's scheduler — ever sees it. What crosses is the parsed hint and not
 the headers: a bag of them from a service whose answers are read under a size bound is more surface
 than one value is worth. Empty is the ordinary case, since Vault fills the header on a rate-limited
-answer alone and only where an operator enabled the rate-limit response headers.
+answer alone and only where an operator enabled the rate-limit response headers. Its `toString()` is
+overridden for the reason `VaultToken`'s is, one step weaker: the body is not a secret but it is a
+whole service answer under a size bound, so the printed form carries its length and not the body —
+the record is safe to print without a transport author having to know that it is.
 
 Status classification stays in the signer, because the transport returns an answer rather than
 raising on one. `VaultTransitVapidSigner` puts each non-`200` to one question — does the status

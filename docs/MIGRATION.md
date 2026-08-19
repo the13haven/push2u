@@ -347,7 +347,10 @@ two-argument constructor. Your transport therefore compiles and works exactly as
 fills the hint: `PushOutcome.SignerUnavailable.retryAfter()` is permanently empty for that
 deployment, because the header stops at the transport unless the transport hands it on. Read
 `Retry-After` and pass it to the three-argument constructor if the deployment schedules anything on
-that value.
+that value. The same record also prints differently now: `toString()` describes the body — its
+length — instead of reproducing it, so a transport that logged the response object whole logs a
+description of the answer from this version on, and a log parser reading the body out of that line
+stops finding it.
 
 #### An eager Vault `build()` raises a different type when Vault is down
 

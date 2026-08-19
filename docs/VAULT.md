@@ -435,6 +435,12 @@ into the exception it raises — which is the only route by which the one compon
 the caller's scheduler, ever sees it. What crosses is the parsed hint and not the headers: a bag of
 them from a service read under a size bound is more surface than one value is worth.
 
+Printing that record does not reproduce the body: `toString()` gives the status, the body's length
+and the hint, so a transport that logs the response it just built puts a description of the answer
+into the log line rather than the answer itself. Nothing stops you reaching past it — but `body()`
+is a service's whole answer with whatever it happened to carry in it, control characters included,
+so a transport that logs the body logs that too.
+
 The starter exposes these as properties:
 
 ```yaml
