@@ -17,8 +17,8 @@ different class from another", not enough to defend a five-percent difference.
   message — a signed VAPID token is reused for every send to a push-service origin until it nears
   expiry — so the per-message figure to size against is the send that serves a cached token, and
   the send that signs is what the first message to each origin pays. Parsing, validation, key
-  decoding, HKDF and AES-GCM together are a rounding error, and so is the cache lookup that
-  replaced the signature.
+  decoding, HKDF and AES-GCM together are a rounding error, and so is the cache key a hit builds
+  where the signature used to be.
 - **The expensive steps left per message are CPU-bound and independent per subscription**, so a
   fan-out scales with cores. `sendAsync` with an executor is what uses them; what remains on that
   path is the protocol's own arithmetic, which does not benefit from being made cleverer.
@@ -96,8 +96,9 @@ as one.
 
 The first five rows are the sub-microsecond ones, ordered by cost rather than by where they fall in
 the pipeline. Four of them touch no provider and are measured once, then repeated across the columns
-so each column reads as a complete budget; the cache-key row does read the signer's advertised key,
-which is why it is measured per column even though the two agree. All five are printed coarsely on
+so each column reads as a complete budget; the cache-key row is measured per column because it runs
+against each column's own signer, though nothing in it reaches the provider, which is why the two
+figures agree. All five are printed coarsely on
 purpose: everything above ~90 µs reproduces between runs within a few percent, while the
 sub-microsecond rows move by around a fifth, which is more than the difference between them. Read
 them as "far below anything else on the path, and it does not matter", not as a ranking.
@@ -118,7 +119,7 @@ real deployment. Run to run the rows containing a round trip move by 20–30 %, 
 local figures above, which is why they are given as ranges over the runs rather than as single
 medians.
 
-| Step | Median |
+| Step | Median, or its range over the runs |
 |---|---|
 | `VaultTransitVapidSigner.publicKey()`, eager mode | 8 ns |
 | `VaultTransitVapidSigner.publicKey()`, deferred mode after the fetch | 8 ns |
@@ -132,15 +133,20 @@ nothing of Transit is on the path of a send that serves a token already signed, 
 two rows together say and what neither says alone. The signing row is the first send to an origin
 within a token's life, and every send under `jwtReuse(false)`.
 
-The signing row is more than the signature plus the local remainder, and the gap is not attributed:
-the suite measures the whole and the parts, not the difference between them. Its range is wider
-than the local table's for the same reason the signature row's is — it contains the round trip.
+The signing row's range is wider than anything in the local table for the reason the signature
+row's is — it contains the round trip. The previous recording put that row well above the signature
+plus the local remainder and declined to attribute the gap; this one no longer shows a gap to
+decline, the whole and the sum of the parts overlapping across their ranges. That is an observation
+about two independently measured quantities and not an attribution: the suite measures wholes and
+parts, never the difference between them, and a whole that happens to agree with a sum is not
+thereby explained by it.
 
-The two `publicKey()` rows agree because they are the same read: both construction modes retain one
-pair and reach it through a single volatile read, and the deferred mode's one fetch is paid by the
-call that triggers it, outside every measured repetition. A signer that fetches reads Vault exactly
-once — at startup in the eager mode, at first use in the deferred one — and never again, so no
-later `publicKey()` pays a round trip in either.
+The two `publicKey()` rows agree because they are the same read: every construction mode retains one
+pair and reaches it through a single volatile read, and the deferred mode's one fetch is paid by the
+call that triggers it, outside every measured repetition. The two that fetch are the two measured;
+the supplied mode is the same field and the same clone, and fetches nothing at any point. A signer
+that fetches reads Vault exactly once — at startup in the eager mode, at first use in the deferred
+one — and never again, so no later `publicKey()` pays a round trip in either.
 
 ## What the numbers say
 
@@ -156,8 +162,9 @@ costs nothing to follow.
 **Two elliptic-curve operations are what a message costs, and a third is what a token costs.** ECDH
 and the ephemeral key pair are 624.7 µs of the 648.4 µs cached `send` on the JDK provider — 96.3 %.
 Add the ES256 signature and the three are 744.0 µs of the 753.2 µs signing `send` — 98.8 %.
-Everything else in the library, including all the parsing, encoding, HKDF, AES-GCM and the cache
-lookup itself, is the remainder in both cases. Both figures are the sum of measured parts set
+Everything else in the library — all the parsing, encoding, HKDF and AES-GCM, plus the cache key a
+hit builds — is the remainder in the first case, and the same minus the cache, which a sender that
+signs every time never consults, in the second. Both figures are the sum of measured parts set
 beside a measured whole, which is the only arithmetic this document does; the two `send` rows are
 never subtracted from each other.
 
@@ -166,7 +173,7 @@ is 5.5× the cost of generating a key pair, though both are one scalar multiplic
 BouncyCastle it is 2.2× and 2.9× faster in absolute terms. Part of the gap is inherent — key
 generation and signing multiply the curve's *fixed* generator, for which a provider can precompute
 tables, while ECDH multiplies the *arbitrary* point of the subscriber, where there is nothing to
-precompute — but a factor of 2.8 between providers is not inherent, and it is the largest single
+precompute — but a factor of 2.9 between providers is not inherent, and it is the largest single
 lever measured here.
 
 Three explanations for that cost were tested and rejected rather than assumed, and all three checks
@@ -197,16 +204,19 @@ service's origin, the contact and an expiry that defaults to 12 hours — so the
 origin and reuses it until it nears expiry, and a large fan-out waits on Vault once per distinct
 origin met rather than once per subscription. The two `send` rows measure both ends of that: 1.5–1.9
 ms when every send signs, 0.63–0.67 ms when the token is already there, which is a local send with
-no Transit on it. `publicKey()` is 8 ns in both construction modes — near the floor of what this
+no Transit on it. `publicKey()` is 8 ns in both fetching modes — near the floor of what this
 harness can resolve at all — because the retained pair reaches every caller through one volatile
 read and no later call pays a round trip.
 
 **Parallelism, not micro-optimisation, is what scales a fan-out.** The expensive steps are CPU-bound
 and independent per subscription, so `sendAsync` with an executor is the lever that uses the other
 cores; the Vault signature is not CPU-bound at all, and the token cache took it off the per-message
-path rather than speeding it up — which is what a cache can do for a cost that is a round trip. The
-cache lookup that replaced it is ~32 ns: three orders of magnitude below the local signature it
-replaces, and four below a Transit round trip.
+path rather than speeding it up — which is what a cache can do for a cost that is a round trip.
+What a hit pays instead was measured only in part: building the key — reading the signer's
+advertised key and encoding it — is ~32 ns, three orders of magnitude below the local signature and
+four below a Transit round trip, and the map lookup it precedes, with its monitor and its two clock
+readings, was not measured separately. The conclusion survives the gap by a wide margin, but the
+32 ns is the key and not the whole hit.
 
 ## Keeping this document honest
 
@@ -217,9 +227,16 @@ looks current is worse than no row.
 
 **Both tables were re-recorded after VAPID token reuse landed**, which is what the paired `send`
 rows are for: the question the previous recording left open — what a send serving a cached token
-costs — is answered by measuring that send rather than by adjusting the other one. The signing rows
-are the comparable half, and they sit within a few percent of the figures the previous recording
-took on the same machine, so nothing on the path became slower while the cache was added to it.
+costs — is answered by measuring that send rather than by adjusting the other one.
+
+The signing rows are the half comparable to what was there before, and only in the local table is
+the comparison worth making: 726.6 → 753.2 µs on the JDK provider and 372.8 → 374.0 µs on
+BouncyCastle, with the JDK column up a uniform few percent across every row including the ones no
+change since has touched. That is the machine, not the path. **The Vault signing row is not
+comparable and no conclusion is drawn from it**: it moved 2.2–2.5 → 1.5–1.9 ms, and a dev-mode
+container sharing the machine with its client is not a baseline that holds a quarter of its value
+still between two recordings ten days apart. What the local table supports is the whole claim
+made here — nothing on the send path became slower while the cache was added to it.
 
 Every `send` row is one POST, so the removal of the sender's retry loop leaves them where they are:
 a stub transport answering `2xx` was never repeated. What no longer exists is the *worst case*
