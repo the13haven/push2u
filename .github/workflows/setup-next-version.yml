@@ -41,6 +41,23 @@ jobs:
             exit 1
           fi
 
+      # A missing secret expands to the empty string, and the step below would write that empty
+      # string into the key file without complaint. The failure would then surface at the end of
+      # the run, as JGit refusing the tag push from inside markNextVersion, naming neither the
+      # secret nor this workflow — and this run is the one that has to happen before a minor or a
+      # major release, so an unreadable error here stalls the release itself. The Release and
+      # Publish Existing Tag workflows check their secrets for the same reason; this one is the
+      # third of the three, with the shortest list.
+      - name: Verify the deploy key is configured
+        env:
+          ACTIONS_WRITE_KEY: ${{ secrets.ACTIONS_WRITE_KEY }}
+        run: |
+          if [ -z "$ACTIONS_WRITE_KEY" ]; then
+            echo "Missing repository secret: ACTIONS_WRITE_KEY" >&2
+            echo "See docs/RELEASING.md for how it is obtained." >&2
+            exit 1
+          fi
+
       # axion pushes the version marker tag back to origin, and GITHUB_TOKEN cannot be handed to
       # its JGit transport, so the push goes over SSH with a dedicated deploy key instead.
       # known_hosts is pinned explicitly rather than populated with ssh-keyscan at run time:
