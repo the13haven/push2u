@@ -98,10 +98,10 @@ The first five rows are the sub-microsecond ones, ordered by cost rather than by
 the pipeline. Four of them touch no provider and are measured once, then repeated across the columns
 so each column reads as a complete budget; the cache-key row is measured per column because it runs
 against each column's own signer, though nothing in it reaches the provider, which is why the two
-figures agree. All five are printed coarsely on
-purpose: everything above ~90 µs reproduces between runs within a few percent, while the
-sub-microsecond rows move by around a fifth, which is more than the difference between them. Read
-them as "far below anything else on the path, and it does not matter", not as a ranking.
+figures agree. All five are printed coarsely on purpose: everything above ~90 µs reproduces between
+runs within a few percent, while the sub-microsecond rows move by around a fifth, which is more than
+the difference between them. Read them as "far below anything else on the path, and it does not
+matter", not as a ranking.
 
 Both providers register `SHA256withECDSAinP1363Format`, so on both the library signs in the raw
 `r || s` form directly and the DER re-encoding path is not exercised. That path is not dead — a
@@ -218,6 +218,62 @@ four below a Transit round trip, and the map lookup it precedes, with its monito
 readings, was not measured separately. The conclusion survives the gap by a wide margin, but the
 32 ns is the key and not the whole hit.
 
+## Against the previous recording
+
+The table before this one was taken on the same machine ten days earlier, which is the only reason
+the two can be set side by side at all:
+
+```
+OpenJDK 64-Bit Server VM 26.0.1 · Mac OS X aarch64 · 10 CPU · 2026-08-09
+BouncyCastle bcprov 1.85 · Vault 1.18 in a Testcontainers dev-mode container on the same machine
+```
+
+Every row below appears in both recordings. The previous one had a single `send` row and it was a
+send that signs, so it is compared against this recording's signing row; the cached row has no
+predecessor because the question it answers was open when the previous table was taken.
+
+| Step | JDK (SunEC/SunJCE) | BouncyCastle |
+|---|---|---|
+| `Origin.serialize` † | ~0.26 → ~0.25 µs | ~0.26 → ~0.25 µs |
+| `EndpointPolicy.validate` | ~0.25 → ~0.24 µs | ~0.25 → ~0.24 µs |
+| Build the JWT — JSON and base64url | ~0.18 → ~0.17 µs | ~0.18 → ~0.17 µs |
+| Decode `p256dh`, on-curve check included † | 1.2 → 1.3 µs | 2.4 → 2.3 µs |
+| HKDF-SHA-256, 2 extract + 3 expand † | 2.0 → 2.1 µs | 8.9 → 8.8 µs |
+| Ephemeral P-256 key pair † | 91.4 → 95.9 µs | 79.4 → 81.3 µs |
+| **ECDH** † | **509.6 → 528.8 µs** | **182.9 → 181.0 µs** |
+| VAPID signature, ES256, local signer | 115.6 → 119.3 µs | 80.2 → 84.4 µs |
+| `Authorization` header whole — JWT, signature, `k` | 114.6 → 121.3 µs | 80.4 → 82.9 µs |
+| Encrypt one record, ephemeral pair supplied | 517.0 → 537.5 µs | 201.3 → 201.0 µs |
+| Encrypt one record whole | 606.5 → 639.5 µs | 290.2 → 295.0 µs |
+| **`PushSender.send`, signing every time** | **726.6 → 753.2 µs** | **372.8 → 374.0 µs** |
+
+**† marks a row whose code carries no commit between the two recordings.** Every type those five
+rows reach — `EcKeys`, `Hkdf`, `Origin`, `P256PublicKeys`, `Algorithms` and `Jca` — is
+byte-identical across the interval, so they measure the same instructions twice, and whatever they
+moved by is what this harness reproduces at on this machine rather than a change in anything. That
+is what makes them the scale the rest of the table is read against, and it is why they are worth
+keeping in a comparison that has no other calibration.
+
+On the JDK provider the marked rows moved by −3.8 %, +3.8 %, +4.9 %, +5.0 % and +8.3 %, and the
+`send` row by +3.7 %. On BouncyCastle they moved by −3.8 %, −4.2 %, −1.1 %, −1.0 % and +2.4 %, and
+`send` by +0.3 %. In both columns the `send` row moved less than any of them, the negative ones
+included: **on both providers the send path moved less than code that did not change at all.**
+Nothing here supports a claim that the send path became slower, and nothing supports one that it
+became faster either: what the token cache bought is not in this table, because both of its columns
+are sends that sign. That figure is the cached row of the recording above, which has nothing to be
+compared against yet.
+
+Three rows in the current table are new and appear here in neither column: `assessPayloadSize` and
+the token cache key, which had nothing to measure before, and `PushSender.send` with a cached
+token, which is the whole point of the re-recording.
+
+**The Vault table is deliberately not compared.** Its `sign()` row is unchanged within its own
+range (0.9–1.3 → 0.9–1.2 ms) and its `publicKey()` row moved 7 → 8 ns, at the floor of what the
+harness resolves. But the send row moved 2.2–2.5 → 1.5–1.9 ms, roughly −28 %, and there is no
+anchor row in that table to read it against: a dev-mode container sharing a machine with its client
+is not a baseline that holds a quarter of its value still over ten days, in either direction. The
+move is recorded here and nothing is concluded from it.
+
 ## Keeping this document honest
 
 Re-record when the send path changes, when the JDK baseline moves, or when a provider is added — and
@@ -229,14 +285,16 @@ looks current is worse than no row.
 rows are for: the question the previous recording left open — what a send serving a cached token
 costs — is answered by measuring that send rather than by adjusting the other one.
 
-The signing rows are the half comparable to what was there before, and only in the local table is
-the comparison worth making: 726.6 → 753.2 µs on the JDK provider and 372.8 → 374.0 µs on
-BouncyCastle, with the JDK column up a uniform few percent across every row including the ones no
-change since has touched. That is the machine, not the path. **The Vault signing row is not
-comparable and no conclusion is drawn from it**: it moved 2.2–2.5 → 1.5–1.9 ms, and a dev-mode
-container sharing the machine with its client is not a baseline that holds a quarter of its value
-still between two recordings ten days apart. What the local table supports is the whole claim
-made here — nothing on the send path became slower while the cache was added to it.
+*Against the previous recording* above is where that comparison is kept, and it is kept because the
+comparison is the point of this re-recording rather than a habit. It holds the previous table's
+figures and nothing else does: a number that appears both there and in the prose would be two
+sources for one fact, and they would not stay equal.
+
+**That section lasts exactly one cycle.** The next re-recording either deletes it or rewrites it
+against the table this one leaves behind — it must never come to compare two recordings that are
+both in the past, which is what it becomes on its own if nobody touches it. Its rows carry a mark
+for the steps whose code did not change between the two recordings, and a future comparison that
+cannot name such rows has no scale to read itself against and should not be attempted.
 
 Every `send` row is one POST, so the removal of the sender's retry loop leaves them where they are:
 a stub transport answering `2xx` was never repeated. What no longer exists is the *worst case*
