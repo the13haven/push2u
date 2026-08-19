@@ -1026,9 +1026,11 @@ able to act on it — the caller's scheduler — ever sees it. What crosses is t
 the headers: a bag of them from a service whose answers are read under a size bound is more surface
 than one value is worth. Empty is the ordinary case, since Vault fills the header on a rate-limited
 answer alone and only where an operator enabled the rate-limit response headers. Its `toString()` is
-overridden for the reason `VaultToken`'s is, one step weaker: the body is not a secret but it is a
-whole service answer under a size bound, so the printed form carries its length and not the body —
-the record is safe to print without a transport author having to know that it is.
+overridden for the reason `VaultToken`'s is, one step weaker: the body is not a credential by type
+or by contract, but it is an arbitrary service answer under a size bound and may hold sensitive data
+all the same — a token echoed back in an error message, an internal path, whatever a compromised hop
+in front of Vault decides to put there — so the printed form carries its length and not the body.
+The record is safe to print without a transport author having to know what came back in it.
 
 Status classification stays in the signer, because the transport returns an answer rather than
 raising on one. `VaultTransitVapidSigner` puts each non-`200` to one question — does the status
