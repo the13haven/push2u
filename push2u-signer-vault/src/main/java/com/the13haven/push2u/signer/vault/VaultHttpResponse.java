@@ -31,6 +31,9 @@ import java.util.Optional;
  * negative value is refused here, at the boundary that took it, as the transport implementation defect it is. Zero is
  * legal; it declares "now".
  *
+ * <p>{@link #toString()} is overridden to describe the body rather than print it: the record-generated form would put a
+ * service's whole answer — up to the transport's size limit — into whatever log line printed the record.
+ *
  * @param statusCode the HTTP status code
  * @param body the response body decoded as UTF-8 (Vault's JSON; empty on a bodyless reply)
  * @param retryAfter how long Vault declared it would be before it can serve again, parsed from the {@code Retry-After}
@@ -61,5 +64,28 @@ public record VaultHttpResponse(int statusCode, String body, Optional<Duration> 
      */
     public VaultHttpResponse(int statusCode, String body) {
         this(statusCode, body, Optional.empty());
+    }
+
+    /**
+     * A form that describes the body without reproducing it — the record-generated {@code toString()} would print the
+     * whole of it. What the body holds is whatever answered on the Vault address, up to the transport's response-size
+     * limit, which the supplied transport sets at 1 MiB and a custom one sets wherever it likes. So one
+     * {@code log.info("{}", response)} in a transport implementation would put a megabyte of a service's internal
+     * answer into a log line, with every control character it happened to carry still in it. The status code and the
+     * retry hint are the two values worth reading in a diagnostic, and they are safe to print; the body's length says
+     * what the body was without saying what was in it.
+     *
+     * <p>That the signer does echo a failed body into its exception message, escaped and bounded, is not a
+     * contradiction: there the body <em>is</em> the failure being reported and nothing else diagnoses it, so it is
+     * worth carrying under those two guards. Here nothing needs the body at all — this form is reached by printing a
+     * record, which is a thing code does incidentally — so the cheapest safe answer is not to carry it.
+     *
+     * @return the status code, the body's length in place of the body, and the retry hint
+     */
+    @Override
+    public String toString() {
+        return "VaultHttpResponse[statusCode=" + statusCode
+                + ", body=<redacted, " + body.length() + " chars>, retryAfter="
+                + retryAfter + "]";
     }
 }
