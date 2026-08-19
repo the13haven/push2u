@@ -50,6 +50,15 @@ class VaultTransitVapidSignerLogSafeExcerptTest {
     /** {@code U+0000}. */
     private static final String NUL = Character.toString(0);
 
+    /** {@code U+202E}, the right-to-left override: it reorders everything printed after it until a terminator. */
+    private static final String RLO = Character.toString(0x202E);
+
+    /** {@code U+2066}, the left-to-right isolate, one of the four isolate characters. */
+    private static final String LRI = Character.toString(0x2066);
+
+    /** {@code U+200F}, the right-to-left mark. */
+    private static final String RLM = Character.toString(0x200F);
+
     private static final String TOKEN = "s.push2u-test-vault-token";
     private static final URI VAULT = URI.create("https://vault.test:8200");
 
@@ -88,6 +97,17 @@ class VaultTransitVapidSignerLogSafeExcerptTest {
     void aNulAndATabAreEscaped() {
         assertThat(VaultTransitVapidSigner.logSafeExcerpt(NUL)).isEqualTo("\\u0000");
         assertThat(VaultTransitVapidSigner.logSafeExcerpt("a\tb")).isEqualTo("a\\u0009b");
+    }
+
+    @Test
+    void theBidirectionalFormattingCharactersAreEscaped() {
+        // These end no line and steer no terminal, so every test above would let them through. What
+        // they do instead is reorder what follows them — and what follows the excerpt is the fixed
+        // wording of the message, the part an operator trusts precisely because no response wrote
+        // it. The mark, the override and the isolate stand for their three ranges.
+        assertThat(VaultTransitVapidSigner.logSafeExcerpt(RLO + "forged")).isEqualTo("\\u202eforged");
+        assertThat(VaultTransitVapidSigner.logSafeExcerpt(LRI + "forged")).isEqualTo("\\u2066forged");
+        assertThat(VaultTransitVapidSigner.logSafeExcerpt(RLM + "forged")).isEqualTo("\\u200fforged");
     }
 
     @Test

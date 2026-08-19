@@ -193,6 +193,18 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final int LINE_SEPARATOR = 0x2028;
     /** {@code U+2029}, the paragraph counterpart of {@link #LINE_SEPARATOR} and a line break for the same reason. */
     private static final int PARAGRAPH_SEPARATOR = 0x2029;
+    /** {@code U+200E} and {@code U+200F}, the two bidirectional marks. */
+    private static final int BIDI_MARK_FIRST = 0x200E;
+
+    private static final int BIDI_MARK_LAST = 0x200F;
+    /** {@code U+202A}-{@code U+202E}, the bidirectional embeddings, the override pair and their terminator. */
+    private static final int BIDI_EMBEDDING_FIRST = 0x202A;
+
+    private static final int BIDI_EMBEDDING_LAST = 0x202E;
+    /** {@code U+2066}-{@code U+2069}, the bidirectional isolates and their terminator. */
+    private static final int BIDI_ISOLATE_FIRST = 0x2066;
+
+    private static final int BIDI_ISOLATE_LAST = 0x2069;
 
     private static final int UNCOMPRESSED_LENGTH = 65;
     private static final int COORDINATE_LENGTH = 32;
@@ -1439,7 +1451,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * backslash, a {@code u}, and four hex digits: the ISO control characters, which covers the carriage return and
      * line feed that would otherwise forge a second log entry, the tab, the escape that opens an ANSI sequence, the
      * NUL, and the C1 range with its next-line character — plus the Unicode line and paragraph separators, which are
-     * not control characters but do end a line for a reader that follows the Unicode rules.
+     * not control characters but do end a line for a reader that follows the Unicode rules, and the bidirectional
+     * formatting characters, which end no line at all but reorder the words printed after them.
      *
      * <p>Second, the bound is applied to the <em>escaped</em> text, so a body of nothing but control characters cannot
      * inflate six-fold past it, and the truncation marker is counted inside the bound rather than appended past it: the
@@ -1459,7 +1472,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         while (index < text.length()) {
             int codePoint = text.codePointAt(index);
             int width = Character.charCount(codePoint);
-            boolean escape = breaksALogLine(codePoint);
+            boolean escape = isUnsafeInALogLine(codePoint);
             if (excerpt.length() + (escape ? ESCAPE_LENGTH : width) > budget) {
                 truncated = true;
                 break;
@@ -1479,9 +1492,20 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * C0 and C1 ranges — the line feed, the carriage return, the tab, the escape, the NUL and the next-line character
      * at {@code U+0085} among them. The two separators named beside it are ordinary punctuation by category and would
      * pass any control-character test, yet they end a line wherever the Unicode line-breaking rules are honoured.
+     *
+     * <p>The bidirectional formatting characters are here for the same reason one step further on: they end nothing,
+     * but they reorder what a reader sees. An override left open in an echoed body reverses the text that follows it —
+     * including the fixed words this message appends after the excerpt, which are the part an operator trusts because
+     * no response could have written them. Any viewer that applies the Unicode bidirectional algorithm renders it that
+     * way, and a log read in a browser is read by one.
      */
-    private static boolean breaksALogLine(int codePoint) {
-        return Character.isISOControl(codePoint) || codePoint == LINE_SEPARATOR || codePoint == PARAGRAPH_SEPARATOR;
+    private static boolean isUnsafeInALogLine(int codePoint) {
+        return Character.isISOControl(codePoint)
+                || codePoint == LINE_SEPARATOR
+                || codePoint == PARAGRAPH_SEPARATOR
+                || (codePoint >= BIDI_MARK_FIRST && codePoint <= BIDI_MARK_LAST)
+                || (codePoint >= BIDI_EMBEDDING_FIRST && codePoint <= BIDI_EMBEDDING_LAST)
+                || (codePoint >= BIDI_ISOLATE_FIRST && codePoint <= BIDI_ISOLATE_LAST);
     }
 
     /**
