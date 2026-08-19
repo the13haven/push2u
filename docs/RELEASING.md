@@ -301,8 +301,8 @@ would create the tag `v0.0.0`. The patch incrementer only engages afterwards.
 **This is why a minor or major bump needs an explicit version.** Left alone, axion only increments
 the patch from the last tag — the version it derives without a Setup Next Version run is a patch
 release, never a minor or major one. On a repository with no tags at all, there is no last tag to
-increment from, and the version released would be `initialVersion` (currently `0.0.0`,
-`build.gradle.kts:101`) rather than whatever the README documents — the sharpest case of this rule,
+increment from, and the version released would be `initialVersion` (currently `0.0.0`, set in
+`build.gradle.kts`'s `scmVersion` block) rather than whatever the README documents — the sharpest case of this rule,
 since every version an untagged repository could fall back to is wrong. So before a Release that
 should land a minor, a major, or the very first version, run:
 
