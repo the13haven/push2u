@@ -25,6 +25,9 @@ import java.util.Optional;
  * configuration — an API-managed setting on {@code sys/quotas/config} that defaults to false (<a
  * href="https://developer.hashicorp.com/vault/api-docs/system/quotas-config">Vault quotas configuration API</a>).
  *
+ * <p>{@link #toString()} is overridden to describe the body rather than print it: the record-generated form would put a
+ * service's whole answer — up to the transport's size limit — into whatever log line printed the record.
+ *
  * <p>A transport that does not read the header — or a response that carries none — uses the two-argument constructor,
  * which reports no hint. The hint must never be negative: a delay pointing into the past reads to whoever schedules the
  * next attempt as "repeat immediately", which is a prompt to hammer a Vault that just said it cannot serve — so a
@@ -61,5 +64,23 @@ public record VaultHttpResponse(int statusCode, String body, Optional<Duration> 
      */
     public VaultHttpResponse(int statusCode, String body) {
         this(statusCode, body, Optional.empty());
+    }
+
+    /**
+     * A form that describes the body without reproducing it — the record-generated {@code toString()} would print the
+     * whole of it. What the body holds is whatever answered on the Vault address, up to the transport's response-size
+     * limit, which the supplied transport sets at 1 MiB and a custom one sets wherever it likes. So one
+     * {@code log.info("{}", response)} in a transport implementation would put a megabyte of a service's internal
+     * answer into a log line, with every control character it happened to carry still in it. The status code and the
+     * retry hint are the two values worth reading in a diagnostic, and they are safe to print; the body's length says
+     * what the body was without saying what was in it.
+     *
+     * @return the status code, the body's length in place of the body, and the retry hint
+     */
+    @Override
+    public String toString() {
+        return "VaultHttpResponse[statusCode=" + statusCode
+                + ", body=<redacted, " + body.length() + " chars>, retryAfter="
+                + retryAfter + "]";
     }
 }
