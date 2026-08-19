@@ -194,24 +194,13 @@ class DomainTypesTest {
         assertThat(Urgency.NORMAL.headerValue()).isEqualTo("normal");
     }
 
-    @Test
-    void pushResultEnforcesTheContractItsFieldsDocument() {
-        assertThatThrownBy(() -> new PushResult(null, 201, 1)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new PushResult(PushResult.Status.FAILED, -1, 1))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("statusCode");
-        assertThatThrownBy(() -> new PushResult(PushResult.Status.DELIVERED, 201, 0))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("attempts");
-
-        // The documented edges stay legal: 0 means "no status was obtained", 1 is the first POST.
-        assertThat(new PushResult(PushResult.Status.FAILED, 0, 1).isDelivered()).isFalse();
-    }
+    // PushOutcome's own contract — per-variant validation, the NotAttempted grouping, identity
+    // equality of the class-shaped variants, the redacting renderings — lives in PushOutcomeTest.
 
     @Test
     void pushResponseRejectsANegativeStatusCode() {
         // PushHttpClient is a public seam, so a custom transport could hand back a -1 sentinel for
-        // "no response"; it is refused where it is produced, not carried into the PushResult.
+        // "no response"; it is refused where it is produced, not carried into the PushOutcome.
         assertThatThrownBy(() -> PushResponse.of(-1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("statusCode");

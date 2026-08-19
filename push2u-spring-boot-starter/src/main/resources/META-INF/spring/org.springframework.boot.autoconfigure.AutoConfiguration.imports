@@ -1,2 +1,4 @@
 com.the13haven.push2u.spring.Push2uAutoConfiguration
+com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration
 com.the13haven.push2u.spring.Push2uHealthAutoConfiguration
+com.the13haven.push2u.spring.Push2uStartupChecksAutoConfiguration

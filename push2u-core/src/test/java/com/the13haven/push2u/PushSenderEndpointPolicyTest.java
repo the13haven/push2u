@@ -15,9 +15,8 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.jspecify.annotations.Nullable;
@@ -27,9 +26,11 @@ import org.junit.jupiter.api.Test;
  * Tests for the {@link EndpointPolicy} seam in the send pipeline. The load-bearing property is <em>where</em> the
  * policy runs: a rejected endpoint must cost zero signing operations (under an external signer, each one is a remote
  * Vault/KMS call) and zero HTTP requests — proven with a counting signer and a counting client, not asserted from the
- * code's shape. Every sender has a policy, so there is no unguarded path left to test; what is tested instead is that
- * {@link EndpointPolicies#unrestricted()} is genuinely the way to send anywhere, so that nobody is tempted to
- * reintroduce a no-policy sender to get that behaviour back.
+ * code's shape. A rejection reaches the caller as the {@link PushOutcome.EndpointRejected} value, so one hostile row
+ * never aborts a fan-out; the policy's own defect, by contrast, propagates as itself. Every sender has a policy, so
+ * there is no unguarded path left to test; what is tested instead is that {@link EndpointPolicies#unrestricted()} is
+ * genuinely the way to send anywhere, so that nobody is tempted to reintroduce a no-policy sender to get that behaviour
+ * back.
  */
 class PushSenderEndpointPolicyTest {
 
@@ -42,14 +43,17 @@ class PushSenderEndpointPolicyTest {
     @Test
     void aRejectedEndpointCostsNoSignatureAndNoHttpRequest() {
         PushSender sender = sender(EndpointPolicies.allowedOrigins("https://push.example"));
-        Subscription subscription = subscription(FOREIGN_ENDPOINT);
-        PushMessage message = PushMessage.of(new byte[] {1});
 
-        assertThatThrownBy(() -> sender.send(subscription, message)).isInstanceOf(EndpointRejectedException.class);
+        PushOutcome outcome = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
 
+        assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
         assertThat(signer.signs.get())
                 .as("no VAPID signature for a rejected endpoint — under an external signer each one is a"
                         + " remote Vault/KMS operation")
+                .isZero();
+        assertThat(signer.publicKeys.get())
+                .as("no publicKey() read for a rejected endpoint — the token cache's lookup starts with one,"
+                        + " so a zero count proves the policy ran before the cache was touched at all")
                 .isZero();
         assertThat(client.posts.get())
                 .as("no HTTP request for a rejected endpoint — the request itself is the SSRF primitive")
@@ -57,28 +61,80 @@ class PushSenderEndpointPolicyTest {
     }
 
     @Test
-    void theRejectionSurfacedBySendOmitsTheCapabilityPathAndQuery() {
-        PushSender sender = sender(EndpointPolicies.allowedOrigins("https://push.example"));
-        Subscription subscription = subscription(FOREIGN_ENDPOINT);
+    void aRejectedSendTouchesNeitherTheSignerNorTheTokenCacheEvenWhenTheCacheIsWarm() {
+        // The cold-cache test above cannot see a lookup that happens before the policy: a lookup
+        // alone signs nothing and POSTs nothing. Warm the cache first, then have the policy turn
+        // against the same endpoint — now a lookup ahead of the policy is observable twice over, as
+        // a publicKey() read on the rejected send (the lookup key is built from a fresh read) and as
+        // a mutation of the access-ordered LRU the sender keeps.
+        AtomicBoolean rejecting = new AtomicBoolean(false);
+        EndpointPolicy statefulPolicy = endpoint -> {
+            if (rejecting.get()) {
+                throw new EndpointRejectedException(
+                        "endpoint no longer allowed: " + Endpoints.redact(endpoint.toString()));
+            }
+        };
+        PushSender sender = sender(statefulPolicy);
+        Subscription subscription = subscription(ALLOWED_ENDPOINT);
         PushMessage message = PushMessage.of(new byte[] {1});
 
-        assertThatThrownBy(() -> sender.send(subscription, message))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageNotContaining("meta-data")
-                .hasMessageNotContaining("probe=1")
-                .hasMessageContaining("https://internal.example:8443/…#");
+        assertThat(sender.send(subscription, message)).isInstanceOf(PushOutcome.Accepted.class);
+        int signsAfterWarming = signer.signs.get();
+        int publicKeysAfterWarming = signer.publicKeys.get();
+        int postsAfterWarming = client.posts.get();
+
+        rejecting.set(true);
+        assertThat(sender.send(subscription, message)).isInstanceOf(PushOutcome.EndpointRejected.class);
+
+        assertThat(signer.signs.get())
+                .as("a warm cache makes a hit free of signatures, so this alone cannot distinguish"
+                        + " a lookup before the policy from no lookup — the publicKey count below can")
+                .isEqualTo(signsAfterWarming);
+        assertThat(signer.publicKeys.get())
+                .as("no publicKey() read on the rejected send — the cache lookup starts with one, and a"
+                        + " lookup would also have reordered the access-ordered LRU before the verdict")
+                .isEqualTo(publicKeysAfterWarming);
+        assertThat(client.posts.get()).isEqualTo(postsAfterWarming);
+
+        // The zero-lookup assertions above must not be passing because nothing was cached: admit the
+        // endpoint again and the next send serves the warmed entry — one more publicKey() read for
+        // its lookup, and no new signature.
+        rejecting.set(false);
+        assertThat(sender.send(subscription, message)).isInstanceOf(PushOutcome.Accepted.class);
+        assertThat(signer.signs.get())
+                .as("the entry survived the rejection, so the cache was warm all along")
+                .isEqualTo(signsAfterWarming);
+        assertThat(signer.publicKeys.get()).isEqualTo(publicKeysAfterWarming + 1);
+    }
+
+    @Test
+    void theRejectionOutcomeOmitsTheCapabilityPathAndQuery() {
+        PushSender sender = sender(EndpointPolicies.allowedOrigins("https://push.example"));
+
+        PushOutcome outcome = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
+
+        assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+        PushOutcome.EndpointRejected rejected = (PushOutcome.EndpointRejected) outcome;
+        // The record's generated toString prints both components, so asserting on it covers the
+        // redacted endpoint, the reason, and the default rendering a log line would carry.
+        assertThat(rejected.toString())
+                .doesNotContain("meta-data")
+                .doesNotContain("probe=1")
+                .contains("https://internal.example:8443/…#");
+        assertThat(rejected.redactedEndpoint()).startsWith("https://internal.example:8443/…#");
+        assertThat(rejected.reason()).contains("not in the allowed set");
     }
 
     @Test
     void unrestrictedSendsToTheVeryEndpointAnAllowlistRejects() {
         // What the named opt-out buys, and what it costs: the same internal-looking endpoint that
-        // allowedOrigins refuses above is delivered to here. Asserting it against FOREIGN_ENDPOINT
+        // allowedOrigins refuses above is POSTed to here. Asserting it against FOREIGN_ENDPOINT
         // specifically is what makes this a statement about the policy rather than about a send.
         PushSender sender = sender(EndpointPolicies.unrestricted());
 
-        PushResult result = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
+        PushOutcome outcome = sender.send(subscription(FOREIGN_ENDPOINT), PushMessage.of(new byte[] {1}));
 
-        assertThat(result.isDelivered()).isTrue();
+        assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
         assertThat(client.lastEndpoint).isEqualTo(URI.create(FOREIGN_ENDPOINT));
@@ -104,40 +160,41 @@ class PushSenderEndpointPolicyTest {
     void anAllowedEndpointGoesThroughTheFullPipelineExactlyOnce() {
         PushSender sender = sender(EndpointPolicies.allowedOrigins("https://push.example"));
 
-        PushResult result = sender.send(subscription(ALLOWED_ENDPOINT), PushMessage.of(new byte[] {1}));
+        PushOutcome outcome = sender.send(subscription(ALLOWED_ENDPOINT), PushMessage.of(new byte[] {1}));
 
-        assertThat(result.isDelivered()).isTrue();
+        assertThat(outcome).isInstanceOf(PushOutcome.Accepted.class);
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
         assertThat(client.lastEndpoint).isEqualTo(URI.create(ALLOWED_ENDPOINT));
     }
 
     @Test
-    void sendAsyncRoutesThroughTheSamePolicy() throws Exception {
-        // The async path delegates to send() inside the queued task, so the rejection completes
-        // the future exceptionally rather than throwing from sendAsync — and cannot bypass the
-        // policy. Both halves are pinned here.
+    void sendAsyncRoutesThroughTheSamePolicyAndCompletesNormallyWithTheRejection() throws Exception {
+        // The async path delegates to send() inside the queued task, so it cannot bypass the
+        // policy — and a rejection is an outcome, so the future completes NORMALLY with the
+        // EndpointRejected value rather than exceptionally: a fan-out reads every row's verdict
+        // from one channel.
         PushSender sender = sender(EndpointPolicies.allowedOrigins("https://push.example"));
         PushMessage message = PushMessage.of(new byte[] {1});
 
-        CompletableFuture<PushResult> rejected = sender.sendAsync(subscription(FOREIGN_ENDPOINT), message);
-        assertThatThrownBy(() -> rejected.get(5, TimeUnit.SECONDS))
-                .isInstanceOf(ExecutionException.class)
-                .cause()
-                .isInstanceOf(EndpointRejectedException.class);
+        PushOutcome rejected =
+                sender.sendAsync(subscription(FOREIGN_ENDPOINT), message).get(5, TimeUnit.SECONDS);
+        assertThat(rejected).isInstanceOf(PushOutcome.EndpointRejected.class);
         assertThat(signer.signs.get()).isZero();
         assertThat(client.posts.get()).isZero();
 
-        PushResult delivered =
+        PushOutcome accepted =
                 sender.sendAsync(subscription(ALLOWED_ENDPOINT), message).get(5, TimeUnit.SECONDS);
-        assertThat(delivered.isDelivered()).isTrue();
+        assertThat(accepted).isInstanceOf(PushOutcome.Accepted.class);
     }
 
     @Test
     void aPolicyThrowingItsOwnDefectDoesNotCorruptTheSender() {
         // A policy bug (here: an IllegalStateException on the first call only) must propagate as
-        // itself — not be dressed up as a rejection — and must leave the sender fully usable: the
-        // sender holds no mutable state, so the next send runs the whole pipeline normally.
+        // itself — not be dressed up as a rejection outcome: the facade converts exactly
+        // EndpointRejectedException and nothing else from this seam. And it must leave the sender
+        // fully usable: the policy runs ahead of the token cache, the sender's only mutable state,
+        // so a policy that throws has touched nothing and the next send runs normally.
         AtomicInteger calls = new AtomicInteger();
         EndpointPolicy flaky = endpoint -> {
             if (calls.incrementAndGet() == 1) {
@@ -155,8 +212,7 @@ class PushSenderEndpointPolicyTest {
         assertThat(signer.signs.get()).isZero();
         assertThat(client.posts.get()).isZero();
 
-        PushResult result = sender.send(subscription, message);
-        assertThat(result.isDelivered()).isTrue();
+        assertThat(sender.send(subscription, message)).isInstanceOf(PushOutcome.Accepted.class);
         assertThat(signer.signs.get()).isEqualTo(1);
         assertThat(client.posts.get()).isEqualTo(1);
     }
@@ -184,10 +240,16 @@ class PushSenderEndpointPolicyTest {
         return new Subscription(endpoint, b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET));
     }
 
-    /** Delegates to a real in-JVM signer but counts {@code sign} calls — the cost a rejection must not incur. */
+    /**
+     * Delegates to a real in-JVM signer but counts both contract methods — the costs a rejection must not incur.
+     * {@code sign} is the obvious one; {@code publicKey} is the subtle one: the token cache's lookup key is built from
+     * a fresh {@code publicKey()} read, so a rejected send that performed a cache lookup would show up here even though
+     * it signed nothing — and under an external signer that read is allowed to be a remote call.
+     */
     private static final class CountingSigner implements VapidSigner {
         private final VapidSigner delegate = new LocalEcVapidSigner(generateVapidKeys());
         private final AtomicInteger signs = new AtomicInteger();
+        private final AtomicInteger publicKeys = new AtomicInteger();
 
         @Override
         public byte[] sign(byte[] signingInput) {
@@ -197,6 +259,7 @@ class PushSenderEndpointPolicyTest {
 
         @Override
         public byte[] publicKey() {
+            publicKeys.incrementAndGet();
             return delegate.publicKey();
         }
     }

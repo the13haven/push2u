@@ -40,11 +40,13 @@ import org.springframework.context.annotation.Configuration;
 import com.the13haven.push2u.PushCryptoException;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.VapidSignerUnavailableException;
 import com.the13haven.push2u.signer.vault.RecordingHttpClient;
 import com.the13haven.push2u.signer.vault.VaultHttpResponse;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
 import com.the13haven.push2u.signer.vault.VaultTransitVapidSigner;
 import com.the13haven.push2u.spring.Push2uAutoConfiguration;
+import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthIndicator;
 
@@ -587,6 +589,7 @@ class VaultSignerAutoConfigurationTest {
                 .withConfiguration(AutoConfigurations.of(
                         VaultSignerAutoConfiguration.class,
                         Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class,
                         Push2uHealthAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
@@ -605,8 +608,10 @@ class VaultSignerAutoConfigurationTest {
     @Test
     void theVaultSignerOutranksTheCoreLocalSigner() {
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.public-key=" + publicKeyB64,
                         "push2u.vapid.private-key=" + privateKeyB64,
@@ -642,8 +647,10 @@ class VaultSignerAutoConfigurationTest {
         // private-key are set: that test's point is precedence between two signers, this one
         // reproduces the README scenario, where no local VAPID keys exist at all.
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
                         "push2u.allowed-origins=https://fcm.googleapis.com",
@@ -669,8 +676,10 @@ class VaultSignerAutoConfigurationTest {
         // public key, exactly as the real Vault Transit API would.
         FetchedMetadataTransportConfiguration.SIGN_REQUEST_BODIES.clear();
         new ApplicationContextRunner()
-                .withConfiguration(
-                        AutoConfigurations.of(VaultSignerAutoConfiguration.class, Push2uAutoConfiguration.class))
+                .withConfiguration(AutoConfigurations.of(
+                        VaultSignerAutoConfiguration.class,
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class))
                 .withPropertyValues(
                         "push2u.vapid.subject=mailto:ops@example.com",
                         "push2u.allowed-origins=https://fcm.googleapis.com",
@@ -878,12 +887,14 @@ class VaultSignerAutoConfigurationTest {
         // A socket that accepts but never answers: only the bound request-timeout can end the
         // exchange. The metadata GET used to set a connect timeout alone, which such a server
         // satisfies, so startup could hang forever — that part was a defect, and this pins its fix.
+        // A timeout is an exchange with no answer, so the transport reports it as the
+        // custodian-unavailable type (ADR-021's split), not as a cryptographic defect.
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             explicitRunner("http://127.0.0.1:" + silent.getLocalPort())
                     .withPropertyValues("push2u.signer.vault.request-timeout=500ms")
                     .run(context -> assertThatThrownBy(() -> context.getBean(VapidSigner.class)
                                     .sign("starter timeout probe".getBytes(StandardCharsets.UTF_8)))
-                            .isInstanceOf(PushCryptoException.class)
+                            .isInstanceOf(VapidSignerUnavailableException.class)
                             .hasMessageContaining("timed out"));
         }
     }

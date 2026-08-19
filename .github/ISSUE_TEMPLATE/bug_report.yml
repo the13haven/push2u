@@ -77,7 +77,7 @@ body:
     attributes:
       label: What happened
       description: >-
-        Include the `PushResult`, status code or exception you observed. If an RFC says otherwise,
+        Include the `PushOutcome`, status code or exception you observed. If an RFC says otherwise,
         cite the section — this library treats the RFCs as its specification.
     validations:
       required: true

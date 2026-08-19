@@ -27,8 +27,6 @@ import org.junit.jupiter.api.Test;
  */
 class PushSenderOptionsTest {
 
-    private final PushTestSupport.RecordingSleeper sleeper = new PushTestSupport.RecordingSleeper();
-
     @Test
     void urgencyAndTopicAreSentUnderTheirRfc8030HeaderNames() throws IOException {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
@@ -77,7 +75,6 @@ class PushSenderOptionsTest {
         try (MockPushReceiver receiver = new MockPushReceiver()) {
             PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                     .httpClient(trustingPushHttpClient())
-                    .sleeper(sleeper)
                     .defaultTtl(Duration.ofMinutes(5))
                     .build()
                     .send(subscription(receiver), PushMessage.of(bytes("x")));
@@ -123,6 +120,51 @@ class PushSenderOptionsTest {
     void theBuilderRejectsNullsRatherThanFailingLaterInASend() {
         assertThat(catchBuilderFailure(builder -> builder.jwtExpiry(null))).isInstanceOf(NullPointerException.class);
         assertThat(catchBuilderFailure(builder -> builder.defaultTtl(null))).isInstanceOf(NullPointerException.class);
+        assertThat(catchBuilderFailure(builder -> builder.jwtRenewBefore(null)))
+                .isInstanceOf(NullPointerException.class);
+        // A kept null would not fail later at all: the constructor reads an unset transport as "no
+        // transport was configured" and quietly builds the default one, so a caller whose lookup
+        // returned null would send over a transport it never chose.
+        assertThat(catchBuilderFailure(builder -> builder.httpClient(null))).isInstanceOf(NullPointerException.class);
+    }
+
+    /**
+     * Zero margin is the <em>most</em> reuse — hold the token to its last second — so it must stay legal rather than be
+     * read as an off switch; a margin at or above {@code jwtExpiry} simply means every send signs afresh, so the two
+     * values are deliberately not cross-validated anywhere, including {@code build()}. Only a negative margin is an
+     * error, at the step that set it.
+     */
+    @Test
+    void jwtRenewBeforeRejectsOnlyNegativeValues() {
+        assertThat(catchBuilderFailure(builder -> builder.jwtRenewBefore(Duration.ZERO)))
+                .as("ZERO is legal: it means no margin, not no reuse")
+                .isNull();
+        assertThat(catchBuilderFailure(
+                        builder -> builder.jwtRenewBefore(Duration.ofHours(25)).build()))
+                .as("a margin above any legal jwtExpiry still builds — every send mints, which is not an error")
+                .isNull();
+
+        assertThat(catchBuilderFailure(builder -> builder.jwtRenewBefore(Duration.ofSeconds(-1))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwtRenewBefore");
+    }
+
+    /**
+     * The cache bound is not a second spelling of the off switch: below one is rejected, {@code jwtReuse(false)} is the
+     * switch.
+     */
+    @Test
+    void jwtCacheSizeRejectsValuesBelowOne() {
+        assertThat(catchBuilderFailure(builder -> builder.jwtCacheSize(1)))
+                .as("a one-entry cache is legal")
+                .isNull();
+
+        for (int invalid : new int[] {0, -1}) {
+            assertThat(catchBuilderFailure(builder -> builder.jwtCacheSize(invalid)))
+                    .as("%s", invalid)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("jwtReuse(false)");
+        }
     }
 
     /** Applies a builder mutation and returns what it threw, or {@code null} if it was accepted. */
@@ -140,7 +182,6 @@ class PushSenderOptionsTest {
     private PushSender pusher() {
         return PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", EndpointPolicies.unrestricted())
                 .httpClient(trustingPushHttpClient())
-                .sleeper(sleeper)
                 .build();
     }
 

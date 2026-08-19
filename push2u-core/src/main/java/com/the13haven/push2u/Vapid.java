@@ -15,6 +15,11 @@ import java.util.Objects;
  * <p>The JWT JSON is handwritten: the claims are tiny ({@code aud}/{@code exp}/{@code sub}) and fixed-shape, so a JSON
  * library would be dead weight. The header is the constant {@code {"typ":"JWT","alg":"ES256"}}. The ES256 signature is
  * delegated to a {@link VapidSigner}.
+ *
+ * <p>This class also owns the two shape checks applied to what a {@link VapidSigner} returns, because this is where
+ * those values go on the wire. The public key's check has a second caller — {@link VapidSigner#publicKeyBase64Url()},
+ * which publishes the same value to a browser — so it is shared rather than private: publishing a key and sending with
+ * it must accept exactly the same set and say the same thing when they refuse.
  */
 final class Vapid {
 
@@ -33,9 +38,36 @@ final class Vapid {
 
     /** The full {@code Authorization} header value for the "vapid" scheme. */
     static String authorizationHeader(VapidSigner signer, String audience, String subject, Instant expiry) {
+        return signedAuthorizationHeader(signer, audience, subject, expiry).headerValue();
+    }
+
+    /**
+     * The full {@code Authorization} header value together with the base64url public key its own {@code k} parameter
+     * carries — from one {@link VapidSigner#publicKey()} read, so the two cannot name different keys even against a
+     * signer whose answers vary call to call. The caller that files signed headers under their key needs exactly that:
+     * a key read separately from the header's could drift from the value actually on the wire, and the header would
+     * then be stored under an identity it does not carry.
+     */
+    static SignedHeader signedAuthorizationHeader(VapidSigner signer, String audience, String subject, Instant expiry) {
         Objects.requireNonNull(signer, "signer");
         String jwt = jwt(signer, audience, subject, expiry);
-        return "vapid t=" + jwt + ", k=" + Base64Url.encode(requireUncompressedPoint(signer.publicKey()));
+        String publicKeyBase64Url = Base64Url.encode(requireUncompressedPoint(signer.publicKey()));
+        return new SignedHeader("vapid t=" + jwt + ", k=" + publicKeyBase64Url, publicKeyBase64Url);
+    }
+
+    /**
+     * A signed {@code Authorization} header value paired with the base64url public key that appears as its {@code k}
+     * parameter — both produced by {@link #signedAuthorizationHeader} from a single {@code publicKey()} read.
+     *
+     * @param headerValue the complete {@code vapid t=..., k=...} header value
+     * @param publicKeyBase64Url the base64url encoding of the public key bytes the header's {@code k} carries
+     */
+    record SignedHeader(String headerValue, String publicKeyBase64Url) {
+        /** The header value is a bearer credential; only the public half is printable. */
+        @Override
+        public String toString() {
+            return "SignedHeader[headerValue=<redacted>, publicKeyBase64Url=" + publicKeyBase64Url + "]";
+        }
     }
 
     /** The signed compact JWT: {@code base64url(header).base64url(claims).base64url(signature)}. */
@@ -76,8 +108,17 @@ final class Vapid {
      * Check the other half of the {@link VapidSigner} contract, for the same reason: the key travels as the {@code k}
      * parameter, and a malformed one is rejected by the push service exactly like a bad signature — while the signature
      * itself verifies, which makes it the harder of the two to trace back.
+     *
+     * <p>Shared with {@link VapidSigner#publicKeyBase64Url()}, which hands the same value to a browser instead of to a
+     * push service. One implementation and one wording is the point: a consumer meeting a broken signer through their
+     * own key-publishing endpoint reads what the next send would have told them, and the publication path can never
+     * refuse a key delivery would have carried.
+     *
+     * <p>A {@code null} is a {@link NullPointerException} rather than a {@link PushCryptoException}: the method is
+     * declared to return bytes and never {@code null}, so a signer answering {@code null} has broken the type contract
+     * rather than failed at a cryptographic operation.
      */
-    private static byte[] requireUncompressedPoint(byte[] publicKey) {
+    static byte[] requireUncompressedPoint(byte[] publicKey) {
         Objects.requireNonNull(publicKey, "publicKey");
         if (publicKey.length != UNCOMPRESSED_P256_POINT_LENGTH) {
             String wrapped = publicKey.length > 0 && publicKey[0] == DER_SEQUENCE_TAG

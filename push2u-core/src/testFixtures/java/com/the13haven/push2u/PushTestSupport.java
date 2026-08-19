@@ -12,8 +12,6 @@ import java.security.KeyPair;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Shared helpers for the send-pipeline tests. A plain class (not JUnit lifecycle) so both test source sets can use it:
@@ -66,15 +64,5 @@ final class PushTestSupport {
         return VapidKeys.of(
                 EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
                 TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
-    }
-
-    /** Records backoff durations instead of sleeping, so the retry tests run instantly. */
-    static final class RecordingSleeper implements Sleeper {
-        final List<Duration> sleeps = new ArrayList<>();
-
-        @Override
-        public void sleep(Duration duration) {
-            sleeps.add(duration);
-        }
     }
 }

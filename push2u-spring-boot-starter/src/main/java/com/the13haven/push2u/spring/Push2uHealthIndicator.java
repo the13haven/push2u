@@ -8,6 +8,7 @@ package com.the13haven.push2u.spring;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
@@ -53,12 +54,21 @@ import com.the13haven.push2u.VapidSigner;
  * the operator diagnosing the DOWN already looks — at WARN once per outage (on the transition into failure) and at
  * DEBUG while it persists, because health is polled and re-tracing an unchanged failure every few seconds helps nobody.
  *
- * <p>Registered whenever the {@link VapidSigner} it probes with is a bean (see {@link Push2uHealthAutoConfiguration}),
- * because the signer is the only part of a send that can stop working while the application runs — the rest of a
- * {@link com.the13haven.push2u.PushSender} is immutable configuration validated at build time, and an incomplete
- * configuration fails startup rather than surfacing here. It participates in readiness-style checks only: Spring Boot's
- * {@code liveness} group contains just the application's own {@code LivenessState}, so a signer outage can never
- * restart pods — an unreachable Vault is not something a container restart fixes.
+ * <p>Registered, unless a deployment switches it off, wherever the {@link VapidSigner} it probes with is a bean (see
+ * {@link Push2uHealthAutoConfiguration}, which also carries the switch), because the signer is the only part of a send
+ * that can stop working while the application runs — the rest of a {@link com.the13haven.push2u.PushSender} is
+ * immutable configuration validated at build time, and an incomplete configuration fails startup rather than surfacing
+ * here. Left alone it stays a readiness-style check: Spring Boot builds its {@code liveness} group from the
+ * application's own {@code LivenessState} alone, so a signer outage does not restart pods — an unreachable Vault is not
+ * something a container restart fixes. An operator who declares a group of that name including this contributor gets
+ * what they declared, so the property that keeps the two apart is the deployment's rather than this class's.
+ *
+ * <p>What this asserts that a probe of the signer's backend cannot: it signs, so it fails on a credential that no
+ * longer authorises signing — an expired or revoked token, a key renamed or deleted, a permission withdrawn — where a
+ * probe asking the backend whether it is up and unsealed answers yes to all of them. It then verifies what came back
+ * against the signer's own advertised public key, which reaches the case no credential check does either: bytes
+ * returned successfully that do not verify. A deployment carrying such a backend probe beside this one is not carrying
+ * the same question twice.
  */
 public final class Push2uHealthIndicator implements HealthIndicator {
 
@@ -134,6 +144,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * Creates the indicator over the configured signer with the default cache TTL ({@link #DEFAULT_CACHE_TTL}).
      *
      * @param signer the configured VAPID signer
+     * @throws NullPointerException if {@code signer} is {@code null}
      */
     public Push2uHealthIndicator(VapidSigner signer) {
         this(signer, DEFAULT_CACHE_TTL);
@@ -146,6 +157,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
      * @param cacheTtl how long a successful probe result is served from cache; a failed result is cached for at most
      *     {@link #MAX_FAILURE_CACHE_TTL} regardless. {@link Duration#ZERO} disables caching entirely
      * @throws IllegalArgumentException if {@code cacheTtl} is negative
+     * @throws NullPointerException if {@code signer} is {@code null}
      */
     public Push2uHealthIndicator(VapidSigner signer, Duration cacheTtl) {
         this(signer, cacheTtl, Clock.systemUTC());
@@ -168,7 +180,7 @@ public final class Push2uHealthIndicator implements HealthIndicator {
         if (cacheTtl.isNegative()) {
             throw new IllegalArgumentException("the cache TTL must not be negative: " + cacheTtl);
         }
-        this.signer = signer;
+        this.signer = Objects.requireNonNull(signer, "signer");
         this.successTtlMillis = toMillisClamped(cacheTtl);
         this.failureTtlMillis = Math.min(this.successTtlMillis, MAX_FAILURE_CACHE_TTL.toMillis());
         this.clock = clock;

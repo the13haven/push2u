@@ -38,11 +38,11 @@ import javax.crypto.spec.SecretKeySpec;
  */
 final class WebPushEncryptor {
 
-    static final int DEFAULT_RECORD_SIZE = 4096;
-
     /**
      * The default ceiling on the encrypted HTTP entity body, in bytes. RFC 8030 §7.2 lets a push service refuse
-     * anything larger than 4096 octets of entity body, so that is what the library assumes by default.
+     * anything larger than 4096 octets of entity body, so that is what the library assumes by default. This is the one
+     * configured size: the {@code rs} the header advertises is derived from it via {@link #maxPlaintextBytes} and
+     * {@link #recordSizeForMaxPlaintext}, never configured on its own.
      */
     static final int DEFAULT_MAX_ENCRYPTED_BODY_BYTES = 4096;
 
@@ -160,54 +160,78 @@ final class WebPushEncryptor {
     /**
      * The RFC 8291 §4 rule, in one place: {@code rs} MUST be <em>greater than</em> the sum of the plaintext, the
      * padding delimiter (1 octet) and the authentication tag (16 octets). Equality is a violation, not the boundary
-     * case. Both callers — {@link PushSender#send} up front and {@link #encrypt} at the last moment — go through here
-     * so a single message describes it.
+     * case. Both directions of the rule go through the pair {@link #maxPlaintextForRecordSize} /
+     * {@link #recordSizeForMaxPlaintext} — this refusal at the moment of encryption, and the {@code rs}
+     * {@link PushSender} derives once at build time — so one place decides the rule whichever way it is asked.
      *
-     * <p>The sum is computed in {@code long} because this method takes an arbitrary {@code int}: {@code encrypt} is
-     * reachable directly, without the body-size check that would otherwise bound the plaintext, and a plaintext longer
-     * than {@code Integer.MAX_VALUE - 17} would wrap the {@code int} sum to a negative number and slip past this guard,
-     * letting an unencryptable record through.
+     * <p>This guard stays although production always passes a derived {@code rs} that fits by construction:
+     * {@code encrypt} is reachable directly, without the sender's pre-flight, and a direct caller can still hand it an
+     * {@code rs} too small for its plaintext. The comparison runs in {@code long} because this method takes an
+     * arbitrary {@code int}, and {@code int} arithmetic over values near {@link Integer#MAX_VALUE} would wrap and slip
+     * past this guard, letting an unencryptable record through.
      *
      * @param plaintextLength the plaintext length in octets
      * @param recordSize the {@code rs} the header would advertise
      */
     static void checkRecordSize(int plaintextLength, int recordSize) {
-        long recordContentSize = (long) plaintextLength + RECORD_OVERHEAD;
-        if (recordSize <= recordContentSize) {
+        if (plaintextLength > maxPlaintextForRecordSize(recordSize)) {
+            long recordContentSize = (long) plaintextLength + RECORD_OVERHEAD;
             throw new IllegalArgumentException(
                     "recordSize " + recordSize + " is too small for a " + plaintextLength + "-byte payload: RFC 8291 §4"
                             + " requires rs to be strictly greater than plaintext (" + plaintextLength
                             + ") + padding delimiter (" + PADDING_DELIMITER_LENGTH + ") + authentication tag ("
                             + GCM_TAG_BYTES + ") = " + recordContentSize + "; raise recordSize to at least "
-                            + (recordContentSize + 1));
+                            + recordSizeForMaxPlaintext(plaintextLength));
         }
     }
 
     /**
-     * The two independent size preconditions of a send, checked before any cryptography or I/O. They constrain
-     * different things and are reported separately: first the RFC 8030 §7.2 limit on the encrypted entity body a push
-     * service must accept, then the RFC 8291 §4 rule on {@code rs}.
+     * The largest plaintext one configuration carries: the configured ceiling on the encrypted entity body (RFC 8030
+     * §7.2) less the fixed {@link #BODY_OVERHEAD}, clamped below at zero. One subtraction, deliberately: the record
+     * size is derived from this maximum so that it can never be the bound that binds, and a {@code min} over the two
+     * would be a branch no input can select, reading as a live guard. This is the number {@link PushSender} checks a
+     * payload against before any cryptography or I/O — and reports when the payload does not fit — because plaintext
+     * octets are the unit the caller can act in.
      *
-     * <p>Takes the payload length rather than the payload so the boundaries near {@link Integer#MAX_VALUE} are testable
-     * without allocating multi-gigabyte arrays. The body sum needs {@code long}: in {@code int} a payload above
-     * {@code Integer.MAX_VALUE - 103} would wrap to a negative size and pass the limit unnoticed. The record-size sum
-     * that follows cannot overflow when reached from here — any payload large enough to wrap it has already failed the
-     * body check above, whose limit is itself an {@code int} — but it shares the {@code long} arithmetic of
-     * {@link #checkRecordSize}, where the risk is real.
+     * <p>Takes the configured value rather than a payload so the boundaries near {@link Integer#MAX_VALUE} are testable
+     * without allocating multi-gigabyte arrays. The subtraction runs in {@code long}, and the result is clamped below
+     * at zero before it is narrowed back to {@code int}: the builder's own minimum (a body ceiling of at least 103)
+     * keeps the operand non-negative on every real sender, but this method takes an arbitrary {@code int}, and a
+     * negative {@code long} narrowed to {@code int} can wrap into a large positive maximum — the one failure a size
+     * bound must never have. Zero is also the honest answer for such a configuration: no plaintext fits it.
      *
-     * @param payloadLength the plaintext length in octets
-     * @param recordSize the configured {@code rs}
      * @param maxEncryptedBodyBytes the configured ceiling on the encrypted body
+     * @return the largest plaintext length, in octets, that the ceiling permits; never negative
      */
-    static void checkPayloadFits(int payloadLength, int recordSize, int maxEncryptedBodyBytes) {
-        long bodyBytes = (long) payloadLength + BODY_OVERHEAD;
-        if (bodyBytes > maxEncryptedBodyBytes) {
-            throw new IllegalArgumentException(
-                    "Encrypted Web Push body would be " + bodyBytes + " bytes, exceeding the configured maximum of "
-                            + maxEncryptedBodyBytes + " bytes; maximum plaintext payload is "
-                            + (maxEncryptedBodyBytes - BODY_OVERHEAD) + " bytes");
-        }
-        checkRecordSize(payloadLength, recordSize);
+    static int maxPlaintextBytes(int maxEncryptedBodyBytes) {
+        return (int) Math.max(0, (long) maxEncryptedBodyBytes - BODY_OVERHEAD);
+    }
+
+    /**
+     * The record-size half of the rule, inverted into a maximum: RFC 8291 §4 requires {@code rs} to be strictly greater
+     * than the plaintext plus {@link #RECORD_OVERHEAD}, so the largest plaintext a given {@code rs} carries is
+     * {@code rs - RECORD_OVERHEAD - 1}. In {@code long} so that a caller-supplied {@code rs} near either {@code int}
+     * extreme cannot wrap the subtraction.
+     */
+    private static long maxPlaintextForRecordSize(int recordSize) {
+        return (long) recordSize - RECORD_OVERHEAD - 1;
+    }
+
+    /**
+     * The same rule in the other direction, and the exact inverse of {@link #maxPlaintextForRecordSize}: the smallest
+     * {@code rs} whose record carries a plaintext of {@code maxPlaintextBytes} — the sum RFC 8291 §4 names, plus the
+     * one octet by which the rule requires {@code rs} to exceed it. The second addend is deliberately spelled
+     * {@code RECORD_OVERHEAD + 1} and not {@link #MIN_RECORD_SIZE}: the two are the same 18 for different reasons,
+     * since the minimum record size is this rule applied to an empty plaintext, and writing the constant here would tie
+     * the derivation to an answer about a different question.
+     *
+     * <p>This is what {@link PushSender} derives its {@code rs} from, once, at build time, so that the advertised
+     * record size declares exactly the plaintext capacity the sender is able to use. In {@code long} for the same
+     * reason as its inverse — the sum for a plaintext near {@link Integer#MAX_VALUE} exceeds {@code int}, which is also
+     * what lets {@link #checkRecordSize}'s diagnostic stay exact there.
+     */
+    static long recordSizeForMaxPlaintext(int maxPlaintextBytes) {
+        return (long) maxPlaintextBytes + RECORD_OVERHEAD + 1;
     }
 
     private byte[] aesGcm(byte[] cek, byte[] nonce, byte[] plaintext) {

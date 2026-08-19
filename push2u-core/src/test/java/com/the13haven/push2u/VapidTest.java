@@ -93,6 +93,49 @@ class VapidTest {
     }
 
     /**
+     * The pair-returning form exists so a caller can file the header under the very key its {@code k} parameter carries
+     * — one {@code publicKey()} read feeds both — which the token cache depends on: an entry filed under a key read
+     * separately could be stored under an identity the wire does not carry, even against a signer whose answers vary
+     * call to call.
+     */
+    @Test
+    void signedAuthorizationHeaderReturnsTheKeyItsOwnHeaderCarries() {
+        KeyPair keyPair = EcKeys.generateP256(jca);
+        VapidKeys keys = VapidKeys.of(
+                EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
+                TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
+        LocalEcVapidSigner signer = new LocalEcVapidSigner(keys);
+
+        Vapid.SignedHeader signed =
+                Vapid.signedAuthorizationHeader(signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY);
+
+        assertThat(signed.headerValue()).startsWith("vapid t=").endsWith(", k=" + signed.publicKeyBase64Url());
+        assertThat(signed.publicKeyBase64Url())
+                .as("the pair's key is the encoding of the advertised point — the same value k carries")
+                .isEqualTo(Base64Url.encode(signer.publicKey()));
+    }
+
+    /** The header value is a bearer credential, so the pair's {@code toString} must redact it. */
+    @Test
+    void signedHeaderToStringRedactsTheBearerCredential() {
+        KeyPair keyPair = EcKeys.generateP256(jca);
+        VapidKeys keys = VapidKeys.of(
+                EcKeys.encodeUncompressed((ECPublicKey) keyPair.getPublic()),
+                TestVectors.scalar32((ECPrivateKey) keyPair.getPrivate()));
+        LocalEcVapidSigner signer = new LocalEcVapidSigner(keys);
+
+        Vapid.SignedHeader signed =
+                Vapid.signedAuthorizationHeader(signer, TestVectors.VAPID_AUDIENCE, TestVectors.VAPID_SUBJECT, EXPIRY);
+        String token = signed.headerValue()
+                .substring("vapid t=".length(), signed.headerValue().indexOf(", k="));
+
+        assertThat(signed.toString())
+                .doesNotContain(token)
+                .contains("<redacted>")
+                .contains(signed.publicKeyBase64Url());
+    }
+
+    /**
      * The {@link VapidSigner} contract is checked where its output is used, because neither half fails visibly on its
      * own: a wrong-shaped signature or key still yields a syntactically valid {@code Authorization} header, and the
      * push service answers 401/403 to every send with nothing naming the signer. RFC 7518 §3.4 fixes the signature at

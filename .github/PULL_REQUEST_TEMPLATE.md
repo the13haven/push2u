@@ -27,4 +27,9 @@ dependencies / documentation, or ignore-for-release for housekeeping.
 - [ ] `docs/DESIGN.md` updated if the architecture moved, and a *new* file in `docs/adr/` if a
       decision did (an implemented ADR is never edited); `README.md` updated if the consumer-
       facing API or limits changed, `docs/SPRING.md` / `docs/VAULT.md` if a starter or Vault
-      property did, `docs/VAPID.md` if the key-generation recipe did.
+      property did, `docs/HEALTH.md` if the health indicator did, `docs/SIGNER.md` if the
+      `VapidSigner` contract did (the shape checks, which exception a custodian failure leaves in,
+      what the conformance kit asserts), `docs/VAPID.md` if the key-generation recipe did,
+      `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did — how or when a signer pins a
+      key version, anything that re-reads a key on a live signer, a key-version accessor, or a
+      change to how `401`/`403` is classified.

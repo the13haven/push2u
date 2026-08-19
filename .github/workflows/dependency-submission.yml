@@ -9,9 +9,9 @@ name: Dependency Submission
 # works either way, which is exactly what makes this gap easy to miss: the bump pull requests keep
 # arriving and look like proof that everything is wired up.
 #
-# It matters here specifically: push2u pins BouncyCastle and commons-lang3 through dependency
-# constraints because of CVEs (see the root build and the quality convention plugin), and the graph
-# is what would tell us the next one.
+# It matters here specifically: push2u pins commons-lang3 through a dependency constraint because of
+# a CVE (see the quality convention plugin), it carried a BouncyCastle pin in the root build until
+# JGit stopped requesting a vulnerable version, and the graph is what would tell us the next one.
 
 on:
   workflow_dispatch:

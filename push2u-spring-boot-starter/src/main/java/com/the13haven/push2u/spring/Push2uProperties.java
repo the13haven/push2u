@@ -18,51 +18,68 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param vapid the VAPID identity (keys + subject); always present, its fields may be unset
  * @param jwtExpiry how far ahead the VAPID JWT {@code exp} is set; {@code null} keeps the {@code PushSender} default
  *     (12h). Rejected at startup if not strictly positive or more than 24h (RFC 8292 §2)
+ * @param jwtRenewBefore how long before a reused token's {@code exp} a fresh one is signed; {@code null} keeps the
+ *     {@code PushSender} default (5m). Rejected at startup if negative. It is deliberately not validated against
+ *     {@code push2u.jwt-expiry}: a margin at or above the token's whole life is legal and simply means every send signs
+ *     afresh. {@code 0s} is legal too and is <em>not</em> an off switch — zero margin is the most reuse, holding a
+ *     token to its last second; {@code push2u.jwt-reuse} is the switch
+ * @param jwtReuse whether a signed VAPID token is reused for later sends to the same push-service origin until it nears
+ *     expiry; {@code null} keeps the {@code PushSender} default ({@code true}). {@code false} is the declared off
+ *     switch, restoring a fresh signature per message
+ * @param jwtCacheSize how many signed tokens the sender holds at once, evicting the least recently used; {@code null}
+ *     keeps the {@code PushSender} default (64). Rejected at startup if below 1 — the bound is what makes the cache
+ *     safe to hold rather than a tuning knob, and it is never a second way to spell {@code push2u.jwt-reuse: false}.
+ *     Overflow costs a signature per send, never a delivery
  * @param defaultTtl the push {@code TTL} used when a message sets none; {@code null} keeps the {@code PushSender}
  *     default (24h). Rejected at startup if negative
- * @param recordSize the {@code aes128gcm} record size (RFC 8188 {@code rs}); {@code null} keeps the {@code PushSender}
- *     default (4096 bytes). Rejected at startup if below 18 (RFC 8188 §2); separately, a send fails if the value does
- *     not exceed that particular payload plus 17 bytes (RFC 8291 §4) — a per-payload check this property cannot
- *     pre-empt
- * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body; {@code null} keeps the {@code PushSender}
- *     default (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the
- *     fixed 103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
- * @param allowedOrigins the push-service origins the sender may POST to (e.g. {@code https://fcm.googleapis.com}), each
- *     matched exactly — a subdomain of a listed origin is not allowed. Its entries are unioned with those of
+ * @param maxEncryptedBodyBytes the ceiling on the encrypted HTTP entity body — the sender's one size property, from
+ *     which the advertised {@code aes128gcm} record size is derived; {@code null} keeps the {@code PushSender} default
+ *     (4096 bytes, the limit RFC 8030 §7.2 lets a push service enforce). Rejected at startup if it is below the fixed
+ *     103-byte {@code aes128gcm} overhead, which is the body an empty payload produces
+ * @param allowedOrigins the push-service origins this deployment may contact (e.g. {@code https://fcm.googleapis.com}),
+ *     each matched exactly — a subdomain of a listed origin is not allowed. Its entries are unioned with those of
  *     {@code push2u.allowed-domains} into one allowlist, so the two are halves of one statement rather than rival
- *     settings. One of the two, or an application-supplied {@code EndpointPolicy} bean, is required: leaving all three
- *     out fails the context, because a sender with no policy POSTs wherever a subscription's endpoint points, which for
- *     client-registered subscriptions is a blind-SSRF surface. Malformed entries are rejected at startup, naming this
- *     property and the index of the entry. A non-empty value is mutually exclusive with an {@code EndpointPolicy} bean;
- *     an explicitly <em>empty</em> value is the escape hatch for a service that inherits this property from shared
- *     configuration it cannot unset, and cedes either to a bean or to the sibling property. Emptying every property
- *     that is set, with no bean, fails the context naming both keys: with nothing left to cede to, the allowlist would
- *     reject every send
- * @param allowedDomains the push-service domains the sender may POST to <em>together with every subdomain of each, at
- *     any depth</em>: {@code notify.windows.com} also admits {@code wns2-ln2p.notify.windows.com}. This is not an
+ *     settings, and the union is published as the {@code EndpointPolicy} bean: one definition the autoconfigured sender
+ *     enforces before every send and the application applies where it accepts subscriptions. One of the two properties,
+ *     or an application-supplied {@code EndpointPolicy} bean, is required wherever the autoconfigured sender is built —
+ *     leaving all three out fails such a context, because a sender with no policy POSTs wherever a subscription's
+ *     endpoint points, which for client-registered subscriptions is a blind-SSRF surface. A malformed entry fails the
+ *     context at startup whether or not a sender is built, naming this property and the index of the entry; a non-empty
+ *     value beside an <em>application-supplied</em> {@code EndpointPolicy} bean fails the same way, naming both, since
+ *     the two express one security control — beside the starter's own bean it is no conflict but the ordinary
+ *     configuration, the property being exactly what that bean is built from. An explicitly <em>empty</em> value is the
+ *     escape hatch for a service that inherits this property from shared configuration it cannot unset, and cedes
+ *     either to a bean or to the sibling property. Emptying every property that is set, with no bean, fails a
+ *     sender-building context naming both keys: with nothing left to cede to, the allowlist would reject every send
+ * @param allowedDomains the push-service domains this deployment may contact <em>together with every subdomain of each,
+ *     at any depth</em>: {@code notify.windows.com} also admits {@code wns2-ln2p.notify.windows.com}. This is not an
  *     origin with the scheme left off — it is deliberately wider, and worth exactly what the DNS of each listed zone is
  *     worth, so it belongs where the push service operator documents that its hostnames vary within one zone. The match
  *     is anchored at a DNS label boundary ({@code evilnotify.windows.com} is not admitted) and covers only
  *     {@code https} on the default port; an exact host with a port is named under {@code push2u.allowed-origins}
  *     instead. Each entry is a bare hostname of at least two labels, carrying no scheme, port, path or wildcard.
- *     Everything the sibling property says applies here identically: the union, being one of the two ways to express
- *     the decision, startup rejection naming this property and the entry's index, exclusivity with an
- *     {@code EndpointPolicy} bean, and an explicitly empty value as the per-property escape hatch — with every set
- *     property empty and no bean failing the context on both keys at once
- * @param retry the retry policy
- * @param health the Actuator health probe settings; always present, defaults apply when unset
+ *     Everything the sibling property says applies here identically: the union published as the {@code EndpointPolicy}
+ *     bean, being one of the two ways to express the decision, startup rejection naming this property and the entry's
+ *     index, exclusivity with an <em>application-supplied</em> {@code EndpointPolicy} bean, and an explicitly empty
+ *     value as the per-property escape hatch — with every set property empty and no bean failing a sender-building
+ *     context on both keys at once
  */
 @ConfigurationProperties("push2u")
 public record Push2uProperties(
         @DefaultValue Vapid vapid,
         @Nullable Duration jwtExpiry,
+        @Nullable Duration jwtRenewBefore,
+        // Boolean, not boolean: a primitive would need a @DefaultValue to bind, which would restate
+        // the PushSender default here and let the two drift. null means the key was left unset, so
+        // the sender's own default stands — the same "one place for the default" rule the nullable
+        // siblings above and below follow. It also keeps `false`, the deliberate off switch, a value
+        // the operator wrote rather than one the binder supplied.
+        @Nullable Boolean jwtReuse,
+        @Nullable Integer jwtCacheSize,
         @Nullable Duration defaultTtl,
-        @Nullable Integer recordSize,
         @Nullable Integer maxEncryptedBodyBytes,
         @Nullable List<String> allowedOrigins,
-        @Nullable List<String> allowedDomains,
-        @DefaultValue Retry retry,
-        @DefaultValue Health health) {
+        @Nullable List<String> allowedDomains) {
 
     /**
      * Snapshots each allowlist into an unmodifiable copy (when set), so the bound configuration cannot drift from the
@@ -111,34 +128,4 @@ public record Push2uProperties(
                     + ", subject=" + subject + "]";
         }
     }
-
-    /**
-     * Retry policy, mapped onto {@link com.the13haven.push2u.RetryPolicy}.
-     *
-     * @param maxAttempts the maximum number of POSTs including the first (≥ 1). Rejected at startup if below 1
-     * @param initialBackoff the backoff before the first retry; doubles on each subsequent retry. Rejected at startup
-     *     if negative
-     * @param maxBackoff the ceiling for the backoff (and any honoured {@code Retry-After}). Rejected at startup if
-     *     negative
-     */
-    public record Retry(
-            @DefaultValue("3") int maxAttempts,
-            @DefaultValue("1s") Duration initialBackoff,
-            @DefaultValue("60s") Duration maxBackoff) {}
-
-    /**
-     * The Actuator health probe ({@link Push2uHealthIndicator}). The probe exercises the configured signer, which for a
-     * remote signer (Vault Transit) is a full backend round-trip on an endpoint Kubernetes polls every few seconds —
-     * hence a result cache, and an off switch for deployments that do not want health tied to the signer at all.
-     *
-     * @param enabled whether the push2u health indicator is registered. {@code false} removes it entirely, so health
-     *     never touches the signer
-     * @param cacheTtl how long a successful probe result is served from cache before the signer is exercised again. A
-     *     <em>failed</em> result is cached for at most 5 seconds regardless (the shorter of this value and 5s), so
-     *     recovery is noticed quickly even under a long TTL. {@code 0s} disables caching; negative values are rejected
-     *     at startup
-     */
-    public record Health(
-            @DefaultValue("true") boolean enabled,
-            @DefaultValue("30s") Duration cacheTtl) {}
 }

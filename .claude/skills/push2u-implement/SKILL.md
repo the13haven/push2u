@@ -1,6 +1,6 @@
 ---
 name: push2u-implement
-description: How to make a change in the push2u Web Push library — the procedures and constraints that are not visible from the code being edited. Consult it before writing or changing any library or build code here, including a change that looks local or one-line, because most changes here have required companions elsewhere — a builder option also needs a Spring property, startup validation, docs and tests; a protocol or crypto fix has an RFC clause and a published vector that decide what is correct; a new public member is permanent once released; a vulnerable transitive is pinned by constraint rather than force; a BC-FIPS test belongs in its own source set. Use it for fixing a bug in the encryption, VAPID, retry, endpoint or Vault code, adding or changing a configuration option, writing a new VapidSigner or transport, avoiding a new dependency in the zero-dependency core, pinning an advisory, and working out everything a change touches.
+description: How to make a change in the push2u Web Push library — the procedures and constraints that are not visible from the code being edited. Consult it before writing or changing any library or build code here, including a change that looks local or one-line, because most changes here have required companions elsewhere — a builder option also needs a Spring property, startup validation, docs and tests; a protocol or crypto fix has an RFC clause and a published vector that decide what is correct; a new public member is permanent once released; a vulnerable transitive is pinned by constraint rather than force; a BC-FIPS test belongs in its own source set. Use it for fixing a bug in the encryption, VAPID, endpoint, outcome-classification or Vault code, adding or changing a configuration option, writing a new VapidSigner or transport, avoiding a new dependency in the zero-dependency core, pinning an advisory, and working out everything a change touches.
 ---
 
 # Implementing a change in push2u
@@ -86,9 +86,12 @@ still working; the second passes for reasons that have nothing to do with your c
 
 Two habits particular to this code:
 
-- **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, in
-  `WebPushEncryptor.checkRecordSize`, and both the pre-flight check and the encryptor call it. When
-  you find yourself writing a second copy of a protocol rule, put it where the first one lives.
+- **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, as the inverse
+  pair `WebPushEncryptor.maxPlaintextForRecordSize` / `recordSizeForMaxPlaintext`: the encryptor's
+  `checkRecordSize` refusal reads one direction, and the sender's `build()`-time derivation of `rs`
+  from the body ceiling reads the other — one place decides the rule whichever way it is asked.
+  When you find yourself writing a second copy of a protocol rule, put it where the first one
+  lives.
 - **Size arithmetic in `long`.** A payload above `Integer.MAX_VALUE - 103` wraps negative in `int`
   and passes any limit check. If you touch the size path, keep the sums wide and keep the boundary
   test.
@@ -99,12 +102,12 @@ This is the procedure most often left half-finished, because the useful part wor
 
 1. **Core builder.** Add the setter on `PushSender.Builder`, validate the value where it is set (not
    at send time), and document the unit and the default in Javadoc. Validation belongs here because
-   this is where the constraint is known — the builder rejects a `recordSize` below the RFC 8188 §2
-   floor of 18 regardless of who is calling.
+   this is where the constraint is known — the builder rejects a `maxEncryptedBodyBytes` below the
+   fixed 103-octet `aes128gcm` overhead regardless of who is calling.
 
 2. **Starter property.** Add the component to `Push2uProperties`. Leave it nullable and let `null`
-   mean "keep the builder default" — that is the pattern `jwt-expiry`, `default-ttl`,
-   `record-size` and `max-encrypted-body-bytes` all follow, and it keeps the default in one place
+   mean "keep the builder default" — that is the pattern `jwt-expiry`, `default-ttl` and
+   `max-encrypted-body-bytes` all follow, and it keeps the default in one place
    instead of two.
 
 3. **Wire it, and translate the error.** In `Push2uAutoConfiguration`, forward the value through
@@ -112,7 +115,7 @@ This is the procedure most often left half-finished, because the useful part wor
    front:
 
    ```java
-   applyIfPresent(properties.recordSize(), builder::recordSize, "push2u.record-size");
+   applyIfPresent(properties.maxEncryptedBodyBytes(), builder::maxEncryptedBodyBytes, "push2u.max-encrypted-body-bytes");
    ```
 
    The builder's own message names its camelCase parameter, which is not what the operator wrote in
@@ -120,14 +123,15 @@ This is the procedure most often left half-finished, because the useful part wor
    Use it rather than writing the try/catch inline: four inline copies is what pushed
    `pushSender(...)` past PMD's complexity thresholds, and a fifth would do it again.
 
-   A value that reaches a *constructor* validating several properties at once (as `push2u.retry.*`
-   does) needs the other helper, `requireValid(property, probe)`. `applyIfPresent` would compile,
-   but it cannot attribute the failure: one constructor call rejects on behalf of any of its
-   arguments, and `RetryPolicy` reports both backoff bounds through a single message. So
-   `retryPolicy(...)` calls that constructor once per key, passing one real value and filling the
-   rest with values the constructor accepts regardless. Read its Javadoc before copying the shape —
-   the attribution rests on a stated invariant that a test samples, and the Javadoc is explicit
-   about what the sampling does and does not decide.
+   `applyIfPresent` is the only helper there is now, and it works because every property the starter
+   forwards reaches a *setter* that validates that one value. A property group that instead reached
+   a constructor validating several at once could not be attributed this way — one constructor call
+   rejects on behalf of any of its arguments — and would need a probe per key, offering the
+   constructor one real value and filling the rest with values it accepts regardless. The starter
+   had exactly one such group, `push2u.retry.*`, and it went with the retry loop; if a change ever
+   introduces another, that shape is what it needs, along with a test sampling the invariant the
+   attribution rests on — that the filler values stay acceptable beside any value of the key being
+   probed.
 
 4. **Document it.** The README property table, and the protocol-limits section if the option changes
    a limit. `docs/DESIGN.md` too if it changes the pipeline's contract rather than a number.
@@ -226,9 +230,11 @@ public member deserve to be permanent, since it ships to Maven Central and canno
 
 If the change settles something the ADRs do not cover, or replaces a decision one of them records,
 write a **new** file in `docs/adr/` and add its row to `docs/adr/README.md`. Do not edit an ADR
-whose decision is implemented — a superseded one keeps its body and gets `Superseded by ADR-NNN` on
-its status line, and `docs/adr/README.md` carries the procedure. `docs/DESIGN.md` is the document
-that tracks the code; the ADRs are the record of what was decided and when.
+whose decision is implemented — a superseded one keeps its body and takes one of two status-line
+spellings depending on how much moved: `Superseded by ADR-NNN` when the whole decision did, or the
+narrower `Accepted; one clause superseded by ADR-NNN` when only one clause did — and
+`docs/adr/README.md` carries the procedure for both. `docs/DESIGN.md` is the document that tracks
+the code; the ADRs are the record of what was decided and when.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

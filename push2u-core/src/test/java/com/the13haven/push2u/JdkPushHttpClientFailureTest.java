@@ -28,8 +28,9 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * Transport failures, which are the cases a caller cannot read as a push-service verdict. The distinction this library
- * draws is that an HTTP status — even 410 Gone — is a {@link PushResult}, while a connection that never produced one is
- * a {@link PushDeliveryException}. These tests cover the second half.
+ * draws is that an HTTP status — even 410 Gone — is answered as a {@link PushResponse} for the sender to classify,
+ * while an exchange that never produced one throws {@link PushDeliveryException}. These tests cover the second half —
+ * the transport seam's own contract, which is unchanged by the facade reporting these failures as outcomes.
  *
  * <p>The endpoint is redacted in the message on both paths: a push endpoint carries the subscription identifier, which
  * is a bearer credential for that subscription, and exception messages reach logs.

@@ -29,8 +29,8 @@ updates:
     # breaking change lives.
     #
     # NOT applied to the gradle ecosystem above, where the same rule would be actively harmful —
-    # there a patch release is typically the security fix (see the commons-lang3 and BouncyCastle
-    # pins in the build), and suppressing it defeats the point of running Dependabot at all.
+    # there a patch release is typically the security fix (the commons-lang3 pin in the quality
+    # convention plugin is one), and suppressing it defeats the point of running Dependabot at all.
     ignore:
       - dependency-name: "*"
         update-types:

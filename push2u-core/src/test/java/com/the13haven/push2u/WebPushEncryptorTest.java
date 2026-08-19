@@ -51,7 +51,9 @@ class WebPushEncryptorTest {
         byte[] auth = b64(TestVectors.AUTH_SECRET);
         byte[] plaintext = TestVectors.PLAINTEXT.getBytes(StandardCharsets.US_ASCII);
 
-        byte[] body = encryptor.encrypt(uaPublic, auth, plaintext, WebPushEncryptor.DEFAULT_RECORD_SIZE);
+        // 4096 as an rs is just a caller's value here: the sender derives its own, and this test
+        // exercises the encryptor's parameter directly.
+        byte[] body = encryptor.encrypt(uaPublic, auth, plaintext, 4096);
 
         ByteBuffer header = ByteBuffer.wrap(body);
         byte[] salt = new byte[16];
@@ -70,7 +72,7 @@ class WebPushEncryptorTest {
         // RFC 8291 §2: a fresh application-server key pair (and salt) per message. Comparing whole
         // bodies would also pass with a reused ephemeral key and only the salt changing, so the
         // salt and the keyid are compared separately.
-        byte[] second = encryptor.encrypt(uaPublic, auth, plaintext, WebPushEncryptor.DEFAULT_RECORD_SIZE);
+        byte[] second = encryptor.encrypt(uaPublic, auth, plaintext, 4096);
         assertThat(Arrays.copyOfRange(second, 0, 16))
                 .as("fresh salt per message")
                 .isNotEqualTo(salt);
@@ -128,11 +130,7 @@ class WebPushEncryptorTest {
 
     @Test
     void bodyOverheadIsTheFixedSingleRecordCostNotAMagicNumber() {
-        byte[] body = encryptor.encrypt(
-                b64(TestVectors.UA_PUBLIC),
-                b64(TestVectors.AUTH_SECRET),
-                new byte[0],
-                WebPushEncryptor.DEFAULT_RECORD_SIZE);
+        byte[] body = encryptor.encrypt(b64(TestVectors.UA_PUBLIC), b64(TestVectors.AUTH_SECRET), new byte[0], 4096);
 
         // header(86) + delimiter(1) + tag(16); the 4096-byte body ceiling minus this is the
         // 3993-octet plaintext maximum RFC 8291 §4 derives.
@@ -144,5 +142,53 @@ class WebPushEncryptorTest {
         assertThat(WebPushEncryptor.DEFAULT_MAX_ENCRYPTED_BODY_BYTES - WebPushEncryptor.BODY_OVERHEAD)
                 .as("RFC 8291 §4: at most 3993 octets of plaintext")
                 .isEqualTo(3993);
+    }
+
+    /**
+     * The derivation of {@code rs} from the configured body ceiling, pinned across the whole range the builder admits —
+     * including both ends. The derived {@code rs} is {@code maxEncryptedBodyBytes − 85} for every configuration, so the
+     * last row is the one to check rather than read: it stays below {@code Integer.MAX_VALUE} by construction and must
+     * not wrap.
+     */
+    @Test
+    void derivedRecordSizeDeclaresExactlyThePlaintextCapacityAcrossTheWholeRange() {
+        int[][] table = {
+            // maxEncryptedBodyBytes, maximumPayloadBytes, derived rs
+            {103, 0, 18}, // the minimum the builder accepts: an empty payload, and the smallest legal rs
+            {2048, 1945, 1963},
+            {4096, 3993, 4011}, // the default
+            {8192, 8089, 8107},
+            {Integer.MAX_VALUE, Integer.MAX_VALUE - 103, Integer.MAX_VALUE - 85},
+        };
+        for (int[] row : table) {
+            int maximumPayload = WebPushEncryptor.maxPlaintextBytes(row[0]);
+            assertThat(maximumPayload)
+                    .as("maximum payload for a body ceiling of %d", row[0])
+                    .isEqualTo(row[1]);
+            assertThat(WebPushEncryptor.recordSizeForMaxPlaintext(maximumPayload))
+                    .as("derived rs for a body ceiling of %d", row[0])
+                    .isEqualTo(row[2]);
+        }
+        assertThat(WebPushEncryptor.recordSizeForMaxPlaintext(Integer.MAX_VALUE - 103))
+                .as("the top of the range is 2147483562 and does not wrap")
+                .isEqualTo(2147483562L)
+                .isLessThan(Integer.MAX_VALUE);
+    }
+
+    /** The two directions are exact inverses: an rs derived for a maximum carries exactly that maximum, and no more. */
+    @Test
+    void derivedRecordSizeIsTheExactInverseOfTheRecordSizeRule() {
+        byte[] uaPublic = b64(TestVectors.UA_PUBLIC);
+        byte[] auth = b64(TestVectors.AUTH_SECRET);
+        for (int maximumPayload : new int[] {0, 1, 1945, 3993}) {
+            int rs = Math.toIntExact(WebPushEncryptor.recordSizeForMaxPlaintext(maximumPayload));
+
+            assertThat(encryptor.encrypt(uaPublic, auth, new byte[maximumPayload], rs))
+                    .as("the derived rs %d carries a plaintext of exactly %d octets", rs, maximumPayload)
+                    .hasSize(WebPushEncryptor.BODY_OVERHEAD + maximumPayload);
+            assertThatThrownBy(() -> encryptor.encrypt(uaPublic, auth, new byte[maximumPayload + 1], rs))
+                    .as("and one octet more violates RFC 8291 §4 under it — the derivation is exact, not padded")
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 }

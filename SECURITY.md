@@ -69,8 +69,12 @@ In scope — the properties the library is responsible for:
   runs. The endpoint in a `Subscription` is attacker-influenced, so this is the SSRF control point.
 - **Secret exposure in diagnostics**: `X-Vault-Token`, the Vault address, or the capability
   path/query of an endpoint reaching an exception message, log record, or health payload.
-- **Resource exhaustion reachable from a remote peer**: an unbounded read, a missing timeout, or
-  a retry path a hostile push service can amplify.
+- **Resource exhaustion reachable from a remote peer**: an unbounded read, a missing timeout, or an
+  unbounded internal cache. The library performs one POST per send and schedules no repeat, so the
+  path a hostile push service could amplify by naming a large `Retry-After` is the caller's
+  scheduler and not ours — what remains in scope here is that the value reported is the value that
+  arrived: unmodified, with no ceiling of ours applied and none silently removed, so that the
+  caller's own bound is the only one and is applied to a number the service really sent.
 - **The Spring Boot starters**: a property binding or conditional that silently disables one of
   the controls above.
 

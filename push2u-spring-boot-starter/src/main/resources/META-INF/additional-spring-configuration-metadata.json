@@ -1,0 +1,10 @@
+{
+  "properties": [
+    {
+      "name": "push2u.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether this deployment sends web push messages. Defaults to true. Set it to false to state that this deployment deliberately does not send: the signer, the transport, the sender and the health indicator are then not contributed at all, while the endpoint policy the allowlist properties express, and every startup refusal guarding them, stay in force. Only true and false are accepted; any other value fails the context naming the property, because this is the one key where a typo would otherwise mean the opposite of what was typed.",
+      "defaultValue": true
+    }
+  ]
+}

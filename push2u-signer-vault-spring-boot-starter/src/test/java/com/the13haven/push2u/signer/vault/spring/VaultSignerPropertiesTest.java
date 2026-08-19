@@ -40,7 +40,17 @@ class VaultSignerPropertiesTest {
         // stand in for an actual value. The unset address prints null for the same reason: it must
         // stay distinguishable from the marker an unrenderable-but-configured address gets.
         VaultSignerProperties properties = new VaultSignerProperties(
-                null, "transit", null, null, null, null, null, Duration.ofSeconds(30), Duration.ofSeconds(10), 1024);
+                null,
+                "transit",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                Duration.ofSeconds(30),
+                Duration.ofSeconds(10),
+                1024);
 
         assertThat(properties.toString()).contains("token=null").contains("address=null");
     }
@@ -272,6 +282,7 @@ class VaultSignerPropertiesTest {
                 "hvs.SECRET-TOKEN-MARKER",
                 "BPublicKeyMarker",
                 3,
+                null,
                 Duration.ofSeconds(30),
                 Duration.ofSeconds(10),
                 1024 * 1024);

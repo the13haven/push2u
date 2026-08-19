@@ -6,21 +6,22 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import java.math.BigInteger;
+import java.net.URI;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
-import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -38,6 +39,7 @@ import org.springframework.boot.health.autoconfigure.registry.HealthContributorR
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.health.registry.HealthContributorRegistry;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,11 +50,11 @@ import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
+import com.the13haven.push2u.PushOutcome;
 import com.the13haven.push2u.PushResponse;
-import com.the13haven.push2u.PushResult;
 import com.the13haven.push2u.PushSender;
-import com.the13haven.push2u.RetryPolicy;
 import com.the13haven.push2u.Subscription;
+import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
 
 /**
@@ -68,9 +70,18 @@ class Push2uAutoConfigurationTest {
     /** A well-formed subscription {@code p256dh} point, unrelated to the VAPID pair above. */
     private static String subscriptionKeyB64;
 
+    // The full starter composition, exactly as the imports file ships it. The removed-properties
+    // tombstone rides along so every scenario here also proves that a context without the removed
+    // key starts exactly as before its check existed; the endpoint-policy autoconfiguration rides
+    // along so every sender wired here takes its policy from the bean, the way a real context does
+    // — and so the refusals that stayed with pushSender demonstrably fire with the policy
+    // autoconfiguration PRESENT, rather than being satisfied by the starter's own bean.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withConfiguration(
-                    AutoConfigurations.of(Push2uAutoConfiguration.class, Push2uHealthAutoConfiguration.class));
+            .withConfiguration(AutoConfigurations.of(
+                    Push2uAutoConfiguration.class,
+                    Push2uEndpointPolicyAutoConfiguration.class,
+                    Push2uHealthAutoConfiguration.class,
+                    Push2uStartupChecksAutoConfiguration.class));
 
     @BeforeAll
     static void generateVapidKeys() throws Exception {
@@ -98,10 +109,15 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void withoutKeysThereIsNoSenderOrSigner() {
-        runner.run(context -> {
+    void withoutKeysAndWithTheStatementThereIsNoSenderOrSigner() {
+        // A deployment that says it does not send holds neither, and starts. This used to be the
+        // behaviour of a context that simply configured nothing, and that is exactly what changed:
+        // the absence of a sender no longer passes for a decision, so the deployment states it.
+        runner.withPropertyValues("push2u.enabled=false").run(context -> {
+            assertThat(context).hasNotFailed();
             assertThat(context).doesNotHaveBean(PushSender.class);
             assertThat(context).doesNotHaveBean(VapidSigner.class);
+            assertThat(context).doesNotHaveBean(PushHttpClient.class);
         });
     }
 
@@ -222,8 +238,9 @@ class Push2uAutoConfigurationTest {
         // stop answering while the application runs, and here it is present and reachable.
         //
         // The main autoconfiguration is excluded so no PushSender bean can appear, which also
-        // exercises the reason @EnableConfigurationProperties is restated on the health
-        // autoconfiguration: without it, push2u.health.* would not bind in this context.
+        // exercises the reason the health autoconfiguration carries its own
+        // @EnableConfigurationProperties: without it, management.health.push2u.* would not bind in
+        // this context.
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(Push2uHealthAutoConfiguration.class))
                 .withUserConfiguration(CustomSignerConfiguration.class)
@@ -235,37 +252,38 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void recordSizeAndMaxEncryptedBodyBytesReachTheSender() {
-        // Both properties are optional pass-throughs to the builder; assert they are not silently
-        // dropped by sending a payload that only fits under the raised limits. A stub transport
-        // stands in for the network — the point under test is the size precondition, not delivery.
+    void maxEncryptedBodyBytesReachesTheSender() {
+        // The one size property is an optional pass-through to the builder; assert it is not
+        // silently dropped by sending a payload that only fits under the raised ceiling. A stub
+        // transport stands in for the network — the point under test is the size precondition, not
+        // delivery. One property is the whole of raising the limit: the record size is derived
+        // from it, so there is no second key to raise in step.
         keyedRunner()
-                .withPropertyValues("push2u.record-size=8192", "push2u.max-encrypted-body-bytes=8192")
+                .withPropertyValues("push2u.max-encrypted-body-bytes=8192")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     assertThat(context).hasSingleBean(PushSender.class);
                     PushSender sender = context.getBean(PushSender.class);
-                    // 4096 plaintext bytes: rejected by the PushSender defaults (rs=4096, body cap
-                    // 4096 -> 3993 max plaintext) but accepted once record-size/max-encrypted-body-bytes
-                    // are raised, proving the properties actually reached the builder.
-                    PushResult result = sender.send(
+                    // 4096 plaintext bytes: rejected by the PushSender default (body cap 4096 ->
+                    // 3993 max plaintext) but accepted once max-encrypted-body-bytes is raised,
+                    // proving the property actually reached the builder.
+                    PushOutcome result = sender.send(
                             subscription(), PushMessage.builder(new byte[4096]).build());
-                    assertThat(result.isDelivered()).isTrue();
+                    assertThat(result).isInstanceOf(PushOutcome.Accepted.class);
                 });
     }
 
     @Test
     void defaultLimitsRejectAPayloadThatOnlyFitsUnderTheRaisedOnes() {
         // Control for the previous test: without raising the properties, the same 4096-byte
-        // payload must be rejected by PushSender's own default limits, before any network call.
-        // At the defaults the body-size precondition (rs=4096, body cap 4096) fires first, ahead
-        // of the record-size one — hence the assertion on that particular message.
+        // payload must be rejected by PushSender's own default limits, before any network call —
+        // reported as the PayloadRejected outcome in plaintext octets, with the maximum the
+        // default configuration carries.
         keyedRunner().run(context -> {
             PushSender sender = context.getBean(PushSender.class);
-            assertThatThrownBy(() -> sender.send(
-                            subscription(), PushMessage.builder(new byte[4096]).build()))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("exceeding the configured maximum");
+            PushOutcome outcome = sender.send(
+                    subscription(), PushMessage.builder(new byte[4096]).build());
+            assertThat(outcome).isEqualTo(new PushOutcome.PayloadRejected(4096, 3993));
         });
     }
 
@@ -336,26 +354,15 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void invalidRecordSizeFailsTheContextNamingTheProperty() {
-        // The builder's own message names its camelCase parameter ("recordSize"), not the YAML
-        // property — the starter re-throws with push2u.record-size prefixed so the failure is
-        // actionable. That re-thrown IllegalArgumentException wraps the builder's original as its
-        // cause, so rootCause() would find the unprefixed message instead; and Spring's own
-        // BeanCreationException.getMessage() happens to *echo* the wrapped text too, so a plain
-        // "any message in the chain contains the needle" search would match that wrapper instead of
-        // the actual exception. firstOfTypeContaining requires both the exact exception type and
-        // the message, landing on the starter's own IllegalArgumentException specifically.
-        keyedRunner().withPropertyValues("push2u.record-size=10").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.record-size:"))
-                    .hasMessageContaining("push2u.record-size:")
-                    .hasMessageContaining("recordSize must be at least");
-        });
-    }
-
-    @Test
     void invalidMaxEncryptedBodyBytesFailsTheContextNamingTheProperty() {
+        // The builder's own message names its camelCase parameter ("maxEncryptedBodyBytes"), not
+        // the YAML property — the starter re-throws with push2u.max-encrypted-body-bytes prefixed
+        // so the failure is actionable. That re-thrown IllegalArgumentException wraps the builder's
+        // original as its cause, so rootCause() would find the unprefixed message instead; and
+        // Spring's own BeanCreationException.getMessage() happens to *echo* the wrapped text too,
+        // so a plain "any message in the chain contains the needle" search would match that wrapper
+        // instead of the actual exception. firstOfTypeContaining requires both the exact exception
+        // type and the message, landing on the starter's own IllegalArgumentException specifically.
         keyedRunner().withPropertyValues("push2u.max-encrypted-body-bytes=10").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
@@ -369,8 +376,8 @@ class Push2uAutoConfigurationTest {
 
     @Test
     void invalidJwtExpiryFailsTheContextNamingTheProperty() {
-        // Same convention as push2u.record-size: PushSender.Builder#jwtExpiry's own message names
-        // its camelCase parameter ("jwtExpiry"), not the YAML property.
+        // Same convention as push2u.max-encrypted-body-bytes: PushSender.Builder#jwtExpiry's own
+        // message names its camelCase parameter ("jwtExpiry"), not the YAML property.
         keyedRunner().withPropertyValues("push2u.jwt-expiry=25h").run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
@@ -378,6 +385,180 @@ class Push2uAutoConfigurationTest {
                     .hasMessageContaining("push2u.jwt-expiry:")
                     .hasMessageContaining("jwtExpiry must be > 0 and <= 24h");
         });
+    }
+
+    @Test
+    void invalidJwtRenewBeforeFailsTheContextNamingTheProperty() {
+        keyedRunner().withPropertyValues("push2u.jwt-renew-before=-1s").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-renew-before:"))
+                    .hasMessageContaining("push2u.jwt-renew-before:")
+                    .hasMessageContaining("jwtRenewBefore must not be negative");
+        });
+    }
+
+    @Test
+    void invalidJwtCacheSizeFailsTheContextNamingTheProperty() {
+        // Zero is the value an operator reaches for meaning "cache nothing" — the core refuses it
+        // and says so, because push2u.jwt-reuse is the switch and a cache bound is not a second
+        // spelling of it. The starter's job is only to put the YAML key in front of that message.
+        keyedRunner().withPropertyValues("push2u.jwt-cache-size=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(firstOfTypeContaining(
+                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.jwt-cache-size:"))
+                    .hasMessageContaining("push2u.jwt-cache-size:")
+                    .hasMessageContaining("jwtCacheSize must be at least 1")
+                    .as("the core's message points at the declared off switch; the prefix must not truncate it")
+                    .hasMessageContaining("jwtReuse(false)");
+        });
+    }
+
+    @Test
+    void tokenReuseIsOnByDefaultSoOneOriginCostsOneSignature() {
+        // No push2u.jwt-* property set at all: the sender's own default (reuse on) must survive the
+        // starter, which is exactly what leaving the properties nullable buys — the default lives in
+        // one place. Two sends to one origin, one signature.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void jwtReuseFalseSignsEverySend() {
+        // The declared off switch, and the property whose name nothing but this test pins.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-reuse=false")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations())
+                            .as("with reuse off every send builds and signs a fresh token")
+                            .isEqualTo(2);
+                });
+    }
+
+    @Test
+    void aJwtRenewBeforeAtTheTokensWholeLifeStartsCleanlyAndSignsEverySend() {
+        // The margin has swallowed the token's whole life, so nothing is ever worth caching. That is
+        // a consequence of the configuration and never an error: the context must start, and it is
+        // deliberately not cross-validated against push2u.jwt-expiry. It doubles as the proof that
+        // push2u.jwt-renew-before reached the builder — at the default 5m margin the same two sends
+        // cost one signature (the test above).
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-expiry=12h", "push2u.jwt-renew-before=12h")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(2);
+                });
+    }
+
+    @Test
+    void aZeroJwtRenewBeforeStartsCleanlyAndIsNotAnOffSwitch() {
+        // Zero margin is the MOST reuse — hold the token to its last second — not "reuse nothing".
+        // An operator reaching for it as a switch must get reuse, not a rejection and not a fresh
+        // signature per send.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("push2u.jwt-renew-before=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    assertThat(signer.signOperations()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void jwtCacheSizeBoundsHowManyOriginsAreHeldAtOnce() {
+        // Two origins, alternating, four sends. At the default bound both entries survive and the
+        // sender signs twice; bounded at one entry, each send evicts the other origin's token and
+        // every send signs — which is what a full cache costs, never a refused delivery.
+        CountingSigner atDefault = countingSigner();
+        twoOriginRunner()
+                .withBean(VapidSigner.class, () -> atDefault)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    alternateBetweenTwoOrigins(context.getBean(PushSender.class));
+                    assertThat(atDefault.signOperations()).isEqualTo(2);
+                });
+
+        CountingSigner boundedToOne = countingSigner();
+        twoOriginRunner()
+                .withPropertyValues("push2u.jwt-cache-size=1")
+                .withBean(VapidSigner.class, () -> boundedToOne)
+                .withUserConfiguration(StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    alternateBetweenTwoOrigins(context.getBean(PushSender.class));
+                    assertThat(boundedToOne.signOperations())
+                            .as("a cache holding one entry evicts the other origin on every send")
+                            .isEqualTo(4);
+                });
+    }
+
+    @Test
+    void theCachedVapidTokenNeverReachesTheHealthIndicatorDetails() {
+        // The cached Authorization header is a bearer credential: it authenticates this application
+        // server to the push service for the rest of the token's life, so it must not surface on any
+        // observable surface. The health payload is the one such surface in this module — served to
+        // whoever can reach the endpoint once show-details is opened up, which `always` commonly is.
+        //
+        // The indicator is given the signer, never the sender, so it has no reference through which
+        // it could reach the cache at all. That is the answer, and it is pinned here rather than
+        // argued: the assertion is over the payload an operator actually sees, in both of its
+        // states, with a token demonstrably sitting in the sender's cache while they are produced.
+        CountingSigner signer = countingSigner();
+        RecordingTransport transport = new RecordingTransport();
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.cache-ttl=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .withBean(PushHttpClient.class, () -> transport)
+                .run(context -> {
+                    PushSender sender = context.getBean(PushSender.class);
+                    sendTwice(sender);
+                    String header = transport.authorizations.get(0);
+                    assertThat(transport.authorizations)
+                            .as("the second send was served from the cache, so a token is resident")
+                            .containsExactly(header, header);
+                    // The header is "vapid t=<jwt>, k=<public key>": the credential is the JWT, and
+                    // its signature is the part no assertion on a prefix could catch.
+                    String jwt = header.substring(header.indexOf("t=") + 2, header.indexOf(", k="));
+                    String signature = jwt.substring(jwt.lastIndexOf('.') + 1);
+
+                    Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+                    Health up = indicator.health();
+                    assertThat(up.getStatus()).isEqualTo(Status.UP);
+                    // ...and again with the probe failing, which is the payload that carries values
+                    // derived from an exception rather than fixed strings.
+                    signer.failing.set(true);
+                    Health down = indicator.health();
+                    assertThat(down.getStatus()).isEqualTo(Status.DOWN);
+
+                    for (Health health : List.of(up, down)) {
+                        assertThat(health.getDetails().toString())
+                                .doesNotContain(header)
+                                .doesNotContain(jwt)
+                                .doesNotContain(signature);
+                    }
+                });
     }
 
     @Test
@@ -392,119 +573,29 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void invalidRetryMaxAttemptsFailsTheContextNamingTheProperty() {
-        // The worst offender before this fix: RetryPolicy's own message ("maxAttempts must be >=
-        // 1") does not even mention "retry", let alone the YAML property — an operator reading it
-        // has nothing to go on.
-        keyedRunner().withPropertyValues("push2u.retry.max-attempts=0").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-attempts:"))
-                    .hasMessageContaining("push2u.retry.max-attempts:")
-                    .hasMessageContaining("maxAttempts must be >= 1");
-        });
-    }
-
-    @Test
-    void invalidRetryInitialBackoffFailsTheContextNamingTheProperty() {
-        // RetryPolicy reports both backoff bounds through one message, so without the per-key probe
-        // an operator cannot tell which of the two durations it is complaining about.
-        keyedRunner().withPropertyValues("push2u.retry.initial-backoff=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(),
-                            IllegalArgumentException.class,
-                            "push2u.retry.initial-backoff:"))
-                    .hasMessageContaining("push2u.retry.initial-backoff:")
-                    .hasMessageContaining("backoff durations must not be negative");
-        });
-    }
-
-    @Test
-    void invalidRetryMaxBackoffFailsTheContextNamingTheProperty() {
-        keyedRunner().withPropertyValues("push2u.retry.max-backoff=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.retry.max-backoff:"))
-                    .hasMessageContaining("push2u.retry.max-backoff:")
-                    .hasMessageContaining("backoff durations must not be negative");
-        });
-    }
-
-    /**
-     * The tripwire for the probes in {@code Push2uAutoConfiguration.retryPolicy}. Each of them fills the components it
-     * is not testing with {@code 1} and {@code Duration.ZERO}, and attributes any rejection to the one real value it
-     * passed. That attribution is only sound while those filler values stay acceptable beside an arbitrary value of the
-     * component under test — which {@link RetryPolicy#none()} alone does not witness, since it fixes all three. A
-     * constraint <em>between</em> components would otherwise leave the probes blaming the wrong YAML key with every
-     * other test still green.
-     *
-     * <p>Four assertions: the {@link RetryPolicy#none()} baseline, then one per probe pairing that probe's filler with
-     * a non-trivial value of its own component — the shape a cross-component constraint would break. <b>This samples
-     * the invariant, it does not decide it:</b> a constraint that only bites above some threshold would survive these
-     * points. What it buys is that the cheap and likely versions of that mistake fail here rather than in an operator's
-     * log, and that the invariant is written down as something executable rather than as a comment nobody re-checks.
-     */
-    @Test
-    void probeFillersStayAcceptableBesideARealValue() {
-        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ZERO))
-                .as("the triple RetryPolicy.none() is built from")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(Integer.MAX_VALUE, Duration.ZERO, Duration.ZERO))
-                .as("zero backoffs stay legal for any attempt count — what the max-attempts probe assumes")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(1, Duration.ofSeconds(1), Duration.ZERO))
-                .as("a zero max-backoff stays legal beside a real initial-backoff")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> new RetryPolicy(1, Duration.ZERO, Duration.ofSeconds(1)))
-                .as("a zero initial-backoff stays legal beside a real max-backoff — the max-backoff probe's own"
-                        + " assumption, and the one the other three assertions do not cover")
-                .doesNotThrowAnyException();
-    }
-
-    /**
-     * The starter's {@code @DefaultValue}s for {@code push2u.retry.*} are supposed to be {@code RetryPolicy.defaults()}
-     * restated in YAML terms — that equality is what lets README.md and docs/SPRING.md describe an unset retry block as
-     * "the default policy" while the starter always constructs one explicitly. Nothing else pins it, so a change to
-     * either side would make both documents quietly wrong.
-     */
-    @Test
-    void theStarterRetryDefaultsAreTheCoreRetryDefaults() {
-        // Read back what Spring actually bound with no push2u.retry.* set, rather than restating
-        // the @DefaultValue literals here — restating them would pin this test to itself.
-        keyedRunner().run(context -> {
-            Push2uProperties.Retry bound =
-                    context.getBean(Push2uProperties.class).retry();
-
-            assertThat(new RetryPolicy(bound.maxAttempts(), bound.initialBackoff(), bound.maxBackoff()))
-                    .as("the @DefaultValue triple Spring binds for push2u.retry.*")
-                    .isEqualTo(RetryPolicy.defaults());
-        });
-    }
-
-    @Test
     void allowedOriginsPropertyEnforcesThePolicyOnTheWiredSender() {
-        // Positive and negative halves of the same property: the allowlisted origin delivers
-        // (through the stub transport), a foreign one is rejected before any transport call —
-        // proving push2u.allowed-origins actually reached the builder rather than being dropped.
+        // Positive and negative halves of the same property: the allowlisted origin is accepted
+        // (through the stub transport), a foreign one is refused before any transport call —
+        // proving push2u.allowed-origins actually governs the wired sender, now that it travels
+        // through the published policy bean rather than being built inside pushSender.
         keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription(), PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered()).isTrue();
+                    assertThat(result).isInstanceOf(PushOutcome.Accepted.class);
                 });
         keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://other.example")
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription(),
                                     PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class);
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -517,12 +608,12 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription("https://wns2-ln2p.notify.windows.com/w/?token=abc"),
                             PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered())
+                    assertThat(result)
                             .as("a domain rule admits every subdomain at any depth, which is why it exists")
-                            .isTrue();
+                            .isInstanceOf(PushOutcome.Accepted.class);
                 });
         // ...while a host that merely ends with the configured text, with no label boundary in
         // front of it, is not. That single missing dot is the vulnerability class this feature
@@ -533,10 +624,10 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription("https://evilnotify.windows.com/w/?token=abc"),
                                     PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class);
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -577,54 +668,16 @@ class Push2uAutoConfigurationTest {
                         "https://wns2-ln2p.notify.windows.com/w/?token=abc"
                     }) {
                         assertThat(sender.send(
-                                                subscription(endpoint),
-                                                PushMessage.builder(new byte[1]).build())
-                                        .isDelivered())
+                                        subscription(endpoint),
+                                        PushMessage.builder(new byte[1]).build()))
                                 .as(endpoint)
-                                .isTrue();
+                                .isInstanceOf(PushOutcome.Accepted.class);
                     }
-                    assertThatThrownBy(() -> sender.send(
+                    assertThat(sender.send(
                                     subscription("https://other.example/send/abc"),
                                     PushMessage.builder(new byte[1]).build()))
                             .as("the union is still an allowlist")
-                            .isInstanceOf(EndpointRejectedException.class);
-                });
-    }
-
-    @Test
-    void malformedAllowedOriginFailsTheContextNamingThePropertyAndTheEntry() {
-        // Same contract as record-size: a misconfigured allowlist must fail startup with the YAML
-        // property name, not misbehave at send time. The index comes with it — the starter builds
-        // one rule per entry, so it knows which entry of which list refused, and an operator with a
-        // dozen origins configured does not have to find the bad one by inspection.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-origins=https://push.example.test,http://push.example")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(),
-                                    IllegalArgumentException.class,
-                                    "push2u.allowed-origins[1]:"))
-                            .hasMessageContaining("push2u.allowed-origins[1]:")
-                            .hasMessageContaining("must be https");
-                });
-    }
-
-    @Test
-    void malformedAllowedDomainFailsTheContextNamingThePropertyAndTheEntry() {
-        // The domain field is exactly where a pasted endpoint URL lands, so its refusal is the one
-        // most worth attributing precisely — and it must name push2u.allowed-domains, not the
-        // sibling property whose entries were all fine.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-domains=notify.windows.com,https://push.example")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(),
-                                    IllegalArgumentException.class,
-                                    "push2u.allowed-domains[1]:"))
-                            .hasMessageContaining("push2u.allowed-domains[1]:")
-                            .hasMessageContaining("bare hostname");
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
                 });
     }
 
@@ -634,105 +687,11 @@ class Push2uAutoConfigurationTest {
                 .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
                 .run(context -> {
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
-                });
-    }
-
-    @Test
-    void allowedOriginsPropertyPlusPolicyBeanFailsTheContextNamingBoth() {
-        // Both configured is ambiguous for a security control: silently preferring either would
-        // leave the operator believing the ignored one is in force. The context must fail naming
-        // both sources — including the concrete bean name, since ANY autoconfiguration could have
-        // contributed the EndpointPolicy bean and the operator has to find it to fix it.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-origins=https://push.example.test")
-                .withUserConfiguration(RejectingPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
-                            .hasMessageContaining("EndpointPolicy bean")
-                            .hasMessageContaining("'rejectingPolicy'")
-                            .hasMessageContaining("Configure exactly one");
-                });
-    }
-
-    @Test
-    void theIndexIsCountedWithinItsOwnPropertyWhenBothAreConfigured() {
-        // The case the per-property index was designed for, and the one a single test populating
-        // one list can never fail on: with both lists populated, an index counted across the pair —
-        // or a property name captured once for whichever list ran first — still points somewhere,
-        // just not at the entry the operator has to fix. Asserted in both directions, since a shared
-        // counter is only visibly wrong for the list that is processed second.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues(
-                        "push2u.allowed-origins=https://fcm.googleapis.com,https://push.example.test,"
-                                + "https://updates.push.services.mozilla.com",
-                        "push2u.allowed-domains=good.example,bad..example")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(),
-                                    IllegalArgumentException.class,
-                                    "push2u.allowed-domains[1]:"))
-                            .as("the index is this property's own, not a position in the concatenated pair")
-                            .hasMessageNotContaining("push2u.allowed-origins")
-                            .hasMessageContaining("empty label");
-                });
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues(
-                        "push2u.allowed-origins=https://fcm.googleapis.com,http://push.example",
-                        "push2u.allowed-domains=good.example,notify.windows.com")
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(),
-                                    IllegalArgumentException.class,
-                                    "push2u.allowed-origins[1]:"))
-                            .hasMessageNotContaining("push2u.allowed-domains")
-                            .hasMessageContaining("must be https");
-                });
-    }
-
-    @Test
-    void allowedDomainsPropertyPlusPolicyBeanFailsTheContextNamingBoth() {
-        // The exclusivity is between the properties and a bean, and it holds for the new property
-        // exactly as for the old one — including naming WHICH property is non-empty, which with two
-        // of them is the difference between a fix and a search.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues("push2u.allowed-domains=notify.windows.com")
-                .withUserConfiguration(RejectingPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-domains"))
-                            .hasMessageContaining("EndpointPolicy bean")
-                            .hasMessageContaining("'rejectingPolicy'")
-                            .hasMessageContaining("Configure exactly one");
-                });
-    }
-
-    @Test
-    void bothAllowlistPropertiesPlusPolicyBeanNameBothPropertiesAndTheBean() {
-        // The plural branch of the same refusal. Naming which property collided is the whole point
-        // of that branch, and with both non-empty the answer is "both" — an operator told about one
-        // of them would empty it, restart, and meet the refusal again over the other.
-        keyedRunnerWithoutEndpointPolicy()
-                .withPropertyValues(
-                        "push2u.allowed-origins=https://push.example.test", "push2u.allowed-domains=notify.windows.com")
-                .withUserConfiguration(RejectingPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(firstOfTypeContaining(
-                                    context.getStartupFailure(), IllegalStateException.class, "push2u.allowed-origins"))
-                            .hasMessageContaining("push2u.allowed-domains")
-                            .hasMessageContaining("EndpointPolicy bean")
-                            .hasMessageContaining("'rejectingPolicy'")
-                            .hasMessageContaining("Configure exactly one");
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -748,12 +707,13 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome)
                             .as("the bean's policy is in force, not no-policy")
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -767,12 +727,13 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    assertThatThrownBy(() -> sender.send(
-                                    subscription(),
-                                    PushMessage.builder(new byte[1]).build()))
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome)
                             .as("the bean's policy is in force, not no-policy")
-                            .isInstanceOf(EndpointRejectedException.class)
-                            .hasMessageContaining("application policy");
+                            .isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .contains("application policy");
                 });
     }
 
@@ -787,6 +748,11 @@ class Push2uAutoConfigurationTest {
         // while the operator's mistake may be in the other half. IllegalStateException for the same
         // reason as the neither-case beside it — this is a statement about the state of the
         // configuration, not about a bad value in it.
+        //
+        // The endpoint-policy autoconfiguration is in this context and must not change the answer:
+        // its bean's condition is an allowlist with at least one ENTRY, so an emptied pair
+        // contributes no bean, and this refusal still reaches the operator instead of being
+        // satisfied by a policy the starter never should have built.
         keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=", "push2u.allowed-domains=")
                 .run(context -> {
@@ -823,6 +789,10 @@ class Push2uAutoConfigurationTest {
         // attacker-influenced. The failure has to be actionable in every direction, so it names all
         // three ways to answer — both properties and the bean, including the deliberate opt-out,
         // which exists only as a bean.
+        //
+        // The endpoint-policy autoconfiguration is in this context: with nothing expressed it
+        // contributes no bean, so the sender's obligation refusal still fires rather than being
+        // quietly satisfied by a starter-built policy.
         keyedRunnerWithoutEndpointPolicy().run(context -> {
             assertThat(context).hasFailed();
             assertThat(firstOfTypeContaining(
@@ -832,6 +802,170 @@ class Push2uAutoConfigurationTest {
                     .as("all three ways to decide")
                     .hasMessageContaining("EndpointPolicy bean")
                     .hasMessageContaining("EndpointPolicies.unrestricted()");
+        });
+    }
+
+    @Test
+    void expressedAllowlistWithoutThePolicyAutoConfigurationFailsNamingIt() {
+        // The sender no longer builds the policy from the properties: the allowlist is one
+        // definition, published as a bean so the code accepting subscriptions reads the same rule
+        // the sender enforces, and a second construction inside pushSender would be a second place
+        // that rule is stated. So a context that excludes the policy autoconfiguration while
+        // expressing an allowlist gets a refusal naming what is missing, not a silently rebuilt
+        // policy the rest of the context cannot see.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalStateException.class,
+                                    "Push2uEndpointPolicyAutoConfiguration"))
+                            .hasMessageContaining("push2u.allowed-origins")
+                            .as("the property that is actually non-empty, not a slash-joined pair")
+                            .hasMessageNotContaining("push2u.allowed-domains")
+                            .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
+    void anExpressedDomainsAllowlistWithoutThePolicyAutoConfigurationNamesThatProperty() {
+        // The mirror of the case above, and the reason that branch names a property at all: with
+        // two allowlist keys, a refusal naming the wrong one sends the operator to the half of the
+        // configuration they never wrote. Domains is the half a deployment reaches for when the
+        // service operator documents varying hostnames rather than one origin.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-domains=notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalStateException.class,
+                                    "Push2uEndpointPolicyAutoConfiguration"))
+                            .hasMessageContaining("push2u.allowed-domains is non-empty")
+                            .as("the property that is actually non-empty, not its neighbour")
+                            .hasMessageNotContaining("push2u.allowed-origins")
+                            .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
+    void bothAllowlistPropertiesWithoutThePolicyAutoConfigurationNameBoth() {
+        // The plural branch of the same refusal. Naming which property was expressed is the whole
+        // point of it, so with both non-empty the answer has to be both: an operator told about one
+        // of them would move that one into a bean, restart, and meet the refusal again over the
+        // other.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(Push2uAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test",
+                        "push2u.allowed-domains=notify.windows.com")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalStateException.class,
+                                    "Push2uEndpointPolicyAutoConfiguration"))
+                            .hasMessageContaining("push2u.allowed-origins and push2u.allowed-domains are non-empty")
+                            .hasMessageContaining("no EndpointPolicy bean");
+                });
+    }
+
+    @Test
+    void theContradictionSurvivesExcludingThePolicyAutoConfigurationWithASenderConfigured() {
+        // The configuration that must not boot green: a fully configured sender, a non-empty
+        // allowlist property, an application EndpointPolicy bean, and the policy bean's
+        // auto-configuration excluded — the framework's standard tool, and the natural next move
+        // for an operator who just met the contradiction refusal. The check lives in a class of
+        // its own precisely so this exclusion removes only the bean: the contradiction still fails
+        // the context, naming the property and the bean, instead of the sender quietly enforcing
+        // the application bean while push2u.allowed-origins is read by nothing.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        Push2uAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class,
+                        Push2uStartupChecksAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("push2u.allowed-origins")
+                            .hasMessageContaining("'rejectingPolicy'")
+                            .hasMessageContaining("Configure exactly one");
+                });
+    }
+
+    @Test
+    void excludingTheChecksAutoConfigurationIsTheOneRouteAroundTheContradiction() {
+        // The declared residual, pinned so it stays declared: excluding the auto-configuration
+        // whose name says "startup checks" is a deliberate, visible act of switching those checks
+        // off, and it is the only route by which a non-empty allowlist boots beside an application
+        // bean. The context starts and the sender enforces the application bean. This also pins
+        // that the contradiction has exactly ONE implementation — a second guard left inside
+        // pushSender would fail this context, and two implementations of one refusal is the drift
+        // the whole arrangement exists to prevent.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        Push2uAutoConfiguration.class,
+                        Push2uEndpointPolicyAutoConfiguration.class,
+                        Push2uHealthAutoConfiguration.class))
+                .withPropertyValues(
+                        "push2u.vapid.public-key=" + publicKeyB64,
+                        "push2u.vapid.private-key=" + privateKeyB64,
+                        "push2u.vapid.subject=mailto:admin@example.com",
+                        "push2u.allowed-origins=https://push.example.test")
+                .withUserConfiguration(RejectingPolicyConfiguration.class, StubHttpClientConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    PushSender sender = context.getBean(PushSender.class);
+                    PushOutcome outcome = sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build());
+                    assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
+                    assertThat(((PushOutcome.EndpointRejected) outcome).reason())
+                            .as("the application bean is what the sender enforces")
+                            .contains("application policy");
+                });
+    }
+
+    @Test
+    void theSenderEnforcesTheSameDefinitionThePolicyBeanCarries() {
+        // One rule, one definition: what the registration boundary refuses through the bean and
+        // what the sender refuses on a send must be the same answer, because the sender reads the
+        // bean rather than building a second policy from the same properties. Behaviour, not
+        // identity — the wiring is a security control, so the assertion is that a non-allowlisted
+        // endpoint is actually refused at both points.
+        keyedRunner().withUserConfiguration(StubHttpClientConfiguration.class).run(context -> {
+            assertThat(context).hasSingleBean(EndpointPolicy.class);
+            EndpointPolicy policy = context.getBean(EndpointPolicy.class);
+            URI foreign = URI.create("https://other.example/send/abc");
+            assertThatExceptionOfType(EndpointRejectedException.class)
+                    .as("the boundary's answer, through the bean")
+                    .isThrownBy(() -> policy.validate(foreign));
+            assertThat(context.getBean(PushSender.class)
+                            .send(
+                                    subscription("https://other.example/send/abc"),
+                                    PushMessage.builder(new byte[1]).build()))
+                    .as("the sender's answer, through the same definition")
+                    .isInstanceOf(PushOutcome.EndpointRejected.class);
         });
     }
 
@@ -868,12 +1002,12 @@ class Push2uAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     PushSender sender = context.getBean(PushSender.class);
-                    PushResult result = sender.send(
+                    PushOutcome result = sender.send(
                             subscription("https://169.254.169.254/latest/meta-data"),
                             PushMessage.builder(new byte[1]).build());
-                    assertThat(result.isDelivered())
+                    assertThat(result)
                             .as("a cloud-metadata address is exactly what the opt-out lets through")
-                            .isTrue();
+                            .isInstanceOf(PushOutcome.Accepted.class);
                 });
     }
 
@@ -958,28 +1092,153 @@ class Push2uAutoConfigurationTest {
     }
 
     @Test
-    void healthIndicatorCanBeDisabledByProperty() {
+    void healthIndicatorIsRegisteredByDefault() {
+        // The default this change deliberately does not move: Spring Boot's convention is that a
+        // contributor is on, and neither of the two keys deciding it needs to be written for the
+        // probe to exist. Stated on its own so that a regression in the condition shows up as a
+        // failing default rather than only inside a test about disabling it.
+        keyedRunner().run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+        });
+    }
+
+    @Test
+    void healthIndicatorCanBeDisabledByTheStandardProperty() {
         // The operator's escape hatch for deployments that must not tie health to the signer at
         // all: the indicator is not registered, so no health evaluation can ever reach the signer
-        // backend — while the sender itself stays wired.
-        keyedRunner().withPropertyValues("push2u.health.enabled=false").run(context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
-            assertThat(context).hasSingleBean(PushSender.class);
+        // backend — while the sender itself stays wired. The key is the one every Boot health
+        // contributor answers to, which is the whole point of the condition being the framework's.
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
+    }
+
+    @Test
+    void disablingHealthIndicatorsWholesaleAlsoRemovesThePush2uOne() {
+        // The behaviour the bespoke condition did not have, and the reason for the swap: a
+        // deployment that turns every contributor off by default meant to turn this one off too,
+        // and used to keep a probe that signs on every evaluation — against a remote signer, a real
+        // audited operation per poll that nobody asked for.
+        keyedRunner()
+                .withPropertyValues("management.health.defaults.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                    assertThat(context).hasSingleBean(PushSender.class);
+                });
+    }
+
+    @Test
+    void thePush2uKeyOutranksTheWholesaleDefault() {
+        // The other half of the same contract: off by default, on by name — the shape an operator
+        // uses to enumerate exactly the contributors they want. Without this, "defaults off" would
+        // be a one-way door for this indicator.
+        keyedRunner()
+                .withPropertyValues("management.health.defaults.enabled=false", "management.health.push2u.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                });
+    }
+
+    @Test
+    void theCacheTtlPropertyReachesTheIndicator() {
+        // The tuning moved to the framework's prefix with the switch, so pin that it still arrives:
+        // 0s is the value whose effect is observable from outside, since it disables caching
+        // entirely and every evaluation must then reach the signer. A bound-but-ignored property
+        // would leave the default 30s TTL in place and collapse three probes into one signature.
+        CountingSigner signer = countingSigner();
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.cache-ttl=0s")
+                .withBean(VapidSigner.class, () -> signer)
+                .run(context -> {
+                    Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+                    for (int i = 0; i < 3; i++) {
+                        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+                    }
+                    assertThat(signer.signOperations())
+                            .as("cache-ttl: 0s means every evaluation probes the signer")
+                            .isEqualTo(3);
+                });
+    }
+
+    @Test
+    void theDefaultCacheTtlStillCollapsesRepeatedEvaluations() {
+        // The control for the test above, and the behaviour that must survive the property's move:
+        // with nothing configured the probe result is reused, so a burst of evaluations costs one
+        // signature. Written with no property at all, which is how the default is actually met.
+        CountingSigner signer = countingSigner();
+        keyedRunner().withBean(VapidSigner.class, () -> signer).run(context -> {
+            Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
+            for (int i = 0; i < 3; i++) {
+                assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+            }
+            assertThat(signer.signOperations())
+                    .as("the default TTL is what keeps a polled endpoint off the signer's backend")
+                    .isEqualTo(1);
         });
     }
 
     @Test
     void negativeHealthCacheTtlFailsTheContextNamingTheProperty() {
-        // Same convention as push2u.record-size: the indicator's own validation message cannot
-        // know the YAML property, so the autoconfiguration re-throws with the property prefixed.
-        keyedRunner().withPropertyValues("push2u.health.cache-ttl=-1s").run(context -> {
-            assertThat(context).hasFailed();
-            assertThat(firstOfTypeContaining(
-                            context.getStartupFailure(), IllegalArgumentException.class, "push2u.health.cache-ttl:"))
-                    .hasMessageContaining("push2u.health.cache-ttl:")
-                    .hasMessageContaining("negative");
-        });
+        // Same convention as push2u.max-encrypted-body-bytes: the indicator's own validation
+        // message cannot know the YAML property, so the autoconfiguration re-throws with the
+        // property prefixed — and the property it names has to be the one the operator wrote, which
+        // is now the framework-prefixed key.
+        keyedRunner()
+                .withPropertyValues("management.health.push2u.cache-ttl=-1s")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(firstOfTypeContaining(
+                                    context.getStartupFailure(),
+                                    IllegalArgumentException.class,
+                                    "management.health.push2u.cache-ttl:"))
+                            .hasMessageContaining("management.health.push2u.cache-ttl:")
+                            .hasMessageContaining("negative");
+                });
+    }
+
+    @Test
+    void theContributorRegistersUnderTheNameTheSwitchAndGroupsUse() {
+        // Three things spell this contributor's name and only one of them is written down here: the
+        // condition's argument, the property prefix its tuning binds from, and whatever a
+        // deployment puts in a health group's include or exclude. The registry decides the third by
+        // stripping the standard suffix from the bean name, so the bean method's name is what keeps
+        // all three in step — rename it and the group entry silently names a contributor that no
+        // longer exists, which fails a context that is not this one.
+        keyedRunner()
+                .withConfiguration(AutoConfigurations.of(HealthContributorRegistryAutoConfiguration.class))
+                .run(context -> {
+                    assertThat(context).hasSingleBean(Push2uHealthIndicator.class);
+                    HealthContributorRegistry registry = context.getBean(HealthContributorRegistry.class);
+                    assertThat(registry.getContributor("push2u"))
+                            .as("the registered name must be the string the condition and a group both use")
+                            .isSameAs(context.getBean(Push2uHealthIndicator.class));
+                    assertThat(registry.getContributor("push2uHealthIndicator"))
+                            .as("the bean name is not the contributor name — the suffix is stripped")
+                            .isNull();
+                });
+    }
+
+    @Test
+    void withoutSpringBootHealthOnTheClasspathTheContextStartsWithoutTheIndicator() {
+        // The starter is usable without Actuator, and the condition swap is where that could have
+        // broken: the indicator's factory method now carries an annotation from spring-boot-health
+        // itself. It is safe because the class-level condition is decided before the class is
+        // loaded, so the method is never examined — but nothing in the code says so, and a
+        // NoClassDefFoundError here would only ever appear in a consumer's application.
+        keyedRunner()
+                .withClassLoader(new FilteredClassLoader("org.springframework.boot.health"))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushSender.class);
+                    assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
+                });
     }
 
     @Test
@@ -1053,7 +1312,7 @@ class Push2uAutoConfigurationTest {
         julLogger.setLevel(Level.ALL);
         try {
             keyedRunner()
-                    .withPropertyValues("push2u.health.cache-ttl=0s")
+                    .withPropertyValues("management.health.push2u.cache-ttl=0s")
                     .withUserConfiguration(FailingSignerConfiguration.class)
                     .run(context -> {
                         Push2uHealthIndicator indicator = context.getBean(Push2uHealthIndicator.class);
@@ -1087,6 +1346,42 @@ class Push2uAutoConfigurationTest {
     private ApplicationContextRunner keyedRunner() {
         return keyedRunnerWithoutEndpointPolicy()
                 .withPropertyValues("push2u.allowed-origins=https://push.example.test");
+    }
+
+    /**
+     * A context whose allowlist admits two push-service origins, for the cases where more than one audience is the
+     * point — the token cache is keyed by audience, so a second origin is what makes its bound observable.
+     */
+    private ApplicationContextRunner twoOriginRunner() {
+        return keyedRunnerWithoutEndpointPolicy()
+                .withPropertyValues("push2u.allowed-origins=https://push.example.test,https://other.push.example.test");
+    }
+
+    /** Two sends to one origin: the second is the one a reused token serves. */
+    private static void sendTwice(PushSender sender) {
+        for (int i = 0; i < 2; i++) {
+            assertThat(sender.send(
+                            subscription(), PushMessage.builder(new byte[1]).build()))
+                    .isInstanceOf(PushOutcome.Accepted.class);
+        }
+    }
+
+    /** Four sends alternating between two origins — two audiences, each visited twice. */
+    private static void alternateBetweenTwoOrigins(PushSender sender) {
+        for (int i = 0; i < 2; i++) {
+            for (String endpoint :
+                    List.of("https://push.example.test/send/abc", "https://other.push.example.test/send/abc")) {
+                assertThat(sender.send(
+                                subscription(endpoint),
+                                PushMessage.builder(new byte[1]).build()))
+                        .isInstanceOf(PushOutcome.Accepted.class);
+            }
+        }
+    }
+
+    /** A real local signer that counts its signatures, and can be failed for the health-probe half of a test. */
+    private static CountingSigner countingSigner() {
+        return new CountingSigner(new LocalEcVapidSigner(VapidKeys.fromBase64(publicKeyB64, privateKeyB64)));
     }
 
     /** Keys and subject only — for the cases that supply the endpoint policy themselves, or deliberately omit it. */
@@ -1147,6 +1442,52 @@ class Push2uAutoConfigurationTest {
         @Bean
         EndpointPolicy unrestrictedPolicy() {
             return EndpointPolicies.unrestricted();
+        }
+    }
+
+    /**
+     * A signer that counts the signatures it is asked for — the only way to observe from outside whether a token was
+     * reused, since a cache hit calls {@code publicKey()} but never {@code sign()}. It can also be failed on demand,
+     * for the health-probe half of the leak test.
+     */
+    private static final class CountingSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final AtomicInteger signOperations = new AtomicInteger();
+        private final AtomicBoolean failing = new AtomicBoolean();
+
+        CountingSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            signOperations.incrementAndGet();
+            if (failing.get()) {
+                throw new IllegalStateException("signer backend unavailable");
+            }
+            return delegate.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+
+        int signOperations() {
+            return signOperations.get();
+        }
+    }
+
+    /** Answers every POST with 201 and keeps the {@code Authorization} header each send presented. */
+    private static final class RecordingTransport implements PushHttpClient {
+
+        private final List<String> authorizations = new CopyOnWriteArrayList<>();
+
+        @Override
+        public PushResponse post(URI endpoint, Map<String, String> headers, byte[] body) {
+            authorizations.add(headers.get("Authorization"));
+            return new PushResponse(201, Map.of());
         }
     }
 

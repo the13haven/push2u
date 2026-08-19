@@ -5,6 +5,11 @@ the push services, so it is created once, outside the application, and handed to
 configuration. This is that one-time recipe — [`README.md` → VAPID keys](../README.md#vapid-keys)
 covers the pair's lifecycle and where its two halves go afterwards.
 
+**"Once" is meant literally.** Every subscription a browser creates is bound to the public key it
+was handed, so the day a second pair has to replace this one is a migration run beside the first
+rather than a swap: [`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) is the runbook for it, and the
+step it starts from is the recipe below.
+
 ## What has to come out
 
 Any P-256 generator will do, as long as it emits the encodings used here: the public key as the
@@ -69,9 +74,9 @@ hundred. So "strip the sign byte" is wrong half the time, and "strip but do not 
 once in two hundred — the worse of the two, because the key looks perfectly fine right up to the
 point where a signature does not verify. That second defect is exactly the one
 `nl.martijndwars:web-push`'s own generator has (see
-[`MIGRATION.md`](MIGRATION.md#vapid-key-encoding)); copying the block whole avoids both. push2u's
-own test suite runs this block out of this file, so a snippet that stops printing a usable pair
-fails the build.
+[`MIGRATION-FROM-WEB-PUSH.md`](MIGRATION-FROM-WEB-PUSH.md#vapid-key-encoding)); copying the block
+whole avoids both. push2u's own test suite runs this block out of this file, so a snippet that stops
+printing a usable pair fails the build.
 
 ## With npm `web-push`
 
