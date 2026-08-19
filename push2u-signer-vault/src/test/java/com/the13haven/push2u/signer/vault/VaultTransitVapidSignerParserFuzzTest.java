@@ -202,10 +202,10 @@ class VaultTransitVapidSignerParserFuzzTest {
 
     /**
      * The production echo cap ({@code ERROR_ECHO_LIMIT}) holds only if <em>every</em> throw site routes the body
-     * through {@code abbreviated}. A sentinel planted ~30k characters in must never surface anywhere in the throwable
-     * chain, and no message may exceed the cap plus headroom — for the pristine body and for its mutants alike.
-     * Truncation/deletion are sampled on a fixed stride here (the body is 30k+ characters; exhaustive mutation of it
-     * would dominate the build for no extra coverage), structural replacement stays exhaustive.
+     * through {@code logSafeExcerpt}. A sentinel planted ~30k characters in must never surface anywhere in the
+     * throwable chain, and no message may exceed the cap plus headroom — for the pristine body and for its mutants
+     * alike. Truncation/deletion are sampled on a fixed stride here (the body is 30k+ characters; exhaustive mutation
+     * of it would dominate the build for no extra coverage), structural replacement stays exhaustive.
      */
     @Test
     void anOversizedBodyStaysOutOfExceptionMessagesEvenUnderMutation() {

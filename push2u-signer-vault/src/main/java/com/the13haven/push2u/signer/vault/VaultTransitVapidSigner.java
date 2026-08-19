@@ -25,6 +25,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -180,8 +181,35 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * a format complaint would.
      */
     private static final Pattern VAULT_SIGNATURE = Pattern.compile("vault:v(\\d+):([A-Za-z0-9\\-_]*={0,2})");
-    /** Cap for response text echoed into exception messages — enough context, log-safe size. */
+    /**
+     * Cap for response text echoed into exception messages — enough context, log-safe size. It bounds the escaped
+     * excerpt including its truncation marker, so no message carries more than this many characters of a response
+     * however many of them had to be escaped.
+     */
     private static final int ERROR_ECHO_LIMIT = 2048;
+    /** Width of one escaped character in an echoed excerpt: a backslash, a {@code u} and four hex digits. */
+    private static final int ESCAPE_LENGTH = 6;
+    /** {@code U+2028}, a line break by the Unicode rules although its category is punctuation, not control. */
+    private static final int LINE_SEPARATOR = 0x2028;
+    /** {@code U+2029}, the paragraph counterpart of {@link #LINE_SEPARATOR} and a line break for the same reason. */
+    private static final int PARAGRAPH_SEPARATOR = 0x2029;
+    /**
+     * {@code U+061C}, the Arabic letter mark: a bidirectional mark like the two below, apart from them in the code
+     * space alone.
+     */
+    private static final int BIDI_ARABIC_MARK = 0x061C;
+    /** {@code U+200E} and {@code U+200F}, the left-to-right and right-to-left marks. */
+    private static final int BIDI_MARK_FIRST = 0x200E;
+
+    private static final int BIDI_MARK_LAST = 0x200F;
+    /** {@code U+202A}-{@code U+202E}, the bidirectional embeddings, the override pair and their terminator. */
+    private static final int BIDI_EMBEDDING_FIRST = 0x202A;
+
+    private static final int BIDI_EMBEDDING_LAST = 0x202E;
+    /** {@code U+2066}-{@code U+2069}, the bidirectional isolates and their terminator. */
+    private static final int BIDI_ISOLATE_FIRST = 0x2066;
+
+    private static final int BIDI_ISOLATE_LAST = 0x2069;
 
     private static final int UNCOMPRESSED_LENGTH = 65;
     private static final int COORDINATE_LENGTH = 32;
@@ -929,9 +957,10 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static void requireP256KeyType(String json) {
         String type = extractKeyType(json);
         if (!REQUIRED_KEY_TYPE.equals(type) && !MANAGED_KEY_TYPE.equals(type)) {
-            throw new PushCryptoException("Vault Transit key type is '" + abbreviated(type) + "', but VAPID requires '"
-                    + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
-                    + "') — RFC 8292 mandates ES256 over NIST P-256");
+            throw new PushCryptoException(
+                    "Vault Transit key type is '" + logSafeExcerpt(type) + "', but VAPID requires '"
+                            + REQUIRED_KEY_TYPE + "' (or Vault Enterprise's '" + MANAGED_KEY_TYPE
+                            + "') — RFC 8292 mandates ES256 over NIST P-256");
         }
     }
 
@@ -1083,7 +1112,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
         int valueStart = directMemberValueStart(json, dataOpen, "signature");
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault response has no 'signature' field: " + abbreviated(json));
+            throw new PushCryptoException("Vault response has no 'signature' field: " + logSafeExcerpt(json));
         }
         return stringValueAt(json, valueStart, "signature");
     }
@@ -1107,7 +1136,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int dataOpen = directMemberObjectStart(json, rootObjectStart(json), "data");
         int valueStart = directMemberValueStart(json, dataOpen, "latest_version");
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault key response has no 'latest_version' field: " + abbreviated(json));
+            throw new PushCryptoException("Vault key response has no 'latest_version' field: " + logSafeExcerpt(json));
         }
         int start = valueStart;
         while (start < json.length() && Character.isWhitespace(json.charAt(start))) {
@@ -1119,7 +1148,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         }
         if (end == start || !endsMember(json, end)) {
             throw new PushCryptoException(
-                    "malformed Vault 'latest_version' field — expected a whole number: " + abbreviated(json));
+                    "malformed Vault 'latest_version' field — expected a whole number: " + logSafeExcerpt(json));
         }
         // Bounded BEFORE Integer.parseInt sees it: parseInt's NumberFormatException carries the
         // ENTIRE digit run in its message, and attaching that as a cause would put a run as long
@@ -1129,14 +1158,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         // ASCII digits (at most 999,999,999) are guaranteed to parse, so the catch is gone.
         if (end - start > 9) {
             throw new PushCryptoException(
-                    "malformed Vault 'latest_version' field — implausibly long number: " + abbreviated(json));
+                    "malformed Vault 'latest_version' field — implausibly long number: " + logSafeExcerpt(json));
         }
         int version = Integer.parseInt(json.substring(start, end));
         if (version < 1) {
             // Transit numbers key versions from 1; a 0 would be pinned into every sign request and
             // rejected by Vault on each send, far from the response that caused it.
             throw new PushCryptoException("Vault reported key version " + version
-                    + ", but Transit key versions start at 1: " + abbreviated(json));
+                    + ", but Transit key versions start at 1: " + logSafeExcerpt(json));
         }
         return version;
     }
@@ -1166,7 +1195,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int valueStart = directMemberValueStart(json, dataOpen, "type");
         if (valueStart < 0) {
             throw new PushCryptoException("Vault key response has no 'type' field, so the key cannot be "
-                    + "confirmed as '" + REQUIRED_KEY_TYPE + "': " + abbreviated(json));
+                    + "confirmed as '" + REQUIRED_KEY_TYPE + "': " + logSafeExcerpt(json));
         }
         return stringValueAt(json, valueStart, "type");
     }
@@ -1188,22 +1217,22 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         int versionValue = directMemberValueStart(json, keysOpen, Integer.toString(version));
         if (versionValue < 0) {
             throw new PushCryptoException(
-                    "Vault key response has no entry for key version " + version + ": " + abbreviated(json));
+                    "Vault key response has no entry for key version " + version + ": " + logSafeExcerpt(json));
         }
         int versionOpen = versionValue;
         while (versionOpen < json.length() && Character.isWhitespace(json.charAt(versionOpen))) {
             versionOpen++;
         }
         if (versionOpen >= json.length() || json.charAt(versionOpen) != '{') {
-            throw new PushCryptoException(
-                    "Vault key response entry for key version " + version + " is not an object: " + abbreviated(json));
+            throw new PushCryptoException("Vault key response entry for key version " + version + " is not an object: "
+                    + logSafeExcerpt(json));
         }
         String versionObject = json.substring(versionOpen, matchingCloseBrace(json, versionOpen) + 1);
 
         int pemStart = directMemberValueStart(versionObject, 0, "public_key");
         if (pemStart < 0) {
             throw new PushCryptoException(
-                    "Vault key response has no 'public_key' for key version " + version + ": " + abbreviated(json));
+                    "Vault key response has no 'public_key' for key version " + version + ": " + logSafeExcerpt(json));
         }
         return stringValueAt(versionObject, pemStart, "public_key").replace("\\n", "\n");
     }
@@ -1215,7 +1244,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             i++;
         }
         if (i >= json.length() || json.charAt(i) != '{') {
-            throw new PushCryptoException("Vault response is not a JSON object: " + abbreviated(json));
+            throw new PushCryptoException("Vault response is not a JSON object: " + logSafeExcerpt(json));
         }
         return i;
     }
@@ -1228,14 +1257,15 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static int directMemberObjectStart(String json, int objectOpen, String name) {
         int valueStart = directMemberValueStart(json, objectOpen, name);
         if (valueStart < 0) {
-            throw new PushCryptoException("Vault key response has no '" + name + "' object: " + abbreviated(json));
+            throw new PushCryptoException("Vault key response has no '" + name + "' object: " + logSafeExcerpt(json));
         }
         int cursor = valueStart;
         while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
             cursor++;
         }
         if (cursor >= json.length() || json.charAt(cursor) != '{') {
-            throw new PushCryptoException("Vault key response '" + name + "' is not an object: " + abbreviated(json));
+            throw new PushCryptoException(
+                    "Vault key response '" + name + "' is not an object: " + logSafeExcerpt(json));
         }
         return cursor;
     }
@@ -1299,14 +1329,14 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             open++;
         }
         if (open >= json.length() || json.charAt(open) != '"') {
-            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + abbreviated(json));
+            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + logSafeExcerpt(json));
         }
         int close = open + 1;
         while (close < json.length() && json.charAt(close) != '"') {
             close += json.charAt(close) == '\\' ? 2 : 1;
         }
         if (close >= json.length()) {
-            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + abbreviated(json));
+            throw new PushCryptoException("malformed Vault '" + fieldName + "' field: " + logSafeExcerpt(json));
         }
         return json.substring(open + 1, close);
     }
@@ -1337,7 +1367,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
                 }
             }
         }
-        throw new PushCryptoException("malformed Vault key response: unterminated object: " + abbreviated(json));
+        throw new PushCryptoException("malformed Vault key response: unterminated object: " + logSafeExcerpt(json));
     }
 
     /**
@@ -1418,15 +1448,88 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Response text as echoed into exception messages, truncated to {@link #ERROR_ECHO_LIMIT} characters with an
-     * explicit marker. The default transport caps responses at 1 MiB, but a megabyte — or whatever a custom
-     * {@link VaultHttpTransport} lets through, where the cap holds only by contract — is far too heavy for a log line.
+     * Response text as echoed into exception messages: one line, escaped, and bounded. What arrives here is whatever
+     * answered on the Vault address — an intercepting proxy, or a service that is not Vault at all, can put anything in
+     * a body, and the message built from it is handed to a logger. So two things are done to it, in this order.
+     *
+     * <p>First, every character that could end the line or steer a terminal is replaced by a printable form — a
+     * backslash, a {@code u}, and four hex digits: the ISO control characters, which covers the carriage return and
+     * line feed that would otherwise forge a second log entry, the tab, the escape that opens an ANSI sequence, the
+     * NUL, and the C1 range with its next-line character — plus the Unicode line and paragraph separators, which are
+     * not control characters but do end a line for a reader that follows the Unicode rules, and the bidirectional
+     * formatting characters, which end no line at all but reorder the words printed after them.
+     *
+     * <p>Second, the bound is applied to the <em>escaped</em> text, so a body of nothing but control characters cannot
+     * inflate six-fold past it, and the truncation marker is counted inside the bound rather than appended past it: the
+     * returned string is never longer than {@link #ERROR_ECHO_LIMIT} characters. The default transport caps responses
+     * at 1 MiB, but a megabyte — or whatever a custom {@link VaultHttpTransport} lets through, where the cap holds only
+     * by contract — is far too heavy for a log line. The count the marker names is the response's own length, before
+     * escaping.
+     *
+     * <p>The marker's room is reserved only once it is known to be needed. Whether a response is truncated is a
+     * question about the escaped text, and the escaped text is what the first pass produces: a body that fits whole is
+     * returned whole, and only a body that does not is escaped a second time against the smaller bound. Reserving the
+     * room up front instead would spend it on every response, and a body escaping to exactly the cap — which fits —
+     * would come back cut and labelled truncated, which is a false statement about what Vault answered.
+     *
+     * <p>Package-private for the excerpt unit tests.
      */
-    private static String abbreviated(String text) {
-        if (text.length() <= ERROR_ECHO_LIMIT) {
-            return text;
+    static String logSafeExcerpt(String text) {
+        StringBuilder excerpt = new StringBuilder(Math.min(text.length(), ERROR_ECHO_LIMIT));
+        if (!escapeWithin(text, ERROR_ECHO_LIMIT, excerpt)) {
+            return excerpt.toString();
         }
-        return text.substring(0, ERROR_ECHO_LIMIT) + "... [truncated, " + text.length() + " chars total]";
+        String marker = "... [truncated, " + text.length() + " chars total]";
+        excerpt.setLength(0);
+        escapeWithin(text, ERROR_ECHO_LIMIT - marker.length(), excerpt);
+        return excerpt.append(marker).toString();
+    }
+
+    /**
+     * Escapes as much of {@code text} into {@code excerpt} as {@code budget} characters hold, and answers whether
+     * anything was left behind. A code point is weighed whole and appended whole, so a cut lands on neither half of an
+     * escape nor half of a surrogate pair.
+     */
+    private static boolean escapeWithin(String text, int budget, StringBuilder excerpt) {
+        int index = 0;
+        while (index < text.length()) {
+            int codePoint = text.codePointAt(index);
+            int width = Character.charCount(codePoint);
+            boolean escape = isUnsafeInALogLine(codePoint);
+            if (excerpt.length() + (escape ? ESCAPE_LENGTH : width) > budget) {
+                return true;
+            }
+            if (escape) {
+                excerpt.append("\\u").append(HexFormat.of().toHexDigits((char) codePoint));
+            } else {
+                excerpt.appendCodePoint(codePoint);
+            }
+            index += width;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code codePoint} must not reach a log line as itself. {@link Character#isISOControl} is the whole of the
+     * C0 and C1 ranges — the line feed, the carriage return, the tab, the escape, the NUL and the next-line character
+     * at {@code U+0085} among them. The two separators named beside it are ordinary punctuation by category and would
+     * pass any control-character test, yet they end a line wherever the Unicode line-breaking rules are honoured.
+     *
+     * <p>The bidirectional formatting characters are here for the same reason one step further on — all twelve of them,
+     * since the class is what the javadoc promises and one left out is one that still reorders. They end nothing, but
+     * they reorder what a reader sees. An override left open in an echoed body reverses the text that follows it —
+     * including the fixed words this message appends after the excerpt, which are the part an operator trusts because
+     * no response could have written them. Any viewer that applies the Unicode bidirectional algorithm renders it that
+     * way, and a log read in a browser is read by one.
+     */
+    private static boolean isUnsafeInALogLine(int codePoint) {
+        return Character.isISOControl(codePoint)
+                || codePoint == LINE_SEPARATOR
+                || codePoint == PARAGRAPH_SEPARATOR
+                || codePoint == BIDI_ARABIC_MARK
+                || (codePoint >= BIDI_MARK_FIRST && codePoint <= BIDI_MARK_LAST)
+                || (codePoint >= BIDI_EMBEDDING_FIRST && codePoint <= BIDI_EMBEDDING_LAST)
+                || (codePoint >= BIDI_ISOLATE_FIRST && codePoint <= BIDI_ISOLATE_LAST);
     }
 
     /**
@@ -1447,12 +1550,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         if (custodianCannotServeNow(status)) {
             return new VapidSignerUnavailableException(
                     operation + " must wait — Vault cannot serve it now: HTTP " + status + " — "
-                            + abbreviated(response.body()),
+                            + logSafeExcerpt(response.body()),
                     status,
                     response.retryAfter().orElse(null),
                     null);
         }
-        return new PushCryptoException(operation + " failed: HTTP " + status + " — " + abbreviated(response.body()));
+        return new PushCryptoException(operation + " failed: HTTP " + status + " — " + logSafeExcerpt(response.body()));
     }
 
     /**
@@ -1504,7 +1607,8 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * <p>The offending value is not echoed, for the same reason {@link #sign} keeps a corrupt payload out of its
      * message — and more so here: a value that failed the signature shape is, by definition, not known to be a
      * signature, and Vault dresses wrapped tokens and Transit ciphertext in the same {@code vault:v<n>:} clothing. The
-     * mismatch message carries only the two version numbers ({@link #abbreviated} keeps a nonsense digit run log-safe).
+     * mismatch message carries only the two version numbers ({@link #logSafeExcerpt} keeps a nonsense digit run
+     * log-safe).
      */
     private static String stripVaultPrefix(String marshalled, @Nullable Integer keyVersion) {
         Matcher signature = VAULT_SIGNATURE.matcher(marshalled);
@@ -1512,7 +1616,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             throw new PushCryptoException("unexpected Vault signature format: expected 'vault:v<version>:<base64url>'");
         }
         if (keyVersion != null && !signature.group(1).equals(Integer.toString(keyVersion))) {
-            throw new PushCryptoException("Vault Transit signed with key version " + abbreviated(signature.group(1))
+            throw new PushCryptoException("Vault Transit signed with key version " + logSafeExcerpt(signature.group(1))
                     + ", but this signer is pinned to key version " + keyVersion + " — the advertised VAPID public"
                     + " key belongs to the pinned version, so this signature could never verify against it");
         }
