@@ -59,6 +59,9 @@ class VaultTransitVapidSignerLogSafeExcerptTest {
     /** {@code U+200F}, the right-to-left mark. */
     private static final String RLM = Character.toString(0x200F);
 
+    /** {@code U+061C}, the Arabic letter mark: the third mark, and the one that sits away from the other two. */
+    private static final String ALM = Character.toString(0x061C);
+
     private static final String TOKEN = "s.push2u-test-vault-token";
     private static final URI VAULT = URI.create("https://vault.test:8200");
 
@@ -104,10 +107,12 @@ class VaultTransitVapidSignerLogSafeExcerptTest {
         // These end no line and steer no terminal, so every test above would let them through. What
         // they do instead is reorder what follows them — and what follows the excerpt is the fixed
         // wording of the message, the part an operator trusts precisely because no response wrote
-        // it. The mark, the override and the isolate stand for their three ranges.
+        // it. The three marks are here by name because one of them sits far from the other
+        // two in the code space, and the override and the isolate stand for their ranges.
         assertThat(VaultTransitVapidSigner.logSafeExcerpt(RLO + "forged")).isEqualTo("\\u202eforged");
         assertThat(VaultTransitVapidSigner.logSafeExcerpt(LRI + "forged")).isEqualTo("\\u2066forged");
         assertThat(VaultTransitVapidSigner.logSafeExcerpt(RLM + "forged")).isEqualTo("\\u200fforged");
+        assertThat(VaultTransitVapidSigner.logSafeExcerpt(ALM + "forged")).isEqualTo("\\u061cforged");
     }
 
     @Test

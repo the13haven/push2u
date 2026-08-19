@@ -193,7 +193,12 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final int LINE_SEPARATOR = 0x2028;
     /** {@code U+2029}, the paragraph counterpart of {@link #LINE_SEPARATOR} and a line break for the same reason. */
     private static final int PARAGRAPH_SEPARATOR = 0x2029;
-    /** {@code U+200E} and {@code U+200F}, the two bidirectional marks. */
+    /**
+     * {@code U+061C}, the Arabic letter mark: a bidirectional mark like the two below, apart from them in the code
+     * space alone.
+     */
+    private static final int BIDI_ARABIC_MARK = 0x061C;
+    /** {@code U+200E} and {@code U+200F}, the left-to-right and right-to-left marks. */
     private static final int BIDI_MARK_FIRST = 0x200E;
 
     private static final int BIDI_MARK_LAST = 0x200F;
@@ -1493,8 +1498,9 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * at {@code U+0085} among them. The two separators named beside it are ordinary punctuation by category and would
      * pass any control-character test, yet they end a line wherever the Unicode line-breaking rules are honoured.
      *
-     * <p>The bidirectional formatting characters are here for the same reason one step further on: they end nothing,
-     * but they reorder what a reader sees. An override left open in an echoed body reverses the text that follows it —
+     * <p>The bidirectional formatting characters are here for the same reason one step further on — all twelve of them,
+     * since the class is what the javadoc promises and one left out is one that still reorders. They end nothing, but
+     * they reorder what a reader sees. An override left open in an echoed body reverses the text that follows it —
      * including the fixed words this message appends after the excerpt, which are the part an operator trusts because
      * no response could have written them. Any viewer that applies the Unicode bidirectional algorithm renders it that
      * way, and a log read in a browser is read by one.
@@ -1503,6 +1509,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
         return Character.isISOControl(codePoint)
                 || codePoint == LINE_SEPARATOR
                 || codePoint == PARAGRAPH_SEPARATOR
+                || codePoint == BIDI_ARABIC_MARK
                 || (codePoint >= BIDI_MARK_FIRST && codePoint <= BIDI_MARK_LAST)
                 || (codePoint >= BIDI_EMBEDDING_FIRST && codePoint <= BIDI_EMBEDDING_LAST)
                 || (codePoint >= BIDI_ISOLATE_FIRST && codePoint <= BIDI_ISOLATE_LAST);
