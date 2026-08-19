@@ -247,17 +247,28 @@ predecessor because the question it answers was open when the previous table was
 | Encrypt one record whole | 606.5 → 639.5 µs | 290.2 → 295.0 µs |
 | **`PushSender.send`, signing every time** | **726.6 → 753.2 µs** | **372.8 → 374.0 µs** |
 
-**† marks a row whose code carries no commit between the two recordings.** Every type those five
-rows reach — `EcKeys`, `Hkdf`, `Origin`, `P256PublicKeys`, `Algorithms` and `Jca` — is
-byte-identical across the interval, so they measure the same instructions twice, and whatever they
-moved by is what this harness reproduces at on this machine rather than a change in anything. That
-is what makes them the scale the rest of the table is read against, and it is why they are worth
-keeping in a comparison that has no other calibration.
+**† marks a row whose library code carries no commit between the two recordings.** Every type those
+five rows execute — `EcKeys`, `Hkdf`, `Origin`, `P256PublicKeys`, `Algorithms` and `Jca` — is
+byte-identical across the interval, so whatever they moved by is what this harness reproduces at on
+this machine rather than a change in anything of ours. That is the scale the rest of the table is
+read against, and it is why they are worth keeping in a comparison that has no other calibration.
+
+**The two columns are calibrated to different precision, and the environment lines above say why.**
+The JDK column is exact: the same JVM, and four of the five marked rows spend nearly all of their
+time inside a provider that shipped with it. The BouncyCastle column is not, because bcprov itself
+moved 1.85 → 1.85.2 inside the interval, and `decode`, HKDF, the key pair and ECDH execute almost
+entirely inside it. That column therefore calibrates only up to a patch bump of the provider — but
+up to the same bump on both sides, since the `send` row it is read against runs through exactly the
+same provider, so the comparison still sets like against like.
 
 On the JDK provider the marked rows moved by −3.8 %, +3.8 %, +4.9 %, +5.0 % and +8.3 %, and the
 `send` row by +3.7 %. On BouncyCastle they moved by −3.8 %, −4.2 %, −1.1 %, −1.0 % and +2.4 %, and
 `send` by +0.3 %. In both columns the `send` row moved less than any of them, the negative ones
-included: **on both providers the send path moved less than code that did not change at all.**
+included, though on the JDK provider only just — +3.7 % against ECDH's +3.8 % is a tenth of a
+percentage point, far below anything this document claims to resolve. **On neither provider did the
+send path move more than code that did not change at all**, and that is the whole of what the table
+supports.
+
 Nothing here supports a claim that the send path became slower, and nothing supports one that it
 became faster either: what the token cache bought is not in this table, because both of its columns
 are sends that sign. That figure is the cached row of the recording above, which has nothing to be
