@@ -23,6 +23,7 @@ import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.EndpointRule;
 import com.the13haven.push2u.PushMessage;
+import com.the13haven.push2u.PushOutcome;
 import com.the13haven.push2u.PushResponse;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.Subscription;
@@ -79,6 +80,18 @@ class VaultHotPathMeasurement {
                         new VaultToken(ROOT_TOKEN))
                 .allowInsecureHttp()
                 .build();
+        // The deferred mode reads Vault on first use rather than at construction. Both modes end
+        // up serving the same retained pair through one volatile read, and the row below is here
+        // to say so rather than to leave it assumed. publicKey() is itself a first use, so the
+        // single fetch is paid by the first call of that step's warm-up and falls outside every
+        // measured repetition — which is what the row is meant to report, the retained read and
+        // not the fetch.
+        VapidSigner deferredSigner = VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
+                        URI.create(vault.getHttpHostAddress()),
+                        new TransitKeyName(KEY_NAME),
+                        new VaultToken(ROOT_TOKEN))
+                .allowInsecureHttp()
+                .build();
 
         byte[] signingInput = "push2u hot path measurement".getBytes(StandardCharsets.US_ASCII);
 
@@ -88,24 +101,46 @@ class VaultHotPathMeasurement {
                 Subscription.fromBase64(endpoint.toString(), generateUaPublicKey(), "BTBZMqHH6r4Tts7J_aSIgg");
         PushMessage message =
                 PushMessage.builder("hot path".getBytes(StandardCharsets.UTF_8)).build();
-        PushSender sender = PushSender.builder(signer, "mailto:push@example.com", policy)
+        // The default sender signs once per push-service origin and reuses the token; the second
+        // signs on every send, which is what every send did before the cache existed. Against a
+        // remote custodian that is the difference between a Transit round trip on the message's
+        // critical path and none at all, so the two are measured rather than reasoned about.
+        PushSender reusingSender = PushSender.builder(signer, "mailto:push@example.com", policy)
                 .httpClient((uri, headers, body) -> new PushResponse(201, Map.of()))
+                .build();
+        PushSender signingSender = PushSender.builder(signer, "mailto:push@example.com", policy)
+                .httpClient((uri, headers, body) -> new PushResponse(201, Map.of()))
+                .jwtReuse(false)
                 .build();
 
         List<Result> results = new ArrayList<>();
-        results.add(
-                measure("VaultTransitVapidSigner.publicKey() — field clone", () -> sink(signer.publicKey().length)));
+        results.add(measure("VaultTransitVapidSigner.publicKey() — eager mode", () -> sink(signer.publicKey().length)));
         results.add(measure(
                 "VaultTransitVapidSigner.sign() — Transit round trip", () -> sink(signer.sign(signingInput).length)));
         results.add(measure(
-                "PushSender.send with Vault, no push-service network",
-                () -> sink(sender.send(subscription, message).statusCode())));
+                "VaultTransitVapidSigner.publicKey() — deferred mode", () -> sink(deferredSigner.publicKey().length)));
+        results.add(measure(
+                "PushSender.send with Vault, cached token", () -> accepted(reusingSender.send(subscription, message))));
+        results.add(measure(
+                "PushSender.send with Vault, signing every time",
+                () -> accepted(signingSender.send(subscription, message))));
 
         report(results);
     }
 
     private long sink(long value) {
         return value;
+    }
+
+    /**
+     * The status of an accepted outcome, refusing anything else: a send that never reached the transport is a different
+     * and much cheaper path, and measuring it under the send's name is the one failure worth stopping for.
+     */
+    private static long accepted(PushOutcome outcome) {
+        if (outcome instanceof PushOutcome.Accepted acceptedOutcome) {
+            return acceptedOutcome.statusCode();
+        }
+        throw new IllegalStateException("the measured send did not reach the transport: " + outcome);
     }
 
     /** A real on-curve P-256 point in the X9.62 uncompressed form the subscription constructor requires. */
@@ -165,10 +200,10 @@ class VaultHotPathMeasurement {
         out.append(System.lineSeparator())
                 .append("=== push2u: Vault Transit hot path (container on this machine) ===")
                 .append(System.lineSeparator())
-                .append(String.format("%-52s %14s %14s%n", "step", "median", "best"));
+                .append(String.format("%-58s %14s %14s%n", "step", "median", "best"));
         for (Result result : results) {
             out.append(
-                    String.format("%-52s %14s %14s%n", result.name(), format(result.median()), format(result.best())));
+                    String.format("%-58s %14s %14s%n", result.name(), format(result.median()), format(result.best())));
         }
         out.append(System.lineSeparator())
                 .append("JVM: ")

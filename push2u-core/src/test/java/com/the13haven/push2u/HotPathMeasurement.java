@@ -97,6 +97,17 @@ class HotPathMeasurement {
                 null,
                 measure(() -> sink(Vapid.signingInput(audience, TestVectors.VAPID_SUBJECT, expiry)
                         .length())));
+        // The pre-flight a caller may ask before rendering a notification. It reads a length and
+        // compares it, touches no provider, and is measured here so that the advice to ask it is
+        // backed by what asking costs.
+        PushSender preflight = sender(VapidKeys.fromBase64(TestVectors.AS_PUBLIC, TestVectors.AS_PRIVATE), null, true);
+        byte[] payload = TestVectors.PLAINTEXT.getBytes(StandardCharsets.UTF_8);
+        record(
+                table,
+                "PushSender.assessPayloadSize",
+                null,
+                measure(() -> sink(
+                        preflight.assessPayloadSize(payload) instanceof PayloadSizeAssessment.WithinLimit ? 1 : 0)));
     }
 
     private void measureProvider(Named named, Map<String, Map<String, Double>> table) {
@@ -125,9 +136,13 @@ class HotPathMeasurement {
         Subscription subscription =
                 Subscription.fromBase64(ENDPOINT.toString(), TestVectors.UA_PUBLIC, TestVectors.AUTH_SECRET);
         PushMessage message = PushMessage.builder(plaintext).build();
-        PushSender.Builder builder = PushSender.builder(vapidKeys, TestVectors.VAPID_SUBJECT, standardPolicy())
-                .httpClient((uri, headers, body) -> new PushResponse(201, Map.of()));
-        PushSender sender = (provider == null ? builder : builder.cryptoProvider(provider)).build();
+        // Two senders, because a send no longer costs one thing. The first is the default: one
+        // signed token per push-service origin, reused until it nears expiry, so all but the first
+        // call in a measurement serves the cache — the steady state a deployment runs in. The
+        // second signs every time, which is both jwtReuse(false) and what every send cost before
+        // the cache existed, so the two rows are the comparison rather than a subtraction.
+        PushSender reusingSender = sender(vapidKeys, provider, true);
+        PushSender signingSender = sender(vapidKeys, provider, false);
 
         String audience = Origin.serialize(ENDPOINT);
         Instant expiry = Instant.now().plus(Duration.ofHours(12));
@@ -219,11 +234,43 @@ class HotPathMeasurement {
                 label,
                 measure(() -> sink(Vapid.authorizationHeader(signer, audience, TestVectors.VAPID_SUBJECT, expiry)
                         .length())));
+        // What a cache hit pays before the map is even consulted: the signer's advertised key,
+        // read fresh on every lookup by contract and encoded exactly as the header's k parameter
+        // is, because that string is the second half of the cache key.
         record(
                 table,
-                "PushSender.send without the network",
+                "Token cache key (publicKey + base64url)",
                 label,
-                measure(() -> sink(sender.send(subscription, message).statusCode())));
+                measure(() -> sink(Base64Url.encode(signer.publicKey()).length())));
+        record(
+                table,
+                "PushSender.send, cached token",
+                label,
+                measure(() -> accepted(reusingSender.send(subscription, message))));
+        record(
+                table,
+                "PushSender.send, signing every time",
+                label,
+                measure(() -> accepted(signingSender.send(subscription, message))));
+    }
+
+    /**
+     * The status of an accepted outcome, refusing anything else. The suite asserts nothing about how long a step takes,
+     * but a {@code send} that was rejected by the policy or refused for size would be a different and much cheaper path
+     * measured under the send's name, so the one thing worth failing over is measuring the wrong path.
+     */
+    private static long accepted(PushOutcome outcome) {
+        if (outcome instanceof PushOutcome.Accepted acceptedOutcome) {
+            return acceptedOutcome.statusCode();
+        }
+        throw new IllegalStateException("the measured send did not reach the transport: " + outcome);
+    }
+
+    private static PushSender sender(VapidKeys vapidKeys, @Nullable Provider provider, boolean jwtReuse) {
+        PushSender.Builder builder = PushSender.builder(vapidKeys, TestVectors.VAPID_SUBJECT, standardPolicy())
+                .httpClient((uri, headers, body) -> new PushResponse(201, Map.of()))
+                .jwtReuse(jwtReuse);
+        return (provider == null ? builder : builder.cryptoProvider(provider)).build();
     }
 
     private static EndpointPolicy standardPolicy() {
