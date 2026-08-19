@@ -135,6 +135,41 @@ class VaultTransitVapidSignerLogSafeExcerptTest {
     }
 
     @Test
+    void aBodyEscapingToExactlyTheBoundIsReturnedWhole() {
+        // The room the marker needs is reserved only once truncation is known to be needed. Taking
+        // it from every body instead would cut this one — which fits — and label it truncated, a
+        // statement about Vault's answer that is simply untrue.
+        String body = "A".repeat(ECHO_LIMIT);
+
+        String excerpt = VaultTransitVapidSigner.logSafeExcerpt(body);
+
+        assertThat(excerpt).isEqualTo(body).hasSize(ECHO_LIMIT).doesNotContain("truncated");
+    }
+
+    @Test
+    void oneCharacterPastTheBoundIsTruncated() {
+        String body = "A".repeat(ECHO_LIMIT + 1);
+
+        String excerpt = VaultTransitVapidSigner.logSafeExcerpt(body);
+
+        assertThat(excerpt)
+                .hasSizeLessThanOrEqualTo(ECHO_LIMIT)
+                .endsWith("... [truncated, " + (ECHO_LIMIT + 1) + " chars total]");
+    }
+
+    @Test
+    void aBodyWithinTheBoundThatEscapesPastItIsTruncated() {
+        // 400 characters of body, 2400 of escapes: short enough to pass a bound read on the raw
+        // text, long enough to break one read on the escaped text — so the marker is earned here
+        // even though the response itself is well under the cap.
+        String body = NUL.repeat(400);
+
+        String excerpt = VaultTransitVapidSigner.logSafeExcerpt(body);
+
+        assertThat(excerpt).hasSizeLessThanOrEqualTo(ECHO_LIMIT).endsWith("... [truncated, 400 chars total]");
+    }
+
+    @Test
     void theBoundHoldsAfterEscapingRatherThanBeforeIt() {
         // The failure this pins: capping the raw text and escaping afterwards would let a body of
         // control characters alone leave with six times the cap — 12k characters of escapes in the

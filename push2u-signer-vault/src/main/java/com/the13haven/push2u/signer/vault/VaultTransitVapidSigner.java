@@ -1466,21 +1466,38 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * by contract — is far too heavy for a log line. The count the marker names is the response's own length, before
      * escaping.
      *
+     * <p>The marker's room is reserved only once it is known to be needed. Whether a response is truncated is a
+     * question about the escaped text, and the escaped text is what the first pass produces: a body that fits whole is
+     * returned whole, and only a body that does not is escaped a second time against the smaller bound. Reserving the
+     * room up front instead would spend it on every response, and a body escaping to exactly the cap — which fits —
+     * would come back cut and labelled truncated, which is a false statement about what Vault answered.
+     *
      * <p>Package-private for the excerpt unit tests.
      */
     static String logSafeExcerpt(String text) {
+        StringBuilder excerpt = new StringBuilder(Math.min(text.length(), ERROR_ECHO_LIMIT));
+        if (!escapeWithin(text, ERROR_ECHO_LIMIT, excerpt)) {
+            return excerpt.toString();
+        }
         String marker = "... [truncated, " + text.length() + " chars total]";
-        int budget = ERROR_ECHO_LIMIT - marker.length();
-        StringBuilder excerpt = new StringBuilder(Math.min(text.length(), budget));
-        boolean truncated = false;
+        excerpt.setLength(0);
+        escapeWithin(text, ERROR_ECHO_LIMIT - marker.length(), excerpt);
+        return excerpt.append(marker).toString();
+    }
+
+    /**
+     * Escapes as much of {@code text} into {@code excerpt} as {@code budget} characters hold, and answers whether
+     * anything was left behind. A code point is weighed whole and appended whole, so a cut lands on neither half of an
+     * escape nor half of a surrogate pair.
+     */
+    private static boolean escapeWithin(String text, int budget, StringBuilder excerpt) {
         int index = 0;
         while (index < text.length()) {
             int codePoint = text.codePointAt(index);
             int width = Character.charCount(codePoint);
             boolean escape = isUnsafeInALogLine(codePoint);
             if (excerpt.length() + (escape ? ESCAPE_LENGTH : width) > budget) {
-                truncated = true;
-                break;
+                return true;
             }
             if (escape) {
                 excerpt.append("\\u").append(HexFormat.of().toHexDigits((char) codePoint));
@@ -1489,7 +1506,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
             }
             index += width;
         }
-        return truncated ? excerpt.append(marker).toString() : excerpt.toString();
+        return false;
     }
 
     /**
