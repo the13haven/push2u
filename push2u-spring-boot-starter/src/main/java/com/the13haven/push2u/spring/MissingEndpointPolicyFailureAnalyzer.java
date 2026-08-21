@@ -61,11 +61,16 @@ final class MissingEndpointPolicyFailureAnalyzer
      * What an injection failure can be answered with that a refusal inside a factory method cannot: the injection point
      * itself. Held apart from the shared enumeration because it is true of this shape of the question only — the
      * sender's refusal has no injection point to withdraw.
+     *
+     * <p>The condition is <em>accepts subscriptions</em> rather than <em>validates the ones it accepts</em>, and the
+     * difference is the whole of the sentence. A service that takes subscriptions from clients and does not check their
+     * endpoints is the one deployment this may not invite to withdraw the injection point: it is the one that should
+     * start checking them, and what follows would otherwise hand it the shape that lets registration go on storing
+     * whatever a browser offers. Neither sending nor accepting leaves nothing for this policy to be applied to.
      */
-    private static final String OR_STOP_REQUIRING_IT = "If this deployment neither sends nor validates the"
-            + " subscriptions it accepts, the injection point is the thing to remove — an"
-            + " ObjectProvider<EndpointPolicy>, or a component that is itself conditional, works in a deployment that"
-            + " expresses an allowlist and in one that does not.";
+    private static final String OR_STOP_REQUIRING_IT = "If this deployment neither sends nor accepts subscriptions,"
+            + " the injection point is the thing to remove — an ObjectProvider<EndpointPolicy>, or a component that is"
+            + " itself conditional, works in a deployment that expresses an allowlist and in one that does not.";
 
     private final @Nullable ConfigurableListableBeanFactory beanFactory;
     private final @Nullable Environment environment;

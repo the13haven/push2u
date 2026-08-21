@@ -469,20 +469,28 @@ autoconfigured sender, with a message naming the three ways to fix it: the oblig
 sender's, and a deployment that does not send is owed no demand for an allowlist it has no use
 for.
 
+Emptying every property that *is* set, with no bean, is the same silence said differently and fails
+the same context — the per-property escape hatch below cedes an emptied key to a bean or to its
+sibling property, and here there is neither to receive it. Its message names both keys rather than
+one: the emptiness is a fact about the pair. These two are one pair of refusals, not two unrelated
+ones, and neither of them fails a deployment that does not send.
+
 One more refusal completes the list: a non-empty allowlist property in a context that has
 **excluded** the auto-configuration publishing the policy bean fails when the autoconfigured
 sender is built, naming the non-empty property and `Push2uEndpointPolicyAutoConfiguration`. The
 sender does not rebuild the policy from the properties — the allowlist is one definition, and a
 second construction inside the sender would be a second place the same rule is stated.
 
-**None of the three reaches a service that only registers subscriptions**, which builds no sender
-for them to fire inside — and that service is the one holding the policy for a living. What it gets
-instead, the moment it injects the bean and the bean is not there, is those same three states as an
-analysis of the unsatisfied dependency, from the text the refusals are written in rather than a copy
-of it, so what a registration-only service reads and what a sending one is refused with cannot come
-apart. It arrives with one answer more than the refusals carry, because an injection failure has one
-they do not: stop requiring the bean, through an `ObjectProvider<EndpointPolicy>` or a component
-that is itself conditional.
+**Those last three are the sender's own** — nothing expressed, everything emptied, and an allowlist
+with no auto-configuration left to turn it into a bean — and a service that only registers
+subscriptions meets none of them, because all three fail where the sender is built and it builds no
+sender. Which is awkward, since that service is the one holding the policy for a living. What it
+gets instead, the moment it injects the bean and the bean is not there, is those same three states
+as an analysis of the unsatisfied dependency, from the text the refusals are written in rather than
+a copy of it, so what a registration-only service reads and what a sending one is refused with
+cannot come apart. It arrives with one answer more than the refusals carry, because an injection
+failure has one they do not: stop requiring the bean, through an `ObjectProvider<EndpointPolicy>` or
+a component that is itself conditional.
 
 **Excluding an auto-configuration removes its contribution, and the checks are placed so that this
 stays true.** The two value refusals above are hosted in `Push2uStartupChecksAutoConfiguration`,
@@ -508,9 +516,9 @@ the checks were excluded, or the question is simply unanswered.
 One escape hatch, and it is per property: a service that *inherits* `push2u.allowed-origins` from
 a shared configuration it does not own cannot unset the property, so setting it to an explicitly
 **empty** value means "deliberately not using this property here" — beside a bean, the bean wins;
-beside the other property, that property carries the allowlist alone. Every set property empty with
-no bean still fails a sender-building context, with a message naming both keys: emptying them is a
-statement about the pair, and no single entry is left to refuse on its own terms.
+beside the other property, that property carries the allowlist alone. Where neither is there to
+receive it, what is left is the refusal above over an allowlist emptied to nothing — a
+sender-building context, both keys named, no single entry left to refuse on its own terms.
 
 **Empty means empty, and a blank is not one.** Where the value arrives as one delimited string —
 an environment variable, `PUSH2U_ALLOWED_ORIGINS=`, is the case this hatch exists for — only a
