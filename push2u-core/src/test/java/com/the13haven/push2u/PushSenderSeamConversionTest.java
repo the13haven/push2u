@@ -24,15 +24,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * The facade's seam-signal conversions (ADR-021): exactly three exception types convert to outcomes —
- * {@link PushDeliveryException} to {@code Indeterminate}, {@link EndpointRejectedException} to
- * {@code EndpointRejected}, {@link VapidSignerUnavailableException} to {@code SignerUnavailable} — and any other
- * {@code RuntimeException} out of a consumer seam propagates as the defect it is. Plus the interruption discipline the
+ * The facade's seam-signal conversions (ADR-021, narrowed by ADR-027): exactly two exception types convert to outcomes
+ * — {@link PushDeliveryException} to {@code Indeterminate}, {@link VapidSignerUnavailableException} to
+ * {@code SignerUnavailable} — and any other {@code RuntimeException} out of a consumer seam propagates as the defect it
+ * is. The endpoint policy is no longer on that list: it signals by returning an {@link EndpointAssessment}, so its
+ * refusal reaches the caller as a value with no exception anywhere in the path, and the value's own normalisation (a
+ * {@code null} reason stored as {@code ""}) is what the outcome reports. Plus the interruption discipline the
  * enumeration exists for: the conversion is refused, on the push and signer paths alike, when the cause chain carries
  * an {@link InterruptedException} <b>or</b> the thread's interrupt status is set, and what leaves is
  * {@link PushInterruptedException} with the contracts ADR-022 fixes for each send method. Plus the guards on the
  * members those conversions read (issue #155): a defective accessor on a seam's exception costs the caller a
- * diagnostic, never the classification.
+ * diagnostic, never the classification — a guard the policy seam no longer needs, since a record's generated accessor
+ * cannot be overridden.
  */
 class PushSenderSeamConversionTest {
 
@@ -223,21 +226,18 @@ class PushSenderSeamConversionTest {
                 .isFalse();
     }
 
-    // ---- the guarded reads of seam-exception members -------------------------------------------
+    // ---- the policy seam answers by value ------------------------------------------------------
 
     @Test
-    void aRejectionWhoseGetMessageThrowsFallsBackToTheLibrarysOwnReason() {
-        IllegalStateException defect =
-                new IllegalStateException("policy bug mentioning " + ENDPOINT + "/secret-capability-token");
-        EndpointRejectedException raised = new EndpointRejectedException("never read") {
-            @Override
-            public String getMessage() {
-                throw defect;
-            }
-        };
-        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
-                    throw raised;
-                })
+    void aPolicyRefusalConvertsToEndpointRejectedCarryingTheLibrarysRedactionAndThePolicysReason() {
+        // The one conversion on this seam, and it converts a value, not an exception: the redacted
+        // endpoint is this library's own rendering of the subscription it holds — never the
+        // policy's — and the reason is exactly the Refused's, so the two components keep their two
+        // provenances.
+        PushSender sender = PushSender.builder(
+                        generateVapidKeys(),
+                        "mailto:ops@example.com",
+                        endpoint -> new EndpointAssessment.Refused("egress denied by deployment rule"))
                 .httpClient(new CountingClient())
                 .build();
 
@@ -245,34 +245,17 @@ class PushSenderSeamConversionTest {
 
         assertThat(outcome).isInstanceOf(PushOutcome.EndpointRejected.class);
         PushOutcome.EndpointRejected rejected = (PushOutcome.EndpointRejected) outcome;
-        assertThat(rejected.reason())
-                .as("the fallback is the library's own fixed text, distinguishable from the empty string"
-                        + " a null message renders as")
-                .isEqualTo("endpoint policy rejected the endpoint; reason unavailable");
-        // The accessor's complaint was written by nobody who accepted the policy seam's redaction
-        // contract — here it carries the raw capability URL — so nothing of it may travel: not its
-        // message, not its class name, not its rendering.
-        assertThat(rejected.reason())
-                .doesNotContain("secret-capability-token")
-                .doesNotContain("policy bug")
-                .doesNotContain(defect.getClass().getSimpleName())
-                .doesNotContain(defect.toString());
         assertThat(rejected.redactedEndpoint()).startsWith("https://push.example/…#");
+        assertThat(rejected.reason()).isEqualTo("egress denied by deployment rule");
     }
 
     @Test
-    void aRejectionWithANullMessageStillRendersTheEmptyReason() {
-        // The other half of the distinguishability claim above: a policy that wrote no message at
-        // all renders as "", not as the fallback text reserved for a broken accessor.
-        EndpointRejectedException raised = new EndpointRejectedException("replaced by the override") {
-            @Override
-            public String getMessage() {
-                return null;
-            }
-        };
-        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
-                    throw raised;
-                })
+    void aRefusalConstructedWithANullReasonRendersTheEmptyReason() {
+        // The one-line slip the value shape absorbs: new Refused(e.getMessage()) with a null
+        // message. The Refused itself stores "", the outcome reports "", and nothing throws — a
+        // fan-out carries on past the row.
+        PushSender sender = PushSender.builder(
+                        generateVapidKeys(), "mailto:ops@example.com", endpoint -> new EndpointAssessment.Refused(null))
                 .httpClient(new CountingClient())
                 .build();
 
@@ -282,17 +265,28 @@ class PushSenderSeamConversionTest {
     }
 
     @Test
-    void anErrorOutOfASeamAccessorLeavesSendUnclassified() {
-        // The guard's boundary is RuntimeException, pinned at the send level: an AssertionError
-        // out of consumer code is neither survived nor laundered into an outcome.
-        EndpointRejectedException raised = new EndpointRejectedException("never read") {
-            @Override
-            public String getMessage() {
-                throw new AssertionError("invariant failed inside an accessor");
-            }
-        };
+    void aPolicyAnsweringNullIsADefectNotAnOutcome() {
+        // Null is no assessment at all: reading it as Allowed fails open, reading it as Refused
+        // invents a decision — so the send fails with the sender's own NullPointerException, the
+        // reading ADR-022's table gives every violated non-null contract.
+        PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> null)
+                .httpClient(new CountingClient())
+                .build();
+        Subscription subscription = subscription();
+        PushMessage message = message();
+
+        assertThatThrownBy(() -> sender.send(subscription, message))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("endpoint policy returned null");
+    }
+
+    @Test
+    void anyRuntimeExceptionFromThePolicyPropagatesAsADefect() {
+        // The enumeration's other half for this seam: with the refusal a value, NO exception out
+        // of the policy converts — whatever its type, it is a defect in that implementation and
+        // leaves as itself.
         PushSender sender = PushSender.builder(generateVapidKeys(), "mailto:ops@example.com", endpoint -> {
-                    throw raised;
+                    throw new IllegalStateException("policy bug");
                 })
                 .httpClient(new CountingClient())
                 .build();
@@ -300,9 +294,11 @@ class PushSenderSeamConversionTest {
         PushMessage message = message();
 
         assertThatThrownBy(() -> sender.send(subscription, message))
-                .isInstanceOf(AssertionError.class)
-                .hasMessage("invariant failed inside an accessor");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("policy bug");
     }
+
+    // ---- the guarded reads of seam-exception members -------------------------------------------
 
     @Test
     void aSignerFailureWhoseGetCauseThrowsKeepsItsClassificationAndRecordsTheDefect() {

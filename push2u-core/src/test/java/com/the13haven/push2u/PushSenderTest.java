@@ -370,9 +370,7 @@ class PushSenderTest {
         // must stop a send through either overload — as the EndpointRejected outcome, since a
         // policy refusal is a value the fan-out records rather than an exception that aborts it.
         VapidKeys keys = generateVapidKeys();
-        EndpointPolicy refuseEverything = endpoint -> {
-            throw new EndpointRejectedException("refused by test policy");
-        };
+        EndpointPolicy refuseEverything = endpoint -> new EndpointAssessment.Refused("refused by test policy");
         Subscription subscription = new Subscription(
                 "https://push.example.com/never-contacted",
                 TestVectors.b64(TestVectors.UA_PUBLIC),

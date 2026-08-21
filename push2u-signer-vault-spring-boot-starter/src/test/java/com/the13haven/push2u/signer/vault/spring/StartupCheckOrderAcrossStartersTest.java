@@ -20,6 +20,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.the13haven.push2u.EndpointAssessment;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.VapidSigner;
@@ -236,7 +237,7 @@ class StartupCheckOrderAcrossStartersTest {
 
         @Bean
         EndpointPolicy applicationPolicy() {
-            return endpoint -> {};
+            return endpoint -> new EndpointAssessment.Allowed();
         }
     }
 

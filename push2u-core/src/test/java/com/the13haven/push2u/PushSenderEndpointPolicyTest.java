@@ -8,7 +8,6 @@ package com.the13haven.push2u;
 import static com.the13haven.push2u.PushTestSupport.generateVapidKeys;
 import static com.the13haven.push2u.TestVectors.b64;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
@@ -24,11 +23,12 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tests for the {@link EndpointPolicy} seam in the send pipeline. The load-bearing property is <em>where</em> the
- * policy runs: a rejected endpoint must cost zero signing operations (under an external signer, each one is a remote
+ * policy runs: a refused endpoint must cost zero signing operations (under an external signer, each one is a remote
  * Vault/KMS call) and zero HTTP requests — proven with a counting signer and a counting client, not asserted from the
- * code's shape. A rejection reaches the caller as the {@link PushOutcome.EndpointRejected} value, so one hostile row
- * never aborts a fan-out; the policy's own defect, by contrast, propagates as itself. Every sender has a policy, so
- * there is no unguarded path left to test; what is tested instead is that {@link EndpointPolicies#unrestricted()} is
+ * code's shape. A refusal is a value end to end: the policy answers {@link EndpointAssessment.Refused} and the caller
+ * reads {@link PushOutcome.EndpointRejected}, so one hostile row never aborts a fan-out; the policy's own defect — an
+ * exception of any type, or a {@code null} answer — propagates or fails as itself. Every sender has a policy, so there
+ * is no unguarded path left to test; what is tested instead is that {@link EndpointPolicies#unrestricted()} is
  * genuinely the way to send anywhere, so that nobody is tempted to reintroduce a no-policy sender to get that behaviour
  * back.
  */
@@ -68,12 +68,9 @@ class PushSenderEndpointPolicyTest {
         // a publicKey() read on the rejected send (the lookup key is built from a fresh read) and as
         // a mutation of the access-ordered LRU the sender keeps.
         AtomicBoolean rejecting = new AtomicBoolean(false);
-        EndpointPolicy statefulPolicy = endpoint -> {
-            if (rejecting.get()) {
-                throw new EndpointRejectedException(
-                        "endpoint no longer allowed: " + Endpoints.redact(endpoint.toString()));
-            }
-        };
+        EndpointPolicy statefulPolicy = endpoint -> rejecting.get()
+                ? new EndpointAssessment.Refused("endpoint no longer allowed: " + Endpoints.redact(endpoint.toString()))
+                : new EndpointAssessment.Allowed();
         PushSender sender = sender(statefulPolicy);
         Subscription subscription = subscription(ALLOWED_ENDPOINT);
         PushMessage message = PushMessage.of(new byte[] {1});
@@ -141,19 +138,22 @@ class PushSenderEndpointPolicyTest {
     }
 
     @Test
-    void unrestrictedRejectsNothingAtAll() {
+    void unrestrictedRefusesNothingAtAll() {
         // Directly against the policy rather than through a sender: no shape of endpoint is
         // refused, loopback and cloud-metadata included, so a reader is not left wondering whether
         // some category is quietly still blocked.
         EndpointPolicy unrestricted = EndpointPolicies.unrestricted();
 
-        assertThatCode(() -> {
-                    unrestricted.validate(URI.create("https://127.0.0.1:8443/send/token"));
-                    unrestricted.validate(URI.create("https://10.0.0.5/send/token"));
-                    unrestricted.validate(URI.create("https://169.254.169.254/latest/meta-data/"));
-                    unrestricted.validate(URI.create("https://user@allowed.example/send/token"));
-                })
-                .doesNotThrowAnyException();
+        for (String endpoint : new String[] {
+            "https://127.0.0.1:8443/send/token",
+            "https://10.0.0.5/send/token",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://user@allowed.example/send/token"
+        }) {
+            assertThat(unrestricted.assess(URI.create(endpoint)))
+                    .as("%s", endpoint)
+                    .isInstanceOf(EndpointAssessment.Allowed.class);
+        }
     }
 
     @Test
@@ -191,15 +191,17 @@ class PushSenderEndpointPolicyTest {
     @Test
     void aPolicyThrowingItsOwnDefectDoesNotCorruptTheSender() {
         // A policy bug (here: an IllegalStateException on the first call only) must propagate as
-        // itself — not be dressed up as a rejection outcome: the facade converts exactly
-        // EndpointRejectedException and nothing else from this seam. And it must leave the sender
-        // fully usable: the policy runs ahead of the token cache, the sender's only mutable state,
-        // so a policy that throws has touched nothing and the next send runs normally.
+        // itself — not be dressed up as a refusal outcome: this seam signals by returning, so the
+        // facade converts no exception out of it at all and any throw is the defect it looks like.
+        // And it must leave the sender fully usable: the policy runs ahead of the token cache, the
+        // sender's only mutable state, so a policy that throws has touched nothing and the next
+        // send runs normally.
         AtomicInteger calls = new AtomicInteger();
         EndpointPolicy flaky = endpoint -> {
             if (calls.incrementAndGet() == 1) {
                 throw new IllegalStateException("policy defect");
             }
+            return new EndpointAssessment.Allowed();
         };
         PushSender sender = sender(flaky);
         Subscription subscription = subscription(ALLOWED_ENDPOINT);
@@ -207,7 +209,6 @@ class PushSenderEndpointPolicyTest {
 
         assertThatThrownBy(() -> sender.send(subscription, message))
                 .isInstanceOf(IllegalStateException.class)
-                .isNotInstanceOf(EndpointRejectedException.class)
                 .hasMessage("policy defect");
         assertThat(signer.signs.get()).isZero();
         assertThat(client.posts.get()).isZero();
@@ -218,12 +219,34 @@ class PushSenderEndpointPolicyTest {
     }
 
     @Test
+    void aPolicyAnsweringNullFailsTheSendAsTheDefectItIs() {
+        // The violated non-null contract: reading null as Allowed would fail open on the one
+        // egress control, reading it as Refused would invent a decision the deployment never made
+        // — so the send fails with the sender's own NullPointerException, which stops a fan-out
+        // exactly as any other policy defect does, and nothing downstream was touched.
+        EndpointPolicy answersNull = endpoint -> null;
+        PushSender sender = sender(answersNull);
+        Subscription subscription = subscription(ALLOWED_ENDPOINT);
+        PushMessage message = PushMessage.of(new byte[] {1});
+
+        assertThatThrownBy(() -> sender.send(subscription, message))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("endpoint policy returned null");
+        assertThat(signer.signs.get()).isZero();
+        assertThat(signer.publicKeys.get()).isZero();
+        assertThat(client.posts.get()).isZero();
+    }
+
+    @Test
     void thePolicySeesTheEndpointUriVerbatim() {
         // The policy receives the endpoint as parsed, un-normalized — normalization is the
         // policy's own business (allowedOrigins normalizes both sides; a custom policy may not
         // want any). Pinned so a future "helpful" pre-normalization shows up as a failure.
         List<URI> seen = new ArrayList<>();
-        PushSender sender = sender(seen::add);
+        PushSender sender = sender(endpoint -> {
+            seen.add(endpoint);
+            return new EndpointAssessment.Allowed();
+        });
 
         sender.send(subscription(ALLOWED_ENDPOINT), PushMessage.of(new byte[] {1}));
 

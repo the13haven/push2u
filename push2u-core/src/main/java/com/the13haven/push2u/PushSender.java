@@ -220,11 +220,15 @@ public final class PushSender {
      * {@link VapidSigner} is a remote Vault/KMS operation) and the HTTP request, so a rejected endpoint costs none of
      * them and is reported as {@link PushOutcome.EndpointRejected}.
      *
-     * <p><b>Three seam signals convert to outcomes, and no others.</b> An {@link EndpointRejectedException} from the
-     * policy becomes {@link PushOutcome.EndpointRejected}; a {@link VapidSignerUnavailableException} from the signer
-     * becomes {@link PushOutcome.SignerUnavailable}; a {@link PushDeliveryException} from the transport becomes
-     * {@link PushOutcome.Indeterminate}. Any other {@code RuntimeException} out of a consumer-written seam is a defect
-     * in that implementation, not an operational condition, and propagates unchanged. What this method itself throws:
+     * <p><b>Two seam signals convert to outcomes, and no others.</b> A {@link VapidSignerUnavailableException} from the
+     * signer becomes {@link PushOutcome.SignerUnavailable}; a {@link PushDeliveryException} from the transport becomes
+     * {@link PushOutcome.Indeterminate}. The endpoint policy signals by returning rather than by throwing: its
+     * {@link EndpointAssessment.Refused} answer becomes {@link PushOutcome.EndpointRejected}, carrying this library's
+     * own redaction of the endpoint beside the policy's reason, with no exception anywhere in that path. Any
+     * {@code RuntimeException} out of a consumer-written seam — the endpoint policy included — is a defect in that
+     * implementation, not an operational condition, and propagates unchanged; a policy answering {@code null} is the
+     * same kind of defect and leaves as a {@link NullPointerException} from the sender's own check. What this method
+     * itself throws:
      *
      * <ul>
      *   <li>{@link PushCryptoException} — the encryption or the signature cannot be produced for a reason that recurs:
@@ -278,30 +282,22 @@ public final class PushSender {
                     "subscription endpoint is not a valid URI: " + Endpoints.redact(subscription.endpoint()));
         }
         // Unconditional, and before the encryption as well as the signature and the POST: a policy
-        // rejection is a verdict on the subscription, and reaching it must not depend on — or pay
+        // refusal is a verdict on the subscription, and reaching it must not depend on — or pay
         // for — any per-send cryptography. The policy also runs before the token cache is
         // consulted, and that cache is the sender's only mutable state, so a policy that throws
-        // (a rejection or its own defect) leaves nothing to corrupt for later sends.
-        try {
-            endpointPolicy.validate(endpoint);
-        } catch (EndpointRejectedException e) {
-            // The policy's contract keeps the raw endpoint out of its message; the redacted form
-            // beside it is this library's own rendering, safe whatever the policy wrote.
-            String reason;
-            try {
-                reason = Objects.requireNonNullElse(e.getMessage(), "");
-            } catch (RuntimeException defect) {
-                // The read is consumer-overridable code, and a rejection the policy already
-                // classified must not leave as the accessor's complaint. Nor may that complaint
-                // travel: it was written by nobody who accepted the policy seam's redaction
-                // contract, so its message, its class name and its rendering may all carry the raw
-                // capability URL. The fixed text below is this library's own, distinguishable from
-                // "" — what a null message renders as — and there is nowhere to record the defect:
-                // this outcome keeps two strings, and the exception is discarded with this
-                // conversion.
-                reason = "endpoint policy rejected the endpoint; reason unavailable";
-            }
-            return new PushOutcome.EndpointRejected(Endpoints.redact(subscription.endpoint()), reason);
+        // its own defect leaves nothing to corrupt for later sends. A null answer is the same
+        // kind of defect: reading it as Allowed would fail open on the one egress control, and
+        // reading it as Refused would invent a decision the deployment never made — so it fails
+        // here, loudly, as the violated non-null contract it is.
+        EndpointAssessment assessment = Objects.requireNonNull(
+                endpointPolicy.assess(endpoint),
+                "the endpoint policy returned null instead of an EndpointAssessment — a defect in that policy");
+        if (assessment instanceof EndpointAssessment.Refused refused) {
+            // The policy's contract keeps the raw endpoint out of its reason; the redacted form
+            // beside it is this library's own rendering, safe whatever the policy wrote. The
+            // reason is read from a final record whose accessor this library generates, so the
+            // read itself cannot be overridden and cannot fail.
+            return new PushOutcome.EndpointRejected(Endpoints.redact(subscription.endpoint()), refused.reason());
         }
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         String authorization;
