@@ -217,7 +217,7 @@ public final class PushSender {
      * through {@link #assessPayloadSize(byte[])}, and this check runs whether or not it was asked: an earlier
      * assessment is never trusted in its place. The {@link EndpointPolicy} the sender was built with runs next, on
      * every send without exception — still ahead of the encryption, the VAPID signature (which under an external
-     * {@link VapidSigner} is a remote Vault/KMS operation) and the HTTP request, so a rejected endpoint costs none of
+     * {@link VapidSigner} is a remote Vault/KMS operation) and the HTTP request, so a refused endpoint costs none of
      * them and is reported as {@link PushOutcome.EndpointRejected}.
      *
      * <p><b>Two seam signals convert to outcomes, and no others.</b> A {@link VapidSignerUnavailableException} from the
