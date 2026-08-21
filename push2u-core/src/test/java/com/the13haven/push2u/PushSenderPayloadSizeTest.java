@@ -177,6 +177,29 @@ class PushSenderPayloadSizeTest {
     }
 
     @Test
+    void everyFittingAnswerIsTheSameInstance() {
+        PushSender sender = sender(builder());
+        PushSender other = sender(builder().maxEncryptedBodyBytes(2048));
+
+        PayloadSizeAssessment first = sender.assessPayloadSize(new byte[0]);
+        PayloadSizeAssessment second = sender.assessPayloadSize(new byte[MAX_DEFAULT_PAYLOAD]);
+
+        // An application may ask this before every notification, and the fitting variant has no
+        // components, so there is nothing for a second object to carry. Pinned as an allocation
+        // property of the sender and not as a promise to callers: WithinLimit's constructor stays
+        // public, any two instances are equal, and identity is not something the answer means.
+        assertThat(first)
+                .as("two fitting answers from one sender are one object")
+                .isSameAs(second);
+        assertThat(other.assessPayloadSize(new byte[0]))
+                .as("and the object does not belong to the sender that handed it out")
+                .isSameAs(first);
+        assertThat(first)
+                .as("a freshly constructed one is still equal to it, which is what callers may rely on")
+                .isEqualTo(new PayloadSizeAssessment.WithinLimit());
+    }
+
+    @Test
     void assessPayloadSizeReadsTheLengthAloneCopiesNothingAndRetainsNothing() {
         PushSender sender = sender(builder());
         byte[] payload = new byte[MAX_DEFAULT_PAYLOAD + 1];
