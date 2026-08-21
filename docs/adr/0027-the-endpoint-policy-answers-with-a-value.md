@@ -180,9 +180,16 @@ write before — from a population larger than today's, with `EndpointRejectedEx
 the same change.
 
 Stating both is the honest form, because the second reading presumes the destination and the first
-does not. What would change the answer under either is a population large enough that a delayed
-break costs more than what the exception channel costs meanwhile — the opposite of where this seam
-stands one release after gaining its second application point.
+does not — and the two do not share a condition. Under the permanent reading there is no later break
+to weigh at all; under the way-station reading a larger later break argues for deciding now rather
+than for postponing, so neither future turns the cost of a future migration into a reason to take
+the compatible shape.
+
+What would justify taking it is one thing and it is about the installed base: a population for which
+migrating today costs more than carrying a second method and an exception channel does — for a while
+if the break comes later, indefinitely if it never does. That is a judgement about how many
+implementations and call sites exist, and this seam gained its second application point one release
+ago, which is the section above's answer to exactly that question.
 
 ## The name changes because the spelling decides who breaks silently
 
@@ -465,14 +472,15 @@ architecture summary names the three converting seam signals, which becomes two.
 Two documents are owed an edit that is easy to miss because neither is about this change.
 `docs/MIGRATION-FROM-WEB-PUSH.md` twice tells a reader arriving from the other library that
 `EndpointRejectedException` is what the policy seam throws and what to catch at a registration
-boundary; both sentences become false. `docs/MIGRATION.md`'s existing section for the `0.1.0` move says in its table that the type still
-exists and is still what `validate` throws. That section is **not** edited: it records one
-transition, its columns ask what a `catch` clause caught in `0.1.0` and what it catches after that
-move, and rewriting it to match a later API would destroy the account of the move it describes. The file accumulates newest first, so the new section is inserted directly under the index and the
-`0.1.0` one sits below it. Which of the two a reader crossing both versions meets first depends on
-whether they are scanning the file or working through the hops in the order they have to apply them,
-and neither needs to be guessed at: every section names the version it moves *from*, and that label
-is what tells a reader which claims belong to which hop.
+boundary; both sentences become false. `docs/MIGRATION.md`'s existing section for the `0.1.0` move
+says in its table that the type still exists and is still what `validate` throws. That section is
+**not** edited: it records one transition, its columns ask what a `catch` clause caught in `0.1.0`
+and what it catches after that move, and rewriting it to match a later API would destroy the account
+of the move it describes. The file accumulates newest first, so the new section is inserted directly
+under the index and the `0.1.0` one sits below it. Which of the two a reader crossing both versions
+meets first depends on whether they are scanning the file or working through the hops in the order
+they have to apply them, and neither needs to be guessed at: every section names the version it
+moves *from*, and that label is what tells a reader which claims belong to which hop.
 
 ## What this rules out
 
