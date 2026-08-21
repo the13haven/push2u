@@ -21,7 +21,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The kind travels with the entry rather than with the parameter it was passed in, so two rules of different kinds
  * can sit in one list and neither can be mistaken for the other. Each entry is validated and normalized when the rule
- * is built, which means a misconfigured allowlist fails at deployment startup rather than silently rejecting — or
+ * is built, which means a misconfigured allowlist fails at deployment startup rather than silently refusing — or
  * silently admitting — sends later. A rule is a value: two rules of the same kind whose entries normalize to the same
  * string are equal, so a list of rules collapses duplicates.
  *

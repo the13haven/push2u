@@ -37,7 +37,7 @@ import com.the13haven.push2u.VapidSigner;
 
 /**
  * The analyzer that answers an application requiring an {@link EndpointPolicy} from a context that expressed no
- * allowlist — the registration-only service, which holds this bean to validate the endpoints it is offered and has no
+ * allowlist — the registration-only service, which holds this bean to assess the endpoints it is offered and has no
  * sender in it for the sender's own refusal over the same absence to run inside.
  *
  * <p>Three states need three answers, and every one of them is the sender's refusal read out loud: the point of the
@@ -407,7 +407,7 @@ class MissingEndpointPolicyFailureAnalyzerTest {
         void accept(FailureAnalysis analysis);
     }
 
-    /** The registration-only service: it validates the endpoints it is offered, and never sends. */
+    /** The registration-only service: it assesses the endpoints it is offered, and never sends. */
     @Configuration(proxyBeanMethods = false)
     static class RequiresPolicyConfiguration {
 

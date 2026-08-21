@@ -92,7 +92,7 @@ public final class EndpointPolicies {
      * A policy allowing exactly the given rules; see {@link #allowedEndpoints(Collection)}.
      *
      * @param rules the allowed endpoint rules
-     * @return a policy that rejects any endpoint no rule matches
+     * @return a policy that refuses any endpoint no rule matches
      * @throws IllegalArgumentException if no rule is given
      */
     public static EndpointPolicy allowedEndpoints(EndpointRule... rules) {
@@ -111,15 +111,15 @@ public final class EndpointPolicies {
      * matches is documented on {@link EndpointRule#origin} and {@link EndpointRule#domain}.
      *
      * <p>Two endpoint-side refusals happen before any rule is consulted, whatever the rules are. A URI carrying
-     * userinfo ({@code https://allowed.example@evil.example/…}) is rejected outright: {@code java.net.URI} resolves the
+     * userinfo ({@code https://allowed.example@evil.example/…}) is refused outright: {@code java.net.URI} resolves the
      * real host and RFC 6454 excludes userinfo from the origin, so the comparison itself is not fooled, but no real
      * push service issues endpoints with userinfo and its only plausible purpose is to impersonate an allowed host to
-     * <em>some</em> parser — rejecting the shape entirely also protects any custom transport that re-parses the URL
-     * string differently. A URI with no scheme or host has no origin to compare and is likewise rejected (reachable
-     * only by calling {@link EndpointPolicy#assess} directly — {@link PushSender} never gets that far with one).
+     * <em>some</em> parser — refusing the shape entirely also protects any custom transport that re-parses the URL
+     * string differently. A URI with no scheme or host has no origin to compare and is likewise refused (reachable only
+     * by calling {@link EndpointPolicy#assess} directly — {@link PushSender} never gets that far with one).
      *
      * @param rules the allowed endpoint rules
-     * @return a policy that rejects any endpoint no rule matches
+     * @return a policy that refuses any endpoint no rule matches
      * @throws IllegalArgumentException if no rule is given
      */
     public static EndpointPolicy allowedEndpoints(Collection<? extends EndpointRule> rules) {
@@ -143,7 +143,7 @@ public final class EndpointPolicies {
      * {@link #allowedDomains(Collection)}.
      *
      * @param domains the allowed domains, e.g. {@code "notify.windows.com"}
-     * @return a policy admitting each listed domain and every host beneath it, and rejecting every other endpoint
+     * @return a policy admitting each listed domain and every host beneath it, and refusing every other endpoint
      * @throws IllegalArgumentException if no domain is given, or any entry is not a well-formed multi-label hostname
      */
     public static EndpointPolicy allowedDomains(String... domains) {
@@ -163,7 +163,7 @@ public final class EndpointPolicies {
      * {@link #allowedEndpoints(Collection)} instead.
      *
      * @param domains the allowed domains, e.g. {@code "notify.windows.com"}
-     * @return a policy admitting each listed domain and every host beneath it, and rejecting every other endpoint
+     * @return a policy admitting each listed domain and every host beneath it, and refusing every other endpoint
      * @throws IllegalArgumentException if no domain is given, or any entry is not a well-formed multi-label hostname
      */
     public static EndpointPolicy allowedDomains(Collection<String> domains) {
@@ -185,7 +185,7 @@ public final class EndpointPolicies {
      * A policy allowing exactly the given origins; see {@link #allowedOrigins(Collection)}.
      *
      * @param origins the allowed origins, e.g. {@code "https://fcm.googleapis.com"}
-     * @return a policy that rejects any endpoint whose origin is not in the set
+     * @return a policy that refuses any endpoint whose origin is not in the set
      * @throws IllegalArgumentException if no origin is given, or any entry is not a well-formed https origin
      */
     public static EndpointPolicy allowedOrigins(String... origins) {
@@ -206,24 +206,24 @@ public final class EndpointPolicies {
      * <p>Each entry must be a bare https origin. A malformed entry — unparseable, non-{@code https} (a
      * {@link Subscription} endpoint is always https, so any other scheme could never match), hostless (spell an
      * internationalised host in its A-label/Punycode form), or carrying a path, query, fragment or userinfo — fails
-     * <em>here</em>, at construction: a misconfigured allowlist should fail deployment startup, not silently reject (or
+     * <em>here</em>, at construction: a misconfigured allowlist should fail deployment startup, not silently refuse (or
      * worse, silently admit) sends later. A lone trailing {@code "/"} is tolerated, since browsers and RFC 6454 both
      * print origins without one but humans often paste one.
      *
-     * <p>On the endpoint side, a URI carrying userinfo ({@code https://allowed.example@evil.example/…}) is rejected
+     * <p>On the endpoint side, a URI carrying userinfo ({@code https://allowed.example@evil.example/…}) is refused
      * outright, before the origin comparison. The comparison itself is not fooled — {@code java.net.URI} resolves the
      * real host, and RFC 6454 excludes userinfo from the origin — but no real push service issues endpoints with
-     * userinfo, so its only plausible purpose is to impersonate an allowed origin to <em>some</em> parser: rejecting
-     * the shape entirely also protects any custom transport that re-parses the URL string differently. A URI with no
-     * scheme or host has no origin to compare and is likewise rejected (reachable only by calling
-     * {@link EndpointPolicy#assess} directly — {@link PushSender} never gets that far with one).
+     * userinfo, so its only plausible purpose is to impersonate an allowed origin to <em>some</em> parser: refusing the
+     * shape entirely also protects any custom transport that re-parses the URL string differently. A URI with no scheme
+     * or host has no origin to compare and is likewise refused (reachable only by calling {@link EndpointPolicy#assess}
+     * directly — {@link PushSender} never gets that far with one).
      *
      * <p>Each entry becomes an {@link EndpointRule#origin}, which is where the entry grammar and its refusals are
      * documented. An allowlist that also has to cover a service whose hostnames vary within a DNS zone is built with
      * {@link #allowedEndpoints(Collection)} instead of enumerating those hostnames here.
      *
      * @param origins the allowed origins, e.g. {@code "https://fcm.googleapis.com"}
-     * @return a policy that rejects any endpoint whose origin is not in the set
+     * @return a policy that refuses any endpoint whose origin is not in the set
      * @throws IllegalArgumentException if no origin is given, or any entry is not a well-formed https origin
      */
     public static EndpointPolicy allowedOrigins(Collection<String> origins) {
