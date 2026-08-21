@@ -597,7 +597,11 @@ implementation on another stack it stays a contract only, unverifiable from here
 
 ```java
 EndpointAssessment assess(URI endpoint);
+```
 
+and the answer, a sealed type of its own beside the seam:
+
+```java
 sealed interface EndpointAssessment {
     record Allowed() implements EndpointAssessment {}
     record Refused(String reason) implements EndpointAssessment {}
@@ -608,7 +612,7 @@ This SPI represents deployment egress policy for push endpoints. The endpoint in
 is attacker-influenced (a public registration endpoint accepts the browser's `PushSubscription`
 JSON verbatim), so without a policy every send is a POST from inside the network to an address of
 the subscription's choosing — a blind SSRF oracle via the status code an answered outcome carries,
-an unanswered `Indeterminate`, and timing. That the oracle is read off outcome values rather than off
+an unanswered `Indeterminate`, and timing. That the oracle is now read off one value rather than off
 a value and an exception changes nothing about it: what closes it is the policy running first and
 unconditionally, before the encryption, the signature and any I/O. `Endpoints.requireSecure` stays a
 protocol check (absolute `https` URL with a host); which hosts a deployment may contact is policy,
@@ -668,15 +672,12 @@ constructor is public, all instances are equal, and nothing distinguishes one fr
 asked on every send from allocating on the answering path — an implementation property pinned by a
 test, published as no promise a caller may read with `==`.
 
-**One defensive branch disappeared with the exception.** `EndpointRejectedException` was public and
-non-final, so a consumer could subclass it and override `getMessage()`, which is why `send` used to
-read that message inside a guard with a fixed-text fallback: a hostile or defective accessor must not
-turn a classified refusal into the accessor's own complaint. `Refused` is a record — final, with an
-accessor this library generates and nobody can replace — so the read cannot be overridden and cannot
-fail, and the fallback text it needed is gone with it (§4). The sealed hierarchy closes the same
-hatch from the other side: structured refusal data no longer travels through this library on a
-consumer's own subtype, and a policy whose boundary wants a rule, a zone or a ticket reference keeps
-that beside the assessment, in the class that produced it.
+**The hierarchy is sealed and both variants are final, which closes a hatch a public exception type
+could not.** A reason arrives on a record whose accessor this library generates, so the conversion
+reads it with none of the machinery an overridable `getMessage()` needed (§4); and structured refusal
+data cannot travel through this library on a consumer's own subtype, so a policy whose boundary
+wants a rule, a zone or a ticket reference keeps that beside the assessment, in the class that
+produced it.
 
 **What the change costs is said out loud rather than netted off.** Implementations became safer:
 falling off the end of a `void` is no longer a way to admit everything, and a policy must positively
@@ -1556,10 +1557,15 @@ The automated suite covers:
   signal into its outcome — the two converting exception types, and the policy's `Refused` value
   becoming `EndpointRejected` — including the interrupt disjunction on both the transport and the
   signer path;
-- the endpoint policy as a seam that answers by value: each standard refusal carrying its own text, a
-  `null` reason stored as `""`, `Allowed` equal by value and carrying nothing, and a policy that
-  answers `null` or throws anything at all read as the defect it is rather than as an outcome
-  (`EndpointAssessmentTest`, `PushSenderEndpointPolicyTest`, `PushSenderSeamConversionTest`);
+- the allowlist's matching and the entry-level refusals of both rule kinds: an origin compared on
+  the whole RFC 6454 serialization, a domain matched at a label boundary and only on `https` and the
+  default port, and case, IDNA form and duplicate entries settled on both sides
+  (`EndpointPoliciesTest`, `EndpointRuleTest`);
+- the endpoint policy as a seam that answers by value: each standard refusal carrying its own text
+  and every admitting answer being the one shared `Allowed` (`EndpointPoliciesTest`), a `null` reason
+  stored as `""` and an `Allowed` carrying nothing and equal by value (`EndpointAssessmentTest`), and
+  a policy that answers `null` or throws anything at all read as the defect it is rather than as an
+  outcome (`PushSenderEndpointPolicyTest`, `PushSenderSeamConversionTest`);
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
   shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in
