@@ -125,8 +125,9 @@ assessment, in the class that produced it — the sentence is what the library c
 
 One consequence travels with that closure. `send` used to read a refusal's `getMessage()` inside its
 own `try`/`catch` and substitute a fixed text where the accessor threw, because a public non-final
-exception class could be subclassed by anyone. A record accessor cannot throw, so the fallback is
-gone and `EndpointRejected.reason()` is now exactly the string the policy's `Refused` carried.
+exception class could be subclassed by anyone. `Refused` is a final record whose accessor this
+library generates and nobody can replace, so that failure mode cannot occur: the fallback is gone
+and `EndpointRejected.reason()` is now exactly the string the policy's `Refused` carried.
 
 #### At a registration boundary, `EndpointAssessment` replaces the `catch`
 
@@ -145,17 +146,21 @@ store.save(subscription);
 
 ```java
 // now — the same three steps, with the second one reading an answer
-if (endpointPolicy.assess(URI.create(subscription.endpoint()))
-        instanceof EndpointAssessment.Refused refused) {
-    log.info("subscription refused at registration: {}", refused.reason());
-    return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+switch (endpointPolicy.assess(URI.create(subscription.endpoint()))) {
+    case EndpointAssessment.Refused refused -> {
+        log.info("subscription refused at registration: {}", refused.reason());
+        return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+    }
+    case EndpointAssessment.Allowed() -> store.save(subscription);   // both passed — store it
 }
-store.save(subscription);
 ```
 
-An exhaustive `switch` over the sealed type is the other spelling, and the one to prefer where both
-branches do work: it needs no `default`, and a variant added in a later release would fail your
-compilation instead of falling into a branch written for something else.
+The hierarchy is sealed, so that `switch` is exhaustive and needs no `default`, and a variant added
+in a later release fails your compilation instead of falling into a branch written for something
+else. An `if (… instanceof EndpointAssessment.Refused refused)` guard is the shorter spelling and is
+fine where the permitting branch is a fall-through — but note which way it fails: a third variant
+would miss the guard and be stored. Where both branches do work, take the `switch`; `send` takes it
+over the same value for the same reason.
 
 **The order around it is unchanged**, and it is the seam's contract rather than a preference: build
 the `Subscription` first — its own `IllegalArgumentException` is what a malformed one raises, and it
@@ -167,6 +172,11 @@ bought you here — that no framework mapped it to a `400` echoing its message, 
 deliberately did not extend `IllegalArgumentException` — a value cannot lose.
 [`SPRING.md` → Endpoint policy](SPRING.md#endpoint-policy) carries the recipe in full.
 
+**Whichever spelling you take, the answer has to be read.** `endpointPolicy.assess(uri);` on a line
+of its own compiles, discards the assessment and stores every row a client offers — the one hazard
+of this release no compiler reports, and this is the boundary it is about:
+[`policy.assess(uri);` as a bare statement](#policyassessuri-as-a-bare-statement-admits-every-endpoint).
+
 ### A green build does not finish the `0.2.0` move
 
 First, who this is about: code that *implements* the seam or *calls* it. An application that only
@@ -176,15 +186,19 @@ release asks nothing of it.
 
 **For everyone else: if you rebuilt against the new version and nothing failed, you have not
 finished the migration — you have another `EndpointPolicy` on the classpath.** An older push2u jar
-ahead of the new one, a shaded copy, a module that was not rebuilt, a version that resolved to what
-you thought you had replaced: something is answering `validate` for you, and the code that will run
-is not the code you believe you compiled.
+ahead of the new one, a shaded copy, a version that resolved to what you thought you had replaced:
+something is answering `validate` for you, and the code that will run is not the code you believe
+you compiled. A module of your own that was not rebuilt is the same diagnosis with a different
+symptom — it holds a class compiled against `validate`, so nothing answers `assess` for it at all
+and the first call raises `AbstractMethodError` at run time, or `NoSuchMethodError` where the stale
+class was the caller rather than the policy. Loud, late, and in production if that module is not
+covered by a test.
 
-Everything this release moves breaks at compile time, by construction and not by luck. The seam's
-single abstract method changed its signature, so no lambda and no implementing class survives it;
-`validate` does not resolve at any call site; and `EndpointRejectedException` does not exist to be
-named in a `catch`. There is no shape of `0.2.0` policy code that keeps compiling and quietly means
-something else.
+Everything this release moves breaks at compile time wherever the code is actually recompiled, by
+construction and not by luck. The seam's single abstract method changed its signature, so no lambda
+and no implementing class survives it; `validate` does not resolve at any call site; and
+`EndpointRejectedException` does not exist to be named in a `catch`. There is no shape of `0.2.0`
+policy code that keeps compiling and quietly means something else.
 
 That property was bought rather than found. Keeping the name and changing only the return type was
 the cheaper change, and it was refused precisely here: `endpointPolicy.validate(uri);` inside a
