@@ -94,27 +94,29 @@ try {
 The call is still a legal statement expression, the returned value is discarded, and nothing is
 thrown. `EndpointRejectedException` extends `RuntimeException`, so the `catch` is unreachable rather
 than illegal and javac says nothing — the "exception is never thrown in body" error exists only for
-checked types. A registration boundary upgraded across that change stops refusing anything and starts storing every
-endpoint a client offers, silently, in the one control this seam exists to enforce. The scope is
-worth stating exactly, because it is what the rule-out below is written against. With the exception
-type kept for compatibility — which is what the report proposes beside the kept name — that recipe
-compiles with no diagnostic of any kind, `-Xlint:all` included. With the type removed as this record
-removes it, a boundary that names it in a `catch` fails loudly at the `catch` and is therefore safe.
-What stays silent under either is the other common shape: a boundary that calls the method and lets
-the unchecked refusal travel to a framework's handler, naming the type nowhere. One of the two
-hazards needs the exception to survive; the other does not need anything.
+checked types. A registration boundary upgraded across that change stops refusing anything and
+starts storing every endpoint a client offers, silently, in the one control this seam exists to
+enforce.
+
+The scope is worth stating exactly, because it is what the rule-out below is written against. With
+the exception type kept for compatibility — which is what the report proposes beside the kept name —
+that recipe compiles with no diagnostic of any kind, `-Xlint:all` included. With the type removed as
+this record removes it, a boundary that names it in a `catch` fails loudly at the `catch` and is
+therefore safe. What stays silent under either is the other common shape: a boundary that calls the
+method and lets the unchecked refusal travel to a framework's handler, naming the type nowhere. One
+of the two hazards needs the exception to survive; the other does not need anything.
 
 So the spelling has to differ, and the choice among the spellings that do is `assess` — the verb
 this project already uses for the same move, one release earlier, on `PushSender.assessPayloadSize`
-answering a `PayloadSizeAssessment`. A reader who has met one of the two guesses the other.
-`probe` was considered and refused: in this project's vocabulary a probe goes and touches something
-— it is what the health indicator does, once per cache interval, to a custodian — and a name
-promising that would describe every implementation of this seam by the habits of the rare one. The
-standard allowlist reads a `URI` and reaches nothing; an implementation *may* resolve, and the
-seam's own Javadoc offers a custom DNS check as one reason it stays an interface, which is exactly
-why the method's name may not decide the question for all of them. `decide` was considered and refused because "decision" already names the
-allowlist itself in ADR-016 and ADR-024, and a per-endpoint verdict under the same word would
-collide with the vocabulary those records established.
+answering a `PayloadSizeAssessment`. A reader who has met one of the two guesses the other. `probe`
+was considered and refused: in this project's vocabulary a probe goes and touches something — it is
+what the health indicator does, once per cache interval, to a custodian — and a name promising that
+would describe every implementation of this seam by the habits of the rare one. The standard
+allowlist reads a `URI` and reaches nothing; an implementation *may* resolve, and the seam's own
+Javadoc offers a custom DNS check as one reason it stays an interface, which is exactly why the
+method's name may not decide the question for all of them. `decide` was considered and refused
+because "decision" already names the allowlist itself in ADR-016 and ADR-024, and a per-endpoint
+verdict under the same word would collide with the vocabulary those records established.
 
 ## `Refused` carries a reason, and deliberately not the endpoint
 
@@ -204,15 +206,16 @@ answer". After this record there is exactly one way to ask. Everything else that
 unchanged: one definition of the rule, applied at both points; the policy as a bean under Spring;
 the order at a registration boundary — the `Subscription` first, the policy on the endpoint it
 carries second, the row third; no accessor for the policy on `PushSender`; and no configuration-only
-path to unrestricted egress. One sentence of that record deserves naming rather than passing over,
-since a later reader will find it: *the core gains no API, and that is a decision rather than an
-absence of work*. This record does add a type to the core. That sentence answers ADR-024's own
-question — what the core needed in order to make the policy reachable where subscriptions are
-accepted — and the four additions it refused are an accessor on `PushSender`, a predicate beside
-`validate`, an overload taking a `Subscription`, and a factory joining subscription parsing to the
-admission decision. None of them is the shape of the one method's answer, none appears here, and
-ADR-024's durable list rules out no core API in general. So the clause is answered rather than
-superseded.
+path to unrestricted egress.
+
+One sentence of that record deserves naming rather than passing over, since a later reader will find
+it: *the core gains no API, and that is a decision rather than an absence of work*. This record does
+add a type to the core. That sentence answers ADR-024's own question — what the core needed in order
+to make the policy reachable where subscriptions are accepted — and the four additions it refused
+are an accessor on `PushSender`, a predicate beside `validate`, an overload taking a `Subscription`,
+and a factory joining subscription parsing to the admission decision. None of them is the shape of
+the one method's answer, none appears here, and ADR-024's durable list rules out no core API in
+general. So the clause is answered rather than superseded.
 
 ADR-016 and ADR-017 are untouched: the seam is still a required argument of every `PushSender`
 factory, the library still ships no allowlist, and the rule kinds and their matching are unchanged.
