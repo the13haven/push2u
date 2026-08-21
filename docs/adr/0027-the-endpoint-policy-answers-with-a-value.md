@@ -44,14 +44,30 @@ public interface EndpointPolicy {
 }
 
 public sealed interface EndpointAssessment {
+
     record Allowed() implements EndpointAssessment {}
-    record Refused(String reason) implements EndpointAssessment {}
+
+    record Refused(String reason) implements EndpointAssessment {
+
+        /** Takes a null reason and stores "" for it: the component is non-null, the parameter is not. */
+        public Refused(@Nullable String reason) {
+            this.reason = Objects.requireNonNullElse(reason, "");
+        }
+    }
 }
 ```
 
 `validate` is removed, and `EndpointRejectedException` with it. The seam stays a functional
 interface with a single abstract method, so a corporate egress rule is still one lambda — it returns
 an answer now instead of falling off the end of a `void`.
+
+**`Refused`'s constructor is written out because its nullness is part of the decision and not an
+implementation detail.** Every package here is `@NullMarked`, so a plain canonical constructor would
+declare the parameter non-null and a policy passing `null` would be violating the contract rather
+than exercising it — which is the opposite of what the section below decides. The explicit canonical
+constructor is what makes "accepts null, stores `""`" machine-readable: the parameter carries
+`@Nullable`, the component and its accessor stay non-null, and the compact form cannot express it,
+since it has no parameter list to annotate.
 
 ## Doing nothing is the alternative to refuse first
 
@@ -70,11 +86,12 @@ that tells applications to inject the bean and apply it at registration is the s
 problem. Deferring does not avoid the cost; it buys the same cost later at a higher price, paid by
 more people.
 
-**And there is no non-breaking form of this change to defer to.** The shape the report proposes as
-the compatible one is not: with `assess` abstract, every existing lambda and every implementing
-class stops compiling exactly as it does under this record, because the single abstract method's
-signature is what moved. The `default` buys callers and nobody else. So the choice is not between
-breaking now and adding compatibly later — it is between breaking now and breaking later.
+**The shape the report offers as the compatible one is not compatible**: with `assess` abstract,
+every existing lambda and every implementing class stops compiling exactly as it does under this
+record, because the single abstract method's signature is what moved. Its `default` buys callers and
+nobody else. A genuinely compatible shape does exist, though — the mirror of it — and it is compared
+and refused in the next section rather than denied here, because the choice this record makes is
+between breaking now and breaking later, and a reader is owed the reason that is so.
 
 The timing has one more thing in it, and it cuts the same way. This would be the second consecutive
 release to break the deployment that reported it, which migrated to the current version days before
@@ -106,6 +123,59 @@ is not re-proposed: the report argues that an implementation which finds throwin
 keep that freedom. With `assess` abstract it does not have that freedom in either design — it must
 return a value — so the `default` serves callers, not implementers, and what it offers them is
 migration convenience for the life of the API.
+
+## The compatible shape, and why it is the expensive one
+
+Turn the report's proposal around and it stops breaking anything:
+
+```java
+@FunctionalInterface
+public interface EndpointPolicy {
+
+    void validate(URI endpoint);                      // still the single abstract method
+
+    default EndpointAssessment assess(URI endpoint) { // the library catches on the caller's behalf
+        try {
+            validate(endpoint);
+            return new EndpointAssessment.Allowed();
+        } catch (EndpointRejectedException e) {
+            return new EndpointAssessment.Refused(e.getMessage());
+        }
+    }
+}
+```
+
+Every lambda, every implementing class and every call site in existence keeps compiling, and the
+binary contract is untouched. A registration boundary gets its `switch`. This is the alternative the
+record has to beat, and beating it takes four things rather than one.
+
+**It does not remove the exception; it hides it.** Every refusal is still constructed and thrown, on
+every request a boundary refuses, and a client posting junk to a public registration endpoint is the
+ordinary source of those. What the caller stops doing is *writing* the catch; the runtime goes on
+performing the throw, with the stack-trace fill-in the value shape avoids. The premise this record
+rests on — that a condition met routinely is not an exceptional one — is answered for the caller's
+source code and left standing everywhere else.
+
+**It makes the seam two methods where ADR-024 left one, and puts the split in the worse place.**
+Under the report's shape an implementation writes `assess` and a caller may spell the question two
+ways; under this one an implementation must still write `validate` — so the seam is asked one way
+and implemented another, and no implementation can ever answer with a value. A policy that would
+rather return `Refused` is not allowed to.
+
+**It writes the lossy conversion into the library and freezes it.** `Refused`'s reason becomes
+`getMessage()` by construction, so the structured answer is permanently a rendering of a message —
+including the `null` message this record has to normalise, now normalised by us on the policy's
+behalf, for good. Nothing built on top of it can ever be more than prose.
+
+**And it does not avoid the break, it enlarges it.** The value-shaped seam is still the destination,
+and reaching it later means removing two published methods instead of one, from a larger population
+of implementations, with `EndpointRejectedException` retired at the same time. Compatibility here
+buys a delay and pays for it with interest — the same argument as the section above, arrived at from
+the other side.
+
+What would change this answer is a population large enough that a delayed, larger break costs more
+than the interest — the opposite of where this seam stands one release after gaining its second
+application point.
 
 ## The name changes because the spelling decides who breaks silently
 
@@ -388,11 +458,13 @@ architecture summary names the three converting seam signals, which becomes two.
 Two documents are owed an edit that is easy to miss because neither is about this change.
 `docs/MIGRATION-FROM-WEB-PUSH.md` twice tells a reader arriving from the other library that
 `EndpointRejectedException` is what the policy seam throws and what to catch at a registration
-boundary; both sentences become false. And `docs/MIGRATION.md`'s existing section for the `0.1.0`
-move states that the type still exists and is still what `validate` throws — a live present-tense
-claim sitting *above* the new section, in the document a reader jumping two versions reads top to
-bottom. That file is mutable and the cell is corrected rather than left to contradict the section
-below it.
+boundary; both sentences become false. `docs/MIGRATION.md`'s existing section for the `0.1.0` move says in its table that the type still
+exists and is still what `validate` throws. That section is **not** edited: it records one
+transition, its columns ask what a `catch` clause caught in `0.1.0` and what it catches after that
+move, and rewriting it to match a later API would destroy the account of the move it describes. The
+file accumulates newest first, so the new section is inserted directly under the index and the
+`0.1.0` one sits below it — a reader crossing both versions meets the removal first and the older
+transition second, which is the order the shape of that document exists to produce.
 
 ## What this rules out
 
@@ -400,6 +472,9 @@ below it.
   a boundary where refusal is the ordinary case.
 - A second way to ask it — a retained `validate`, a predicate, an overload — whether or not the
   second is derived from the first and so cannot disagree with it.
+- The compatible mirror of that shape, `validate` abstract with `assess` derived from it: it keeps
+  the exception thrown on every routine refusal, lets no implementation answer with a value, freezes
+  the reason as a rendering of a message, and buys a delay it repays with a larger break later.
 - A published exception type that nothing in this library throws, offered as compatibility, whose
   only remaining use is a `catch` that never fires.
 - The same method name kept across the change from `void` to a value, which leaves a call site that
