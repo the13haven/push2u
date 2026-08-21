@@ -265,6 +265,22 @@ The context fails exactly as it was failing before, this time naming an empty st
 nothing at all to reason from. "I cleared it" and "I blanked it" are the same intention, and only
 one of them starts.
 
+**A contributor that never disappeared is the obvious next question, and it does not close this.**
+Registering the probe whenever the starter is on the classpath — reporting that delivery is off
+rather than vanishing — shuts two of the five routes above, the delivery switch and the missing
+signer. The other three stay open, and two of them are the operator's own:
+`management.health.push2u.enabled: false` and `management.health.defaults.enabled: false` are the
+standard keys for switching a health indicator off, they are meant to go on working, and a group
+naming `push2u` fails the context under either. The edit above remains the fix, and what the
+placeholder buys beside it is a probe reporting a non-condition in every deployment that stated it
+does not send. Two framework facts are worth having before anyone builds a variant of the idea in
+their own application, since each is otherwise one failed start away: `OUT_OF_SERVICE` maps to 503,
+so an indicator that says "this deployment does not send" in that status marks the whole application
+unhealthy and breaks the very container check this section is about; and `UNKNOWN` is the one status
+that sits *below* `UP` in the default severity order, so a contributor reporting it beside healthy
+ones leaves the aggregate `UP` — by default rather than by construction, since
+`management.endpoint.health.status.order` can be rewritten.
+
 ### Where the membership check stops, and the clash beside it
 
 **A `*` in a group's `include` or `exclude` switches that check off for everything written after
