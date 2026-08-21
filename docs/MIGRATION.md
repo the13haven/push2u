@@ -27,7 +27,231 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
+
+## From `0.2.0`
+
+`0.2.0` is where this upgrade starts. It is the version this section is written against, and the one
+it names throughout; the release it lands in is deliberately unnamed, for the reason above.
+
+One seam changed shape, and only one. `EndpointPolicy` — a deployment's rule for which push
+endpoints it will contact — used to answer by throwing; it answers with a value now. `validate` is
+replaced by `assess`, which returns an `EndpointAssessment`, and `EndpointRejectedException` no
+longer exists. The reason is the second place the policy is applied: since `0.2.0` an application
+can hold the policy where it accepts subscriptions, and there a refusal is an ordinary request from
+an ordinary client rather than an error — the boundary working, not failing.
+
+Everything that moves breaks your compilation, which is the cheap kind, and this section's second
+half is about the reader for whom nothing broke.
+
+- [What stops compiling on the way from `0.2.0`](#what-stops-compiling-on-the-way-from-020)
+  - [`EndpointPolicy.validate` is now `EndpointPolicy.assess`](#endpointpolicyvalidate-is-now-endpointpolicyassess)
+  - [`EndpointRejectedException` is gone, subtypes included](#endpointrejectedexception-is-gone-subtypes-included)
+  - [At a registration boundary, `EndpointAssessment` replaces the `catch`](#at-a-registration-boundary-endpointassessment-replaces-the-catch)
+- [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
+  - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
+- [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
+- [Checklist for the `0.2.0` move](#checklist-for-the-020-move)
+
+### What stops compiling on the way from `0.2.0`
+
+#### `EndpointPolicy.validate` is now `EndpointPolicy.assess`
+
+The seam keeps exactly one method and stays a functional interface, so a corporate egress rule is
+still one lambda — it returns an answer now instead of falling off the end of a `void`:
+
+```java
+// 0.2.0
+EndpointPolicy policy = endpoint -> {
+    if (!egress.permits(endpoint.getHost())) {
+        throw new EndpointRejectedException(
+                "egress rule denies " + Endpoints.redact(endpoint.toString()));
+    }
+};
+```
+
+```java
+// now
+EndpointPolicy policy = endpoint -> egress.permits(endpoint.getHost())
+        ? new EndpointAssessment.Allowed()
+        : new EndpointAssessment.Refused(
+                "egress rule denies " + Endpoints.redact(endpoint.toString()));
+```
+
+A class implementing the seam takes the same edit at its declaration: `public void validate(URI
+endpoint)` becomes `public EndpointAssessment assess(URI endpoint)`, and every path through the body
+ends in a `return`.
+
+`EndpointAssessment` is a sealed interface with two record variants:
+
+- **`Allowed()`** — no components, deliberately and permanently: an admissible endpoint needs no
+  number or string to act on. Its canonical constructor is public, so build one wherever you need
+  it; all instances are equal and identity says nothing.
+- **`Refused(String reason)`** — the reason is the prose an operator reads in a log line, and it
+  carries exactly the obligation the exception message carried before it: **the raw endpoint does
+  not go in it**, so an implementation that wants to name the endpoint renders it with
+  `Endpoints.redact` first. `null` is stored as `""` and a blank reason is permitted, so a policy
+  translating its own failure may write `new EndpointAssessment.Refused(e.getMessage())` in one line
+  without that line becoming a defect.
+
+Three rules of the new contract are worth reading once rather than meeting:
+
+- **A policy must positively return `Allowed`.** Under `void`, doing nothing was how an
+  implementation admitted an endpoint; there is no such path now, which is the one way this change
+  makes implementations safer rather than riskier.
+- **Returning `null` is a defect**, not an admission and not a refusal: `send` reports it as a
+  `NullPointerException` naming the policy, and that stops a fan-out where a refusal would not.
+- **Throwing anything at all out of `assess` is still a defect** and still propagates unchanged.
+  That rule has not moved; what moved is the list of seam signals `send` converts, which was three
+  and is two — `VapidSignerUnavailableException` and `PushDeliveryException`.
+
+#### `EndpointRejectedException` is gone, subtypes included
+
+The type is removed, so `catch (EndpointRejectedException e)` no longer compiles anywhere: around a
+`send`, where it had already stopped catching anything in the release before, and around the policy
+call itself, where it was still doing its job. Nothing in the library throws it and nothing converts
+it; a `catch` kept "for compatibility" would have been one that never fires, which is why the type
+went in the same change as the method that promised it.
+
+If a policy of yours threw its own subtype — `class EgressDenied extends EndpointRejectedException`
+carrying a rule, a zone, a ticket reference — caught at your own boundary while `send` still
+classified it as `EndpointRejected` on the base type, that channel is closed on purpose.
+`EndpointAssessment` is sealed and `Refused` is a final record carrying prose, so nothing of yours
+travels through this library. Nothing needs to: that pattern works only for a consumer that owns
+both ends, its own policy and its own boundary, and such a consumer keeps the structure beside the
+assessment, in the class that produced it — the sentence is what the library carries, and
+`PushOutcome.EndpointRejected` is what a send reports.
+
+One consequence travels with that closure. `send` used to read a refusal's `getMessage()` inside its
+own `try`/`catch` and substitute a fixed text where the accessor threw, because a public non-final
+exception class could be subclassed by anyone. A record accessor cannot throw, so the fallback is
+gone and `EndpointRejected.reason()` is now exactly the string the policy's `Refused` carried.
+
+#### At a registration boundary, `EndpointAssessment` replaces the `catch`
+
+The recipe published in `0.2.0` applied the policy where subscriptions are accepted, and its middle
+step was a `try`/`catch` around a check whose failure is expected:
+
+```java
+// 0.2.0 — step 2 of: build the Subscription, apply the policy, store the row
+try {
+    endpointPolicy.validate(URI.create(subscription.endpoint()));
+} catch (EndpointRejectedException e) {
+    return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+}
+store.save(subscription);
+```
+
+```java
+// now — the same three steps, with the second one reading an answer
+if (endpointPolicy.assess(URI.create(subscription.endpoint()))
+        instanceof EndpointAssessment.Refused refused) {
+    log.info("subscription refused at registration: {}", refused.reason());
+    return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+}
+store.save(subscription);
+```
+
+An exhaustive `switch` over the sealed type is the other spelling, and the one to prefer where both
+branches do work: it needs no `default`, and a variant added in a later release would fail your
+compilation instead of falling into a branch written for something else.
+
+**The order around it is unchanged**, and it is the seam's contract rather than a preference: build
+the `Subscription` first — its own `IllegalArgumentException` is what a malformed one raises, and it
+is what establishes the precondition `assess` documents — apply the policy to the endpoint it
+carries second, store the row third. What each refusal answers to the client is still yours to
+decide, and the reason still does not belong in that answer: echoing it would describe your
+allowlist, or the refused endpoint, to whoever posted the subscription. The one thing the exception
+bought you here — that no framework mapped it to a `400` echoing its message, because it
+deliberately did not extend `IllegalArgumentException` — a value cannot lose.
+[`SPRING.md` → Endpoint policy](SPRING.md#endpoint-policy) carries the recipe in full.
+
+### A green build does not finish the `0.2.0` move
+
+First, who this is about: code that *implements* the seam or *calls* it. An application that only
+hands an `EndpointPolicies.…` allowlist to `PushSender.builder` and lets `send` do the asking names
+neither the method nor the exception anywhere, so a green build is the whole truth for it and this
+release asks nothing of it.
+
+**For everyone else: if you rebuilt against the new version and nothing failed, you have not
+finished the migration — you have another `EndpointPolicy` on the classpath.** An older push2u jar
+ahead of the new one, a shaded copy, a module that was not rebuilt, a version that resolved to what
+you thought you had replaced: something is answering `validate` for you, and the code that will run
+is not the code you believe you compiled.
+
+Everything this release moves breaks at compile time, by construction and not by luck. The seam's
+single abstract method changed its signature, so no lambda and no implementing class survives it;
+`validate` does not resolve at any call site; and `EndpointRejectedException` does not exist to be
+named in a `catch`. There is no shape of `0.2.0` policy code that keeps compiling and quietly means
+something else.
+
+That property was bought rather than found. Keeping the name and changing only the return type was
+the cheaper change, and it was refused precisely here: `endpointPolicy.validate(uri);` inside a
+`try` with a now-unreachable `catch` would have gone on compiling with no diagnostic of any kind —
+the `catch` is unreachable rather than illegal, since the type was unchecked — and a registration
+boundary upgraded across it would have stopped refusing anything and started storing every endpoint
+a client offered. The name moved so that no reader can arrive there.
+
+**This is not a promise that the release has no silent half.** It has one, it is below, and it is
+permanent rather than something the migration passes through.
+
+#### `policy.assess(uri);` as a bare statement admits every endpoint
+
+The safe spelling and the terse one changed places. In `0.2.0`, `policy.validate(uri);` on a line of
+its own was the whole correct call — the refusal arrived by itself. The same shape now compiles with
+no diagnostic of any kind, `-Xlint:all` included, discards the answer and admits everything. No
+compiler help is available for it: the annotation that would mark the return value as one a caller
+may not discard lives in a dependency the zero-dependency core may not take.
+
+Where that matters is not everywhere. Inside a send the slip cannot open the network: `PushSender`
+performs the assessment itself, on every send, and acts on the value, whatever your own code did
+with an earlier one. **The registration boundary is the point where nothing re-checks** — which is
+why the policy is reachable there at all — and it is the one place a discarded answer stores a row
+the policy refused.
+
+So the last step of this migration is a grep rather than a build: search your sources for `assess(`
+and check that every hit either feeds a `switch` or an `instanceof`, or lands in a variable
+something reads. It costs one command and it is the only check there is.
+
+### What the `0.2.0` move does not change
+
+Nothing about the decision moved — only the shape of its answer. Specifically:
+
+- **Where the policy is applied.** Before encrypting, before signing and before any network I/O on
+  every send, and at a registration boundary if your application applies it there. The send-time
+  assessment is not replaced by the registration one: the policy is configuration and can change
+  after a row was stored.
+- **Who owns the rule.** The deployment, as before. A policy is still a required argument of both
+  `PushSender.builder` overloads, and `EndpointPolicies.allowedEndpoints`, `allowedOrigins`,
+  `allowedDomains` and `unrestricted()` keep their names and their signatures.
+- **How a refusal is classified once `send` holds it.** `PushOutcome.EndpointRejected`, carrying the
+  same two strings — this library's own redaction of the endpoint, and the policy's reason — still a
+  `NotAttempted`, still meaning that no POST was made. **A caller that only calls `send` or
+  `sendAsync` and switches on the outcome has nothing to change in this release.**
+- **What the standard allowlist says when it refuses**, word for word: an endpoint carrying
+  userinfo, an endpoint with no scheme or host, and an endpoint no origin or domain rule matches.
+  Which rule came closest is still deliberately not reported.
+- **Spring.** `push2u.allowed-origins` and `push2u.allowed-domains`, their union, the
+  `EndpointPolicy` bean and an application-supplied bean superseding it, the exclusivity between the
+  properties and the bean, the startup refusals that guard them, and the continued absence of a
+  property for the unrestricted mode. A Spring deployment that never names `EndpointPolicy` in its
+  own source has nothing to do for this release.
+
+### Checklist for the `0.2.0` move
+
+- [ ] Rebuild. If your own code implements or calls the policy and nothing failed to compile, stop
+      and find the other `EndpointPolicy` on your classpath before going further.
+- [ ] Change every policy you implement — lambda and class alike — to return `EndpointAssessment`,
+      with a `Refused` on every path that used to throw and an `Allowed` on every path that used to
+      fall off the end.
+- [ ] Replace every `validate(...)` call with `assess(...)`, and read the answer at each one.
+- [ ] Delete every `catch (EndpointRejectedException ...)`, and answer the client from the `Refused`
+      branch instead.
+- [ ] If a policy of yours threw a subtype of that exception to carry structure, keep the structure
+      in your own code beside the assessment.
+- [ ] Grep for `assess(` and confirm no hit is a bare statement, at a registration boundary above
+      all.
 
 ## From `0.1.0`
 

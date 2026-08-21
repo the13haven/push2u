@@ -234,9 +234,10 @@ of them has a counterpart: a `try`/`catch` written for them will not compile. Wh
 throws is `PushCryptoException` for a failure that recurs (an unusable provider, a signer answering
 something that is not a signature, a key-service misconfiguration), `PushInterruptedException` for
 an interrupted send, and `IllegalArgumentException`/`NullPointerException` for an illegal argument —
-all unchecked, all extending `RuntimeException` directly. Note that `PushDeliveryException` and
-`EndpointRejectedException` are *not* among them: both are still what a transport and a policy
-throw, but `send` converts them into `Indeterminate` and `EndpointRejected` rather than rethrowing.
+all unchecked, all extending `RuntimeException` directly. Note that `PushDeliveryException` is
+*not* among them: it is still what a transport throws, but `send` converts it into `Indeterminate`
+rather than rethrowing. A refused endpoint never travels as an exception at all — the
+`EndpointPolicy` seam answers with a value, and `send` reports a refusal as `EndpointRejected`.
 [`README.md` → What a send reports](../README.md#what-a-send-reports-and-what-it-still-throws) has
 the whole table.
 
@@ -511,9 +512,10 @@ from it.
 The policy runs before encryption, before the VAPID signature and before any I/O; a rejection costs
 none of them and comes back as the `EndpointRejected` outcome, carrying the endpoint redacted and
 the policy's own reason, so one hostile row is a line in your log rather than an aborted fan-out.
-(`EndpointRejectedException` is what the policy seam throws and what you catch if you call
-`EndpointPolicy.validate` yourself at a registration boundary.) An origin entry is exact and
-fail-closed — subdomains of an allowed origin are not included. A domain entry matches at a label
+(The seam does not throw: call `EndpointPolicy.assess` yourself at a registration boundary and
+switch on the `EndpointAssessment` it answers with — an `EndpointAssessment.Refused` carries the
+same reason and is your cue to store no row.) An origin entry is exact and fail-closed —
+subdomains of an allowed origin are not included. A domain entry matches at a label
 boundary and over `https` on the default port only, so `notify.windows.com` admits
 `cloud.notify.windows.com` at any depth and refuses `evilnotify.windows.com`; it is worth exactly
 what the DNS of that zone is worth, and belongs only where the service operator publishes the zone
