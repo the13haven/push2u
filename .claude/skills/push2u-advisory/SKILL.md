@@ -1,6 +1,6 @@
 ---
 name: push2u-advisory
-description: Handle a vulnerability report about push2u's own code — triage it, fix it without disclosing it, and publish the advisory with the release. Use this the moment a security defect in this library is reported, suspected or found, whether it arrived through GitHub's private advisory reporting, by email, as a suspicion raised in conversation, or under your own hands while working on something else entirely — a defect nobody reported needs this procedure exactly as much, and is the one most likely to be written straight into a public pull request as an ordinary fix. Use it also whenever the work involves a temporary private fork, a coordinated disclosure date, crediting a reporter, or deciding whether a report is in scope. Not for a vulnerable third-party dependency — pinning one is an ordinary change covered by the push2u-implement skill.
+description: Handle a vulnerability in push2u's own code — triage it, fix it without disclosing it, and publish the advisory with the release. Use this the moment a security defect in this library is reported, suspected or found, whether it arrived through GitHub's private advisory reporting, by email, as a suspicion raised in conversation, or under your own hands while working on something else entirely, wearing the shape of an ordinary fix. Use it also whenever the work involves a temporary private fork, a coordinated disclosure date, crediting a reporter, or deciding whether a report is in scope. Not for a vulnerable third-party dependency — pinning one is an ordinary change covered by the push2u-implement skill.
 ---
 
 # Responding to a vulnerability in push2u
@@ -10,8 +10,11 @@ to expect; this one is what happens next.
 
 It applies to a defect in this library's own code — the encryption, the VAPID signature, key
 handling, the endpoint policy, secret exposure in diagnostics — and it applies to one found in
-house exactly as it applies to one somebody sent in. Nothing below turns on who noticed first;
-what a public pull request discloses is the same either way. A vulnerable *dependency* is a
+house exactly as it applies to one somebody sent in: what a public pull request discloses is the
+same either way, so nothing about *what may be published, and when relative to the fix*, turns on
+who noticed first. What does turn on it is only what needs a reporter to exist — the credit, the
+correspondence and the disclosure window below have no counterpart when there is nobody to inform,
+and an in-house find is released on this project's own schedule. A vulnerable *dependency* is a
 different thing and an ordinary change: pin it with a constraint, per the recipe in
 `.claude/skills/push2u-implement/SKILL.md`. The exception is a dependency flaw that is exploitable
 *through* push2u's own API in a way consumers cannot mitigate — then it needs an advisory of its

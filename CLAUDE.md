@@ -154,14 +154,18 @@ be fixed here, `.claude/skills/push2u-advisory/SKILL.md` carries the procedure �
 branch-push-PR habit publishes the defect and cannot be undone.
 
 **What decides it is what the text describes, never how the defect arrived.** Before anything goes
-into a public pull request, issue or commit message, ask whether it describes a way to make a
-*released* version misbehave; if it does, the advisory path applies whether the defect came in as a
-report, surfaced in review, or was found by your own hands halfway through unrelated work. That
-last one is the case this rule has already failed to catch, and it is the hardest of the three to
-notice: a defect nobody reported is not called a report by anyone, it arrives wearing the shape of
-an ordinary `fix:`, and a rule read as being about handling *reports* does not fire on it. A fix
-that has to stay quiet also travels alone — bundling it with an unrelated change is most of what
-makes its pull request read as routine.
+into a public pull request, issue or commit message, ask whether it describes a way for untrusted
+input — a push service's response, a Vault answer, an endpoint out of a subscription — to reach a
+secret, a signature, the endpoint policy or a log some other system trusts, in a version already
+released. If it does, the advisory path applies whether the defect came in as a report, surfaced in
+review, or was found by your own hands halfway through unrelated work. That last one is the case
+this rule has already failed to catch, and it is the hardest of the three to notice: a defect nobody
+reported is not called a report by anyone, it arrives wearing the shape of an ordinary `fix:`, and a
+rule read as being about handling *reports* does not fire on it. An ordinary bug in released code is
+not this — a rule that stops every `fix:` is discounted as fast as one that stops nothing is missed
+— and neither is a vulnerable third-party dependency, whose pin names its advisory in public on
+purpose. A fix that does have to stay quiet travels alone: bundling it with an unrelated change is
+most of what makes its pull request read as routine.
 
 ## Commands
 

@@ -1,10 +1,14 @@
 <!--
-Security fixes do not start here — see SECURITY.md. A pull request describing an unfixed
-vulnerability discloses it.
+Security fixes do not start here — see SECURITY.md. Does this change fix a defect through which
+untrusted input reaches a secret, a signature, the endpoint policy or a log some other system
+trusts, and does a released version still have it? Then this pull request discloses it, whether or
+not the fix travels with it, and whether the defect was reported to you or found by your own hands.
+Stop and report it privately instead.
 
 Label this pull request: the release notes are generated from labels (.github/release.yml), and an
-unlabeled one lands in "Other Changes". Use breaking-change / enhancement / bug / security /
-dependencies / documentation, or ignore-for-release for housekeeping.
+unlabeled one lands in "Other Changes". Use breaking-change / security / enhancement / bug /
+dependencies / documentation, or ignore-for-release for housekeeping. A pull request appears under
+the first of those it carries, so that order is the order they are matched in.
 -->
 
 ## What this changes

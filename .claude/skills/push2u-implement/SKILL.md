@@ -84,13 +84,6 @@ Write the failing test before the fix — specifically the test that would have 
 security-relevant behaviour, aim the test at the bad outcome being impossible, not at the good path
 still working; the second passes for reasons that have nothing to do with your change.
 
-**If that bad outcome is reachable in a version already released, stop before you push.** This is
-the last point at which the question costs nothing, and the answer changes the whole shape of the
-work: a defect you found yourself, in the middle of work that started as something else, discloses
-exactly as much in a public branch, pull request or commit message as one somebody reported. Read
-`.claude/skills/push2u-advisory/SKILL.md` and take that path — it is not the branch-push-PR one,
-and no part of it can be undone once the push has happened.
-
 Two habits particular to this code:
 
 - **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, as the inverse
@@ -242,6 +235,17 @@ spellings depending on how much moved: `Superseded by ADR-NNN` when the whole de
 narrower `Accepted; one clause superseded by ADR-NNN` when only one clause did — and
 `docs/adr/README.md` carries the procedure for both. `docs/DESIGN.md` is the document that tracks
 the code; the ADRs are the record of what was decided and when.
+
+**Before you push, one question about what this change is.** Does it fix a defect through which
+untrusted input — a push service's response, a Vault answer, an endpoint out of a subscription, a
+payload — reaches a secret, a signature, the endpoint policy, or a log some other system trusts?
+And does a version already released still have it? Then the branch, the commit message and the
+pull request body each disclose it, whether or not the fix travels with them, and a defect you
+found yourself halfway through unrelated work discloses exactly as much as one somebody reported.
+Take `.claude/skills/push2u-advisory/SKILL.md` instead of the branch-push-PR path — nothing about a
+push can be undone afterwards. This is the last point at which asking costs nothing. An ordinary
+bug in released code is not this, and neither is a vulnerable third-party dependency: pinning one
+is the ordinary change above, and its constraint names its advisory in public on purpose.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

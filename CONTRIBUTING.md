@@ -318,9 +318,9 @@ belongs to:
 
 Categories are matched in that order and a PR appears in exactly one of them, so a PR that is both
 breaking and a feature belongs under `breaking-change`. `security` sits above `bug` because the
-same mechanism runs the other way there: a security fix is `fix:` by Conventional Commit and so
-carries `bug` too, and one place lower would be enough to keep it out of the Security section
-altogether.
+same mechanism runs the other way there: a security fix is `fix:` by Conventional Commit, so unless
+`security` was already on it when it was opened the labelling workflow gives it `bug` as well — and
+anywhere below `bug` would be enough to keep it out of the Security section altogether.
 
 Before merging, `main` requires the `quality` check and CodeQL analysis to pass. A change to prose
 skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`) and still reports
