@@ -84,6 +84,13 @@ Write the failing test before the fix — specifically the test that would have 
 security-relevant behaviour, aim the test at the bad outcome being impossible, not at the good path
 still working; the second passes for reasons that have nothing to do with your change.
 
+**If that bad outcome is reachable in a version already released, stop before you push.** This is
+the last point at which the question costs nothing, and the answer changes the whole shape of the
+work: a defect you found yourself, in the middle of work that started as something else, discloses
+exactly as much in a public branch, pull request or commit message as one somebody reported. Read
+`.claude/skills/push2u-advisory/SKILL.md` and take that path — it is not the branch-push-PR one,
+and no part of it can be undone once the push has happened.
+
 Two habits particular to this code:
 
 - **One rule, one implementation.** The RFC 8291 §4 record-size rule lives once, as the inverse

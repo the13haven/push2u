@@ -258,6 +258,16 @@ moved to), and a description of how the code currently works being added to an A
 
 ### 5.9 Process
 
+**First, before the rest of this section:** does the change fix a defect that a *released* version
+still has, and does the branch, the pull request title, body or any commit message describe it?
+Then it is on the wrong path, and saying so is a must-fix however clean the code is — the fix
+belongs in a temporary private fork with an advisory published alongside the release that carries
+it (`.claude/skills/push2u-advisory/SKILL.md`). A defect the author found themselves mid-way
+through unrelated work is the shape this misses: it reads as an ordinary `fix:` because nobody
+called it a report. Text already pushed cannot be unpublished and force-pushing does not help, so
+what is left to decide is the advisory, the label and the release it ships with — raise it rather
+than letting the pull request merge as routine.
+
 Cheap to check, silently wrong when missed: the pull request carries a changelog label (the label
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and

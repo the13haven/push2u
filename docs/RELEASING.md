@@ -189,11 +189,14 @@ tag, grouped by PR labels as configured in `.github/release.yml`. Before releasi
 every merged PR carries the right label:
 
 - `breaking-change`
+- `security`
 - `enhancement`
 - `bug`
-- `security`
 - `dependencies`
 - `documentation`
+
+They are listed in the order `.github/release.yml` matches them, which is a priority order: a PR
+carrying two of them appears under the first, and under that one only.
 
 A PR that should not appear in the notes at all carries `ignore-for-release` — housekeeping, and
 anything merged before the first tag, where "what changed" is a question about code no consumer

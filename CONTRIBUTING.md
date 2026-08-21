@@ -309,15 +309,18 @@ belongs to:
 | Label | Section |
 |---|---|
 | `breaking-change` | Breaking Changes |
+| `security` | Security |
 | `enhancement` | New Features |
 | `bug` | Bug Fixes |
-| `security` | Security |
 | `dependencies` | Dependencies |
 | `documentation` | Documentation |
 | `ignore-for-release` | omitted from the notes |
 
-Categories are matched in that order, so a PR that is both breaking and a feature belongs under
-`breaking-change`.
+Categories are matched in that order and a PR appears in exactly one of them, so a PR that is both
+breaking and a feature belongs under `breaking-change`. `security` sits above `bug` because the
+same mechanism runs the other way there: a security fix is `fix:` by Conventional Commit and so
+carries `bug` too, and one place lower would be enough to keep it out of the Security section
+altogether.
 
 Before merging, `main` requires the `quality` check and CodeQL analysis to pass. A change to prose
 skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`) and still reports

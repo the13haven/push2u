@@ -19,15 +19,21 @@ changelog:
     - title: "Breaking Changes"
       labels:
         - breaking-change
+    # Above "Bug Fixes", and the order here is the whole of what decides it: a security fix is
+    # `fix:` by Conventional Commit, so it carries `bug` as well and would otherwise land under
+    # Bug Fixes and never be named as a security fix anywhere in the notes. It stays below
+    # "Breaking Changes" because a pull request appears in exactly one section and the two say
+    # different things — the security fact also reaches consumers through the published advisory,
+    # its CVE and their scanners, while an incompatible change is announced here and nowhere else.
+    - title: "Security"
+      labels:
+        - security
     - title: "New Features"
       labels:
         - enhancement
     - title: "Bug Fixes"
       labels:
         - bug
-    - title: "Security"
-      labels:
-        - security
     # Dependency bumps get their own section instead of being excluded outright: for a library the
     # dependency set is part of the public surface, so silently dropping dependabot's PRs from the
     # changelog would hide exactly the changes downstream users may need to know about. Dependabot

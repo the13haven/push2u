@@ -149,9 +149,19 @@ this file but not the skill list, so read the matching one directly when the tas
 **A vulnerability never goes in a public issue, pull request or commit message.** It is reported
 through GitHub's private advisory channel (`SECURITY.md`), because the repository is public and a
 description of a defect in the encryption, the VAPID signature or the endpoint policy discloses it
-before a fix exists. This applies to anything you would file on the user's behalf. When one is
-reported here and has to be fixed, `.claude/skills/push2u-advisory/SKILL.md` carries the procedure —
-the ordinary branch-push-PR habit publishes the defect and cannot be undone.
+before a fix exists. This applies to anything you would file on the user's behalf. When one has to
+be fixed here, `.claude/skills/push2u-advisory/SKILL.md` carries the procedure — the ordinary
+branch-push-PR habit publishes the defect and cannot be undone.
+
+**What decides it is what the text describes, never how the defect arrived.** Before anything goes
+into a public pull request, issue or commit message, ask whether it describes a way to make a
+*released* version misbehave; if it does, the advisory path applies whether the defect came in as a
+report, surfaced in review, or was found by your own hands halfway through unrelated work. That
+last one is the case this rule has already failed to catch, and it is the hardest of the three to
+notice: a defect nobody reported is not called a report by anyone, it arrives wearing the shape of
+an ordinary `fix:`, and a rule read as being about handling *reports* does not fire on it. A fix
+that has to stay quiet also travels alone — bundling it with an unrelated change is most of what
+makes its pull request read as routine.
 
 ## Commands
 
