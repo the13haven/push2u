@@ -73,6 +73,16 @@ public final class PushSender {
      */
     private static final int CAUSE_CHAIN_CEILING = 1000;
 
+    /**
+     * The single answer every fitting payload gets. The variant carries no components, so one instance says everything
+     * any of them could: all of them are equal to each other, nothing distinguishes one from the next, and no caller
+     * can be told which it holds. Handing out the same one keeps a question that an application may ask before every
+     * notification from allocating on the answering path, and it commits this class to nothing a caller may read —
+     * identity is not part of what the answer means, and a caller comparing two answers with {@code ==} is asking a
+     * question this type does not answer.
+     */
+    private static final PayloadSizeAssessment WITHIN_LIMIT = new PayloadSizeAssessment.WithinLimit();
+
     private final VapidSigner signer;
     private final String contact;
     private final WebPushEncryptor encryptor;
@@ -347,7 +357,7 @@ public final class PushSender {
         if (payload.length > maximumPayloadBytes) {
             return new PayloadSizeAssessment.ExceedsLimit(payload.length, maximumPayloadBytes);
         }
-        return new PayloadSizeAssessment.WithinLimit();
+        return WITHIN_LIMIT;
     }
 
     /**
