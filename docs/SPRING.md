@@ -453,12 +453,12 @@ the call site worth pointing it at.
 
 What the application does choose is what each refusal answers to its client. A malformed
 subscription — the `IllegalArgumentException` from step 1 — and a policy refusal can both sensibly
-answer `400` with no body, and neither message was written for the client to read. The
-assessment's `reason` is prose for an operator's log line, and a policy of the deployment's own —
-a corporate egress rule — may put whatever it finds useful there, which is reason enough not to
-hand it back to whoever posted the subscription. The standard allowlist is sparing on its own
-account: its refusals carry the endpoint the client itself sent, redacted, and never say which
-rule came closest.
+answer `400` with no body, and neither message was written for the client to read. The assessment's
+`reason` is prose for an operator's log line, and a policy of the deployment's own — a corporate
+egress rule — may put whatever it finds useful there, short of the raw endpoint the seam forbids,
+which is reason enough not to hand it back to whoever posted the subscription. The standard
+allowlist is sparing on its own account: its refusals carry the endpoint the client itself sent,
+redacted, and never say which rule came closest.
 
 The two refusals arrive in different shapes, and the difference is worth stating, because a policy
 refusal used to be an exception here as well. That exception deliberately did not extend
@@ -466,8 +466,9 @@ refusal used to be an exception here as well. That exception deliberately did no
 echoing its message on the application's behalf — and that requirement is met more completely by a
 value than it ever was by an ancestry: there is no exception for a mapping to see, so nothing
 translates a refusal for you and nothing can echo the reason unless the application writes it into
-the response itself. What the shape does move is the other way round, and it is the paragraph
-above: an unhandled exception could not pass unnoticed, and a discarded value can.
+the response itself. What the shape does move is the other way round, and it is the discarded answer
+two paragraphs above: an unhandled exception could not pass unnoticed, and a discarded value
+can.
 
 The registration check does not replace the send-time one. The policy is configuration and can
 change after rows were stored, so `send` assesses every send regardless and reports a refusal as the

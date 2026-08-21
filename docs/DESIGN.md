@@ -1559,8 +1559,8 @@ The automated suite covers:
   signer path;
 - the allowlist's matching and the entry-level refusals of both rule kinds: an origin compared on
   the whole RFC 6454 serialization, a domain matched at a label boundary and only on `https` and the
-  default port, and case, IDNA form and duplicate entries settled on both sides
-  (`EndpointPoliciesTest`, `EndpointRuleTest`);
+  default port, case and IDNA form settled on both sides, and duplicate entries collapsed where the
+  allowlist is built (`EndpointPoliciesTest`, `EndpointRuleTest`);
 - the endpoint policy as a seam that answers by value: each standard refusal carrying its own text
   and every admitting answer being the one shared `Allowed` (`EndpointPoliciesTest`), a `null` reason
   stored as `""` and an `Allowed` carrying nothing and equal by value (`EndpointAssessmentTest`), and
