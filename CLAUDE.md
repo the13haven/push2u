@@ -70,7 +70,7 @@ into the short *Writing a VapidSigner* introduction README gives `docs/SPRING.md
 `docs/VAULT.md`. The testkit coordinate stayed behind in README, under the rule below, and
 `docs/SIGNER.md` links to it rather than repeating it.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…027) with
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…028) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
 `docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
 the environment the numbers were taken on — a snapshot someone took, not an output the build
