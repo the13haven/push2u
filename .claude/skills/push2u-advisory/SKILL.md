@@ -24,9 +24,11 @@ own and belongs here.
 ## The habit to suppress first
 
 The normal workflow in this repository is to branch, commit with a descriptive message, push, and
-open a pull request explaining the reasoning. Every step of that publishes. Applied to an unfixed
+open a pull request explaining the reasoning. Every step of that publishes. Applied to a
 vulnerability in a public repository, it is the disclosure itself, and it cannot be taken back —
-forks, mirrors, notification emails and the events API have already seen it.
+forks, mirrors, notification emails and the events API have already seen it. Carrying the fix in
+the same branch does not soften that: what is exposed is the version already released, and it stays
+exposed until a fixed one is out.
 
 So, until the advisory is published:
 

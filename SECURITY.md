@@ -6,8 +6,11 @@ everything else in this repository.
 
 ## Reporting a vulnerability
 
-**Do not open a public issue for a security report.** A public issue about a cryptographic or
-authentication defect discloses it to everyone before a fix exists.
+**Do not open a public issue for a security report — and do not open a pull request either.** A
+public description of any defect in the *Scope* list below discloses it to everyone, whether or not
+a fix travels with it: a version already released stays exposed until a fixed one is out, so a pull
+request that repairs the defect while describing it has published it all the same. This holds for a
+defect you found while working on something else as much as for one you set out to look for.
 
 Report it through GitHub's private vulnerability reporting:
 
@@ -69,8 +72,9 @@ In scope — the properties the library is responsible for:
   runs. The endpoint in a `Subscription` is attacker-influenced, so this is the SSRF control point.
 - **Secret exposure in diagnostics**: `X-Vault-Token`, the Vault address, or the capability
   path/query of an endpoint reaching an exception message, log record, or health payload.
-- **Integrity of a diagnostic something else reads**: text chosen by a push service, or by whatever
-  answers on the Vault address, reaching an exception message, log record or health payload without
+- **Integrity of a diagnostic something else reads**: text chosen by a push service, by whatever
+  answers on the Vault address, or arriving in a subscription, reaching an exception message, log
+  record or health payload without
   being escaped — so that it can forge a line an operator reads as the application's own, steer a
   terminal with an escape sequence, or reverse the printed order of what follows it. This is a
   different property from the item above and not a weaker form of it: what breaks is the

@@ -7,8 +7,10 @@ body:
       value: >-
         **If this is a security vulnerability, stop and read
         [SECURITY.md](https://github.com/the13haven/push2u/blob/main/SECURITY.md).** A public issue
-        about a defect in encryption, VAPID authentication, key handling or the endpoint policy
-        discloses it before a fix exists.
+        about any defect in that document's *Scope* list — the encryption, VAPID authentication,
+        key handling, the endpoint policy, what a diagnostic exposes or how far it can be trusted,
+        exhaustion a remote peer can drive — discloses it to everyone, and it does so whether or
+        not you already have a fix for it.
 
   - type: checkboxes
     id: not-security

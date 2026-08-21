@@ -7,7 +7,9 @@ look for, so that neither is a surprise at pull-request time.
 [`SECURITY.md`](SECURITY.md); the report stays private until a fix is released. That holds when you
 ran into the problem while working on something else, and when your branch already carries the fix:
 a released version stays exposed until a fixed one is out, so a pull request describing the defect
-is the disclosure whether or not it also repairs it.
+is the disclosure whether or not it also repairs it. An ordinary bug is not this, and neither is
+pinning a vulnerable dependency of ours — that constraint names its advisory in public on purpose,
+below.
 
 Questions and half-formed ideas belong in
 [Discussions](https://github.com/the13haven/push2u/discussions); the issue tracker is for defects

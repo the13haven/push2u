@@ -11,8 +11,10 @@ closes a path no released version completes.
 
 Label this pull request: the release notes are generated from labels (.github/release.yml), and an
 unlabeled one lands in "Other Changes". Use breaking-change / security / enhancement / bug /
-dependencies / documentation, or ignore-for-release for housekeeping. A pull request appears under
-the first of those it carries, so that order is the order they are matched in.
+dependencies / documentation — they are matched in that order, and a pull request appears under the
+first of them it carries and under that one only, so a security fix wants `security` even when it
+already has `bug`. Housekeeping takes ignore-for-release instead, which drops the pull request from
+the notes altogether rather than filing it anywhere.
 -->
 
 ## What this changes

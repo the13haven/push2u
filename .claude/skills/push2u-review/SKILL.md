@@ -264,14 +264,16 @@ address, an endpoint arriving in a subscription — to reach a secret or a key, 
 VAPID signature, get past the endpoint policy to the network, write into a log some other system
 trusts, or exhaust memory or time; and does this library's own code, in a version already
 released, complete that path? An ordinary bug in released code is not this, neither is a
-third-party advisory named in a pin, and neither is hardening that closes a path no released code
-completes. If it is, though, the change is on the wrong path, and saying so is a must-fix however
-clean the code is — the fix belongs in a temporary private fork with an advisory published
-alongside the release that carries it (`.claude/skills/push2u-advisory/SKILL.md`). A defect the
-author found themselves mid-way through unrelated work is the shape this misses: it reads as an
-ordinary `fix:` because nobody called it a report. Text already pushed cannot be unpublished and
-force-pushing does not help, so what is left to decide is the advisory, the label and the release
-it ships with — raise it rather than letting the pull request merge as routine.
+third-party advisory named in a pin, neither is hardening that closes a path no released code
+completes, and neither is a pull request opened after its own advisory is published — that one is
+meant to describe the fix plainly and carry the `security` label. If it is, though, the change is
+on the wrong path, and saying so is a must-fix however clean the code is — the fix belongs in a
+temporary private fork with an advisory published alongside the release that carries it
+(`.claude/skills/push2u-advisory/SKILL.md`). A defect the author found themselves mid-way through
+unrelated work is the shape this misses: it reads as an ordinary `fix:` because nobody called it a
+report. Text already pushed cannot be unpublished and force-pushing does not help, so what is left
+to decide is the advisory, the label and the release it ships with — raise it rather than letting
+the pull request merge as routine.
 
 Cheap to check, silently wrong when missed: the pull request carries a changelog label (the label
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
