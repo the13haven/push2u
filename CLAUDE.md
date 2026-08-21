@@ -256,13 +256,16 @@ classification a repeat decision needs; the schedule is the caller's. `PushOutco
 `NotAttempted` marker over `SignerUnavailable`, `PayloadRejected` and `EndpointRejected`. The
 `Retry-After` is reported with no ceiling applied.
 
-Exactly three seam signals convert (ADR-022's taxonomy, ADR-021's sorting):
-`EndpointRejectedException` → `EndpointRejected`; `VapidSignerUnavailableException` →
-`SignerUnavailable`; `PushDeliveryException` → `Indeterminate`. Any other `RuntimeException` from a
-consumer seam is a defect and propagates. `send` itself throws `PushCryptoException` (a defect, an
-unusable substrate, a misconfiguration that recurs), `PushInterruptedException` (recognised by the
-facade's disjunction — an `InterruptedException` in the chain *or* the thread's interrupt flag —
-never by a seam), and `IllegalArgumentException`/`NullPointerException`.
+Exactly two seam exceptions convert (ADR-022's taxonomy, ADR-021's sorting):
+`VapidSignerUnavailableException` → `SignerUnavailable`; `PushDeliveryException` → `Indeterminate`.
+The endpoint policy is not among them because it answers with a value (ADR-027): `send` converts an
+`EndpointAssessment.Refused` into `EndpointRejected`, pairing the policy's reason with the library's
+own redaction of the endpoint. Any other `RuntimeException` from a consumer seam is a defect and
+propagates, the policy included; a policy answering `null` is the same defect, arriving as a
+`NullPointerException` from the sender's own check. `send` itself throws `PushCryptoException` (a
+defect, an unusable substrate, a misconfiguration that recurs), `PushInterruptedException`
+(recognised by the facade's disjunction — an `InterruptedException` in the chain *or* the thread's
+interrupt flag — never by a seam), and `IllegalArgumentException`/`NullPointerException`.
 
 Three SPIs, and only three (ADR-005):
 
@@ -270,7 +273,10 @@ Three SPIs, and only three (ADR-005):
   P-256 public point, both returned as fresh arrays the caller owns (the kit checks that by array
   identity). Implementations: `LocalEcVapidSigner`, `VaultTransitVapidSigner`.
 - `PushHttpClient` — push transport. Response bodies are never read (untrusted capability URLs).
-- `EndpointPolicy` — deployment egress policy (SSRF control). A required argument of both
+- `EndpointPolicy` — deployment egress policy (SSRF control). One method,
+  `EndpointAssessment assess(URI)`, answering a sealed `Allowed()` / `Refused(reason)` rather than
+  throwing (ADR-027) — refusal is the ordinary case at a registration boundary, where nothing
+  re-checks and a discarded answer admits everything. A required argument of both
   `PushSender.builder` overloads, so no sender exists without one (ADR-016). The standard
   implementation is an allowlist of `EndpointRule` values (ADR-017): `allowedEndpoints` takes a
   mixed list and is the primary cross-browser call, `allowedOrigins`/`allowedDomains` are the

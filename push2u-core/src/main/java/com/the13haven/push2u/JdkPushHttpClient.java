@@ -24,7 +24,7 @@ import java.util.Objects;
  * stream, so connections stay reusable.
  *
  * <p>A second guarantee holds at construction: <b>the client must not follow redirects.</b> The endpoint is an
- * attacker-supplied capability URL and the {@link EndpointPolicy} validated exactly the URI handed to {@link #post} — a
+ * attacker-supplied capability URL and the {@link EndpointPolicy} assessed exactly the URI handed to {@link #post} — a
  * {@code 3xx} chased by the client would re-send the encrypted body and the request headers to whatever host
  * {@code Location} names, an address the policy never saw, and the redirect target's answer would be reported as the
  * delivery result. A supplied client whose {@link HttpClient#followRedirects()} is not

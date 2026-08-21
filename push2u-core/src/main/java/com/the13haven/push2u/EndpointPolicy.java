@@ -28,8 +28,8 @@ import java.net.URI;
  * of every {@link PushSender} factory method: the library does not choose a deployment's allowlist, but it does refuse
  * to decide on the deployment's behalf that there is none — a deployment wanting none says so with
  * {@link EndpointPolicies#unrestricted()}. Note the shape of the seam: the policy is fixed when the sender is built and
- * {@link #validate} receives only the endpoint URI, no request or tenant context — a rule that varies by tenant
- * therefore means building one sender per tenant.
+ * {@link #assess} receives only the endpoint URI, no request or tenant context — a rule that varies by tenant therefore
+ * means building one sender per tenant.
  *
  * <p><b>The decision is older than the send.</b> A subscription usually arrives at a public registration endpoint and
  * is written to a store; whether this deployment will ever contact its endpoint is answerable at that moment, from the
@@ -39,7 +39,7 @@ import java.net.URI;
  * Applying the policy where the subscription is accepted keeps such a row out of the store — build the
  * {@link Subscription} first, which enforces the endpoint and key-material rules, apply this policy to the endpoint it
  * carries second, and store the row only once both have passed. The registration check does not replace the send-time
- * one: the policy is deployment configuration and can change after the row was stored, so the sender validates every
+ * one: the policy is deployment configuration and can change after the row was stored, so the sender assesses every
  * send regardless of what was checked when the row was accepted.
  *
  * <p><b>What a URI-level check cannot do.</b> The policy sees a {@link URI}, so it can enforce name and origin rules
@@ -55,22 +55,30 @@ import java.net.URI;
  * SSRF Prevention Cheat Sheet</a>. The policy is a coarse filter, not a sandbox.
  *
  * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
- * {@link PushSender#sendAsync} makes concurrent {@link #validate} calls the normal case; a policy keeping mutable state
- * — a resolution cache, a counter — has to guard it. The policies {@link EndpointPolicies#allowedOrigins} and
+ * {@link PushSender#sendAsync} makes concurrent {@link #assess} calls the normal case; a policy keeping mutable state —
+ * a resolution cache, a counter — has to guard it. The policies {@link EndpointPolicies#allowedOrigins} and
  * {@link EndpointPolicies#allowedEndpoints} return close over an immutable list of immutable rules and need none.
  */
 @FunctionalInterface
 public interface EndpointPolicy {
 
     /**
-     * Decides whether {@code endpoint} may be contacted: return normally to allow it, throw
-     * {@link EndpointRejectedException} to reject it. The sender calls this before encrypting, before asking the
+     * Decides whether {@code endpoint} may be contacted, and answers with a value: {@link EndpointAssessment.Allowed}
+     * to permit it, {@link EndpointAssessment.Refused} — carrying the policy's own account of the refusal — to refuse
+     * it. A refusal is the ordinary case at the boundaries this seam serves, not an error, so an implementation must
+     * positively return one of the two; falling off the end of the method is not a way to answer, and returning
+     * {@code null} is a defect the caller reports as such. The sender calls this before encrypting, before asking the
      * {@link VapidSigner} for a signature (which may be a remote Vault/KMS operation), and before any HTTP request — a
-     * rejected endpoint costs none of those, and reaches the sender's caller as the
-     * {@link PushOutcome.EndpointRejected} value rather than as this exception, so one hostile row never aborts a
-     * fan-out over a whole subscription store. An application applying the same policy where it accepts subscriptions
-     * calls this method directly, catches the exception at its own boundary, and decides what a refusal answers there —
-     * typically a {@code 400} with no row stored.
+     * refused endpoint costs none of those, and reaches the sender's caller as the {@link PushOutcome.EndpointRejected}
+     * value, so one hostile row never aborts a fan-out over a whole subscription store.
+     *
+     * <p><b>The answer must be read where nothing re-checks.</b> {@code policy.assess(uri);} as a bare statement is
+     * legal Java: it compiles with no diagnostic of any kind, the returned value is discarded, and every endpoint is
+     * admitted. Inside a send that slip cannot open the network — {@link PushSender#send} performs this assessment
+     * itself, on every send, and acts on the value. An application applying the same policy where it accepts
+     * subscriptions has no such backstop: the registration boundary is exactly the point where nothing re-checks, so
+     * the caller there must switch on the returned {@link EndpointAssessment} and refuse to store the row on a
+     * {@link EndpointAssessment.Refused} — typically answering a {@code 400} with no row stored.
      *
      * <p>The argument's precondition is part of this seam's contract at both call sites: the endpoint has already
      * passed {@link Endpoints#requireSecure} (an absolute {@code https} URL with a host). The sender guarantees that
@@ -78,14 +86,15 @@ public interface EndpointPolicy {
      * building the {@link Subscription} first — which applies that check together with the key-material and length
      * rules — and applying the policy to the endpoint it carries second.
      *
-     * <p>The endpoint is a capability URL (RFC 8030 §8.3): implementations must not put the raw URI into the rejection
-     * message — render it with {@link Endpoints#redact} instead. A {@link RuntimeException} of any other type
-     * propagates to the caller unchanged: it is a defect in the policy, not a rejection, and must not be mistaken for
-     * one.
+     * <p>The endpoint is a capability URL (RFC 8030 §8.3): implementations must not put the raw URI into a refusal's
+     * reason — render it with {@link Endpoints#redact} instead. A {@link RuntimeException} of any type thrown from this
+     * method propagates to the caller unchanged: it is a defect in the policy, not a refusal, and must not be mistaken
+     * for one.
      *
      * @param endpoint the push endpoint being decided about; already validated against the
      *     {@link Endpoints#requireSecure} contract (absolute {@code https} URL with a host)
-     * @throws EndpointRejectedException if the policy refuses this endpoint
+     * @return {@link EndpointAssessment.Allowed} if this endpoint may be contacted, or
+     *     {@link EndpointAssessment.Refused} with the policy's account of the refusal; never {@code null}
      */
-    void validate(URI endpoint);
+    EndpointAssessment assess(URI endpoint);
 }

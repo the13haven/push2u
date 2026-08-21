@@ -1,6 +1,6 @@
 # ADR-027 — The endpoint policy answers with a value
 
-**Status:** Proposed
+**Status:** Accepted
 
 Reported as https://github.com/the13haven/push2u/issues/179, by a deployment that had adopted the
 registration-time check one release earlier and found the call awkward at exactly the boundary the
