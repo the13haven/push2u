@@ -192,12 +192,29 @@ Two failure modes of the new shape are settled here rather than discovered:
 
 ## Which records move
 
-**ADR-022 takes the narrow status line.** It owns the exception taxonomy entirely — which types
-exist, what each promises, and what leaves each seam — and one of its three seam signals ceases to
-exist. Its table row for a refused endpoint, and the clause naming three converted types, are what
-this record supersedes; every other part of that ADR stands, including the reasoning that put
-`EndpointRejectedException` outside `IllegalArgumentException`, which is half of why the exception
-shape had to go.
+**Two records take the narrow status line, and ADR-022 divides the halves itself.** It says that it
+owns the taxonomy — which types exist, what each promises, what each carries — and that it owns "the
+contracts and not the sorting"; that classification is ADR-021's, "and so is which failure leaves a
+seam wearing which of these types; a type is the channel and that record decides what goes down it",
+along with "the line between an outcome and an exception". It says why the division is written down:
+so that whoever supersedes either knows which half they are replacing. This record replaces one
+clause of each.
+
+**ADR-022** loses a type. `EndpointRejectedException` ceases to exist, and with it that record's
+table row for a refused endpoint. Every other part of it stands, including the reasoning that put
+the type outside `IllegalArgumentException` — which is half of why the exception shape had to go, so
+the clause that survives is the one that argued this change into being.
+
+**ADR-021** loses the seam's channel. That record states, in its own words, that "the seams keep
+signalling as they do now — `PushHttpClient` throws `PushDeliveryException`, `EndpointPolicy` throws
+`EndpointRejectedException`, and a signer that cannot sign now throws
+`VapidSignerUnavailableException`", and that "those three types convert and no others". After this
+record the endpoint policy signals by returning, the enumeration is two, and for this one seam the
+line between an outcome and an exception has moved. What ADR-021 keeps is everything it is chiefly
+about: the retry removal, the sealed `PushOutcome`, both status matrices, the surfacing of
+`Retry-After`, and the classification itself — a refused endpoint is still `EndpointRejected`, still
+a `NotAttempted`, still meaning exactly what that record made it mean. Only the channel the seam
+uses to say so is gone, and a caller of `send` cannot tell the difference.
 
 **ADR-024 is untouched, and that is a claim worth making explicitly** because this record looks at
 first like the thing that ADR forbids. What it rules out is a *second* method on `EndpointPolicy` —
@@ -219,8 +236,6 @@ general. So the clause is answered rather than superseded.
 
 ADR-016 and ADR-017 are untouched: the seam is still a required argument of every `PushSender`
 factory, the library still ships no allowlist, and the rule kinds and their matching are unchanged.
-ADR-021 is untouched: `EndpointRejected` is still a `NotAttempted` outcome and still means what it
-meant.
 
 ## What this breaks, and how a reader finds out
 
@@ -238,7 +253,8 @@ mechanical translation, and that a reader who finds their build still green has 
 migration but has some other `EndpointPolicy` on the classpath.
 
 This is a breaking change to published API, made inside the revision window the first release note
-declared, and its pull request carries the marker that puts it in the release notes as one.
+declared. The pull request that carries it — the implementation, not this record — takes the marker
+that files it in the release notes as one; this one changes no code and is filed as documentation.
 
 ## Documents
 
@@ -273,5 +289,6 @@ architecture summary names the three converting seam signals, which becomes two.
 - A `send` that treats a `null` assessment, or any exception out of the seam, as an operational
   outcome rather than as the defect it is.
 - A change to where the policy is applied, to who owns the rule, or to how the refusal is classified
-  once the sender holds it — those are ADR-024's, ADR-016's and ADR-021's, and this record leaves
-  all three where they are.
+  once the sender holds it: the first two are ADR-024's and ADR-016's and are untouched, and the
+  third is ADR-021's and survives — what moves there is the channel the seam signals through, never
+  the outcome the caller reads.
