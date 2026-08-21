@@ -268,10 +268,19 @@ told you to inject these beans, and the failure surfaces nowhere near the annota
 
 **Inject them as ordinary dependencies.** Both beans exist under the rules stated above — the sender
 whenever the delivery path is autoconfigured, [the policy](#the-policy-is-a-bean) whenever the
-allowlist is expressed — and a `PushSender` that is genuinely absent is reported by this starter's
-own analysis of the injection failure, which answers in the terms of this context: the contradiction
-with a stated `push2u.enabled: false`, a signer registered too late for the sender's condition to
-see it, or the enumeration of every way to configure one. Not a bean that quietly never appeared.
+allowlist is expressed — and either one that is genuinely absent is reported by this starter's own
+analysis of the injection failure, which answers in the terms of this context rather than leaving a
+bean that quietly never appeared.
+
+For a `PushSender`: the contradiction with a stated `push2u.enabled: false`, a signer registered too
+late for the sender's condition to see it, or the enumeration of every way to configure one. For an
+`EndpointPolicy`: which of the three states the allowlist is in — never decided, every set property
+emptied, or stated in a context that excluded the auto-configuration turning it into a bean — in the
+words the sender's own refusal uses, out of one text rather than a second copy of it. That second
+analysis is the one a registration-only service reads, because it builds no sender for the sender's
+refusal over the same absence to run inside; and where such a deployment states `push2u.enabled:
+false`, the analysis says in one clause that the switch is *not* why the policy is absent, since
+turning delivery back on would not produce it.
 
 For a component that has to disappear along with delivery, condition it on the **property** instead
 of on the bean:
@@ -361,7 +370,10 @@ unrestricted egress.
 The *obligation* to express the decision stays with the sender: a deployment that sends and has
 expressed nothing — both properties unset and no bean, or every set property empty and no bean —
 fails at startup exactly as before, with a message naming the ways to fix it. A registration-only
-deployment that expresses nothing simply holds no policy bean, and starts.
+deployment that expresses nothing simply holds no policy bean, and starts — until it injects that
+bean, at which point the unsatisfied dependency is answered with the same three states in the same
+words: [Inject them as ordinary
+dependencies](#a-bean-condition-on-these-beans-answers-absent-in-every-deployment).
 
 **A bean condition on this bean is subject to the same ordering trap as one on the sender**, and to
 the same silence: see [A bean condition on these beans answers "absent" in every
@@ -462,6 +474,15 @@ One more refusal completes the list: a non-empty allowlist property in a context
 sender is built, naming the non-empty property and `Push2uEndpointPolicyAutoConfiguration`. The
 sender does not rebuild the policy from the properties — the allowlist is one definition, and a
 second construction inside the sender would be a second place the same rule is stated.
+
+**None of the three reaches a service that only registers subscriptions**, which builds no sender
+for them to fire inside — and that service is the one holding the policy for a living. What it gets
+instead, the moment it injects the bean and the bean is not there, is those same three states as an
+analysis of the unsatisfied dependency, from the text the refusals are written in rather than a copy
+of it, so what a registration-only service reads and what a sending one is refused with cannot come
+apart. It arrives with one answer more than the refusals carry, because an injection failure has one
+they do not: stop requiring the bean, through an `ObjectProvider<EndpointPolicy>` or a component
+that is itself conditional.
 
 **Excluding an auto-configuration removes its contribution, and the checks are placed so that this
 stays true.** The two value refusals above are hosted in `Push2uStartupChecksAutoConfiguration`,

@@ -1,5 +1,8 @@
-# The analyzer that answers a missing PushSender in a context where this starter's own startup
-# refusal never ran. Its precedence over Spring Boot's own missing-bean analyzer is declared on the
-# class with @Order, not taken from this file's position on the classpath.
+# The analyzers that answer an unsatisfied push2u dependency in a context where this starter's own
+# startup refusals never ran: a missing PushSender, and a missing EndpointPolicy — the bean a service
+# that only accepts subscriptions injects, in the one deployment shape that builds no sender for the
+# sender's own refusal to run inside. Their precedence over Spring Boot's own missing-bean analyzer
+# is declared on each class with @Order, not taken from this file's position on the classpath.
 org.springframework.boot.diagnostics.FailureAnalyzer=\
-com.the13haven.push2u.spring.MissingPushSenderFailureAnalyzer
+com.the13haven.push2u.spring.MissingPushSenderFailureAnalyzer,\
+com.the13haven.push2u.spring.MissingEndpointPolicyFailureAnalyzer

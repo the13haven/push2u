@@ -246,20 +246,15 @@ public final class Push2uAutoConfiguration {
      * application server may POST to is a decision a sending deployment has to express — the endpoint a send POSTs to
      * comes from the subscription, which is attacker-influenced wherever subscriptions are registered by clients — and
      * a deployment that does not send is owed no such demand, which is why these two refusals are not startup checks of
-     * the context. Two ways of expressing nothing are answered separately. Both properties unset with no bean means the
-     * question was never asked, and the failure offers the three ways to answer it — either property, or a bean,
-     * including one returning {@code EndpointPolicies.unrestricted()}, which is the named opt-out and exists only as a
-     * bean so that choosing it is a code change someone reviews rather than a line copied between profiles. Every set
-     * property empty with no bean is a different statement — the operator emptied a key, which cedes to a bean or to
-     * the other property, and neither of those is there to receive it — and this starter owns that message, naming both
-     * keys: the emptiness is a fact about the pair, and neither core factory can speak for both.
+     * the context. What the refusal <em>says</em> is not written here: the states an absent policy can be in, and the
+     * answer each one is owed, are stated once in {@link MissingEndpointPolicy} and shared with the analysis that
+     * answers the same absence to a deployment which only accepts subscriptions and injects the bean directly. One
+     * question asked from two places deserves one answer, and two copies of it would be two answers within a release or
+     * so.
      *
-     * <p>The remaining branch — a non-empty property with no policy bean — is unreachable while
-     * {@link Push2uEndpointPolicyAutoConfiguration} is active, since a non-empty property is exactly its bean's
-     * condition. It is answered rather than assumed away because an application can exclude that auto-configuration;
-     * this method never builds the policy from the properties itself, because the allowlist is one definition,
-     * published where the code that accepts subscriptions can reach it, and a second construction here would be a
-     * second place the same rule is stated.
+     * <p>This method never builds the policy from the properties itself, whichever state they are in, because the
+     * allowlist is one definition, published where the code that accepts subscriptions can reach it, and a second
+     * construction here would be a second place the same rule is stated.
      */
     private static EndpointPolicy resolveEndpointPolicy(
             ObjectProvider<EndpointPolicy> endpointPolicy,
@@ -269,60 +264,8 @@ public final class Push2uAutoConfiguration {
         if (policy != null) {
             return policy;
         }
-        if (allowedOrigins == null && allowedDomains == null) {
-            throw noDecisionExpressed();
-        }
-        boolean originsExpressed = allowedOrigins != null && !allowedOrigins.isEmpty();
-        boolean domainsExpressed = allowedDomains != null && !allowedDomains.isEmpty();
-        if (!originsExpressed && !domainsExpressed) {
-            throw everyConfiguredAllowlistEmpty();
-        }
-        throw allowlistExpressedWithoutItsAutoConfiguration(originsExpressed, domainsExpressed);
-    }
-
-    /** Both allowlist properties unset and no bean: the decision was never made, so name every way to make it. */
-    private static IllegalStateException noDecisionExpressed() {
-        return new IllegalStateException("neither push2u.allowed-origins nor push2u.allowed-domains is set, and no"
-                + " EndpointPolicy bean is supplied — a sender needs one of them, because the endpoint it POSTs to"
-                + " comes from the subscription, and a subscription registered by a client can name any address this"
-                + " process can reach, including loopback, private-range and cloud-metadata ones. Set"
-                + " push2u.allowed-origins to the push service origins you expect (e.g. https://fcm.googleapis.com);"
-                + " or set push2u.allowed-domains to a zone whose hostnames the service operator documents as varying"
-                + " (e.g. notify.windows.com, which admits every subdomain of it too); or define an EndpointPolicy"
-                + " bean — one returning EndpointPolicies.unrestricted() if this deployment deliberately applies no"
-                + " restriction, which is safe only where subscriptions never arrive from untrusted clients.");
-    }
-
-    /**
-     * Every allowlist property that is set is empty, and there is no bean. Emptying a property cedes it to a bean, so
-     * with no bean there is nothing to cede to and an empty allowlist would reject every send.
-     */
-    private static IllegalStateException everyConfiguredAllowlistEmpty() {
-        return new IllegalStateException("neither push2u.allowed-origins nor push2u.allowed-domains has an entry, and"
-                + " no EndpointPolicy bean is supplied — an empty allowlist would reject every send, which is far more"
-                + " likely a wiring bug than a policy. Emptying one of these properties states that this deployment"
-                + " does not use it and cedes the decision to an EndpointPolicy bean; with no bean there is nothing to"
-                + " cede to. List at least one entry under push2u.allowed-origins or push2u.allowed-domains, or define"
-                + " an EndpointPolicy bean — one returning EndpointPolicies.unrestricted() if this deployment"
-                + " deliberately applies no restriction.");
-    }
-
-    /**
-     * A non-empty allowlist property, but no policy bean in the context: reachable only when the auto-configuration
-     * whose bean's condition is exactly a non-empty allowlist has been excluded. Refused rather than rebuilt here — the
-     * allowlist is one definition, published where the code that accepts subscriptions can reach it, and a second
-     * construction inside the sender's factory would be a second place the same rule is stated. The message names the
-     * property that is actually non-empty, as every sibling refusal does: with two of them, an unnamed one would leave
-     * half the search.
-     */
-    private static IllegalStateException allowlistExpressedWithoutItsAutoConfiguration(
-            boolean originsExpressed, boolean domainsExpressed) {
-        String expressed = originsExpressed && domainsExpressed
-                ? "push2u.allowed-origins and push2u.allowed-domains are non-empty"
-                : (originsExpressed ? "push2u.allowed-origins" : "push2u.allowed-domains") + " is non-empty";
-        return new IllegalStateException(expressed + ", but no EndpointPolicy bean exists in this context — the"
-                + " allowlist becomes one only through Push2uEndpointPolicyAutoConfiguration, which is not active here"
-                + " (most likely excluded). Restore that auto-configuration, or supply an EndpointPolicy bean.");
+        throw new IllegalStateException(
+                MissingEndpointPolicy.of(allowedOrigins, allowedDomains).refusalMessage());
     }
 
     /**

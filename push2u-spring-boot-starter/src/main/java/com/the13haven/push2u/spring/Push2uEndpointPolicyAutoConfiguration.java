@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionOutcome;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.SpringBootCondition;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.bind.BindResult;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
@@ -146,7 +147,19 @@ public final class Push2uEndpointPolicyAutoConfiguration {
 
     /** The bound entries of {@code property}; an unset property and an explicitly empty one both bind to none. */
     static List<String> boundEntries(Binder binder, String property) {
-        return binder.bind(property, Bindable.listOf(String.class)).orElse(List.of());
+        List<String> stated = statedEntries(binder, property);
+        return stated != null ? stated : List.of();
+    }
+
+    /**
+     * The bound entries of {@code property}, or {@code null} where the property is not set at all — the one reading
+     * that tells an unset key from a key set to an explicitly empty value, which are different statements about this
+     * allowlist and are answered differently. It is the same distinction the properties record's nullable component
+     * carries, read straight from the environment for the code that has no bound record to ask.
+     */
+    static @Nullable List<String> statedEntries(Binder binder, String property) {
+        BindResult<List<String>> bound = binder.bind(property, Bindable.listOf(String.class));
+        return bound.isBound() ? bound.get() : null;
     }
 
     /**
