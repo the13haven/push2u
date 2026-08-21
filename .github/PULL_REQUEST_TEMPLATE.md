@@ -1,10 +1,21 @@
 <!--
-Security fixes do not start here — see SECURITY.md. A pull request describing an unfixed
-vulnerability discloses it.
+Security fixes do not start here — see SECURITY.md. Does anything you are about to write here
+describe a way for a remote peer — a push service, whatever answers on the Vault address, an
+endpoint arriving in a subscription — to reach a secret or a key, forge or evade the VAPID
+signature, get past the endpoint policy to the network, write into a log some other system trusts,
+or exhaust memory or time? And does a released version of this library complete that path? Then
+this pull request discloses it, whether or not the fix travels with it, and whether the defect was
+reported to you or found by your own hands. Stop and report it privately instead. An ordinary bug
+is not this, neither is a dependency pin naming its own advisory, and neither is hardening that
+closes a path no released version completes.
 
 Label this pull request: the release notes are generated from labels (.github/release.yml), and an
-unlabeled one lands in "Other Changes". Use breaking-change / enhancement / bug / security /
-dependencies / documentation, or ignore-for-release for housekeeping.
+unlabeled one lands in "Other Changes". Use breaking-change / security / enhancement / bug /
+dependencies / documentation — they are matched in that order, and a pull request appears under
+the first of them it carries and under that one only, so a security fix wants `security` even when
+it already has `bug`. Housekeeping takes ignore-for-release instead, which drops the pull request
+from the notes altogether rather than filing it anywhere.
+
 -->
 
 ## What this changes

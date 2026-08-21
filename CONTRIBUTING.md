@@ -3,8 +3,13 @@
 Thanks for taking the time. This document covers what the build expects and what a reviewer will
 look for, so that neither is a surprise at pull-request time.
 
-**Found a security problem? Do not open an issue.** Follow [`SECURITY.md`](SECURITY.md) — the
-report stays private until a fix is released.
+**Found a security problem? Do not open an issue — and do not open a pull request either.** Follow
+[`SECURITY.md`](SECURITY.md); the report stays private until a fix is released. That holds when you
+ran into the problem while working on something else, and when your branch already carries the fix:
+a released version stays exposed until a fixed one is out, so a pull request describing the defect
+is the disclosure whether or not it also repairs it. An ordinary bug is not this, and neither is
+pinning a vulnerable dependency of ours — that constraint names its advisory in public on purpose,
+below.
 
 Questions and half-formed ideas belong in
 [Discussions](https://github.com/the13haven/push2u/discussions); the issue tracker is for defects
@@ -309,15 +314,18 @@ belongs to:
 | Label | Section |
 |---|---|
 | `breaking-change` | Breaking Changes |
+| `security` | Security |
 | `enhancement` | New Features |
 | `bug` | Bug Fixes |
-| `security` | Security |
 | `dependencies` | Dependencies |
 | `documentation` | Documentation |
 | `ignore-for-release` | omitted from the notes |
 
-Categories are matched in that order, so a PR that is both breaking and a feature belongs under
-`breaking-change`.
+Categories are matched in that order and a PR appears in exactly one of them, so a PR that is both
+breaking and a feature belongs under `breaking-change`. `security` sits above `bug` because the
+same mechanism runs the other way there: a security fix is `fix:` by Conventional Commit, so unless
+`security` was already on it when it was opened the labelling workflow gives it `bug` as well — and
+anywhere below `bug` would be enough to keep it out of the Security section altogether.
 
 Before merging, `main` requires the `quality` check and CodeQL analysis to pass. A change to prose
 skips the heavy jobs automatically (`.github/workflows/detect-changes.yml`) and still reports

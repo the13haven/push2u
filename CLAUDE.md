@@ -148,10 +148,28 @@ this file but not the skill list, so read the matching one directly when the tas
 
 **A vulnerability never goes in a public issue, pull request or commit message.** It is reported
 through GitHub's private advisory channel (`SECURITY.md`), because the repository is public and a
-description of a defect in the encryption, the VAPID signature or the endpoint policy discloses it
-before a fix exists. This applies to anything you would file on the user's behalf. When one is
-reported here and has to be fixed, `.claude/skills/push2u-advisory/SKILL.md` carries the procedure —
-the ordinary branch-push-PR habit publishes the defect and cannot be undone.
+description of the defect discloses it to everyone — whether or not the fix travels in the same
+change, since the released version stays exposed until a fixed one is out. This applies to anything
+you would file on the user's behalf. When one has to be fixed here,
+`.claude/skills/push2u-advisory/SKILL.md` carries the procedure — the ordinary branch-push-PR habit
+publishes the defect and cannot be undone.
+
+**What decides it is what the text describes, never how the defect arrived.** Before anything goes
+into a public pull request, issue or commit message, ask whether it describes a way for a remote
+peer — a push service, whatever answers on the Vault address, an endpoint arriving in a
+subscription — to reach a secret or a key, forge or evade the VAPID signature, get past the
+endpoint policy to the network, write into a log some other system trusts, or exhaust memory or
+time; and whether this library's own code, in a version already released, completes that path. If
+it does, the advisory path applies whether the defect came in as a report, surfaced in review, or
+was found by your own hands halfway through unrelated work. That last one is the case this rule has
+already failed to catch, and it is the hardest of the three to notice: a defect nobody reported is
+not called a report by anyone, it arrives wearing the shape of an ordinary `fix:`, and a rule read
+as being about handling *reports* does not fire on it. An ordinary bug in released code is not this
+— a rule that stops every `fix:` is discounted as fast as one that stops nothing is missed — and
+neither is a vulnerable third-party dependency, whose pin names its advisory in public on purpose.
+Nor is hardening that closes a path no released code completes: that is published openly, like any
+other change. A fix that does have to stay quiet travels alone — bundling it with an unrelated
+change is most of what makes its pull request read as routine.
 
 ## Commands
 

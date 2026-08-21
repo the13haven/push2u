@@ -19,15 +19,21 @@ changelog:
     - title: "Breaking Changes"
       labels:
         - breaking-change
+    # Second, and each neighbour for its own reason. Above "Bug Fixes" and "New Features": a
+    # security fix is `fix:` by Conventional Commit and a hardening one is `feat:`, so the
+    # labelling workflow gives it `bug` or `enhancement` and a `security` label added beside that
+    # would otherwise name it nowhere. Below "Breaking Changes": the security fact also reaches
+    # consumers through the published advisory, its CVE and their scanners, while an incompatible
+    # change is announced here and nowhere else.
+    - title: "Security"
+      labels:
+        - security
     - title: "New Features"
       labels:
         - enhancement
     - title: "Bug Fixes"
       labels:
         - bug
-    - title: "Security"
-      labels:
-        - security
     # Dependency bumps get their own section instead of being excluded outright: for a library the
     # dependency set is part of the public surface, so silently dropping dependabot's PRs from the
     # changelog would hide exactly the changes downstream users may need to know about. Dependabot

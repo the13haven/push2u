@@ -1,6 +1,6 @@
 ---
 name: push2u-advisory
-description: Handle a vulnerability report about push2u's own code — triage it, fix it without disclosing it, and publish the advisory with the release. Use this the moment a security defect in this library is reported or suspected, whether it arrived through GitHub's private advisory reporting, by email, or as a suspicion raised in conversation, and whenever the work involves a temporary private fork, a coordinated disclosure date, crediting a reporter, or deciding whether a report is in scope. Not for a vulnerable third-party dependency — pinning one is an ordinary change covered by the push2u-implement skill.
+description: Handle a vulnerability in push2u's own code — triage it, fix it without disclosing it, and publish the advisory with the release. Use this the moment a security defect in this library is reported, suspected or found, whether it arrived through GitHub's private advisory reporting, by email, as a suspicion raised in conversation, or under your own hands while working on something else entirely, wearing the shape of an ordinary fix. Use it also whenever the work involves a temporary private fork, a coordinated disclosure date, crediting a reporter, or deciding whether a report is in scope. Not for a vulnerable third-party dependency — pinning one is an ordinary change covered by the push2u-implement skill.
 ---
 
 # Responding to a vulnerability in push2u
@@ -9,7 +9,13 @@ This is the maintainer's side of `SECURITY.md`. That document tells a reporter w
 to expect; this one is what happens next.
 
 It applies to a defect in this library's own code — the encryption, the VAPID signature, key
-handling, the endpoint policy, secret exposure in diagnostics. A vulnerable *dependency* is a
+handling, the endpoint policy, secret exposure in a diagnostic and the trustworthiness of one
+something else reads, exhaustion a remote peer can drive — and it applies to one found in
+house exactly as it applies to one somebody sent in: what a public pull request discloses is the
+same either way, so nothing about *what may be published, and when relative to the fix*, turns on
+who noticed first. What does turn on it is only what needs a reporter to exist — the credit, the
+correspondence and the disclosure window below have no counterpart when there is nobody to inform,
+and an in-house find is released on this project's own schedule. A vulnerable *dependency* is a
 different thing and an ordinary change: pin it with a constraint, per the recipe in
 `.claude/skills/push2u-implement/SKILL.md`. The exception is a dependency flaw that is exploitable
 *through* push2u's own API in a way consumers cannot mitigate — then it needs an advisory of its
@@ -18,9 +24,11 @@ own and belongs here.
 ## The habit to suppress first
 
 The normal workflow in this repository is to branch, commit with a descriptive message, push, and
-open a pull request explaining the reasoning. Every step of that publishes. Applied to an unfixed
+open a pull request explaining the reasoning. Every step of that publishes. Applied to a
 vulnerability in a public repository, it is the disclosure itself, and it cannot be taken back —
-forks, mirrors, notification emails and the events API have already seen it.
+forks, mirrors, notification emails and the events API have already seen it. Carrying the fix in
+the same branch does not soften that: what is exposed is the version already released, and it stays
+exposed until a fixed one is out.
 
 So, until the advisory is published:
 
