@@ -6,7 +6,6 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import java.math.BigInteger;
 import java.net.URI;
@@ -44,9 +43,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.the13haven.push2u.EndpointAssessment;
 import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
-import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.LocalEcVapidSigner;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushMessage;
@@ -957,9 +956,9 @@ class Push2uAutoConfigurationTest {
             assertThat(context).hasSingleBean(EndpointPolicy.class);
             EndpointPolicy policy = context.getBean(EndpointPolicy.class);
             URI foreign = URI.create("https://other.example/send/abc");
-            assertThatExceptionOfType(EndpointRejectedException.class)
+            assertThat(policy.assess(foreign))
                     .as("the boundary's answer, through the bean")
-                    .isThrownBy(() -> policy.validate(foreign));
+                    .isInstanceOf(EndpointAssessment.Refused.class);
             assertThat(context.getBean(PushSender.class)
                             .send(
                                     subscription("https://other.example/send/abc"),
@@ -1429,9 +1428,7 @@ class Push2uAutoConfigurationTest {
 
         @Bean
         EndpointPolicy rejectingPolicy() {
-            return endpoint -> {
-                throw new EndpointRejectedException("application policy rejects all endpoints");
-            };
+            return endpoint -> new EndpointAssessment.Refused("application policy rejects all endpoints");
         }
     }
 

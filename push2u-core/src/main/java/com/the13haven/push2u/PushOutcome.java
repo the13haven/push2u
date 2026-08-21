@@ -416,13 +416,12 @@ public sealed interface PushOutcome {
      *
      * @param redactedEndpoint the refused endpoint in redacted form — origin plus a short fingerprint, never the
      *     capability path or query — safe to log and enough to find the row
-     * @param reason the policy's own account of the refusal. The policy seam's contract requires it to render any
-     *     endpoint it mentions in the same redacted form, so this string carries no capability URL from any policy that
-     *     honours its contract. One string here is not the policy's account: where that account could not be read — the
-     *     exception's {@code getMessage()} threw — {@link PushSender#send} substitutes the fixed text {@code "endpoint
-     *     policy rejected the endpoint; reason unavailable"}, this library's own rendering, safe whatever the throwing
-     *     accessor would have written; a policy whose message was merely {@code null} renders as {@code ""}, so the two
-     *     stay distinguishable
+     * @param reason the policy's own account of the refusal — the {@code reason} of the
+     *     {@link EndpointAssessment.Refused} value the policy answered {@link PushSender#send} with. The policy seam's
+     *     contract requires it to render any endpoint it mentions in the same redacted form, so this string carries no
+     *     capability URL from any policy that honours its contract. A policy that gave no account renders as
+     *     {@code ""}: {@link EndpointAssessment.Refused} stores the empty string for a {@code null} reason and permits
+     *     a blank one, and this outcome reports exactly what that value carried
      */
     record EndpointRejected(String redactedEndpoint, String reason) implements NotAttempted {
 

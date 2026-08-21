@@ -28,6 +28,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
+import com.the13haven.push2u.EndpointAssessment;
 import com.the13haven.push2u.EndpointPolicies;
 import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.PushHttpClient;
@@ -442,7 +443,7 @@ class Push2uDeliverySwitchTest {
 
         @Bean
         EndpointPolicy applicationPolicy() {
-            return endpoint -> {};
+            return endpoint -> new EndpointAssessment.Allowed();
         }
     }
 

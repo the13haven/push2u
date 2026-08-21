@@ -23,7 +23,7 @@ import com.the13haven.push2u.EndpointPolicy;
  * the framework's generic "required a bean that could not be found" is what the operator would otherwise read.
  *
  * <p><b>The deployment this exists for is the one with no sender in it.</b> A service that accepts subscriptions and
- * leaves the sending to another one injects this bean to validate each offered endpoint against the same allowlist its
+ * leaves the sending to another one injects this bean to assess each offered endpoint against the same allowlist its
  * sending counterpart enforces — and it is precisely the context in which the sender's own refusal over an unexpressed
  * allowlist never runs, because there is no sender being built for it to run inside. What such a service gets instead
  * is an unsatisfied dependency naming a push2u type and nothing else, in the one deployment shape whose whole reason

@@ -6,7 +6,6 @@
 package com.the13haven.push2u;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
@@ -16,14 +15,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tests for the standard allowlist factories. For {@link EndpointPolicies#allowedOrigins}: the origin comparison must
- * use the same RFC 6454 §6.1 normalization on both sides (so no spelling of an allowed origin is rejected and no
+ * use the same RFC 6454 §6.1 normalization on both sides (so no spelling of an allowed origin is refused and no
  * spelling of a foreign one is admitted), a malformed configuration must fail at construction rather than at send time,
- * and no rejection message may carry the capability part of an endpoint URL. Every one of those tests predates
+ * and no refusal's reason may carry the capability part of an endpoint URL. Every one of those tests predates
  * {@link EndpointRule} and is deliberately unchanged by it: {@code allowedOrigins} was reimplemented over
- * {@link EndpointRule#origin}, and nothing about which entries it accepts, which it refuses, the exception types or the
- * order of the checks was allowed to drift as a consequence. {@link EndpointPolicies#allowedEndpoints} and
- * {@link EndpointPolicies#allowedDomains} are covered here as factories; what each rule kind matches is pinned in
- * {@code EndpointRuleTest}.
+ * {@link EndpointRule#origin}, and nothing about which entries it accepts, which it refuses, or the order of the checks
+ * was allowed to drift as a consequence. The answers are {@link EndpointAssessment} values (ADR-027): every refusal is
+ * a {@link EndpointAssessment.Refused} carrying the wording the thrown form used to carry, never an exception.
+ * {@link EndpointPolicies#allowedEndpoints} and {@link EndpointPolicies#allowedDomains} are covered here as factories;
+ * what each rule kind matches is pinned in {@code EndpointRuleTest}.
  */
 class EndpointPoliciesTest {
 
@@ -31,30 +31,28 @@ class EndpointPoliciesTest {
     void acceptsAnEndpointOnAnAllowedOrigin() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatCode(() -> policy.validate(URI.create("https://push.example/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(policy.assess(URI.create("https://push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
-    void rejectsAnEndpointOnAForeignOrigin() {
+    void refusesAnEndpointOnAForeignOrigin() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatThrownBy(() -> policy.validate(URI.create("https://attacker.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("not in the allowed set");
+        assertThat(refusalReason(policy, "https://attacker.example/subscriber-token"))
+                .contains("not in the allowed set");
     }
 
     @Test
-    void rejectionMessageNeverCarriesTheCapabilityPathOrQuery() {
+    void theRefusalReasonNeverCarriesTheCapabilityPathOrQuery() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatThrownBy(() -> policy.validate(URI.create("https://attacker.example/secret-token?key=secret-query")))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageNotContaining("secret-token")
-                .hasMessageNotContaining("secret-query")
+        assertThat(refusalReason(policy, "https://attacker.example/secret-token?key=secret-query"))
+                .doesNotContain("secret-token")
+                .doesNotContain("secret-query")
                 // The redacted origin+fingerprint form IS expected — it is what lets a log line be
                 // correlated with a stored subscription without disclosing the capability.
-                .hasMessageContaining("https://attacker.example/…#");
+                .contains("https://attacker.example/…#");
     }
 
     @Test
@@ -62,20 +60,20 @@ class EndpointPoliciesTest {
         // RFC 6454 §6.1 drops the scheme's default port, so :443 and no port are the same origin —
         // whichever side spells it out.
         EndpointPolicy explicitInConfig = EndpointPolicies.allowedOrigins("https://push.example:443");
-        assertThatCode(() -> explicitInConfig.validate(URI.create("https://push.example/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(explicitInConfig.assess(URI.create("https://push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
 
         EndpointPolicy implicitInConfig = EndpointPolicies.allowedOrigins("https://push.example");
-        assertThatCode(() -> implicitInConfig.validate(URI.create("https://push.example:443/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(implicitInConfig.assess(URI.create("https://push.example:443/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
     void aDifferentPortIsADifferentOrigin() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatThrownBy(() -> policy.validate(URI.create("https://push.example:8443/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
+        assertThat(policy.assess(URI.create("https://push.example:8443/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
     }
 
     @Test
@@ -84,16 +82,16 @@ class EndpointPoliciesTest {
         // attacker-registered "evil.push.example" endpoint.
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatThrownBy(() -> policy.validate(URI.create("https://evil.push.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
+        assertThat(policy.assess(URI.create("https://evil.push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
     }
 
     @Test
     void hostAndSchemeCaseDoNotMatter() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://PUSH.Example");
 
-        assertThatCode(() -> policy.validate(URI.create("HTTPS://push.EXAMPLE/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(policy.assess(URI.create("HTTPS://push.EXAMPLE/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
@@ -102,57 +100,52 @@ class EndpointPoliciesTest {
         // matches the endpoint's uppercase A-label spelling of the same host.
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://xn--e1afmkfd.xn--80akhbyknj4f");
 
-        assertThatCode(() -> policy.validate(URI.create("https://XN--E1AFMKFD.XN--80AKHBYKNJ4F:443/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(policy.assess(URI.create("https://XN--E1AFMKFD.XN--80AKHBYKNJ4F:443/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
     void ipv6LiteralsMatchByExactTextualFormWithPortNormalization() {
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://[::1]:8443", "https://[::1]:443");
 
-        assertThatCode(() -> policy.validate(URI.create("https://[::1]:8443/subscriber-token")))
-                .doesNotThrowAnyException();
-        assertThatCode(() -> policy.validate(URI.create("https://[::1]/subscriber-token")))
+        assertThat(policy.assess(URI.create("https://[::1]:8443/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(policy.assess(URI.create("https://[::1]/subscriber-token")))
                 .as("the configured :443 and the endpoint's implicit port are the same origin")
-                .doesNotThrowAnyException();
+                .isInstanceOf(EndpointAssessment.Allowed.class);
         // The serialization lowercases but does NOT canonicalize IPv6 textual forms: the expanded
         // spelling of the same address is a different origin string and fails to match. That is
         // the fail-closed direction — a spelling variant can be denied, never admitted.
-        assertThatThrownBy(() -> policy.validate(URI.create("https://[0:0:0:0:0:0:0:1]:8443/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
-        assertThatThrownBy(() -> policy.validate(URI.create("https://[::2]:8443/subscriber-token")))
-                .as("a genuinely different literal is rejected")
-                .isInstanceOf(EndpointRejectedException.class);
+        assertThat(policy.assess(URI.create("https://[0:0:0:0:0:0:0:1]:8443/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(policy.assess(URI.create("https://[::2]:8443/subscriber-token")))
+                .as("a genuinely different literal is refused")
+                .isInstanceOf(EndpointAssessment.Refused.class);
     }
 
     @Test
-    void rejectsAnEndpointWhoseUserinfoImpersonatesAnAllowedOrigin() {
+    void refusesAnEndpointWhoseUserinfoImpersonatesAnAllowedOrigin() {
         // https://fcm.googleapis.com@evil.example/x — java.net.URI resolves the real host
-        // (evil.example), so the comparison would reject it anyway; the policy additionally
-        // rejects ANY endpoint userinfo outright, because no push service issues it and a custom
+        // (evil.example), so the comparison would refuse it anyway; the policy additionally
+        // refuses ANY endpoint userinfo outright, because no push service issues it and a custom
         // transport re-parsing the raw string could split the authority differently.
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://fcm.googleapis.com");
 
-        assertThatThrownBy(
-                        () -> policy.validate(URI.create("https://fcm.googleapis.com@evil.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("userinfo");
-        assertThatThrownBy(() -> policy.validate(URI.create("https://user:pass@fcm.googleapis.com/subscriber-token")))
-                .as("userinfo is rejected even when the real host IS allowed")
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("userinfo");
+        assertThat(refusalReason(policy, "https://fcm.googleapis.com@evil.example/subscriber-token"))
+                .contains("userinfo");
+        assertThat(refusalReason(policy, "https://user:pass@fcm.googleapis.com/subscriber-token"))
+                .as("userinfo is refused even when the real host IS allowed")
+                .contains("userinfo");
     }
 
     @Test
-    void anEndpointWithoutAnOriginIsRejectedWithThePromisedType() {
-        // Unreachable through PushSender (Subscription enforces scheme+host first), but validate()
-        // is public API promising EndpointRejectedException — a direct caller must not get the
-        // plain IllegalArgumentException Origin.serialize would throw.
+    void anEndpointWithoutAnOriginIsRefusedWithTheAnswerTheSeamPromises() {
+        // Unreachable through PushSender (Subscription enforces scheme+host first), but assess()
+        // is public API answering with a value — a direct caller must get a Refused, not the plain
+        // IllegalArgumentException Origin.serialize would throw.
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example");
 
-        assertThatThrownBy(() -> policy.validate(URI.create("mailto:someone@example.com")))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("no scheme or host");
+        assertThat(refusalReason(policy, "mailto:someone@example.com")).contains("no scheme or host");
     }
 
     @Test
@@ -160,8 +153,8 @@ class EndpointPoliciesTest {
         // Humans paste "https://push.example/"; RFC 6454 prints origins without the slash.
         EndpointPolicy policy = EndpointPolicies.allowedOrigins("https://push.example/");
 
-        assertThatCode(() -> policy.validate(URI.create("https://push.example/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(policy.assess(URI.create("https://push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
@@ -236,10 +229,10 @@ class EndpointPoliciesTest {
     void collectionAndVarargsOverloadsAgree() {
         EndpointPolicy fromCollection = EndpointPolicies.allowedOrigins(List.of("https://push.example"));
 
-        assertThatCode(() -> fromCollection.validate(URI.create("https://push.example/subscriber-token")))
-                .doesNotThrowAnyException();
-        assertThatThrownBy(() -> fromCollection.validate(URI.create("https://attacker.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
+        assertThat(fromCollection.assess(URI.create("https://push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(fromCollection.assess(URI.create("https://attacker.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
     }
 
     @Test
@@ -249,10 +242,10 @@ class EndpointPoliciesTest {
         EndpointPolicy fromCollection = EndpointPolicies.allowedEndpoints(List.of(rule));
 
         for (EndpointPolicy policy : new EndpointPolicy[] {fromVarargs, fromCollection}) {
-            assertThatCode(() -> policy.validate(URI.create("https://push.example/subscriber-token")))
-                    .doesNotThrowAnyException();
-            assertThatThrownBy(() -> policy.validate(URI.create("https://attacker.example/subscriber-token")))
-                    .isInstanceOf(EndpointRejectedException.class);
+            assertThat(policy.assess(URI.create("https://push.example/subscriber-token")))
+                    .isInstanceOf(EndpointAssessment.Allowed.class);
+            assertThat(policy.assess(URI.create("https://attacker.example/subscriber-token")))
+                    .isInstanceOf(EndpointAssessment.Refused.class);
         }
     }
 
@@ -262,10 +255,10 @@ class EndpointPoliciesTest {
         EndpointPolicy fromCollection = EndpointPolicies.allowedDomains(List.of("notify.windows.com"));
 
         for (EndpointPolicy policy : new EndpointPolicy[] {fromVarargs, fromCollection}) {
-            assertThatCode(() -> policy.validate(URI.create("https://wns2-ln2p.notify.windows.com/subscriber-token")))
-                    .doesNotThrowAnyException();
-            assertThatThrownBy(() -> policy.validate(URI.create("https://evilnotify.windows.com/subscriber-token")))
-                    .isInstanceOf(EndpointRejectedException.class);
+            assertThat(policy.assess(URI.create("https://wns2-ln2p.notify.windows.com/subscriber-token")))
+                    .isInstanceOf(EndpointAssessment.Allowed.class);
+            assertThat(policy.assess(URI.create("https://evilnotify.windows.com/subscriber-token")))
+                    .isInstanceOf(EndpointAssessment.Refused.class);
         }
     }
 
@@ -297,27 +290,27 @@ class EndpointPoliciesTest {
                 EndpointRule.origin("https://web.push.apple.com"),
                 EndpointRule.domain("notify.windows.com"));
 
-        assertThatCode(() -> policy.validate(URI.create("https://fcm.googleapis.com/fcm/send/subscriber-token")))
+        assertThat(policy.assess(URI.create("https://fcm.googleapis.com/fcm/send/subscriber-token")))
                 .as("an origin rule matches its own origin")
-                .doesNotThrowAnyException();
-        assertThatCode(() -> policy.validate(URI.create("https://wns2-ln2p.notify.windows.com/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(policy.assess(URI.create("https://wns2-ln2p.notify.windows.com/subscriber-token")))
                 .as("the domain rule matches a subdomain")
-                .doesNotThrowAnyException();
+                .isInstanceOf(EndpointAssessment.Allowed.class);
 
-        assertThatThrownBy(() -> policy.validate(URI.create("https://evil.fcm.googleapis.com/subscriber-token")))
+        assertThat(policy.assess(URI.create("https://evil.fcm.googleapis.com/subscriber-token")))
                 .as("the domain rule does not widen the origin rules beside it")
-                .isInstanceOf(EndpointRejectedException.class);
-        assertThatThrownBy(() -> policy.validate(URI.create("https://evilnotify.windows.com/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(policy.assess(URI.create("https://evilnotify.windows.com/subscriber-token")))
                 .as("the origin rules do not narrow the domain rule into an exact match, nor widen it past the label")
-                .isInstanceOf(EndpointRejectedException.class);
-        assertThatThrownBy(() -> policy.validate(URI.create("https://attacker.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
+                .isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(policy.assess(URI.create("https://attacker.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
     }
 
     @Test
-    void theSetMissMessageIsOneWordingForEveryFactory() {
-        // "not in the allowed set" is the literal substring the message keeps; the word "origin" is
-        // gone from the claim because a domain rule may be what failed to match. No rejection says
+    void theSetMissReasonIsOneWordingForEveryFactory() {
+        // "not in the allowed set" is the literal substring the reason keeps; the word "origin" is
+        // gone from the claim because a domain rule may be what failed to match. No refusal says
         // which rule came closest — that would describe the allowlist to whoever supplied the URL.
         EndpointPolicy origins = EndpointPolicies.allowedOrigins("https://push.example");
         EndpointPolicy domains = EndpointPolicies.allowedDomains("zone.example");
@@ -325,14 +318,46 @@ class EndpointPoliciesTest {
         URI endpoint = URI.create("https://attacker.example/secret-token");
 
         for (EndpointPolicy policy : new EndpointPolicy[] {origins, domains, mixed}) {
-            assertThatThrownBy(() -> policy.validate(endpoint))
-                    .isInstanceOf(EndpointRejectedException.class)
-                    .hasMessage("push endpoint is not in the allowed set (no origin or domain rule matches it): "
+            EndpointAssessment assessment = policy.assess(endpoint);
+            assertThat(assessment).isInstanceOf(EndpointAssessment.Refused.class);
+            assertThat(((EndpointAssessment.Refused) assessment).reason())
+                    .isEqualTo("push endpoint is not in the allowed set (no origin or domain rule matches it): "
                             + Endpoints.redact(endpoint.toString()))
-                    .hasMessageNotContaining("secret-token")
-                    .hasMessageNotContaining("push.example")
-                    .hasMessageNotContaining("zone.example");
+                    .doesNotContain("secret-token")
+                    .doesNotContain("push.example")
+                    .doesNotContain("zone.example");
         }
+    }
+
+    @Test
+    void everyAllowingAnswerIsOneSharedInstance() {
+        // An implementation property, deliberately pinned (the type's contract says identity means
+        // nothing, and this test publishes no promise): the allowlist and the unrestricted policy
+        // answer an admissible endpoint without allocating, exactly as assessPayloadSize answers a
+        // fitting payload — the question runs on every send, and one instance says everything an
+        // empty record could.
+        EndpointAssessment fromAllowlist =
+                EndpointPolicies.allowedOrigins("https://push.example").assess(URI.create("https://push.example/a"));
+        EndpointAssessment fromDomains =
+                EndpointPolicies.allowedDomains("zone.example").assess(URI.create("https://a.zone.example/b"));
+        EndpointAssessment fromUnrestricted =
+                EndpointPolicies.unrestricted().assess(URI.create("https://anywhere.example/c"));
+
+        assertThat(fromAllowlist).isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(fromDomains).isSameAs(fromAllowlist);
+        assertThat(fromUnrestricted).isSameAs(fromAllowlist);
+    }
+
+    @Test
+    void unrestrictedAllowsEverythingButRejectsANullEndpointAsAnArgumentError() {
+        // The named opt-out answers Allowed for any endpoint — and a null endpoint is not an
+        // endpoint the policy answers about at all, but an argument error: the NPE is the
+        // caller's bug reported as such, never a Refused.
+        EndpointPolicy unrestricted = EndpointPolicies.unrestricted();
+
+        assertThat(unrestricted.assess(URI.create("https://169.254.169.254/latest/meta-data/")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThatThrownBy(() -> unrestricted.assess(null)).isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -346,15 +371,22 @@ class EndpointPoliciesTest {
                 EndpointRule.domain("zone.example"),
                 EndpointRule.domain("ZONE.EXAMPLE"));
 
-        assertThatCode(() -> policy.validate(URI.create("https://push.example/subscriber-token")))
-                .doesNotThrowAnyException();
-        assertThatCode(() -> policy.validate(URI.create("https://a.zone.example/subscriber-token")))
-                .doesNotThrowAnyException();
-        assertThatThrownBy(() -> policy.validate(URI.create("https://attacker.example/subscriber-token")))
-                .isInstanceOf(EndpointRejectedException.class);
+        assertThat(policy.assess(URI.create("https://push.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(policy.assess(URI.create("https://a.zone.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+        assertThat(policy.assess(URI.create("https://attacker.example/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Refused.class);
 
         assertThat(EndpointRule.origin("https://push.example"))
                 .isEqualTo(EndpointRule.origin("https://PUSH.Example:443/"));
         assertThat(EndpointRule.domain("zone.example")).isEqualTo(EndpointRule.domain("ZONE.EXAMPLE"));
+    }
+
+    /** The reason of the {@link EndpointAssessment.Refused} the policy answers for {@code endpoint}. */
+    private static String refusalReason(EndpointPolicy policy, String endpoint) {
+        EndpointAssessment assessment = policy.assess(URI.create(endpoint));
+        assertThat(assessment).isInstanceOf(EndpointAssessment.Refused.class);
+        return ((EndpointAssessment.Refused) assessment).reason();
     }
 }

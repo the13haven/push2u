@@ -182,8 +182,8 @@ class EndpointRuleTest {
         // look configured and never fire.
         EndpointPolicy policy = EndpointPolicies.allowedDomains("xn--e1afmkfd.xn--80akhbyknj4f");
 
-        assertThatCode(() -> policy.validate(URI.create("https://a.XN--E1AFMKFD.XN--80AKHBYKNJ4F/subscriber-token")))
-                .doesNotThrowAnyException();
+        assertThat(policy.assess(URI.create("https://a.XN--E1AFMKFD.XN--80AKHBYKNJ4F/subscriber-token")))
+                .isInstanceOf(EndpointAssessment.Allowed.class);
     }
 
     @Test
@@ -454,10 +454,11 @@ class EndpointRuleTest {
             "https://notify.windows.com:8443/x", // a port is a statement about a service, not a name
             "https://notify.windows.com:80/x" // 80 is http's default port and is not this rule's
         }) {
-            assertThatThrownBy(() -> policy.validate(URI.create(endpoint)))
+            EndpointAssessment assessment = policy.assess(URI.create(endpoint));
+            assertThat(assessment).as("%s", endpoint).isInstanceOf(EndpointAssessment.Refused.class);
+            assertThat(((EndpointAssessment.Refused) assessment).reason())
                     .as("%s", endpoint)
-                    .isInstanceOf(EndpointRejectedException.class)
-                    .hasMessageContaining("not in the allowed set");
+                    .contains("not in the allowed set");
         }
     }
 
@@ -465,13 +466,15 @@ class EndpointRuleTest {
     void aDomainRuleIsNeverReachedByAnEndpointWithNoOriginOrWithUserinfo() {
         EndpointPolicy policy = EndpointPolicies.allowedEndpoints(EndpointRule.domain("notify.windows.com"));
 
-        assertThatThrownBy(() -> policy.validate(URI.create("mailto:someone@example.com")))
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("no scheme or host");
-        assertThatThrownBy(() -> policy.validate(URI.create("https://notify.windows.com@evil.example/x")))
+        EndpointAssessment noOrigin = policy.assess(URI.create("mailto:someone@example.com"));
+        assertThat(noOrigin).isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(((EndpointAssessment.Refused) noOrigin).reason()).contains("no scheme or host");
+
+        EndpointAssessment userinfo = policy.assess(URI.create("https://notify.windows.com@evil.example/x"));
+        assertThat(userinfo)
                 .as("the shared pre-check fires before any rule is consulted")
-                .isInstanceOf(EndpointRejectedException.class)
-                .hasMessageContaining("userinfo");
+                .isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(((EndpointAssessment.Refused) userinfo).reason()).contains("userinfo");
     }
 
     @Test
@@ -485,9 +488,9 @@ class EndpointRuleTest {
             "https://a.b.c.notify.windows.com/x",
             "https://NOTIFY.WINDOWS.COM:443/x"
         }) {
-            assertThatCode(() -> policy.validate(URI.create(endpoint)))
+            assertThat(policy.assess(URI.create(endpoint)))
                     .as("%s", endpoint)
-                    .doesNotThrowAnyException();
+                    .isInstanceOf(EndpointAssessment.Allowed.class);
         }
     }
 }

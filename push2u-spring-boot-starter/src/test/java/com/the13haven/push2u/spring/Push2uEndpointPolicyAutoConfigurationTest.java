@@ -6,8 +6,6 @@
 package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import java.net.URI;
 import java.util.Map;
@@ -25,8 +23,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
+import com.the13haven.push2u.EndpointAssessment;
 import com.the13haven.push2u.EndpointPolicy;
-import com.the13haven.push2u.EndpointRejectedException;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.VapidSigner;
 
@@ -74,10 +72,10 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(EndpointPolicy.class);
                     EndpointPolicy policy = context.getBean(EndpointPolicy.class);
-                    assertThatCode(() -> policy.validate(URI.create("https://push.example.test/send/abc")))
-                            .doesNotThrowAnyException();
-                    assertThatExceptionOfType(EndpointRejectedException.class)
-                            .isThrownBy(() -> policy.validate(URI.create("https://other.example/send/abc")));
+                    assertThat(policy.assess(URI.create("https://push.example.test/send/abc")))
+                            .isInstanceOf(EndpointAssessment.Allowed.class);
+                    assertThat(policy.assess(URI.create("https://other.example/send/abc")))
+                            .isInstanceOf(EndpointAssessment.Refused.class);
                 });
     }
 
@@ -90,10 +88,10 @@ class Push2uEndpointPolicyAutoConfigurationTest {
         runner.withPropertyValues("push2u.allowed-domains=notify.windows.com").run(context -> {
             assertThat(context).hasNotFailed();
             EndpointPolicy policy = context.getBean(EndpointPolicy.class);
-            assertThatCode(() -> policy.validate(URI.create("https://wns2-ln2p.notify.windows.com/w/?t=abc")))
-                    .doesNotThrowAnyException();
-            assertThatExceptionOfType(EndpointRejectedException.class)
-                    .isThrownBy(() -> policy.validate(URI.create("https://evilnotify.windows.com/w/?t=abc")));
+            assertThat(policy.assess(URI.create("https://wns2-ln2p.notify.windows.com/w/?t=abc")))
+                    .isInstanceOf(EndpointAssessment.Allowed.class);
+            assertThat(policy.assess(URI.create("https://evilnotify.windows.com/w/?t=abc")))
+                    .isInstanceOf(EndpointAssessment.Refused.class);
         });
     }
 
@@ -106,13 +104,12 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     EndpointPolicy policy = context.getBean(EndpointPolicy.class);
-                    assertThatCode(() -> {
-                                policy.validate(URI.create("https://push.example.test/send/abc"));
-                                policy.validate(URI.create("https://cloud.notify.windows.com/w/?t=abc"));
-                            })
-                            .doesNotThrowAnyException();
-                    assertThatExceptionOfType(EndpointRejectedException.class)
-                            .isThrownBy(() -> policy.validate(URI.create("https://other.example/send/abc")));
+                    assertThat(policy.assess(URI.create("https://push.example.test/send/abc")))
+                            .isInstanceOf(EndpointAssessment.Allowed.class);
+                    assertThat(policy.assess(URI.create("https://cloud.notify.windows.com/w/?t=abc")))
+                            .isInstanceOf(EndpointAssessment.Allowed.class);
+                    assertThat(policy.assess(URI.create("https://other.example/send/abc")))
+                            .isInstanceOf(EndpointAssessment.Refused.class);
                 });
     }
 
@@ -161,11 +158,11 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(Push2uHealthIndicator.class);
                     assertThat(context).hasSingleBean(EndpointPolicy.class);
                     EndpointPolicy policy = context.getBean(EndpointPolicy.class);
-                    assertThatCode(() -> policy.validate(URI.create("https://wns2-ln2p.notify.windows.com/w/?t=abc")))
-                            .doesNotThrowAnyException();
-                    assertThatExceptionOfType(EndpointRejectedException.class)
+                    assertThat(policy.assess(URI.create("https://wns2-ln2p.notify.windows.com/w/?t=abc")))
+                            .isInstanceOf(EndpointAssessment.Allowed.class);
+                    assertThat(policy.assess(URI.create("https://10.0.0.5/internal")))
                             .as("the boundary can refuse a row that would otherwise fail on every later send")
-                            .isThrownBy(() -> policy.validate(URI.create("https://10.0.0.5/internal")));
+                            .isInstanceOf(EndpointAssessment.Refused.class);
                 });
     }
 
@@ -180,9 +177,9 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(EndpointPolicy.class);
-                    assertThatExceptionOfType(EndpointRejectedException.class)
-                            .isThrownBy(() -> context.getBean(EndpointPolicy.class)
-                                    .validate(URI.create("https://other.example/send/abc")));
+                    assertThat(context.getBean(EndpointPolicy.class)
+                                    .assess(URI.create("https://other.example/send/abc")))
+                            .isInstanceOf(EndpointAssessment.Refused.class);
                 });
     }
 
@@ -361,7 +358,7 @@ class Push2uEndpointPolicyAutoConfigurationTest {
         // application's: erring this way produces a startup failure naming the conflicting bean,
         // where the other reading would silently drop a stated allowlist.
         runner.withPropertyValues("push2u.allowed-origins=https://push.example.test")
-                .withBean("suppliedPolicy", EndpointPolicy.class, () -> endpoint -> {})
+                .withBean("suppliedPolicy", EndpointPolicy.class, () -> endpoint -> new EndpointAssessment.Allowed())
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
@@ -635,7 +632,8 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     /** Puts a policy into the bean factory as a bare singleton — the registration that leaves no definition. */
     private static ApplicationContextInitializer<ConfigurableApplicationContext> policyRegisteredAsSingleton(
             String name) {
-        return context -> context.getBeanFactory().registerSingleton(name, (EndpointPolicy) endpoint -> {});
+        return context -> context.getBeanFactory()
+                .registerSingleton(name, (EndpointPolicy) endpoint -> new EndpointAssessment.Allowed());
     }
 
     /** Registers a policy as a plain bean definition — one carrying no annotation or factory-method metadata. */
@@ -649,8 +647,8 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     static class ProgrammaticPolicy implements EndpointPolicy {
 
         @Override
-        public void validate(URI endpoint) {
-            throw new EndpointRejectedException("application policy rejects all endpoints");
+        public EndpointAssessment assess(URI endpoint) {
+            return new EndpointAssessment.Refused("application policy rejects all endpoints");
         }
     }
 
@@ -658,9 +656,8 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     static class RejectingPolicyConfiguration {
 
-        static final EndpointPolicy POLICY = endpoint -> {
-            throw new EndpointRejectedException("application policy rejects all endpoints");
-        };
+        static final EndpointPolicy POLICY =
+                endpoint -> new EndpointAssessment.Refused("application policy rejects all endpoints");
 
         @Bean
         EndpointPolicy rejectingPolicy() {
@@ -674,9 +671,7 @@ class Push2uEndpointPolicyAutoConfigurationTest {
 
         @Bean
         EndpointPolicy push2uEndpointPolicy() {
-            return endpoint -> {
-                throw new EndpointRejectedException("application policy rejects all endpoints");
-            };
+            return endpoint -> new EndpointAssessment.Refused("application policy rejects all endpoints");
         }
     }
 
