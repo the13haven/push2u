@@ -23,9 +23,10 @@ an upgrade whose release notes could not have warned about them. The values were
 purpose. They were written against a contract, and the contract moved.
 
 **The question this record answers is not which helpers are convenient.** It is which knowledge
-belongs to the library and therefore has to travel with it. A consumer can write a stub transport in
-five lines and will get it right. A consumer cannot know what the current `Subscription` contract
-accepts, and cannot find out except by upgrading and watching what breaks.
+belongs to the library and therefore has to travel with it. A consumer can write a stub transport
+answering one constant status in five lines and will get it right. A consumer cannot know what the
+current `Subscription` contract accepts, and cannot find out except by upgrading and watching what
+breaks.
 
 ## The decision
 
@@ -98,10 +99,12 @@ test genuinely needs the same public key twice, it needs it within one run, and 
 configured public key is asserting about its own configuration, which belongs to its own tests.
 
 **The kit re-derives two encodings the core keeps package-private, and how far that is caught is
-part of the decision.** `EcKeys` is not exported, so the fixture cannot reach the library's own
-X9.62 uncompressed-point writer or its fixed-width scalar writer and must produce both itself — the
-operation this repository's rules single out, because a coordinate quietly padded or truncated to
-reach 32 bytes yields a pair that looks right and is not. Handing the two strings to
+part of the decision.** `EcKeys` is package-private in the core's single exported package, so no
+`exports` line could ever reach it from the kit's own package: the fixture cannot use the library's
+X9.62 uncompressed-point writer, nor the fixed-width scalar writer this build keeps beside its
+vectors, and must produce both encodings itself — the operation this repository's rules single out,
+because a coordinate quietly padded or truncated to reach 32 bytes yields a pair that looks right
+and is not. Handing the two strings to
 `VapidKeys.fromBase64` catches half of it and no more: the constructor applies the on-curve check to
 the public half and a length check to the scalar, and **nothing anywhere verifies that the scalar is
 the one belonging to that point**. A mis-encoded public key therefore fails at `generate()`, loudly,
@@ -151,9 +154,9 @@ and the index row summarising it says the same; after this change a published pu
 contains code that encodes a scalar as base64url, so the words appear to be crossed. They are not:
 the bullet those words summarise has `VapidKeys` as its subject and an inverse of `fromBase64` as
 its object, and what this record does with that clause is re-impose it — the ruled-out list below
-carries it forward verbatim and extends its reach to a third artifact, the kit, where ADR-018 never
-had occasion to apply it. A later record that enforces an earlier rule in more places has not
-superseded it.
+carries it forward in the words that state the property it protects, and extends its reach to a
+third artifact, the kit, where ADR-018 never had occasion to apply it. A later record that enforces
+an earlier rule in more places has not superseded it.
 
 Declaring one anyway would be the more expensive error of the two. The status line is the only edit
 an immutable record ever takes, so a supersession here would say permanently that ADR-018 lost a
@@ -254,16 +257,17 @@ converts the first of them it reaches. Nothing about that moves when the library
 consumer's own custodian is the thing being simulated, and the seam has one failure type. The
 admission test fails, and the fact that a fake *could* live here is not a reason for one.
 
-The trap worth naming, since it is the reason a consumer might get this wrong: a fake that raises
-only from `sign` and returns a key from `publicKey` has to return a structurally valid 65-byte
-point, because the send validates the advertised key before it asks for a signature — a placeholder
-there ends the send as a `PushCryptoException` and the test never reaches the outcome it was written
-for. A fake raising from both methods has no such requirement, which is the second reason it is the
-form to write. The transport fake is published on the other side of that
-test — not because a stub transport is harder to write, but because the sequence of answers a retry
-loop needs is a shape a consumer cannot get from a lambda without writing the counter and the
-thread-safety themselves, and because what the fake records is subject to rules about capability
-URLs that this library owns.
+Raising from both is also the form with nothing left to get wrong, and the trap it avoids is worth
+naming because it sits the other way round from where one would look for it. The send asks for the
+signature first and validates the advertised key **after** it, so a fake that *returns* from both
+methods has to return a structurally valid 65-byte point: a placeholder there ends the send as a
+`PushCryptoException`, with the signature already produced, and the test never reaches the outcome
+it was written for. A fake that raises has no returned value read at all. The transport fake is
+published on the other side of that test — not because a stub transport is harder to write, but
+because what the fake records is subject to rules about capability URLs and tokens that this library
+owns and that move with it — and, beside that, because the sequence of answers a retry loop needs is
+a shape a consumer cannot get from a lambda without writing the counter and the thread safety
+themselves.
 
 ## What the recording keeps, and what it refuses to keep
 
@@ -280,6 +284,10 @@ printed into a CI log is exactly how such a value leaves the machine. Redaction 
 library's own function rather than a second scheme invented for the kit, which is also why the
 rendering stays useful — `redact` keeps the origin and replaces the capability part, so a failure
 message still says which service was called.
+
+`sent()` answers a plain `List<SentPush>` and the fake asserts nothing itself. A consumer already
+has an assertion library and knows it better than this kit would; a `hasSentTo(...)` here would be a
+second one, worse, in the artifact that is meant to remove work rather than add vocabulary.
 
 `bodyBytes()` and not `bodyLength()`: `PushOutcome.PayloadRejected` already says `payloadBytes`.
 
@@ -422,8 +430,9 @@ implemented. The kit's own Javadoc carries every reason above in its own words, 
   reached through one.
 - A fixed VAPID pair, or any key-shaped constant, in a published artifact.
 - An encoder taking key material a caller already holds and returning its private scalar as a string
-  — in the kit, the core or a starter. That is what ADR-018's clause protects, carried forward here
-  unchanged and extended to an artifact ADR-018 had no occasion to reach.
+  — in the kit, the core or a starter. That is the property ADR-018's clause protects, carried
+  forward here in the words that state it and extended to an artifact ADR-018 had no occasion to
+  reach.
 - An accessor for the private scalar on `VapidKeys`, in this record or after it.
 - A published fake for `VapidSigner`, whose failure mode is a short anonymous class whose two
   methods both raise, and nothing about which moves when the library moves.
