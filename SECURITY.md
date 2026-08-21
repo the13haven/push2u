@@ -7,10 +7,11 @@ everything else in this repository.
 ## Reporting a vulnerability
 
 **Do not open a public issue for a security report — and do not open a pull request either.** A
-public description of any defect in the *Scope* list below discloses it to everyone, whether or not
-a fix travels with it: a version already released stays exposed until a fixed one is out, so a pull
-request that repairs the defect while describing it has published it all the same. This holds for a
-defect you found while working on something else as much as for one you set out to look for.
+public description of any defect in the [in-scope list](#scope) below discloses it to everyone,
+whether or not a fix travels with it: a version already released stays exposed until a fixed one
+is out, so a pull request that repairs the defect while describing it has published it all the
+same. This holds for a defect you found while working on something else as much as for one you set
+out to look for.
 
 Report it through GitHub's private vulnerability reporting:
 
@@ -24,7 +25,9 @@ Please include, as far as you can establish them:
 - the affected version or commit, and the affected module;
 - which of the properties below you believe is broken, and how;
 - a proof of concept — a failing test against this repository is the most useful form;
-- your assessment of impact and of who is exposed.
+- your assessment of impact and of who is exposed;
+- a patch, if you have one — attach it to the advisory thread, which is private, rather than
+  opening a pull request for it.
 
 Redact anything sensitive from what you attach: a subscription endpoint is a capability URL,
 and `p256dh`/`auth`, VAPID private keys and Vault tokens are secrets. A synthetic key pair
@@ -74,11 +77,11 @@ In scope — the properties the library is responsible for:
   path/query of an endpoint reaching an exception message, log record, or health payload.
 - **Integrity of a diagnostic something else reads**: text chosen by a push service, by whatever
   answers on the Vault address, or arriving in a subscription, reaching an exception message, log
-  record or health payload without
-  being escaped — so that it can forge a line an operator reads as the application's own, steer a
-  terminal with an escape sequence, or reverse the printed order of what follows it. This is a
-  different property from the item above and not a weaker form of it: what breaks is the
-  trustworthiness of the record, not the confidentiality of a value inside it.
+  record or health payload without being escaped — so that it can forge a line an operator reads
+  as the application's own, steer a terminal with an escape sequence, or reverse the printed order
+  of what follows it. This is a different property from the item above and not a weaker form of
+  it: what breaks is the trustworthiness of the record, not the confidentiality of a value inside
+  it.
 - **Resource exhaustion reachable from a remote peer**: an unbounded read, a missing timeout, or an
   unbounded internal cache. The library performs one POST per send and schedules no repeat, so the
   path a hostile push service could amplify by naming a large `Retry-After` is the caller's
