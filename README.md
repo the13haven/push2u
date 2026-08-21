@@ -361,7 +361,7 @@ exemption from it; which of your sends are user actions is a fact only your appl
 - `IllegalArgumentException` / `NullPointerException` — an argument that is not a legal value of its
   parameter.
 - Anything else out of a `PushHttpClient`, `VapidSigner` or `EndpointPolicy` you supplied. Exactly
-  two seam signals convert to outcomes — `VapidSignerUnavailableException` and
+  two seam exceptions convert to outcomes — `VapidSignerUnavailableException` and
   `PushDeliveryException` — and any other `RuntimeException` from a seam is a defect in that
   implementation, not an operational condition, so it propagates unchanged rather than being
   laundered into a value. The endpoint policy is not on that list because it does not signal by

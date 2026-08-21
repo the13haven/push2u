@@ -256,7 +256,7 @@ classification a repeat decision needs; the schedule is the caller's. `PushOutco
 `NotAttempted` marker over `SignerUnavailable`, `PayloadRejected` and `EndpointRejected`. The
 `Retry-After` is reported with no ceiling applied.
 
-Exactly two seam signals convert (ADR-022's taxonomy, ADR-021's sorting):
+Exactly two seam exceptions convert (ADR-022's taxonomy, ADR-021's sorting):
 `VapidSignerUnavailableException` → `SignerUnavailable`; `PushDeliveryException` → `Indeterminate`.
 The endpoint policy is not among them because it answers with a value (ADR-027): `send` converts an
 `EndpointAssessment.Refused` into `EndpointRejected`, pairing the policy's reason with the library's

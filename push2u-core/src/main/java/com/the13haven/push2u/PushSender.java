@@ -220,9 +220,9 @@ public final class PushSender {
      * {@link VapidSigner} is a remote Vault/KMS operation) and the HTTP request, so a refused endpoint costs none of
      * them and is reported as {@link PushOutcome.EndpointRejected}.
      *
-     * <p><b>Two seam signals convert to outcomes, and no others.</b> A {@link VapidSignerUnavailableException} from the
-     * signer becomes {@link PushOutcome.SignerUnavailable}; a {@link PushDeliveryException} from the transport becomes
-     * {@link PushOutcome.Indeterminate}. The endpoint policy signals by returning rather than by throwing: its
+     * <p><b>Two seam exceptions convert to outcomes, and no others.</b> A {@link VapidSignerUnavailableException} from
+     * the signer becomes {@link PushOutcome.SignerUnavailable}; a {@link PushDeliveryException} from the transport
+     * becomes {@link PushOutcome.Indeterminate}. The endpoint policy signals by returning rather than by throwing: its
      * {@link EndpointAssessment.Refused} answer becomes {@link PushOutcome.EndpointRejected}, carrying this library's
      * own redaction of the endpoint beside the policy's reason, with no exception anywhere in that path. Any
      * {@code RuntimeException} out of a consumer-written seam — the endpoint policy included — is a defect in that
