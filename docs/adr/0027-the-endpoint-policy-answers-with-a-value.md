@@ -94,10 +94,12 @@ and refused in the next section rather than denied here, because the choice this
 between breaking now and breaking later, and a reader is owed the reason that is so.
 
 The timing has one more thing in it, and it cuts the same way. This would be the second consecutive
-release to break the deployment that reported it, which migrated to the current version days before
-filing. That is a real cost and it is named rather than hidden: it is also the deployment that asked
-for the change, and the alternative on offer is to make it pay the same migration later, when its
-own codebase and everyone else's holds more of the calls that break.
+release to break an integration that migrated to the current version days earlier, and that cost is
+named rather than hidden. What answers it is not that anyone asked for the change — a consumer's
+preference is evidence about cost, never a mandate, and this library's shape is not put to a vote —
+but that deferring does not remove the cost. It relocates it to a later release, where the same
+migration is performed against more call sites, by more deployments, and by some who never saw the
+seam in its present form at all.
 
 ## Replacing the method, rather than adding beside it
 
