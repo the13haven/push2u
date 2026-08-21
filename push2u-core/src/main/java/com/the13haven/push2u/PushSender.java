@@ -292,12 +292,21 @@ public final class PushSender {
         EndpointAssessment assessment = Objects.requireNonNull(
                 endpointPolicy.assess(endpoint),
                 "the endpoint policy returned null instead of an EndpointAssessment — a defect in that policy");
-        if (assessment instanceof EndpointAssessment.Refused refused) {
-            // The policy's contract keeps the raw endpoint out of its reason; the redacted form
-            // beside it is this library's own rendering, safe whatever the policy wrote. The
-            // reason is read from a final record whose accessor this library generates, so the
-            // read itself cannot be overridden and cannot fail.
-            return new PushOutcome.EndpointRejected(Endpoints.redact(subscription.endpoint()), refused.reason());
+        // An exhaustive switch, not an "anything but Refused proceeds" test: the permitting branch
+        // is matched by name, so a variant this seam might gain in a later release fails this
+        // method's compilation instead of walking past an egress control into the network.
+        switch (assessment) {
+            case EndpointAssessment.Refused refused -> {
+                // The policy's contract keeps the raw endpoint out of its reason; the redacted
+                // form beside it is this library's own rendering, safe whatever the policy wrote.
+                // The reason is read from a final record whose accessor this library generates, so
+                // the read itself cannot be overridden and cannot fail.
+                return new PushOutcome.EndpointRejected(Endpoints.redact(subscription.endpoint()), refused.reason());
+            }
+            case EndpointAssessment.Allowed() -> {
+                // The admissible case carries nothing to read and asks nothing of this method:
+                // the pipeline below simply continues.
+            }
         }
         byte[] body = encryptor.encrypt(subscription.p256dh(), subscription.auth(), payload, recordSize);
         String authorization;

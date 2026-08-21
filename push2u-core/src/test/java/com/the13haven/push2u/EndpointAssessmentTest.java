@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The value the {@link EndpointPolicy} seam answers with (ADR-027). The load-bearing property is that constructing a
  * refusal can never fail: a policy translating its own failure writes {@code new Refused(e.getMessage())} in one line,
- * and {@code getMessage()} is {@code null} for every exception built without a message — a constructor refusing that
+ * and {@code getMessage()} is {@code null} for every exception built without a message — a constructor rejecting that
  * would send the one-line slip out of the seam as a defect, and a defect stops the fan-out this value exists to keep
  * running. So {@code Refused} normalises {@code null} to {@code ""} and permits a blank reason, exactly what
  * {@link PushOutcome.EndpointRejected} permits — one refusal may not be legal in one of the two types describing it and
@@ -33,7 +33,7 @@ class EndpointAssessmentTest {
 
     @Test
     void refusedPermitsAnEmptyAndABlankReason() {
-        // Refusing what the name does not contradict would be a defect, not rigour: nothing
+        // Rejecting a reason the name does not contradict would be a defect, not rigour: nothing
         // branches on the reason, so a blank one breaks nothing — and throwing here would stop a
         // fan-out on the first row whose policy wrote no message.
         assertThatCode(() -> {

@@ -349,9 +349,10 @@ class EndpointPoliciesTest {
     }
 
     @Test
-    void unrestrictedAllowsEverythingButStillRefusesANullEndpoint() {
-        // The named opt-out answers Allowed for any endpoint — and a null endpoint is still an
-        // argument error, not an admissible value: the NPE is the caller's bug reported as such.
+    void unrestrictedAllowsEverythingButRejectsANullEndpointAsAnArgumentError() {
+        // The named opt-out answers Allowed for any endpoint — and a null endpoint is not an
+        // endpoint the policy answers about at all, but an argument error: the NPE is the
+        // caller's bug reported as such, never a Refused.
         EndpointPolicy unrestricted = EndpointPolicies.unrestricted();
 
         assertThat(unrestricted.assess(URI.create("https://169.254.169.254/latest/meta-data/")))
