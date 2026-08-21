@@ -277,8 +277,8 @@ does not send. Two framework facts are worth having before anyone builds a varia
 their own application, since each is otherwise one failed start away: `OUT_OF_SERVICE` maps to 503,
 so an indicator that says "this deployment does not send" in that status marks the whole application
 unhealthy and breaks the very container check this section is about; and `UNKNOWN` is the one status
-that sits *below* `UP` in the default severity order, so a contributor reporting it leaves the
-aggregate `UP` — by default rather than by construction, since
+that sits *below* `UP` in the default severity order, so a contributor reporting it beside healthy
+ones leaves the aggregate `UP` — by default rather than by construction, since
 `management.endpoint.health.status.order` can be rewritten.
 
 ### Where the membership check stops, and the clash beside it
