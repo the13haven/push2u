@@ -296,32 +296,44 @@ classified refusal into the accessor's own complaint. `Refused` is a record: fin
 this library generates and nobody can replace. The failure mode does not need guarding because it
 cannot occur.
 
-## A reason a program can branch on, refused
+## The reason is a log line, not a switch
 
-`Refused` carries prose, which is exactly what the exception carried, and ADR-022 rules out
-"message-text matching as the supported way to tell two conditions apart — anywhere a consumer must
-do that, a type is missing". Minting a value type is the one moment that could be answered, since
-neither a record component nor a permitted subtype can be added compatibly afterwards, so the
-question is settled here rather than left.
+`Refused` carries prose, and the affirmative reason for that decides it: the component exists for
+observability. **This library writes no log lines.** It holds no logger and takes no logging
+dependency — the zero-dependency core could not take one — so every diagnostic it produces is a
+value handed to a caller who renders it, and `PushOutcome` already describes its own components in
+exactly those terms: a diagnostic for the log line and the metric, safe to log and enough to find
+the row. An operator wanting to know why a subscription was turned away at registration reads a
+sentence somebody wrote for them to read. A string is the shape of that.
 
-The use case is real. A boundary would separate "this deployment's allowlist is missing a legitimate
-push origin", which is worth an alert and is the failure ADR-024 was written after, from "a client
-posted junk", which is worth a counter. Today's shape serves it no better, so nothing regresses
-either way.
+**Read that way, ADR-022's rule is not engaged.** What it forbids is message-text matching *as the
+supported way to tell two conditions apart* — "anywhere a consumer must do that, a type is missing".
+Rendering a message is not telling two conditions apart; it is what a message is for. The rule fires
+where a program branches, and nothing here asks one to.
 
-What refuses it is that the seam is open. A code this library defines can enumerate only the reasons
-`EndpointPolicies` produces; a corporate egress rule, which is the reason the seam is an interface
-at all, would reach for a general "other" and put its real answer back in the prose. The result is a
-property of one implementation published as a property of the seam, and every implementation after
-it inherits an enumeration that was never about it. The disclosure argument is *not* what decides
-this, and is recorded as insufficient so it is not reached for later: the standard allowlist
-declines to report which rule came closest because that describes the allowlist to whoever supplied
-the endpoint, and a coarse code — the endpoint carried userinfo, it had no host, no rule matched —
-tells that client only things about what it just posted, or what the `400` already told it.
+**A code would be the wrong shape for the purpose, not merely an unnecessary one.** A code carries
+no text, so somewhere a table has to map it to a sentence — and the somewhere would be each
+consumer, reconstructing in its own words what the policy knew at the moment it refused, from an
+enumeration that cannot say which rule was involved or what the endpoint looked like. The
+observability the component exists for would get worse, not better, and every consumer would rebuild
+the same table.
 
-So the reason stays prose, and ADR-022's rule stays live over it as an obligation on whoever finds a
-consumer needing to branch: what that reader is looking at is a missing type, and the place to put
-it is a decision of its own, not a component added to this one.
+A second reason stands behind that one and would refuse a code even if the first did not: the seam
+is open. A code this library defines can enumerate only the reasons `EndpointPolicies` produces, and
+a corporate egress rule — the reason the seam is an interface at all — would reach for a general
+"other" and put its real answer back in the prose, publishing a property of one implementation as a
+property of the seam.
+
+The disclosure argument is *not* what refuses a code, and is recorded as insufficient so it is not
+reached for later: the standard allowlist declines to report which rule came closest because that
+describes the allowlist to whoever supplied the endpoint, and a coarse code — userinfo present, no
+host, no rule matched — tells that client only things about what it just posted, or what the `400`
+already told it.
+
+What stays live is the obligation ADR-022 places on whoever *does* find a consumer needing to branch
+on the kind of refusal: that reader is looking at a missing type, and where it goes is a decision of
+its own rather than a component added to this one. The prose is not a substitute for it and is not
+offered as one.
 
 ## Structure through a subclass, also refused
 
@@ -509,9 +521,11 @@ moves *from*, and that label is what tells a reader which claims belong to which
   refuses to be constructed — a policy's blank or absent reason is rendered, never thrown, because a
   refusal that throws out of the seam is a defect and a defect stops the fan-out this value exists to
   keep running.
-- A reason a program branches on, in this type: a code, an enum or a second component, published from
-  a seam whose implementations this library does not enumerate — and equally the disclosure argument
-  offered as what refuses it.
+- A reason a program branches on, in this type: a code, an enum or a second component, in place of
+  the sentence an operator reads — the component is this library's contribution to a log line it does
+  not write itself, and a code moves the writing of that line into every consumer. Equally: the
+  disclosure argument offered as what refuses a code, and the prose offered as an answer to a
+  consumer that genuinely needs to branch, which is a missing type and a decision of its own.
 - Structured refusal data travelling through this library on a consumer's own subtype, which the
   sealed hierarchy closes deliberately.
 - A component on `Allowed` carrying an address a policy resolved, for a transport to pin: the pinning
