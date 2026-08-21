@@ -53,6 +53,35 @@ public sealed interface EndpointAssessment {
 interface with a single abstract method, so a corporate egress rule is still one lambda — it returns
 an answer now instead of falling off the end of a `void`.
 
+## Doing nothing is the alternative to refuse first
+
+Every alternative below is a way of making the change; this one is not making it, and it is the
+plainest reading of the cost. Breaking a published seam falls on every implementation and every call
+site a consumer has, and what it buys them is that one `try`/`catch` per registration boundary
+becomes a `switch`. Consistency with two decisions of the release before is not, by itself, a
+licence to spend that.
+
+What decides it is a premise about *when*, and it is the argument this record rests on rather than
+the aesthetic one. The second application point is one release old: before it, the only caller of
+this method in existence was `send` itself, and a consumer had no reason to hold a policy at all.
+The population of `validate` call sites and of hand-written implementations is therefore at its
+historical minimum right now and grows with every release that ships without this change — the guide
+that tells applications to inject the bean and apply it at registration is the same age as the
+problem. Deferring does not avoid the cost; it buys the same cost later at a higher price, paid by
+more people.
+
+**And there is no non-breaking form of this change to defer to.** The shape the report proposes as
+the compatible one is not: with `assess` abstract, every existing lambda and every implementing
+class stops compiling exactly as it does under this record, because the single abstract method's
+signature is what moved. The `default` buys callers and nobody else. So the choice is not between
+breaking now and adding compatibly later — it is between breaking now and breaking later.
+
+The timing has one more thing in it, and it cuts the same way. This would be the second consecutive
+release to break the deployment that reported it, which migrated to the current version days before
+filing. That is a real cost and it is named rather than hidden: it is also the deployment that asked
+for the change, and the alternative on offer is to make it pay the same migration later, when its
+own codebase and everyone else's holds more of the calls that break.
+
 ## Replacing the method, rather than adding beside it
 
 The reported shape was an `assess` added beside a `validate` kept as a `default`, so that nothing
@@ -106,6 +135,18 @@ therefore safe. What stays silent under either is the other common shape: a boun
 method and lets the unchecked refusal travel to a framework's handler, naming the type nowhere. One
 of the two hazards needs the exception to survive; the other does not need anything.
 
+**What the change moves, and what it does not, is worth stating in the same breath.** After it,
+`policy.assess(uri);` as a bare statement compiles with no diagnostic of any kind and admits every
+endpoint — where `policy.validate(uri);` as a bare statement was correct. The unsafe spelling and
+the terse one change places, permanently and not only across the migration, and no compiler help is
+available for it: the annotation that would mark the return value as one a caller may not discard
+lives in a dependency the core may not take. The trade is accepted with its name said out loud —
+implementations become safer, since falling off the end of a `void` stops being a way to admit
+everything and a policy must now positively return `Allowed`, while call sites become riskier by
+exactly the shape a discarded value has. `send` re-checks, so no send escapes the control; the
+registration boundary is the point where nothing re-checks, which is why ADR-024 put the policy
+there, and the seam's own Javadoc has to say so where a consumer reads it.
+
 So the spelling has to differ, and the choice among the spellings that do is `assess` — the verb
 this project already uses for the same move, one release earlier, on `PushSender.assessPayloadSize`
 answering a `PayloadSizeAssessment`. A reader who has met one of the two guesses the other. `probe`
@@ -145,10 +186,23 @@ than deferred.
 
 `reason` keeps the obligation the exception message carried — the raw URI does not go in it, and an
 implementation renders the endpoint with `Endpoints.redact` where it wants to name it, as the
-standard allowlist does. Its compact constructor enforces what the name asserts, as `ExceedsLimit`
-does for its numbers: a `null` reason is a `NullPointerException` and a blank one an
-`IllegalArgumentException`, because a refusal nobody can read is a defect in the policy rather than
-a refusal.
+standard allowlist does.
+
+**It validates nothing, and that is a decision rather than an oversight.** The obvious shape is the
+one `ExceedsLimit` uses — refuse what the name contradicts — and here it would be a defect. A policy
+translating its own failure writes `new Refused(e.getMessage())` in one line, and `getMessage()` is
+`null` for every exception built without a message; today that is legal, because
+`EndpointRejectedException`'s constructor checks nothing, and `send` renders it as `""` on an
+outcome whose Javadoc keeps that rendering deliberately distinguishable from the fixed text it
+substitutes elsewhere. A compact constructor throwing on `null` or blank would send that one-line
+slip out of the seam as a defect, by this record's own rule, and a defect propagates: a synchronous
+fan-out over a subscription store stops on the first row whose policy took that shortcut. That is
+the self-inflicted denial of service the whole value shape exists to prevent, and it is reachable by
+an endpoint an attacker chose. So `Refused` normalises a `null` reason to `""` and permits a blank
+one, which is exactly what `PushOutcome.EndpointRejected` permits — one refusal may not be legal in
+one of the two types describing it and illegal in the other. `ExceedsLimit` is not the precedent it
+looks like: its check guards a relation a caller branches on, and a blank reason breaks nothing
+anybody branches on.
 
 **One defensive branch disappears with the exception, and it is worth naming.**
 `EndpointRejectedException` is a public non-final class, so a consumer may subclass it and override
@@ -158,6 +212,49 @@ classified refusal into the accessor's own complaint. `Refused` is a record: fin
 this library generates and nobody can replace. The failure mode does not need guarding because it
 cannot occur.
 
+## A reason a program can branch on, refused
+
+`Refused` carries prose, which is exactly what the exception carried, and ADR-022 rules out
+"message-text matching as the supported way to tell two conditions apart — anywhere a consumer must
+do that, a type is missing". Minting a value type is the one moment that could be answered, since
+neither a record component nor a permitted subtype can be added compatibly afterwards, so the
+question is settled here rather than left.
+
+The use case is real. A boundary would separate "this deployment's allowlist is missing a legitimate
+push origin", which is worth an alert and is the failure ADR-024 was written after, from "a client
+posted junk", which is worth a counter. Today's shape serves it no better, so nothing regresses
+either way.
+
+What refuses it is that the seam is open. A code this library defines can enumerate only the reasons
+`EndpointPolicies` produces; a corporate egress rule, which is the reason the seam is an interface
+at all, would reach for a general "other" and put its real answer back in the prose. The result is a
+property of one implementation published as a property of the seam, and every implementation after
+it inherits an enumeration that was never about it. The disclosure argument is *not* what decides
+this, and is recorded as insufficient so it is not reached for later: the standard allowlist
+declines to report which rule came closest because that describes the allowlist to whoever supplied
+the endpoint, and a coarse code — the endpoint carried userinfo, it had no host, no rule matched —
+tells that client only things about what it just posted, or what the `400` already told it.
+
+So the reason stays prose, and ADR-022's rule stays live over it as an obligation on whoever finds a
+consumer needing to branch: what that reader is looking at is a missing type, and the place to put
+it is a decision of its own, not a component added to this one.
+
+## Structure through a subclass, also refused
+
+`EndpointRejectedException` is a public non-final class, so a consumer's policy may today throw
+`class EgressDenied extends EndpointRejectedException` carrying whatever its own boundary wants to
+read — a rule, a zone, a ticket reference — catch that type where it accepts subscriptions, and
+still have `send` classify it as `EndpointRejected` because the base type is what the facade
+converts. `EndpointAssessment` is sealed and `Refused` is final, so that channel closes and a
+`String` is what remains.
+
+It closes on purpose. The subclass hatch is the same hatch that made `send` read `getMessage()`
+defensively, and it works only for a consumer that owns both ends — its own policy and its own
+boundary — which is a consumer that can as easily carry its structure beside the assessment, in the
+class that produced it. What it cannot do is travel through this library, and it does not need to:
+the sender's business with a refusal is to report it, and the two components of the outcome are what
+that report is made of.
+
 ## `Allowed` carries nothing, and one instance says it
 
 The permitting branch has no components, for the reason ADR-023 gives for `WithinLimit`: an endpoint
@@ -165,6 +262,14 @@ that is admissible needs no number or string to act on, and a component added to
 changes its canonical constructor, its accessors and every pattern written against it — a breaking
 change where a method would have been a compatible addition. Deciding it now is what makes the empty
 shape a commitment instead of an omission.
+
+Unlike the size assessment, this case does have a candidate on offer, and it is named rather than
+waved past: a policy that resolves could hand back the address it vetted, for a transport to pin and
+connect to. It is refused because the pinning belongs to the transport that opens the socket, not to
+the value a policy returns — the seam's own Javadoc sends a deployment wanting that guarantee to the
+transport layer, and an address `PushSender` never reads would be a component published for a
+consumer to carry between two of its own components. A policy needing it holds it already, in the
+implementation that resolved.
 
 The type is not a singleton — its canonical constructor is public and a caller may build as many as
 it likes — and the library's own implementations still hand out one shared instance, as
@@ -183,8 +288,13 @@ hostile row and carries on.
 Two failure modes of the new shape are settled here rather than discovered:
 
 - **A policy returning `null`** is a defect, and it arrives as a `NullPointerException` from the
-  sender's own check. The `void` method had no such case; the value-returning one does, and the
-  answer is the one ADR-022's table already gives for a violated non-null contract.
+  sender's own check — which stops the fan-out, where a blank reason above deliberately does not.
+  The two are not treated differently by temperament: a missing reason has a rendering that keeps
+  the refusal's meaning intact, and a missing answer has none. Reading `null` as `Allowed` fails
+  open on the one control this seam is, and reading it as `Refused` invents a decision the
+  deployment never made. So the only honest reading is the one ADR-022's table already gives for a
+  violated non-null contract, and the `void` method's freedom from this case is a real thing the
+  change costs.
 - **A policy throwing anything at all** is a defect and propagates unchanged. This is not a new rule
   but the removal of the exception from the one list it was on: the facade converted three seam
   types and now converts two, and everything else out of a consumer seam is read as a defect in that
@@ -201,9 +311,10 @@ so that whoever supersedes either knows which half they are replacing. This reco
 clause of each.
 
 **ADR-022** loses a type. `EndpointRejectedException` ceases to exist, and with it that record's
-table row for a refused endpoint. Every other part of it stands, including the reasoning that put
-the type outside `IllegalArgumentException` — which is half of why the exception shape had to go, so
-the clause that survives is the one that argued this change into being.
+table row for a refused endpoint and its last row's count — "the facade converts three types and no
+others" is two after this. Every other part of it stands, including the reasoning that put the type
+outside `IllegalArgumentException` — which is half of why the exception shape had to go, so the
+clause that survives is the one that argued this change into being.
 
 **ADR-021** loses the seam's channel. That record states, in its own words, that "the seams keep
 signalling as they do now — `PushHttpClient` throws `PushDeliveryException`, `EndpointPolicy` throws
@@ -234,6 +345,14 @@ and a factory joining subscription parsing to the admission decision. None of th
 the one method's answer, none appears here, and ADR-024's durable list rules out no core API in
 general. So the clause is answered rather than superseded.
 
+One argument inside ADR-024 does get weaker without any of its decisions moving, and it is named
+here so that a later reader who notices does not read the weakening as an opening. That record
+refuses a core `Subscriptions.accept(policy, …)` factory partly because it would report two
+unrelated refusals through one call, an `IllegalArgumentException` for a malformed subscription
+beside an `EndpointRejectedException` for an inadmissible host. After this record the second is a
+value and that leg is gone. The refusal stands on the other one, which is ADR-004's and untouched:
+the moment a subscription is accepted is outside this library.
+
 ADR-016 and ADR-017 are untouched: the seam is still a required argument of every `PushSender`
 factory, the library still ships no allowlist, and the rule kinds and their matching are unchanged.
 
@@ -262,8 +381,18 @@ that files it in the release notes as one; this one changes no code and is filed
 registration recipe, which stops being a `try`/`catch` and becomes a `switch`; `docs/DESIGN.md` §4
 and §5 for the pipeline step and where the policy is applied; `docs/MIGRATION.md` for the move
 itself. `EndpointPolicy`'s own Javadoc states the value contract in its own words, since it ships in
-a `sources.jar` to readers who have neither this record nor those documents — and `CLAUDE.md`'s
+a `sources.jar` to readers who have neither this record nor those documents, and it is where the
+discarded-answer trade above has to be said to the person who can walk into it — and `CLAUDE.md`'s
 architecture summary names the three converting seam signals, which becomes two.
+
+Two documents are owed an edit that is easy to miss because neither is about this change.
+`docs/MIGRATION-FROM-WEB-PUSH.md` twice tells a reader arriving from the other library that
+`EndpointRejectedException` is what the policy seam throws and what to catch at a registration
+boundary; both sentences become false. And `docs/MIGRATION.md`'s existing section for the `0.1.0`
+move states that the type still exists and is still what `validate` throws — a live present-tense
+claim sitting *above* the new section, in the document a reader jumping two versions reads top to
+bottom. That file is mutable and the cell is corrected rather than left to contradict the section
+below it.
 
 ## What this rules out
 
@@ -285,7 +414,17 @@ architecture summary names the three converting seam signals, which becomes two.
   change, which is the same commitment ADR-023 made for `WithinLimit`.
 - A published singleton for that branch: a non-public canonical constructor, or an `INSTANCE`
   constant offering identity as something a caller may read.
-- A `Refused` carrying no reason, or one carrying the raw endpoint in the reason it does carry.
+- A `Refused` carrying the raw endpoint in the reason it does carry; and equally a `Refused` that
+  refuses to be constructed — a policy's blank or absent reason is rendered, never thrown, because a
+  refusal that throws out of the seam is a defect and a defect stops the fan-out this value exists to
+  keep running.
+- A reason a program branches on, in this type: a code, an enum or a second component, published from
+  a seam whose implementations this library does not enumerate — and equally the disclosure argument
+  offered as what refuses it.
+- Structured refusal data travelling through this library on a consumer's own subtype, which the
+  sealed hierarchy closes deliberately.
+- A component on `Allowed` carrying an address a policy resolved, for a transport to pin: the pinning
+  belongs to the seam that opens the socket.
 - A `send` that treats a `null` assessment, or any exception out of the seam, as an operational
   outcome rather than as the defect it is.
 - A change to where the policy is applied, to who owns the rule, or to how the refusal is classified
