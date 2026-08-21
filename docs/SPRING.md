@@ -294,9 +294,9 @@ own auto-configuration carries exactly this condition. A property is read from t
 there is no ordering to get wrong.
 
 Note which question that answers. `push2u.enabled` is about *sending*, and the policy bean survives
-`false` — a component that validates subscriptions where they are registered is one a
-registration-only deployment wants precisely when the switch is off, so whether it exists is not a
-question that property answers. For a component that exists in both deployments and does less in
+`false` — a component that assesses the endpoints of subscriptions where they are registered is
+one a registration-only deployment wants precisely when the switch is off, so whether it exists is
+not a question that property answers. For a component that exists in both deployments and does less in
 one, inject an `ObjectProvider<PushSender>` and ask it.
 
 `@ConditionalOnBean` is reliable in an auto-configuration of your own, `@AutoConfigureAfter` the
@@ -349,7 +349,10 @@ The starter takes that decision from one of two **sources**, and exactly one of 
   origins, and two domains for the two services that publish a zone rather than a host.
 - **An application `EndpointPolicy` bean**, which suppresses the starter's own. This is the route
   for anything the properties cannot express — a corporate egress rule, a custom check, or
-  `EndpointPolicies.unrestricted()`.
+  `EndpointPolicies.unrestricted()`. The seam answers with a value, so such a bean is still one
+  lambda: it returns `EndpointAssessment.Allowed` to permit the endpoint or
+  `EndpointAssessment.Refused` with its own account of the refusal. Returning `null`, or throwing
+  anything at all, is a defect in the policy rather than a refusal, and reaches the caller as one.
 
 **The two properties are not two sources.** They are two halves of one statement, and a context
 setting both gets one allowlist holding all of their entries — which is exactly the shape a
@@ -409,33 +412,57 @@ class SubscriptionController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();   // malformed — store nothing
         }
-        try {
-            // 2. Apply the deployment's policy to the endpoint the Subscription carries.
-            endpointPolicy.validate(URI.create(subscription.endpoint()));
-        } catch (EndpointRejectedException e) {
-            return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+        // 2. Apply the deployment's policy to the endpoint the Subscription carries, and act
+        //    on what it answers — the assessment is the whole of the check here.
+        switch (endpointPolicy.assess(URI.create(subscription.endpoint()))) {
+            case EndpointAssessment.Refused refused -> {
+                // refused.reason() is the policy's own account of it, written for the log line
+                // this application keeps; it does not go into the response.
+                return ResponseEntity.badRequest().build();   // policy refuses — store nothing
+            }
+            // 3. Store only what both accepted.
+            case EndpointAssessment.Allowed() -> store.save(subscription);
         }
-        store.save(subscription);                         // 3. Store only what both accepted.
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 }
 ```
 
-**The order is the seam's contract, not the application's preference.** `validate` documents its
+**The order is the seam's contract, not the application's preference.** `assess` documents its
 argument as an endpoint that already satisfies `Endpoints.requireSecure` — an absolute `https` URL
 with a host — and building the `Subscription` first is what establishes that, together with the
 key-material and length rules. So: the `Subscription` first, the policy on the endpoint it carries
-second, the row stored third. What the application does choose is what each refusal answers to its
-client. A malformed subscription (`IllegalArgumentException`) and a policy refusal
-(`EndpointRejectedException`) can both sensibly answer `400` with no body — echoing either message
-would describe the allowlist, or the refused endpoint, to whoever posted the subscription — and
-`EndpointRejectedException` deliberately does not extend `IllegalArgumentException` precisely so
-that no framework mapping makes that echo for you: the application catching it at its own boundary
-decides what a refusal means there.
+second, the row stored third.
+
+**The answer has to be read, and here that is the only thing enforcing anything.**
+`endpointPolicy.assess(uri);` on a line of its own is legal Java: it compiles with no diagnostic of
+any kind, `-Xlint:all` included, the verdict is discarded, and the boundary stores every endpoint a
+client offers it. Inside a send that slip cannot open the network — `send` performs the assessment
+itself, on every send, and acts on the value. A registration boundary has no such backstop; being
+the point where nothing re-checks is the whole reason the policy is applied here at all. So the
+`switch` above — or an `if`, or any other reading of the returned value — is not a style choice,
+it is the control itself, and nothing in the toolchain will tell you it is missing: the annotation
+that would mark the return value as one a caller may not discard lives in a dependency the
+zero-dependency core may not take. A review that finds `assess(` alone on a line at a registration
+boundary is looking at a boundary that stores whatever a client offers it.
+
+What the application does choose is what each refusal answers to its client. A malformed
+subscription — the `IllegalArgumentException` from step 1 — and a policy refusal can both sensibly
+answer `400` with no body: echoing the exception's message, or the assessment's `reason`, would
+describe the allowlist or the refused endpoint to whoever posted the subscription. The two arrive in
+different shapes, and the difference is worth stating, because a policy refusal used to be an
+exception here as well. That exception deliberately did not extend `IllegalArgumentException`, so
+that no framework's exception handling could turn it into a `400` echoing its message on the
+application's behalf — and that requirement is met more completely by a value than it ever was by an
+ancestry: there is no exception for a mapping to see, so nothing translates a refusal for you and
+nothing can echo the reason unless the application writes it into the response itself. What the
+shape does move is the other way round, and it is the paragraph above: an unhandled exception could
+not pass unnoticed, and a discarded value can.
 
 The registration check does not replace the send-time one. The policy is configuration and can
-change after rows were stored, so `send` validates every send regardless and reports a refusal as
-the `EndpointRejected` outcome, where a fan-out flags or removes the row and carries on.
+change after rows were stored, so `send` assesses every send regardless and reports a refusal as the
+`EndpointRejected` outcome — this library's own redaction of the endpoint beside the same `reason`
+the policy wrote — where a fan-out flags or removes the row and carries on.
 
 Across two services — one registering, one sending, each with its own context — what the bean
 guarantees is one *interpretation*: both build their policy from the same two properties through
