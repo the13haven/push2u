@@ -695,9 +695,12 @@ before encryption, before the VAPID signature (a remote Vault/KMS call under an 
 signer), and before any network I/O. A rejected endpoint costs none of them, and reaches the caller
 as `PushOutcome.EndpointRejected`: the policy did its job, and one hostile row must not abort a
 fan-out over a whole subscription store, so a loop records the row as violating policy — flagging or
-removing the stored subscription — and carries on. The variant carries the endpoint in redacted form
-and the policy's own account of the refusal, never the path or query, because a push endpoint is a
-capability URL.
+removing the stored subscription — and carries on. The variant carries two things. The redacted
+endpoint is the library's own rendering — the origin plus a short fingerprint, never the capability
+path or query, and `Endpoints.redact(String)` is the public helper that produces it; it is not
+delegated to the policy, so it is safe whatever an implementation wrote. The reason beside it *is*
+what the policy wrote, and keeping a capability URL out of that string is the policy's own
+obligation — spelled out below, where the seam a custom rule plugs into is described.
 
 **The seam answers with a value, and at the registration boundary you have to read it.**
 `assess` returns an `EndpointAssessment`: a sealed pair of `Allowed()` and `Refused(reason)`. A
@@ -710,9 +713,10 @@ cases and not a `try`/`catch` around a check whose failure is the expected case:
 // endpoint it carries, and only then the row.
 Subscription subscription = Subscription.fromBase64(
     browserSubscription.endpoint(), browserSubscription.p256dh(), browserSubscription.auth());
+URI endpoint = URI.create(subscription.endpoint());
 
-switch (pushServices.assess(URI.create(subscription.endpoint()))) {
-    case EndpointAssessment.Allowed a -> subscriptionStore.save(subscription);
+switch (pushServices.assess(endpoint)) {
+    case EndpointAssessment.Allowed() -> subscriptionStore.save(subscription);
     case EndpointAssessment.Refused r -> {
         log.info("Registration refused for {}: {}",
             Endpoints.redact(subscription.endpoint()), r.reason());
@@ -722,13 +726,14 @@ switch (pushServices.assess(URI.create(subscription.endpoint()))) {
 ```
 
 > [!WARNING]
-> `pushServices.assess(uri);` written as a bare statement compiles with no diagnostic of any kind —
-> `-Xlint:all` included — discards the answer, and admits every endpoint. Inside a send that slip
-> cannot open the network: `send` performs the assessment itself, on every send, and acts on the
-> value. The registration boundary is precisely the point where nothing re-checks, which is why the
-> policy is applied there at all, so the returned value is what has to decide whether the row is
-> stored. No annotation marks the result as one you may not discard — the one that would lives in a
-> dependency the zero-dependency core cannot take.
+> `pushServices.assess(endpoint);` written as a bare statement compiles with no diagnostic of any
+> kind — `-Xlint:all` included — discards the answer, and admits every endpoint. Inside a send that
+> slip cannot open the network: `send` performs the assessment itself, on every send, and acts on
+> the value. The registration boundary — where you apply the policy for the reason above, so that a
+> row the policy refuses never enters the store to fail forever — is precisely the point where
+> nothing re-checks, so the returned value is what has to decide whether the row is stored. No
+> annotation marks the result as one you may not discard: the one that would lives in a dependency
+> the zero-dependency core cannot take.
 
 A refusing policy does not throw, and is not expected to: `PushSender` turns a `Refused` into
 `PushOutcome.EndpointRejected` itself, rendering the endpoint in its own redacted form rather than
@@ -780,6 +785,18 @@ neither of the two kinds can express belongs. An implementation has to return on
 answers: falling off the end of the method is no longer a way to admit an endpoint. The policy is
 fixed when the sender is built and receives only the URI — a rule that varies by tenant means one
 sender per tenant.
+
+**Writing one carries one obligation about disclosure: keep the raw endpoint out of the reason.**
+The string in a `Refused` is not private to your policy — `send` copies it onto
+`PushOutcome.EndpointRejected`, from where it reaches every log line, metric label and alert the
+application builds out of an outcome. A push endpoint is a capability URL, so a reason that quotes
+it verbatim publishes the credential to all of them. Render it with `Endpoints.redact(String)`
+first, which is what the standard allowlist does, and say what your rule objected to in your own
+words beside it. Nothing enforces this — `Refused` validates its reason no further than storing
+`""` for a `null` one, deliberately, because a refusal that threw out of the seam would stop the
+fan-out the value shape exists to keep running. The redacted endpoint on the outcome is not affected
+either way: the library renders that one itself, from the subscription it holds, which is why
+`Refused` carries no endpoint component for you to fill in.
 
 **Sending anywhere is still possible, and has a name.** `EndpointPolicies.unrestricted()` accepts
 every endpoint `Subscription` accepts — loopback, private-range and cloud-metadata addresses

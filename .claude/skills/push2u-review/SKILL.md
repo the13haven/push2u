@@ -71,16 +71,26 @@ wrongly, for a defect the caller cannot act on per send, and for cancellation:
 `IllegalArgumentException` for an illegal argument (ADR-021, ADR-022). The seams keep their own
 vocabulary — `PushDeliveryException`, `VapidSignerUnavailableException` — and **exactly those two
 convert**; anything else out of a consumer-written seam is a defect and must propagate rather than
-be laundered into a value. The endpoint policy is the seam that does not throw at all (ADR-027):
-`assess` answers `EndpointAssessment.Allowed` or `Refused(reason)`, `send` converts a `Refused` into
-`EndpointRejected`, and a `null` answer is a defect leaving as the sender's own
-`NullPointerException` — never read as either verdict, since one reading fails open on an egress
-control and the other invents a decision the deployment never made. A blank or absent `reason` is
-the opposite case and must stay renderable rather than throw: a refusal that threw out of the seam
-would stop the fan-out the value shape exists to keep running. Check that a new failure lands in
-the right channel and the right type, that the recurrence axis is what sorted it rather than "does a
-human have to act", that a cause is preserved unless a suppression explains why not, and that no
-failure is quietly turned into a default that looks like success.
+be laundered into a value. The endpoint policy signals by returning rather than by throwing
+(ADR-027): `assess` answers `EndpointAssessment.Allowed` or `Refused(reason)`, and `send` converts a
+`Refused` into `EndpointRejected`. It is a consumer-written seam like the other two, so it *can*
+throw — and what comes out is a defect on the same rule, propagating unchanged. A `PushSender` that
+catches anything from the policy is therefore a finding, not a safeguard. A `null` answer is the
+same kind of defect and leaves as the sender's own `NullPointerException`, never read as either
+verdict, since one reading fails open on an egress control and the other invents a decision the
+deployment never made. A blank or absent `reason` is the opposite case and must stay renderable
+rather than throw: a refusal that threw out of the seam would stop the fan-out the value shape
+exists to keep running. Check that a new failure lands in the right channel and the right type, that
+the recurrence axis is what sorted it rather than "does a human have to act", that a cause is
+preserved unless a suppression explains why not, and that no failure is quietly turned into a
+default that looks like success.
+
+**A library exception extends `RuntimeException` directly, and never `IllegalArgumentException`** —
+ADR-022 rules out both halves. Subclassing IAE lets an existing `catch (IllegalArgumentException e)`
+keep swallowing the new condition along with the old one, which cancels exactly the disambiguation
+the type was minted for; and IAE itself stays what the JDK made it — a value that is not a legal
+value of its parameter, carrying no library semantics and handled in a generic pool. A change to
+that hierarchy needs the same reasoning, explicitly.
 
 **What the diff does not contain.** Changes here tend to imply work in more than one place: a new
 `PushSender.Builder` option usually needs a `push2u.*` property in the starter, startup validation
@@ -189,11 +199,6 @@ endpoint itself from the subscription it holds. Check both halves — that a pol
 or touches puts no raw URI into a `reason` (`Endpoints.redact` first, as `EndpointPolicies` does),
 and that nothing moves that rendering into the seam, where an implementation could publish a
 capability URL through `PushOutcome.EndpointRejected` and into every log the outcome reaches.
-
-The types that do still signal by throwing extend `RuntimeException` directly rather than
-`IllegalArgumentException` on purpose: web frameworks commonly map IAE to a 400, which would echo a
-redacted-but-fingerprinted message back to whoever registered the subscription. A change to that
-hierarchy needs the same reasoning, explicitly.
 
 ### 5.4 Cryptographic invariants
 
