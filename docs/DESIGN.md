@@ -139,7 +139,7 @@ API does not have. Do not "fix" it.
 PushSender.send(subscription, message)
     │
     ├─ Check the payload against the maximum the configured body ceiling admits
-    ├─ Validate the endpoint against the sender's EndpointPolicy (always present)
+    ├─ Assess the endpoint against the sender's EndpointPolicy (always present)
     ├─ Decode the subscription P-256 public key, checking the point is on the curve
     ├─ Generate an ephemeral P-256 key pair and random salt
     ├─ ECDH + HKDF-SHA-256
@@ -172,7 +172,7 @@ fails a consumer's compilation rather than falling through:
 | The POST went out and nothing answered | `Indeterminate` |
 | The key custodian cannot sign now | `SignerUnavailable` — a `NotAttempted` |
 | The payload does not fit the sender's configuration | `PayloadRejected(payloadBytes, maximumPayloadBytes)` — a `NotAttempted` |
-| The endpoint policy refused the endpoint | `EndpointRejected(redactedEndpoint, reason)` — a `NotAttempted` |
+| The endpoint policy answered `Refused` | `EndpointRejected(redactedEndpoint, reason)` — a `NotAttempted` |
 
 `NotAttempted` is a marker whose three leaves implement it directly, so one `switch` chooses its own
 grain: under it no POST was made, which is the only structural answer to whether a repeat can
@@ -187,25 +187,33 @@ them, which is where a consumer reads them. A `5xx` neither list names falls to 
 §15.6: a statement about the server rather than about the request), so an unregistered or
 later-registered `5xx` is never permanent by omission.
 
-Three seam signals convert to outcomes and no others: `EndpointRejectedException` from the policy,
-`VapidSignerUnavailableException` from the signer, `PushDeliveryException` from the transport. Any
-other `RuntimeException` out of a consumer-written seam is a defect in that implementation and
-propagates unchanged rather than being laundered into a value. What `send` itself throws is
-`PushCryptoException` for a failure that recurs, `PushInterruptedException` for a cancellation, and
-`IllegalArgumentException`/`NullPointerException` for an argument that is not a legal value of its
-parameter ([ADR-022](adr/0022-one-type-per-programmatic-action.md)).
+**Two seam exceptions convert to outcomes, and no others**: `VapidSignerUnavailableException` from
+the signer and `PushDeliveryException` from the transport. The third seam signals by returning rather
+than by throwing — `EndpointPolicy.assess` answers with the sealed `EndpointAssessment`, and its
+`Refused` variant is what the pipeline turns into `EndpointRejected`
+([ADR-027](adr/0027-the-endpoint-policy-answers-with-a-value.md)); §5 carries why the answer is a
+value. Any other `RuntimeException` out of a consumer-written seam is a defect in that
+implementation and propagates unchanged rather than being laundered into a value — and for the
+policy that now means an exception of *any* type, since it has no converting one left. A policy
+answering `null` is the same kind of defect and surfaces as a `NullPointerException` from the
+sender's own check: reading `null` as permission would fail open on the one egress control there is,
+and reading it as a refusal would invent a decision the deployment never made. What `send` itself
+throws is `PushCryptoException` for a failure that recurs, `PushInterruptedException` for a
+cancellation, and `IllegalArgumentException`/`NullPointerException` for an argument that is not a
+legal value of its parameter ([ADR-022](adr/0022-one-type-per-programmatic-action.md)).
 
 The conversions trust the seam's classification, not its diagnostics: every member read while
-converting — the policy exception's message, the signer exception's status and retry hint, the
-cause chain the interruption walk traverses — is read inside a guard, so a defective accessor in a
-consumer's exception subclass costs the caller that one diagnostic, never the classified outcome.
-The defect is recorded as a suppressed exception where the outcome carries the seam's failure —
-bounded per exception instance, because preallocating one exception and throwing it for every call
-is ordinary, and one such instance with a broken accessor would otherwise grow a suppressed entry
-per send for as long as a fan-out runs. `EndpointRejected` carries only strings, so a rejection
-whose `getMessage()` threw gets the sender's own fixed reason instead, carrying nothing the
-throwing accessor wrote. An `Error` out of
-any of those reads is not survived and propagates.
+converting — the signer exception's status and retry hint, the cause chain the interruption walk
+traverses — is read inside a guard, so a defective accessor in a consumer's exception subclass costs
+the caller that one diagnostic, never the classified outcome. The defect is recorded as a suppressed
+exception where the outcome carries the seam's failure — bounded per exception instance, because
+preallocating one exception and throwing it for every call is ordinary, and one such instance with a
+broken accessor would otherwise grow a suppressed entry per send for as long as a fan-out runs. A
+refusal's reason is read without any of that machinery: it is a component of a final record whose
+accessor this library generates, so nothing a consumer writes can stand between `send` and the
+string — the guard that used to sit around the policy exception's `getMessage()` guarded a failure
+mode that no longer exists (§5). An `Error` out of any of those reads is not survived and
+propagates.
 
 The interruption test is the facade's rather than any seam's, written as a disjunction — an
 `InterruptedException` anywhere in the cause chain, *or* the current thread's interrupt status set —
@@ -229,7 +237,12 @@ VAPID signature (a remote Vault/KMS call under an external signer) and the POST 
 endpoint costs no cryptography and no I/O. It runs unconditionally: a sender cannot exist without a
 policy, so the pipeline has no branch around this step and the ordering guarantee does not depend
 on configuration. `sendAsync` runs the same pipeline, so the policy cannot be bypassed on the async
-path either.
+path either. The answer is read with an exhaustive `switch` over the sealed `EndpointAssessment`,
+matching the permitting variant by name rather than proceeding on anything that is not a refusal, so
+a variant this seam might gain in a later release fails `send`'s own compilation instead of walking
+past an egress control into the network; a `Refused` becomes `EndpointRejected`, carrying this
+library's redaction of the endpoint from the subscription the sender holds beside the reason the
+policy wrote.
 
 The VAPID `aud` claim is the endpoint's origin in the Unicode serialization of RFC 6454 §6.1, as
 RFC 8292 §2 requires: lowercase scheme and host, IDNA A-labels converted to their Unicode form,
@@ -574,7 +587,7 @@ a huge response. This seam is push-delivery only; the Vault module has its own t
 (section 7) because Vault responses must be read.
 
 Implementations must not follow redirects. A chased `Location` would POST the encrypted body and
-the request headers to a host `EndpointPolicy` never validated, and would let the redirect
+the request headers to a host `EndpointPolicy` never assessed, and would let the redirect
 target's answer stand in for the push service's verdict. The invariant is stated in code rather
 than inherited from a JDK default: `JdkPushHttpClient` builds its own client with `Redirect.NEVER`
 and rejects a supplied `java.net.http.HttpClient` whose `followRedirects()` differs. For an
@@ -583,18 +596,97 @@ implementation on another stack it stays a contract only, unverifiable from here
 ### EndpointPolicy
 
 ```java
-void validate(URI endpoint);
+EndpointAssessment assess(URI endpoint);
+
+sealed interface EndpointAssessment {
+    record Allowed() implements EndpointAssessment {}
+    record Refused(String reason) implements EndpointAssessment {}
+}
 ```
 
 This SPI represents deployment egress policy for push endpoints. The endpoint in a `Subscription`
 is attacker-influenced (a public registration endpoint accepts the browser's `PushSubscription`
 JSON verbatim), so without a policy every send is a POST from inside the network to an address of
 the subscription's choosing — a blind SSRF oracle via the status code an answered outcome carries,
-an unanswered `Indeterminate`, and timing. That the oracle is now read off one value rather than off
+an unanswered `Indeterminate`, and timing. That the oracle is read off outcome values rather than off
 a value and an exception changes nothing about it: what closes it is the policy running first and
 unconditionally, before the encryption, the signature and any I/O. `Endpoints.requireSecure` stays a
 protocol check (absolute `https` URL with a host); which hosts a deployment may contact is policy,
 and lives here.
+
+**The seam answers with a value, and refusal is not an exceptional condition**
+([ADR-027](adr/0027-the-endpoint-policy-answers-with-a-value.md)). A refusal is the boundary
+working: where subscriptions are accepted, an inadmissible endpoint is an ordinary request from an
+ordinary client, answered with a `400` and no stored row, and a caller meeting that condition
+routinely should not have to write control flow around it. The exception shape made that worse on
+purpose rather than by accident — the refusal could not be an `IllegalArgumentException`, since a
+web framework mapping it to a `400` would echo the message back to whoever posted the subscription,
+so every consumer wrote the same catch-and-translate at its own boundary. This is the same move
+already made twice in this library: a delivery that failed is a `PushOutcome` rather than a thrown
+exception ([ADR-021](adr/0021-retry-belongs-to-the-caller.md)), and the size question is a
+`PayloadSizeAssessment` answerable before a send
+([ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md)). The verb is the one that move
+already uses — `assess`, beside `assessPayloadSize` — and it is deliberately a *different* verb from
+the one the seam had, because keeping the name across a change from `void` to a value would leave
+`policy.validate(uri);` compiling unchanged as a bare statement, silently admitting every endpoint
+at the one point where nothing re-checks. The seam still has exactly one method, so there remains
+exactly one way to ask it.
+
+**`Refused` carries prose, and deliberately not the endpoint.** The reason exists for observability:
+this library writes no log lines and holds no logger — the zero-dependency core could not take one —
+so every diagnostic it produces is a value handed to a caller who renders it, and only the policy can
+say what it knew at the moment it refused. That is a sentence an operator reads, not a code a
+program branches on; a consumer that genuinely has to branch on the *kind* of refusal is looking at a
+missing type rather than at a component this one should have grown. No endpoint component is carried
+because both callers already hold the endpoint they just passed in, and because the redaction of a
+capability URL stays this library's own work: `send` renders the redacted endpoint from the
+subscription it holds, whatever the policy wrote, so one of `EndpointRejected`'s two components is a
+structural guarantee rather than a promise resting on a seam's contract. The reason keeps the
+obligation the exception message carried — an implementation naming an endpoint renders it through
+`Endpoints.redact` first.
+
+**`Refused` validates nothing, and that is a decision.** A `null` reason is stored as `""` and a
+blank one is permitted, which is exactly what `PushOutcome.EndpointRejected` permits — one refusal
+may not be legal in one of the two types describing it and illegal in the other. The obvious shape,
+a compact constructor refusing what the name contradicts, would be a defect here: a policy
+translating its own failure writes `new Refused(e.getMessage())`, `getMessage()` is `null` for every
+exception built without one, and a constructor throwing on that would send a one-line slip out of the
+seam as a defect. A defect propagates, and a propagating defect stops a synchronous fan-out over a
+subscription store on the first row that took the shortcut — the self-inflicted denial of service the
+value shape exists to prevent, reachable through an endpoint an attacker chose. So the reason is
+rendered, never thrown.
+
+**`Allowed` carries nothing and will not grow components.** An admissible endpoint needs no number or
+string to act on, and a record component added later changes the canonical constructor, the accessors
+and every pattern written against the type — a breaking change where a method would have been a
+compatible addition, so the empty shape is a commitment rather than an omission, the same one
+`WithinLimit` makes. The one candidate worth naming is an address a resolving policy vetted, for a
+transport to pin; it belongs to the seam that opens the socket, and a policy that needs it holds it
+already in the implementation that resolved. Nor is the variant a singleton: its canonical
+constructor is public, all instances are equal, and nothing distinguishes one from another.
+`EndpointPolicies` does hand every admissible endpoint one shared instance, which keeps a question
+asked on every send from allocating on the answering path — an implementation property pinned by a
+test, published as no promise a caller may read with `==`.
+
+**One defensive branch disappeared with the exception.** `EndpointRejectedException` was public and
+non-final, so a consumer could subclass it and override `getMessage()`, which is why `send` used to
+read that message inside a guard with a fixed-text fallback: a hostile or defective accessor must not
+turn a classified refusal into the accessor's own complaint. `Refused` is a record — final, with an
+accessor this library generates and nobody can replace — so the read cannot be overridden and cannot
+fail, and the fallback text it needed is gone with it (§4). The sealed hierarchy closes the same
+hatch from the other side: structured refusal data no longer travels through this library on a
+consumer's own subtype, and a policy whose boundary wants a rule, a zone or a ticket reference keeps
+that beside the assessment, in the class that produced it.
+
+**What the change costs is said out loud rather than netted off.** Implementations became safer:
+falling off the end of a `void` is no longer a way to admit everything, and a policy must positively
+return `Allowed`. Call sites became riskier by exactly the shape a discarded value has —
+`policy.assess(uri);` as a bare statement compiles with no diagnostic of any kind, `-Xlint:all`
+included, and admits every endpoint. No compiler help is available for that: the annotation marking a
+return value as one a caller may not discard lives in a dependency the core may not take. Inside a
+send the slip cannot open the network, because `send` performs the assessment itself and acts on it;
+the registration boundary is the point where nothing re-checks, which is why the seam's own Javadoc
+says so where a consumer reads it.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
@@ -613,15 +705,17 @@ compiler refuses first.
 accepted, and before every send. A policy refusal is not a `410` — nothing expires the stored row —
 so a row whose endpoint the policy refuses fails once per notification forever while the
 subscriber's browser reports a healthy subscription; checking where the subscription is accepted
-keeps that row out of the store. The core gained no API for the second point, and that was the
-decision rather than an absence of work: `validate` is public and takes the endpoint URI alone,
-`EndpointRejectedException` is catchable at the application's own boundary (below), and a
-deployment that built its sender by hand holds the policy because it constructed it. The order at
-that boundary is the seam's own contract — `validate` documents its argument as an endpoint that
-already satisfies `Endpoints.requireSecure`, so the boundary builds the `Subscription` first,
-applies the policy to the endpoint it carries second, and stores the row only once both have
-passed. The registration check does not make the send's check redundant: the policy is deployment
-configuration and changes, so `send` validates every time and never trusts that a row once passed.
+keeps that row out of the store. Reaching the second point cost the core no accessor on
+`PushSender`, no predicate beside the one method, no overload taking a `Subscription` and no factory
+joining subscription parsing to the admission decision: `assess` is public and takes the endpoint URI
+alone, the value it answers is a type any caller can `switch` over, and a deployment that built its
+sender by hand holds the policy because it constructed it. The order at that boundary is the seam's
+own contract — `assess` documents its argument as an endpoint that already satisfies
+`Endpoints.requireSecure`, so the boundary builds the `Subscription` first, applies the policy to the
+endpoint it carries second, refuses to store the row on a `Refused` — typically answering `400` — and
+stores it only once both have passed. The registration check does not make the send's check
+redundant: the policy is deployment configuration and changes, so `send` assesses every time and
+never trusts that a row once passed.
 
 The standard implementation is an allowlist of `EndpointRule` values
 ([ADR-017](adr/0017-domain-rule-in-the-endpoint-allowlist.md)). A rule is a value that carries its
@@ -681,19 +775,22 @@ domain entry verbatim only while it is a bounded ASCII host-shaped token free of
 whitespace and control characters — otherwise omitted, with the caller left to say which entry it
 was.
 
-A rejected *endpoint*, by contrast, raises `EndpointRejectedException` inside the seam — extending
-`RuntimeException`, not `IllegalArgumentException`, because the argument is well-formed
-(configuration refuses it), and because web frameworks commonly map IAE to a 400 response that
-would echo the redacted-but-fingerprinted message to the caller who registered the subscription.
-Rejection messages never carry the capability path/query (`Endpoints.redact`).
+A refused *endpoint*, by contrast, is not an error and raises nothing: the argument is well-formed
+and it is the deployment's configuration that declines it, so the allowlist answers `Refused` with
+its own account. It gives three — userinfo in the endpoint, no scheme or host and therefore no origin
+to compare, and no rule matching — each naming the endpoint only through `Endpoints.redact`, so no
+capability path or query travels in a reason. Which rule came closest is deliberately not among them:
+that would describe the allowlist to whoever supplied the endpoint. The asymmetry with the paragraph
+above is the point rather than an inconsistency — a malformed rule entry is a caller's own argument
+being wrong, which is what `IllegalArgumentException` is for, while a refused endpoint is the seam
+doing its job on a perfectly legal argument.
 
-That exception is the seam's vocabulary and not the facade's: `send` recognises exactly this type
-and reports `EndpointRejected`, carrying the endpoint in this library's own redacted rendering
-beside the policy's account of the refusal. The refusal is a value rather than an exception because
-one hostile row must not abort a fan-out over a whole subscription store — a denial of service a
-deployment would inflict on itself — and because the policy has done its job when the request never
-leaves. An application calling `validate` directly, at its own registration boundary, still catches
-the exception, and it means the same thing there.
+The two callers read the same value and act differently on it. `send` converts a `Refused` into the
+`EndpointRejected` outcome, so one hostile row never aborts a fan-out over a whole subscription
+store — a denial of service a deployment would otherwise inflict on itself — and the policy has done
+its job the moment the request never leaves. An application applying the same policy where it accepts
+subscriptions switches on the value there and stores nothing, and the refusal means exactly what it
+means inside a send: this deployment will not contact that endpoint.
 
 A URI-level policy is a coarse filter, not a sandbox: it cannot close DNS rebinding, and redirect
 behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redirect.NEVER`, so a
@@ -1456,8 +1553,13 @@ The automated suite covers:
   message's payload byte-for-byte unchanged, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`, `PayloadSizeAssessmentTest`);
 - HTTP delivery, the status matrix per status and per carve-out, and the conversion of each seam
-  signal into its outcome — including the interrupt disjunction on both the transport and the signer
-  path;
+  signal into its outcome — the two converting exception types, and the policy's `Refused` value
+  becoming `EndpointRejected` — including the interrupt disjunction on both the transport and the
+  signer path;
+- the endpoint policy as a seam that answers by value: each standard refusal carrying its own text, a
+  `null` reason stored as `""`, `Allowed` equal by value and carrying nothing, and a policy that
+  answers `null` or throws anything at all read as the defect it is rather than as an outcome
+  (`EndpointAssessmentTest`, `PushSenderEndpointPolicyTest`, `PushSenderSeamConversionTest`);
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
   shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in
