@@ -238,8 +238,10 @@ on an earlier step's outcome.
 
 ### A bean condition on these beans answers "absent" in every deployment
 
-Every refusal above needs something in the context to be missing or malformed. This is the one
-route into "boots green, sends nothing" where nothing is either, so no startup check can see it:
+Every refusal above needs something in the context for a check to read — a value, a key a release
+removed, a bean, two statements contradicting each other. This is the one route into "boots green,
+sends nothing" that leaves the context indistinguishable from a working deployment's, so no startup
+check can see it:
 
 ```java
 @Configuration                              // the application's own, or one it @Imports
@@ -257,16 +259,19 @@ other. The condition is evaluated against a context that does not hold this star
 answers "absent" however correctly push2u is configured. `@ConditionalOnMissingBean` fails the same
 way in the other direction: a fallback registered "only if push2u contributed none" is registered
 always, and an application bean is exactly what this starter's own `@ConditionalOnMissingBean`
-stands down for — so the fallback silently becomes the sender, or the policy, the deployment
-actually uses. Spring Boot documents both annotations as intended for auto-configuration classes; it
-is said here because this is the guide that has just told you to inject these beans, and the failure
-surfaces nowhere near the annotation that caused it.
+stands down for — so the fallback silently becomes the sender the deployment actually uses. On the
+policy that same mistake is loud rather than silent, and deliberately: a bean beside a stated
+allowlist is the contradiction this starter refuses the context over, under [What fails at startup,
+and from where](#what-fails-at-startup-and-from-where). Spring Boot documents both annotations as
+intended for auto-configuration classes; it is said here because this is the guide that has just
+told you to inject these beans, and the failure surfaces nowhere near the annotation that caused it.
 
 **Inject them as ordinary dependencies.** Both beans exist under the rules stated above — the sender
 whenever the delivery path is autoconfigured, [the policy](#the-policy-is-a-bean) whenever the
 allowlist is expressed — and a `PushSender` that is genuinely absent is reported by this starter's
-own analysis of the injection failure, which names what is missing and every way to answer it,
-rather than by a bean that quietly never appeared.
+own analysis of the injection failure, which answers in the terms of this context: the contradiction
+with a stated `push2u.enabled: false`, a signer registered too late for the sender's condition to
+see it, or the enumeration of every way to configure one. Not a bean that quietly never appeared.
 
 For a component that has to disappear along with delivery, condition it on the **property** instead
 of on the bean:
@@ -285,8 +290,9 @@ registration-only deployment wants precisely when the switch is off, so whether 
 question that property answers. For a component that exists in both deployments and does less in
 one, inject an `ObjectProvider<PushSender>` and ask it.
 
-`@ConditionalOnBean` is reliable in an auto-configuration of your own ordered after this starter's,
-which is the case it exists for.
+`@ConditionalOnBean` is reliable in an auto-configuration of your own, `@AutoConfigureAfter` the
+class that contributes what you are asking about — `Push2uAutoConfiguration` for the sender,
+`Push2uEndpointPolicyAutoConfiguration` for the policy. That is the case the annotation exists for.
 
 ## The outcome a Spring caller reads
 
