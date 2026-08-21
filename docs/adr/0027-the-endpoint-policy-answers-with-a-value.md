@@ -145,9 +145,12 @@ public interface EndpointPolicy {
 }
 ```
 
-Every lambda, every implementing class and every call site in existence keeps compiling, and the
-binary contract is untouched. A registration boundary gets its `switch`. This is the alternative the
-record has to beat, and beating it takes four things rather than one.
+Every lambda, every call site and — with one exception worth naming, since a compatibility claim
+that overstates is worth nothing — every implementing class in existence keeps compiling, and the
+binary contract is untouched. The exception is a class that already declares an `assess(URI)` of its
+own with an incompatible return type: its recompilation fails on the clash, though the binary it
+already produced goes on running. A registration boundary gets its `switch`. This is the alternative
+the record has to beat, and beating it takes four things rather than one.
 
 **It does not remove the exception; it hides it.** Every refusal is still constructed and thrown, on
 every request a boundary refuses, and a client posting junk to a public registration endpoint is the
@@ -167,15 +170,19 @@ rather return `Refused` is not allowed to.
 including the `null` message this record has to normalise, now normalised by us on the policy's
 behalf, for good. Nothing built on top of it can ever be more than prose.
 
-**And it does not avoid the break, it enlarges it.** The value-shaped seam is still the destination,
-and reaching it later means removing two published methods instead of one, from a larger population
-of implementations, with `EndpointRejectedException` retired at the same time. Compatibility here
-buys a delay and pays for it with interest — the same argument as the section above, arrived at from
-the other side.
+**And it settles into one of two futures, neither of which is free.** If the two methods are
+permanent, then it is not a step towards this record's decision but a refusal of it, and the three
+paragraphs above are the whole of its price — paid on every request a boundary refuses, for the life
+of the API. If it is a way station, the arithmetic of arriving later is worse than arriving now, and
+the shape of the later break is worth stating exactly rather than rounding up: `validate` is removed
+and `assess` loses its `default`, so every implementation must write the method none of them had to
+write before — from a population larger than today's, with `EndpointRejectedException` retired in
+the same change.
 
-What would change this answer is a population large enough that a delayed, larger break costs more
-than the interest — the opposite of where this seam stands one release after gaining its second
-application point.
+Stating both is the honest form, because the second reading presumes the destination and the first
+does not. What would change the answer under either is a population large enough that a delayed
+break costs more than what the exception channel costs meanwhile — the opposite of where this seam
+stands one release after gaining its second application point.
 
 ## The name changes because the spelling decides who breaks silently
 
@@ -461,10 +468,11 @@ Two documents are owed an edit that is easy to miss because neither is about thi
 boundary; both sentences become false. `docs/MIGRATION.md`'s existing section for the `0.1.0` move says in its table that the type still
 exists and is still what `validate` throws. That section is **not** edited: it records one
 transition, its columns ask what a `catch` clause caught in `0.1.0` and what it catches after that
-move, and rewriting it to match a later API would destroy the account of the move it describes. The
-file accumulates newest first, so the new section is inserted directly under the index and the
-`0.1.0` one sits below it — a reader crossing both versions meets the removal first and the older
-transition second, which is the order the shape of that document exists to produce.
+move, and rewriting it to match a later API would destroy the account of the move it describes. The file accumulates newest first, so the new section is inserted directly under the index and the
+`0.1.0` one sits below it. Which of the two a reader crossing both versions meets first depends on
+whether they are scanning the file or working through the hops in the order they have to apply them,
+and neither needs to be guessed at: every section names the version it moves *from*, and that label
+is what tells a reader which claims belong to which hop.
 
 ## What this rules out
 
