@@ -296,8 +296,8 @@ there is no ordering to get wrong.
 Note which question that answers. `push2u.enabled` is about *sending*, and the policy bean survives
 `false` — a component that assesses the endpoints of subscriptions where they are registered is
 one a registration-only deployment wants precisely when the switch is off, so whether it exists is
-not a question that property answers. For a component that exists in both deployments and does less in
-one, inject an `ObjectProvider<PushSender>` and ask it.
+not a question that property answers. For a component that exists in both deployments and does
+less in one, inject an `ObjectProvider<PushSender>` and ask it.
 
 `@ConditionalOnBean` is reliable in an auto-configuration of your own, `@AutoConfigureAfter` the
 class that contributes what you are asking about — `Push2uAutoConfiguration` for the sender,
@@ -350,9 +350,11 @@ The starter takes that decision from one of two **sources**, and exactly one of 
 - **An application `EndpointPolicy` bean**, which suppresses the starter's own. This is the route
   for anything the properties cannot express — a corporate egress rule, a custom check, or
   `EndpointPolicies.unrestricted()`. The seam answers with a value, so such a bean is still one
-  lambda: it returns `EndpointAssessment.Allowed` to permit the endpoint or
-  `EndpointAssessment.Refused` with its own account of the refusal. Returning `null`, or throwing
-  anything at all, is a defect in the policy rather than a refusal, and reaches the caller as one.
+  lambda: it returns `new EndpointAssessment.Allowed()` to permit the endpoint, or
+  `new EndpointAssessment.Refused("…")` carrying its own account of the refusal. Both are records
+  and both are constructed — there is deliberately no shared constant to reach for. Returning
+  `null`, or throwing anything at all, is a defect in the policy rather than a refusal, and reaches
+  the caller as one.
 
 **The two properties are not two sources.** They are two halves of one statement, and a context
 setting both gets one allowlist holding all of their entries — which is exactly the shape a
@@ -382,7 +384,7 @@ dependencies](#a-bean-condition-on-these-beans-answers-absent-in-every-deploymen
 the same silence: see [A bean condition on these beans answers "absent" in every
 deployment](#a-bean-condition-on-these-beans-answers-absent-in-every-deployment).
 
-### Validating where subscriptions are accepted
+### Assessing where subscriptions are accepted
 
 A policy refusal is not a `410`: nothing marks the stored row as dead, so a subscription whose
 endpoint the policy refuses fails at every send, forever, while the subscriber's browser reports a
@@ -436,28 +438,36 @@ second, the row stored third.
 
 **The answer has to be read, and here that is the only thing enforcing anything.**
 `endpointPolicy.assess(uri);` on a line of its own is legal Java: it compiles with no diagnostic of
-any kind, `-Xlint:all` included, the verdict is discarded, and the boundary stores every endpoint a
-client offers it. Inside a send that slip cannot open the network — `send` performs the assessment
-itself, on every send, and acts on the value. A registration boundary has no such backstop; being
-the point where nothing re-checks is the whole reason the policy is applied here at all. So the
-`switch` above — or an `if`, or any other reading of the returned value — is not a style choice,
-it is the control itself, and nothing in the toolchain will tell you it is missing: the annotation
-that would mark the return value as one a caller may not discard lives in a dependency the
-zero-dependency core may not take. A review that finds `assess(` alone on a line at a registration
-boundary is looking at a boundary that stores whatever a client offers it.
+any kind, `-Xlint:all` included, the verdict is discarded, and every endpoint that got past step 1
+is stored — `https://10.0.0.5/notify` included, since step 1 checks the shape of the URL and not
+where it points. Inside a send that slip cannot open the network: `send` performs the assessment
+itself, on every send, and acts on the value. At this boundary nothing stands between the discarded
+answer and `store.save` — the row is written on the strength of this one reading, and a row the
+policy would have refused is exactly the dead row the paragraph opening this section is about. So
+the `switch` above — or an `if`, or any other reading of the returned value — is not a style
+choice, it is the control itself, and the compiler will not tell you it is missing: javac says
+nothing about a discarded return value, and the annotation that would mark this one as
+non-discardable lives in a dependency the zero-dependency core may not take. Static analysis you
+configure yourself — an Error Prone check, an IDE inspection — is what can catch it, and this is
+the call site worth pointing it at.
 
 What the application does choose is what each refusal answers to its client. A malformed
 subscription — the `IllegalArgumentException` from step 1 — and a policy refusal can both sensibly
-answer `400` with no body: echoing the exception's message, or the assessment's `reason`, would
-describe the allowlist or the refused endpoint to whoever posted the subscription. The two arrive in
-different shapes, and the difference is worth stating, because a policy refusal used to be an
-exception here as well. That exception deliberately did not extend `IllegalArgumentException`, so
-that no framework's exception handling could turn it into a `400` echoing its message on the
-application's behalf — and that requirement is met more completely by a value than it ever was by an
-ancestry: there is no exception for a mapping to see, so nothing translates a refusal for you and
-nothing can echo the reason unless the application writes it into the response itself. What the
-shape does move is the other way round, and it is the paragraph above: an unhandled exception could
-not pass unnoticed, and a discarded value can.
+answer `400` with no body, and neither message was written for the client to read. The
+assessment's `reason` is prose for an operator's log line, and a policy of the deployment's own —
+a corporate egress rule — may put whatever it finds useful there, which is reason enough not to
+hand it back to whoever posted the subscription. The standard allowlist is sparing on its own
+account: its refusals carry the endpoint the client itself sent, redacted, and never say which
+rule came closest.
+
+The two refusals arrive in different shapes, and the difference is worth stating, because a policy
+refusal used to be an exception here as well. That exception deliberately did not extend
+`IllegalArgumentException`, so that no framework's exception handling could turn it into a `400`
+echoing its message on the application's behalf — and that requirement is met more completely by a
+value than it ever was by an ancestry: there is no exception for a mapping to see, so nothing
+translates a refusal for you and nothing can echo the reason unless the application writes it into
+the response itself. What the shape does move is the other way round, and it is the paragraph
+above: an unhandled exception could not pass unnoticed, and a discarded value can.
 
 The registration check does not replace the send-time one. The policy is configuration and can
 change after rows were stored, so `send` assesses every send regardless and reports a refusal as the
