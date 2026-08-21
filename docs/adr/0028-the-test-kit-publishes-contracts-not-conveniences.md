@@ -97,7 +97,7 @@ test genuinely needs the same public key twice, it needs it within one run, and 
 `generate()` gives it that without publishing anything. A deployment that asserts on its own
 configured public key is asserting about its own configuration, which belongs to its own tests.
 
-## The private scalar's string form, and why ADR-018 is untouched
+## The private scalar's string form, and the clause of ADR-018 it narrows
 
 [ADR-018](0018-encoded-vapid-public-key-on-the-signer.md) rules out any encoder for the private
 scalar, in plain words: handing the secret back as a string is the one direction this library does
@@ -123,7 +123,27 @@ skip: a pair generated at deployment start is replaced by a different pair at th
 every browser subscription taken under the old application server key becomes unusable. That is the
 sentence someone tempted to shortcut the key-generation recipe needs to have read.
 
-## The subscription fixture is coherence, and one of its accessors is convenience
+**That argument defends the property ADR-018 protects; it does not fit the words ADR-018 used.**
+Its closing sentence rules out *any* encoder for the private scalar, and the index row a reader
+consults before opening it says the same thing unqualified. A published push2u artifact will, after
+this change, contain code that encodes a private scalar as base64url. The property survives intact —
+nothing can be handed material and asked for its secret — but the rule as written and as indexed is
+narrower afterwards than it was before, and a record that says "unchanged" leaves the index
+over-stating a rule the artifacts no longer follow, with nothing at ADR-018 pointing forward.
+
+**So this record supersedes that one clause, and the status line is the only edit ADR-018 ever
+takes.** It already carries a partial supersession from
+[ADR-021](0021-retry-belongs-to-the-caller.md), so the extension is spelled
+`Accepted; one clause superseded by ADR-021, another by ADR-028` — named here rather than left for
+whoever implements this to invent, since the form is the one thing an immutable record cannot be
+asked about later. The clause that moves is the private-scalar encoder and nothing else: the
+public-key members, the alphabet, the absence of a pair-level inverse and every other item ADR-018
+rules out stand exactly as they are, and `VapidKeys` gains no accessor for the scalar in this
+record or after it. **The edit belongs to the implementation, not to this record's proposal**: while
+this is `Proposed` there is nothing to supersede, and ADR-018's status line and index row are
+untouched until the code lands.
+
+## The subscription fixture is one coherent set, published in the two forms it is read in
 
 A subscription's endpoint, `p256dh` and `auth` are one set. Static factories returning them
 separately would let a test combine the `p256dh` of one subscription with the `auth` of another and
@@ -136,13 +156,16 @@ configures beside it, and keeping both visible in the same block is the same arg
 [ADR-016](0016-endpoint-policy-is-a-required-decision.md) makes about egress decisions generally: a
 required value belongs in the factory method, not in a default.
 
-**`p256dhBase64Url()` and `authBase64Url()` are convenience, and this record says so rather than
-inventing a rule for them.** `Subscription` returns defensive copies of both arrays and the core's
-decoder tolerates padded and unpadded input alike, so a consumer can encode them itself, either way,
-and the library will accept the result. They are kept because splitting the coherent set to save two
-methods would cost more than they do — not because they carry a rule that can move. A later reader
-weighing an addition against this record should apply the admission test above and find that these
-two do not pass it on their own.
+**The browser-form accessors carry a rule too, and it is the alphabet.** What the core's decoder
+tolerates is *padding*: `Base64Url` decodes with or without trailing `=`, because that is what
+browsers vary on. It does not tolerate a different alphabet — a consumer reaching for
+`java.util.Base64.getEncoder()` rather than `getUrlEncoder()` produces a string
+`Subscription.fromBase64` refuses outright, and the 65 bytes of a `p256dh` make the two alphabets
+differ in practice rather than in principle. ADR-018 spent a bullet on exactly these three details —
+the URL-safe alphabet, the absence of padding, the raw X9.62 point rather than an SPKI encoding —
+being load-bearing and unstated where consumers look. Publishing them as values rather than as
+prose is the same move for the subscription's half of the pair. They pass the admission test on
+their own; the coherent set is why they sit on one fixture rather than on two.
 
 ## The transport fake is scripted, because retry belongs to the caller
 
@@ -166,11 +189,44 @@ propagates out of `send` unchanged instead of arriving as an outcome. That is th
 wants — one POST too many is a failure, not a scenario — and the Javadoc says where it surfaces, so
 that nobody waits for an `Indeterminate` that will not come.
 
+**`reset`, mutable configuration and per-endpoint routing are refused for one reason each.** A
+`reset` makes one fake serve several tests, and the first symptom of a test that forgot it is a
+neighbour's request in `sent()`; a fresh fake per test costs one line and cannot do that. Mutable
+configuration means the script a test declared is not the script that ran. Routing by endpoint is a
+second addressing model layered on a seam whose method already takes the endpoint — a test needing
+different answers per subscription gives each subscription its own fake, which says the same thing
+in the test's own terms.
+
+**A transport failure cannot sit inside a script, and that is a deliberate omission rather than an
+oversight.** `failingWith` is a mode of the whole fake, so `429`, then nothing answering, then `201`
+— a shape ADR-021's obligation genuinely reaches — is not expressible here. Expressing it needs a
+script element that is either a response or a failure, which is the sealed answer type this record
+otherwise refuses as the start of a scripting language; a consumer needing that composes a
+five-line `PushHttpClient` of its own, which is exactly the case where writing the stub is the
+right answer. If the shape turns out to be ordinary rather than rare, it is an addition a later
+record can make on evidence, and this one does not rule it out.
+
 **The Javadoc also states what a shared script does under a fan-out.** `sendAsync` makes concurrent
 `post` calls the normal case; responses are handed out in the order calls enter the fake, which for
 concurrent sends is not the order of the subscriptions. Scripted sequences are for the sequential
 loop over one subscription. A fan-out test uses one constant response, or one fake per subscription.
 Left unsaid, this produces flaky consumer tests that read as a library defect.
+
+## No fake for the third seam
+
+The charter admits correct fakes of seams that already exist, and there are three seams. A signer
+that raises `VapidSignerUnavailableException` is the only way to reach `SignerUnavailable` through
+the real pipeline, and that variant is one of the eight a consumer must now decide about — so the
+question has to be answered rather than left to the charter's wording.
+
+It is not published. `signer -> { throw new VapidSignerUnavailableException(...); }` is two lines a
+consumer writes correctly the first time, because the seam has two methods and one failure type, and
+nothing about it moves when the library moves: the admission test fails, and the fact that a fake
+*could* live here is not a reason for one. The transport fake is published on the other side of that
+test — not because a stub transport is harder to write, but because the sequence of answers a retry
+loop needs is a shape a consumer cannot get from a lambda without writing the counter and the
+thread-safety themselves, and because what the fake records is subject to rules about capability
+URLs that this library owns.
 
 ## What the recording keeps, and what it refuses to keep
 
@@ -246,11 +302,14 @@ longer exists.
 
 ## The library's own fixtures stay in this build
 
-`MockPushReceiver`, `LoopbackTls`, `TestVectors`, and the Vault module's `FakeTransitVault` and
-`RecordingHttpClient` are not published. The vectors are conformance material for the library's
+`MockPushReceiver`, `LoopbackTls`, `TestVectors`, `PushTestSupport`, and the Vault module's
+`FakeTransitVault` and `RecordingHttpClient` are not published. The vectors are conformance material for the library's
 crypto, which a consumer does not re-run; the receiver and the certificate are this build's
 plumbing; and the Vault pair belongs to the other trust domain entirely — the one where responses
-must be read. This is the split ADR-014 already made, and the addition here does not narrow it.
+must be read. `PushTestSupport` is named explicitly because it is the one most likely to be offered
+for promotion: its subject overlaps the new fixtures almost exactly, and it is nonetheless this
+build's, being wired to the in-process receiver and bound by an invariant of the two BouncyCastle
+classpaths that no consumer has. This is the split ADR-014 already made, and the addition here does not narrow it.
 
 ## One artifact
 
@@ -286,14 +345,27 @@ library permits.
 
 ## Documents
 
-`docs/TESTING.md` is new and is the kit's reference for the consumer side, in the shape
+`docs/TESTKIT.md` is new and is the kit's reference for the consumer side, in the shape
 `docs/SIGNER.md` has for the implementor side, with README's *Documentation* table gaining its row
-and the Maven coordinate staying in README alone. `docs/SIGNER.md` keeps the contract material and
-links across. `CLAUDE.md` describes `push2u-testkit` as the conformance kit "and nothing else",
-which this change falsifies, and its module table is the other place the artifact is described.
+and the Maven coordinate staying in README alone. It is named for the artifact and not for the
+activity: a `docs/TESTING.md` would read as a contributor's guide to testing this repository, which
+is `CONTRIBUTING.md`'s subject, and this repository has already paid once for a document whose name
+did not say which of two journeys it described. `docs/SIGNER.md` keeps the contract material and
+links across.
+
+Four published texts state that the kit holds one thing, and each is part of the change rather than
+a follow-up. `CLAUDE.md` calls it the conformance kit "and nothing else", and its module table is
+the other place the artifact is described. The kit's `package-info.java` says its one member today
+is `VapidSignerContractTest`. Its `build.gradle.kts` `description` becomes the published POM
+description and names only the signer contract. And `VapidKeys`' own Javadoc carries ADR-018's
+clause in the words a consumer actually reads — that handing a secret back as a string is the one
+direction this library does not provide, which stays true after this change and is the sentence a
+reader will hold against the new fixture, so it is reviewed here rather than discovered later.
+
 `docs/DESIGN.md` describes the module layout and gains the kit's second half. `docs/adr/README.md`
-gains the row. The kit's own Javadoc carries every reason above in its own words, since it ships in
-a `sources.jar` to readers who have neither this record nor those documents.
+gains the row, and ADR-018's row takes the status change named above when this record is
+implemented. The kit's own Javadoc carries every reason above in its own words, since it ships in a
+`sources.jar` to readers who have neither this record nor those documents.
 
 ## What this rules out
 
@@ -303,7 +375,11 @@ a `sources.jar` to readers who have neither this record nor those documents.
   reached through one.
 - A fixed VAPID pair, or any key-shaped constant, in a published artifact.
 - An encoder taking key material a caller already holds and returning its private scalar as a string
-  — in the kit, the core or a starter; ADR-018 unchanged.
+  — in the kit, the core or a starter. That is the whole of what ADR-018's clause protected, and it
+  is what survives the one-clause supersession named above; everything else ADR-018 rules out stands.
+- An accessor for the private scalar on `VapidKeys`, in this record or after it.
+- A published fake for `VapidSigner`, whose failure mode is two lines a consumer writes correctly
+  and nothing about which moves when the library moves.
 - A second model of a browser subscription, or a fixture returning subscription components
   separately, so that an incoherent set can be assembled from them.
 - A fixture that hands over the encrypted body, or a `toString()` rendering a capability URL, a
@@ -315,6 +391,6 @@ a `sources.jar` to readers who have neither this record nor those documents.
   fakes — published from any artifact.
 - A second published artifact carrying the fixtures apart from the contract.
 - A retry DSL, an assertion DSL, response routing, mutable configuration or a `reset` on the
-  transport fake.
+  transport fake — each refused for its own reason above, not as a group.
 - A mock push service listening on a socket, shipped as part of this decision.
 - A contract test asserting that an `EndpointPolicy` answers deterministically.
