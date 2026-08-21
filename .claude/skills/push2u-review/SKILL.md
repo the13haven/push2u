@@ -69,12 +69,28 @@ a custodian that cannot sign now, an unanswered POST. **An exception** is reserv
 wrongly, for a defect the caller cannot act on per send, and for cancellation:
 `PushCryptoException` for a failure that recurs, `PushInterruptedException` for an interruption,
 `IllegalArgumentException` for an illegal argument (ADR-021, ADR-022). The seams keep their own
-vocabulary — `PushDeliveryException`, `EndpointRejectedException`,
-`VapidSignerUnavailableException` — and **exactly those three convert**; anything else out of a
-consumer-written seam is a defect and must propagate rather than be laundered into a value. Check
-that a new failure lands in the right channel and the right type, that the recurrence axis is what
-sorted it rather than "does a human have to act", that a cause is preserved unless a suppression
-explains why not, and that no failure is quietly turned into a default that looks like success.
+vocabulary — `PushDeliveryException`, `VapidSignerUnavailableException` — and **exactly those two
+convert**; anything else out of a consumer-written seam is a defect and must propagate rather than
+be laundered into a value. The endpoint policy signals by returning rather than by throwing
+(ADR-027): `assess` answers `EndpointAssessment.Allowed` or `Refused(reason)`, and `send` converts a
+`Refused` into `EndpointRejected`. It is a consumer-written seam like the other two, so it *can*
+throw — and what comes out is a defect on the same rule, propagating unchanged. A `PushSender` that
+catches anything from the policy is therefore a finding, not a safeguard. A `null` answer is the
+same kind of defect and leaves as the sender's own `NullPointerException`, never read as either
+verdict, since one reading fails open on an egress control and the other invents a decision the
+deployment never made. A blank or absent `reason` is the opposite case and must stay renderable
+rather than throw: a refusal that threw out of the seam would stop the fan-out the value shape
+exists to keep running. Check that a new failure lands in the right channel and the right type, that
+the recurrence axis is what sorted it rather than "does a human have to act", that a cause is
+preserved unless a suppression explains why not, and that no failure is quietly turned into a
+default that looks like success.
+
+**A library exception extends `RuntimeException` directly, and never `IllegalArgumentException`** —
+ADR-022 rules out both halves. Subclassing IAE lets an existing `catch (IllegalArgumentException e)`
+keep swallowing the new condition along with the old one, which cancels exactly the disambiguation
+the type was minted for; and IAE itself stays what the JDK made it — a value that is not a legal
+value of its parameter, carrying no library semantics and handled in a generic pool. A change to
+that hierarchy needs the same reasoning, explicitly.
 
 **What the diff does not contain.** Changes here tend to imply work in more than one place: a new
 `PushSender.Builder` option usually needs a `push2u.*` property in the starter, startup validation
@@ -144,7 +160,10 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
   async path runs the same pipeline precisely so the control cannot be bypassed). A new code path
   that reaches the network without passing `EndpointPolicy` is a must-fix — without it every send is
   a blind SSRF oracle through the status code an answered outcome carries, an unanswered
-  `PushOutcome.Indeterminate`, and timing.
+  `PushOutcome.Indeterminate`, and timing. Passing it means *reading its answer*:
+  `policy.assess(uri);` as a bare statement compiles with no diagnostic and admits everything, so a
+  call site that discards the `EndpointAssessment` — in the library, in a document's recipe, or in a
+  test's fixture — is the same finding.
 - **`Endpoints.requireSecure` is a protocol check, not a security control.** Which hosts a
   deployment may contact is policy and lives in `EndpointPolicy`. Conflating them weakens both.
 - **The push transport must not read the response body**, so a hostile service cannot create memory
@@ -174,10 +193,12 @@ ask what it can carry when things go wrong:
 - `p256dh`, `auth`, private scalars, or anything derived from them;
 - URI userinfo, which is rejected rather than echoed.
 
-`EndpointRejectedException` extends `RuntimeException` rather than `IllegalArgumentException` on
-purpose: web frameworks commonly map IAE to a 400, which would echo a redacted-but-fingerprinted
-message back to whoever registered the subscription. A change to that hierarchy needs the same
-reasoning, explicitly.
+The endpoint policy's refusal is a value rather than an exception: `EndpointAssessment.Refused`
+carries a `reason` and deliberately no endpoint component, because `PushSender` renders the redacted
+endpoint itself from the subscription it holds. Check both halves — that a policy the change writes
+or touches puts no raw URI into a `reason` (`Endpoints.redact` first, as `EndpointPolicies` does),
+and that nothing moves that rendering into the seam, where an implementation could publish a
+capability URL through `PushOutcome.EndpointRejected` and into every log the outcome reaches.
 
 ### 5.4 Cryptographic invariants
 

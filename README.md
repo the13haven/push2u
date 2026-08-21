@@ -361,10 +361,15 @@ exemption from it; which of your sends are user actions is a fact only your appl
 - `IllegalArgumentException` / `NullPointerException` — an argument that is not a legal value of its
   parameter.
 - Anything else out of a `PushHttpClient`, `VapidSigner` or `EndpointPolicy` you supplied. Exactly
-  three seam signals convert to outcomes — `EndpointRejectedException`,
-  `VapidSignerUnavailableException`, `PushDeliveryException` — and any other `RuntimeException` from
-  a seam is a defect in that implementation, not an operational condition, so it propagates
-  unchanged rather than being laundered into a value.
+  two seam signals convert to outcomes — `VapidSignerUnavailableException` and
+  `PushDeliveryException` — and any other `RuntimeException` from a seam is a defect in that
+  implementation, not an operational condition, so it propagates unchanged rather than being
+  laundered into a value. The endpoint policy is not on that list because it does not signal by
+  throwing: its `EndpointAssessment.Refused` answer becomes `EndpointRejected` with no exception
+  anywhere in that path, an exception out of it is a defect like any other seam's, and a policy
+  answering `null` fails the send with a `NullPointerException` from the sender's own check —
+  reading that as permission would fail open on an egress control, and reading it as a refusal
+  would invent a decision the deployment never made.
 
 Because one send is one POST, a blocking `send` costs at most one push exchange — bounded by the
 transport's per-request timeout, 30 seconds on the default `JdkPushHttpClient` — plus, on a send
@@ -579,7 +584,7 @@ README describes the API as it stands and nothing about where it came from.
 The two allowlist properties are not alternatives: they are unioned into one allowlist, and a
 deployment covering all four browser push services writes both. The allowlist they express is
 published as an `EndpointPolicy` bean, so the code that accepts subscriptions injects it and
-validates each offered endpoint against the same rule every send will enforce — a service that
+assesses each offered endpoint against the same rule every send will enforce — a service that
 registers subscriptions and leaves the sending to another one holds the bean without configuring a
 signer at all. There is deliberately no property
 for the unrestricted mode: under Spring it is an application `@Bean EndpointPolicy` returning
@@ -650,7 +655,7 @@ applied at both points of a subscription's life: where a subscription is accepte
 is stored, and before every send. `PushSender` takes it as the third parameter of its factory
 method rather than as an optional builder step — there is no way to obtain a sender without naming
 a policy — and the same object answers at the registration boundary, because you already hold it:
-you built it to build the sender. Validating there matters because a policy refusal is not a `410` —
+you built it to build the sender. Asking it there matters because a policy refusal is not a `410` —
 nothing ever expires the stored row, so a subscription accepted from an origin the policy refuses
 fails on every send, forever, while the subscriber's browser reports a healthy subscription. For
 almost every deployment that policy is an allowlist naming the browser push services its users can
@@ -690,16 +695,51 @@ before encryption, before the VAPID signature (a remote Vault/KMS call under an 
 signer), and before any network I/O. A rejected endpoint costs none of them, and reaches the caller
 as `PushOutcome.EndpointRejected`: the policy did its job, and one hostile row must not abort a
 fan-out over a whole subscription store, so a loop records the row as violating policy — flagging or
-removing the stored subscription — and carries on. The variant carries the endpoint in redacted form
-and the policy's own account of the refusal, never the path or query, because a push endpoint is a
-capability URL.
+removing the stored subscription — and carries on. The variant carries two things. The redacted
+endpoint is the library's own rendering — the origin plus a short fingerprint, never the capability
+path or query, and `Endpoints.redact(String)` is the public helper that produces it; it is not
+delegated to the policy, so it is safe whatever an implementation wrote. The reason beside it *is*
+what the policy wrote, and keeping a capability URL out of that string is the policy's own
+obligation — spelled out below, where the seam a custom rule plugs into is described.
 
-The seam's own signal is `EndpointRejectedException`, which is what an `EndpointPolicy`
-implementation throws and what an application catches when it calls `validate` directly at its
-registration boundary. It extends `RuntimeException` directly, deliberately not
-`IllegalArgumentException`, which web frameworks commonly map to a 400 response echoing the message.
-`PushSender` recognises exactly that type; any other `RuntimeException` from a policy is a defect in
-it and propagates.
+**The seam answers with a value, and at the registration boundary you have to read it.**
+`assess` returns an `EndpointAssessment`: a sealed pair of `Allowed()` and `Refused(reason)`. A
+refusal there is the boundary working, not failing — an inadmissible endpoint is an ordinary request
+from an ordinary client — so applying the policy where subscriptions arrive is a `switch` over two
+cases and not a `try`/`catch` around a check whose failure is the expected case:
+
+```java
+// The Subscription first — it applies the endpoint and key-material rules — then the policy on the
+// endpoint it carries, and only then the row.
+Subscription subscription = Subscription.fromBase64(
+    browserSubscription.endpoint(), browserSubscription.p256dh(), browserSubscription.auth());
+URI endpoint = URI.create(subscription.endpoint());
+
+switch (pushServices.assess(endpoint)) {
+    case EndpointAssessment.Allowed() -> subscriptionStore.save(subscription);
+    case EndpointAssessment.Refused r -> {
+        log.info("Registration refused for {}: {}",
+            Endpoints.redact(subscription.endpoint()), r.reason());
+        return ResponseEntity.badRequest().build();   // nothing stored
+    }
+}
+```
+
+> [!WARNING]
+> `pushServices.assess(endpoint);` written as a bare statement compiles with no diagnostic of any
+> kind — `-Xlint:all` included — discards the answer, and admits every endpoint. Inside a send that
+> slip cannot open the network: `send` performs the assessment itself, on every send, and acts on
+> the value. The registration boundary — where you apply the policy for the reason above, so that a
+> row the policy refuses never enters the store to fail forever — is precisely the point where
+> nothing re-checks, so the returned value is what has to decide whether the row is stored. No
+> annotation marks the result as one you may not discard: the one that would lives in a dependency
+> the zero-dependency core cannot take.
+
+A refusing policy does not throw, and is not expected to: `PushSender` turns a `Refused` into
+`PushOutcome.EndpointRejected` itself, rendering the endpoint in its own redacted form rather than
+trusting an implementation to. Any `RuntimeException` out of a policy is a defect in it, not a
+refusal, and propagates unchanged; a policy answering `null` is the same kind of defect and fails
+the send with a `NullPointerException`.
 
 The endpoint is normalized once, and every rule compares against that one value — RFC 6454
 normalization on both sides, so lowercase scheme and host, IDNA A-labels decoded and the default
@@ -739,10 +779,24 @@ refusal names the entry the way a rejection names an endpoint: an origin entry i
 path and query stripped, since a pasted capability URL is exactly the mistake being reported, and a
 domain entry appears verbatim only when it is a plain host-shaped token.
 
-`EndpointPolicy` itself is a functional interface (`void validate(URI endpoint)`), so corporate
-egress rules or custom DNS checks can be expressed directly — that seam is where a rule neither of
-the two kinds can express belongs. The policy is fixed when the sender is built and receives only
-the URI — a rule that varies by tenant means one sender per tenant.
+`EndpointPolicy` itself is a functional interface (`EndpointAssessment assess(URI endpoint)`), so
+corporate egress rules or custom DNS checks can be expressed directly — that seam is where a rule
+neither of the two kinds can express belongs. An implementation has to return one of the two
+answers: falling off the end of the method is no longer a way to admit an endpoint. The policy is
+fixed when the sender is built and receives only the URI — a rule that varies by tenant means one
+sender per tenant.
+
+**Writing one carries one obligation about disclosure: keep the raw endpoint out of the reason.**
+The string in a `Refused` is not private to your policy — `send` copies it onto
+`PushOutcome.EndpointRejected`, from where it reaches every log line, metric label and alert the
+application builds out of an outcome. A push endpoint is a capability URL, so a reason that quotes
+it verbatim publishes the credential to all of them. Render it with `Endpoints.redact(String)`
+first, which is what the standard allowlist does, and say what your rule objected to in your own
+words beside it. Nothing enforces this — `Refused` validates its reason no further than storing
+`""` for a `null` one, deliberately, because a refusal that threw out of the seam would stop the
+fan-out the value shape exists to keep running. The redacted endpoint on the outcome is not affected
+either way: the library renders that one itself, from the subscription it holds, which is why
+`Refused` carries no endpoint component for you to fill in.
 
 **Sending anywhere is still possible, and has a name.** `EndpointPolicies.unrestricted()` accepts
 every endpoint `Subscription` accepts — loopback, private-range and cloud-metadata addresses
