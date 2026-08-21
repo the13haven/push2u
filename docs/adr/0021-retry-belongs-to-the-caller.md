@@ -1,6 +1,6 @@
 # ADR-021 — Retry belongs to the caller
 
-**Status:** Accepted
+**Status:** Accepted; one clause superseded by [ADR-027](0027-the-endpoint-policy-answers-with-a-value.md)
 
 `PushSender.send` retries. Three separable things are welded into one `for` loop: **which**
 responses may be retried, a private static naming 429 and the whole 5xx class; **how long** to wait
