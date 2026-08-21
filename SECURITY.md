@@ -69,6 +69,12 @@ In scope — the properties the library is responsible for:
   runs. The endpoint in a `Subscription` is attacker-influenced, so this is the SSRF control point.
 - **Secret exposure in diagnostics**: `X-Vault-Token`, the Vault address, or the capability
   path/query of an endpoint reaching an exception message, log record, or health payload.
+- **Integrity of a diagnostic something else reads**: text chosen by a push service, or by whatever
+  answers on the Vault address, reaching an exception message, log record or health payload without
+  being escaped — so that it can forge a line an operator reads as the application's own, steer a
+  terminal with an escape sequence, or reverse the printed order of what follows it. This is a
+  different property from the item above and not a weaker form of it: what breaks is the
+  trustworthiness of the record, not the confidentiality of a value inside it.
 - **Resource exhaustion reachable from a remote peer**: an unbounded read, a missing timeout, or an
   unbounded internal cache. The library performs one POST per send and schedules no repeat, so the
   path a hostile push service could amplify by naming a large `Retry-After` is the caller's

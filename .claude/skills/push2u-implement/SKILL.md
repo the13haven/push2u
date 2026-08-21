@@ -236,16 +236,18 @@ narrower `Accepted; one clause superseded by ADR-NNN` when only one clause did �
 `docs/adr/README.md` carries the procedure for both. `docs/DESIGN.md` is the document that tracks
 the code; the ADRs are the record of what was decided and when.
 
-**Before you push, one question about what this change is.** Does it fix a defect through which
-untrusted input — a push service's response, a Vault answer, an endpoint out of a subscription, a
-payload — reaches a secret, a signature, the endpoint policy, or a log some other system trusts?
-And does a version already released still have it? Then the branch, the commit message and the
-pull request body each disclose it, whether or not the fix travels with them, and a defect you
-found yourself halfway through unrelated work discloses exactly as much as one somebody reported.
-Take `.claude/skills/push2u-advisory/SKILL.md` instead of the branch-push-PR path — nothing about a
-push can be undone afterwards. This is the last point at which asking costs nothing. An ordinary
-bug in released code is not this, and neither is a vulnerable third-party dependency: pinning one
-is the ordinary change above, and its constraint names its advisory in public on purpose.
+**Before you push, one question about what this change is.** Does the branch, the commit message
+or the pull request body describe a way for a remote peer — a push service, whatever answers on
+the Vault address, an endpoint arriving in a subscription — to reach a secret or a key, forge or
+evade the VAPID signature, get past the endpoint policy to the network, write into a log some other
+system trusts, or exhaust memory or time? And does this library's own code, in a version already
+released, complete that path? Then each of those three texts discloses it, whether or not the fix
+travels with them, and a defect you found yourself halfway through unrelated work discloses exactly
+as much as one somebody reported. Take `.claude/skills/push2u-advisory/SKILL.md` instead of the
+branch-push-PR path — nothing about a push can be undone afterwards, and this is the last point at
+which asking costs nothing. An ordinary bug in released code is not this; neither is a vulnerable
+third-party dependency, which is the ordinary change above and whose constraint names its advisory
+in public on purpose; and neither is hardening that closes a path no released code completes.
 
 Commit in Conventional Commit form (`feat:`, `fix(vault):`, `test:`, `docs:`), and label the pull
 request — the release notes are generated from labels, and an unlabeled pull request lands in "Other

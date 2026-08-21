@@ -3,8 +3,11 @@
 Thanks for taking the time. This document covers what the build expects and what a reviewer will
 look for, so that neither is a surprise at pull-request time.
 
-**Found a security problem? Do not open an issue.** Follow [`SECURITY.md`](SECURITY.md) — the
-report stays private until a fix is released.
+**Found a security problem? Do not open an issue — and do not open a pull request either.** Follow
+[`SECURITY.md`](SECURITY.md); the report stays private until a fix is released. That holds when you
+ran into the problem while working on something else, and when your branch already carries the fix:
+a released version stays exposed until a fixed one is out, so a pull request describing the defect
+is the disclosure whether or not it also repairs it.
 
 Questions and half-formed ideas belong in
 [Discussions](https://github.com/the13haven/push2u/discussions); the issue tracker is for defects

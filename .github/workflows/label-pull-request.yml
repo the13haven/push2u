@@ -75,9 +75,12 @@ jobs:
             *) ;;
           esac
 
-          # A security fix is `fix:` by Conventional Commit and would land under Bug Fixes. Which
-          # fixes are security fixes is a judgement call about impact, not something a title
-          # prefix can carry, so the `security` label stays manual.
+          # A security fix is `fix:` by Conventional Commit, and a hardening one `feat:`, so what
+          # this step derives on its own is `bug` or `enhancement`. Which fixes are security fixes
+          # is a judgement call about impact, not something a title prefix can carry, so the
+          # `security` label stays manual — and since .github/release.yml matches Security above
+          # both of those, adding it by hand is the whole of what puts the pull request in that
+          # section rather than a second label with no effect.
 
           if [ ${#labels[@]} -eq 0 ]; then
             echo "No changelog label follows from this title; leaving it to the reviewer."

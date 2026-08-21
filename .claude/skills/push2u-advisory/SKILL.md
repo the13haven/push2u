@@ -9,7 +9,8 @@ This is the maintainer's side of `SECURITY.md`. That document tells a reporter w
 to expect; this one is what happens next.
 
 It applies to a defect in this library's own code — the encryption, the VAPID signature, key
-handling, the endpoint policy, secret exposure in diagnostics — and it applies to one found in
+handling, the endpoint policy, secret exposure in a diagnostic and the trustworthiness of one
+something else reads, exhaustion a remote peer can drive — and it applies to one found in
 house exactly as it applies to one somebody sent in: what a public pull request discloses is the
 same either way, so nothing about *what may be published, and when relative to the fix*, turns on
 who noticed first. What does turn on it is only what needs a reporter to exist — the credit, the
