@@ -76,6 +76,7 @@ push2u-core
 push2u-testkit
 ├── VapidSignerContractTest (the published conformance kit, for a test classpath)
 ├── EndpointPolicyContractTest (the same, for a deployment's own endpoint policy)
+├── PushHttpClientContractTest (the same, for a custom transport, over its own TLS harness)
 ├── VapidKeyPairFixture / SubscriptionFixture (values of the public input contracts)
 └── ScriptedPushHttpClient / SentPush (a scripted, recording transport fake)
 
@@ -98,13 +99,21 @@ application's runtime one.
 
 The kit has two sides, serving the two audiences this library has
 ([ADR-028](adr/0028-the-test-kit-publishes-contracts-not-conveniences.md)). The contracts are the
-executable statement of what an extension point owes, and serve whoever writes one:
-`VapidSignerContractTest` for a signer, and `EndpointPolicyContractTest`
-([ADR-029](adr/0029-the-kit-states-what-an-endpoint-policy-owes.md)) for a deployment's own endpoint
-policy — that it answers with a value rather than an exception, that concurrent calls all come back,
-and that a refusal's reason keeps the capability part of the endpoint out of the logs the outcome
-reaches, which is the one obligation of that seam whose breach travels past every redaction this
-library performs. The fixtures serve the far larger audience that only sends: a generated VAPID pair and a coherent
+executable statement of what an extension point owes, and serve whoever writes one — every one of
+the three SPIs has one. `VapidSignerContractTest` covers the signer. `EndpointPolicyContractTest`
+([ADR-029](adr/0029-the-kit-states-what-an-endpoint-policy-owes.md)) covers a deployment's own
+endpoint policy — that it answers with a value rather than an exception, that concurrent calls all
+come back, and that a refusal's reason keeps the capability part of the endpoint out of the logs the
+outcome reaches, which is the one obligation of that seam whose breach travels past every redaction
+this library performs. `PushHttpClientContractTest`
+([ADR-030](adr/0030-the-kit-states-what-a-transport-owes.md)) covers a custom transport, over a
+loopback TLS server the kit brings as package-private machinery of that one class — an error status
+answered rather than thrown, response headers reaching the caller, exactly one byte-for-byte
+faithful request per `post` call, redirects returned rather than followed, the two unanswered
+shapes thrown as `PushDeliveryException`, and concurrent callers each getting their own response;
+the harness's certificate is generated per test JVM and duplicates the core's internal builder on
+purpose, since neither side's fixtures may be published. The fixtures serve the far larger audience
+that only sends: a generated VAPID pair and a coherent
 browser subscription, each published in both the typed and the base64url form and each valid by
 construction against the input contracts *as they currently stand*, plus a `PushHttpClient` that
 answers a declared response sequence and records what it was asked to send. What admits a member is
@@ -114,7 +123,7 @@ survives an upgrade that tightens validation, where a consumer's pasted literal 
 warning a release note could have carried. The fixtures reach no JCE provider by name, which the
 core's two deliberately disjoint BouncyCastle test classpaths make a build constraint rather than a
 preference. [`TESTKIT.md`](TESTKIT.md) is the consumer-facing reference for the fixtures and for the
-endpoint policy contract, and [`SIGNER.md`](SIGNER.md) for the signer one.
+endpoint-policy and transport contracts, and [`SIGNER.md`](SIGNER.md) for the signer one.
 
 ### JPMS identity
 

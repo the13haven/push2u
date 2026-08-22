@@ -72,7 +72,7 @@ comes up; this is the whole list.
 | [`HEALTH.md`](docs/HEALTH.md) | The starter's health indicator — what its probe asserts, its two keys, and the health-group routes. |
 | [`VAULT.md`](docs/VAULT.md) | The Vault Transit signer — the three key modes, the `push2u.signer.vault.*` properties, namespaces, and its transport seam. |
 | [`SIGNER.md`](docs/SIGNER.md) | Writing a `VapidSigner` over an HSM, a KMS or a remote custodian, and the conformance kit that checks one. |
-| [`TESTKIT.md`](docs/TESTKIT.md) | The rest of the test kit — fixtures and a scripted transport for a sending application's own tests, and the `EndpointPolicy` conformance contract. |
+| [`TESTKIT.md`](docs/TESTKIT.md) | The rest of the test kit — fixtures and a scripted transport for a sending application's own tests, and the `EndpointPolicy` and `PushHttpClient` conformance contracts. |
 | [`VAPID.md`](docs/VAPID.md) | The one-time recipe for generating a VAPID key pair. |
 | [`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) | The operator runbook for replacing that pair on a running deployment. |
 | [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) | The browser push services and the allowlist entry each one needs, in both spellings. |
@@ -847,6 +847,16 @@ This seam covers push delivery only. The Vault signer module has its own —
 [`VaultHttpTransport`](docs/VAULT.md#vault-http-transport) — because the Vault API sits in a
 different trust domain and its responses must be read.
 
+What a `PushHttpClient` owes is executable: extend `PushHttpClientContractTest` from
+[`push2u-testkit`](#writing-a-vapidsigner) in your own test suite, and it checks the implementation
+over a real TLS exchange against the kit's own loopback server — an HTTP error status answered as a
+`PushResponse` rather than thrown, the response headers reaching the caller, exactly one request per
+`post` call carrying exactly the URI, headers and bytes it was handed, a redirect returned rather
+than followed, a refused connection and an unanswered request each thrown as
+`PushDeliveryException`, and concurrent calls each getting their own response.
+[`TESTKIT.md`](docs/TESTKIT.md) is the reference, including what the contract deliberately does not
+check and why.
+
 ## Redirects must never be followed
 
 > [!WARNING]
@@ -878,12 +888,15 @@ PushSender sender = PushSender.builder(keys, "mailto:ops@example.com", pushServi
 ```
 
 **Implementing `PushHttpClient` or `VaultHttpTransport` yourself.** The interface contract
-requires it and **nothing can verify it** — the library sees only the seam, so this one is on the
-implementation. Turn redirect following off in whatever stack you wrap; several are unsafe by
-default, OkHttp among them (`followRedirects` and `followSslRedirects` are both `true` until you
-set `followRedirects(false).followSslRedirects(false)`). Return the `3xx` as an ordinary status
-and let the caller judge it — `PushSender` for a `PushHttpClient`, the Vault signer for a
-`VaultHttpTransport`.
+requires it and **nothing at run time can verify it** — the library sees only the seam, so this one
+is on the implementation. Turn redirect following off in whatever stack you wrap; several are
+unsafe by default, OkHttp among them (`followRedirects` and `followSslRedirects` are both `true`
+until you set `followRedirects(false).followSslRedirects(false)`). Return the `3xx` as an ordinary
+status and let the caller judge it — `PushSender` for a `PushHttpClient`, the Vault signer for a
+`VaultHttpTransport`. Your test suite can hold the push side to it: the transport contract in
+[`push2u-testkit`](#custom-http-transport) fails an implementation that follows a redirect or so
+much as connects to the host a `Location` names. `VaultHttpTransport` has no published contract —
+the obligation binds there as a sentence.
 
 On the push side there is nothing to accommodate: RFC 8030 §5 delivery has no redirect step. A
 Vault topology that genuinely answers `307` — an HA standby, typically — is dealt with in
@@ -928,7 +941,8 @@ what writing a signer takes.
 custodian keeps the private key wherever it belongs and answers with a raw 64-byte `r || s` ES256
 signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published test kit; its
 signer contract holds an implementation to that contract in its own test suite, and the same
-artifact carries the one for a custom [endpoint policy](#endpoint-policy-ssrf-hardening):
+artifact carries the contracts for a custom [endpoint policy](#endpoint-policy-ssrf-hardening) and a
+custom [HTTP transport](#custom-http-transport):
 
 ```kotlin
 dependencies {
@@ -961,7 +975,7 @@ combinations a real send can actually produce, and what the kit deliberately doe
 | Module | Purpose | JPMS module name |
 |---|---|---|
 | `push2u-core` | Domain types, encryption, VAPID, response classification, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
-| `push2u-testkit` | The `VapidSigner` and `EndpointPolicy` conformance contracts and the fixtures a sending application tests with, for a **test** classpath | `com.the13haven.push2u.testkit` |
+| `push2u-testkit` | The `VapidSigner`, `EndpointPolicy` and `PushHttpClient` conformance contracts and the fixtures a sending application tests with, for a **test** classpath | `com.the13haven.push2u.testkit` |
 | `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
 | `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
 | `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
