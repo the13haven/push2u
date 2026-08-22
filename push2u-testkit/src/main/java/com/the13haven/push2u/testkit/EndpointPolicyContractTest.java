@@ -52,9 +52,10 @@ import com.the13haven.push2u.Endpoints;
  * <p><b>The refusal check therefore needs a witness with something to leak, and that is a real demand on the
  * fixture.</b> The check searches the reason for the capability part of {@link #refusedEndpoint()} at three
  * granularities — the whole URI, each of user-info, path, query and fragment entire, and inside those each path segment
- * and each query value on its own — in the raw spelling and the decoded one. A string is searched for only when it is
- * long enough that finding it in a sentence about an endpoint means something, and when it does not already occur in
- * the redaction a conforming policy is entitled to print.
+ * and each query value on its own — in the raw spelling and the percent-decoded one, and for a query value in a third,
+ * form-decoded with {@code +} read as a space, since that is what a value handed to a form decoder comes back as. A
+ * string is searched for only when it is long enough that finding it in a sentence about an endpoint means something,
+ * and when it does not already occur in the redaction a conforming policy is entitled to print.
  *
  * <p><b>Whether the witness can be used at all is then decided over the parts below the whole URI, and only those.</b>
  * Every endpoint has a whole-URI string and it passes the rule almost always, so a witness judged by that string would

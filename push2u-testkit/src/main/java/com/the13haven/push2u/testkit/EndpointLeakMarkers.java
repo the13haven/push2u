@@ -123,15 +123,15 @@ record EndpointLeakMarkers(List<Marker> searchable, int searchableComponents, in
     String unfitWitnessMessage() {
         List<String> halves = new ArrayList<>(2);
         if (tooShort > 0) {
-            halves.add(tooShort + " of them are shorter than " + MARKER_MIN_LENGTH
+            halves.add(dropped(tooShort) + " shorter than " + MARKER_MIN_LENGTH
                     + " characters, which is too short to tell a leaked credential apart from the ordinary words of a "
                     + "refusal");
         }
         if (alreadyRedacted > 0) {
-            halves.add(alreadyRedacted
-                    + " of them already occur in the rendering a conforming policy is entitled to print for this "
-                    + "endpoint — its origin and a sixteen-character fingerprint — where finding one would convict a "
-                    + "policy that leaked nothing");
+            halves.add(dropped(alreadyRedacted)
+                    + " already present in the rendering a conforming policy is entitled to print for this endpoint — "
+                    + "its origin and a sixteen-character fingerprint — where finding one would convict a policy that "
+                    + "leaked nothing");
         }
         if (halves.isEmpty()) {
             halves.add("it has no path, query or fragment at all");
@@ -145,6 +145,15 @@ record EndpointLeakMarkers(List<Marker> searchable, int searchableComponents, in
                 + "the credential, in the spelling a policy is most likely to write — passes without difficulty. The "
                 + "parts are not named here: a witness may be a real endpoint, and a capability URL must not travel "
                 + "into a log.";
+    }
+
+    /**
+     * The subject of one half of that message, with its verb. One is the ordinary case — a witness usually has a single
+     * short path — and it is the reading an implementor most often gets, so it is the one that has to be written rather
+     * than left to a plural that fits every count but that one.
+     */
+    private static String dropped(int count) {
+        return count == 1 ? "one of them is" : count + " of them are";
     }
 
     /** What a leaking refusal is told, in terms of where the match came from rather than of what it was. */

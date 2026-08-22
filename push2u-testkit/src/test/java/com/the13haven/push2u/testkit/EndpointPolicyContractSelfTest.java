@@ -269,8 +269,25 @@ final class EndpointPolicyContractSelfTest {
         assertThatThrownBy(contract::refusalIsAValueWhoseReasonKeepsTheCapabilityUrlOut)
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("unfit for this check")
-                .hasMessageContaining("already occur in the rendering")
+                .hasMessageContaining("already present in the rendering")
                 .hasMessageNotContaining("shorter than 16 characters");
+    }
+
+    /**
+     * The third way a witness can be unusable, and the one with nothing to count: an endpoint with no path, query or
+     * fragment at all offers not a single part below its whole URI, so neither half of the fitness rule has anything to
+     * report. The message has to say what is missing rather than trail off into an empty explanation.
+     */
+    @Test
+    void aWitnessWithNoPathQueryOrFragmentIsReportedAsUnfitAndSaysWhatIsMissing() {
+        Contract contract = Contract.witness(URI.create("https://blocked.example"));
+
+        assertThatThrownBy(contract::refusalIsAValueWhoseReasonKeepsTheCapabilityUrlOut)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("unfit for this check")
+                .hasMessageContaining("no path, query or fragment at all")
+                .hasMessageNotContaining("shorter than 16 characters")
+                .hasMessageNotContaining("already present in the rendering");
     }
 
     /**

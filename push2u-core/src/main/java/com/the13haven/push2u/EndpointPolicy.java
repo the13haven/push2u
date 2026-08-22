@@ -61,12 +61,20 @@ import java.net.URI;
  *
  * <p><b>The four obligations above are executable.</b> The {@code push2u-testkit} artifact publishes
  * {@code EndpointPolicyContractTest}, a contract a custom policy extends in its own test suite, handing it one endpoint
- * the policy permits and one it refuses. It checks that both are answered with a value rather than an exception, that
- * concurrent calls all come back, and that the refusal's reason carries none of the endpoint's capability part —
- * searched down to a single path segment and a single query value, in the spelling the endpoint carries and in the
- * decoded one, since a refusal naming one segment publishes the whole credential as surely as one quoting the URI does.
- * Which endpoints a policy ought to admit is deliberately not among the checks: that rule is the deployment's own, and
- * nothing outside it knows the answer.
+ * the policy permits and one it refuses. It checks that both are answered with a value rather than an exception; that
+ * the refusal's reason carries none of the endpoint's capability part — searched down to a single path segment and a
+ * single query value, in the spelling the endpoint carries and in its decoded ones, since a refusal naming one segment
+ * publishes the whole credential as surely as one quoting the URI does; and, as a smoke check rather than a proof, that
+ * several threads inside {@link #assess} at one moment each come back with one of the two answers. What that last one
+ * is worth is asymmetric and it is described as such: no schedule is forced, so a passing run establishes nothing,
+ * while a failing one is a defect every time.
+ *
+ * <p><b>The leak search has a short end, and a policy is not held to what lies below it.</b> A part of the endpoint
+ * under sixteen characters is left alone, because a segment such as {@code v1} or {@code api} turning up in a refusal
+ * says something about the policy's wording and nothing about the endpoint. So a refusal naming a short segment beside
+ * a long one passes, and a witness offering nothing long enough is reported as unusable rather than searched against —
+ * the check states its reach instead of implying more of one. Which endpoints a policy ought to admit is not checked at
+ * all: that rule is the deployment's own, and nothing outside it knows the answer.
  */
 @FunctionalInterface
 public interface EndpointPolicy {
