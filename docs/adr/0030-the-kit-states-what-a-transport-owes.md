@@ -129,8 +129,14 @@ Three reasons, and the first is about the artifact:
   consumer's module graph.** The kit is an automatic module and most consumers put it on the class
   path, where it does not matter — but "most" is the wrong standard for a jar that goes to Maven
   Central, and the dependency buys nothing here.
-- **"Accept the connection and drop it" is not expressible through an exchange-based server**, and it
-  is one of the two transport failures the contract has to produce.
+- **The wire is what this contract is about, and an exchange-based server stands between the check
+  and it.** The harness has to observe the request target as it was actually sent, answer with
+  exactly the bytes a check wants — including, for the sixth check, no status line at all — and add
+  nothing of its own to either direction. A server that parses the request into an object, decides
+  the framing and manages the connection on the harness's behalf is a layer whose behaviour would
+  become part of what every check asserts. Note what is *not* claimed here: an exchange-based server
+  can produce the sixth check's failure, since a handler may close its exchange without sending
+  response headers, and an earlier draft of this record was wrong to say otherwise.
 - **HTTP/1.1 only is not a limitation.** A server that advertises nothing in ALPN leaves the JDK's
   client — which prefers HTTP/2 over TLS — to fall back to HTTP/1.1 by itself, which is what it
   already does against `HttpsServer`.
@@ -327,8 +333,8 @@ records having arrived together.
   exists for unchecked.
 - A lifecycle the kit invents for the transport: a teardown hook, a `close` call on the subject, an
   `AutoCloseable` expectation, or any other obligation `PushHttpClient` does not itself carry.
-- A redirect target on the harness's own listener, which would turn a check about a host the policy
-  never saw into a check about a path.
+- A redirect target on the harness's own listener, which would turn a check about an origin the
+  policy never assessed into a check about a path.
 - A harness asserting the exact set of request headers, or comparing header names case-sensitively,
   or rejecting a chunked request body.
 - A harness listening on anything but loopback, or a certificate whose subject alternative name does
