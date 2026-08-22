@@ -14,6 +14,26 @@ status is five lines and a consumer will get it right; what the current `Subscri
 accepts is something a consumer can only find out by upgrading and watching what breaks. The kit
 publishes the second kind.
 
+## What the kit brings with it
+
+Everything the kit declares is `api`, and that is not an oversight. A consumer *extends*
+`VapidSignerContractTest`, so the JUnit Jupiter annotations it carries, the AssertJ assertions its
+methods run and the `VapidSigner` its abstract method returns are all part of what compiling against
+the kit requires. The fixtures themselves use neither JUnit nor AssertJ, so an application on
+another test runner can still use them — but the artifact is one, and the contract needs both.
+
+The JUnit **BOM** travels the same way, and on a Gradle build it is the part worth knowing about
+before it happens. Its constraints reach whatever test classpath the kit lands on, and a Spring Boot
+build already has a source of the same constraint in Boot's own managed versions. Gradle resolves
+the conflict by taking the higher, so adding the kit can move your test JUnit off the version Boot
+manages and onto the one the kit's BOM names. Nothing about the kit requires that version and
+nothing about it is fragile — this repository's own Spring starter tests took exactly this shift
+when they picked the kit up, and it was accepted rather than pinned back, because one JUnit across a
+build is the better state. But a build that has to stay on Boot's managed JUnit should learn that
+here rather than from a conflict-resolution report: state the version you want explicitly instead of
+leaving it to resolution — an `enforcedPlatform` of Boot's BOM on the test classpath, or a
+dependency constraint naming the JUnit version — and the kit will compile against it unchanged.
+
 ## Why the values are generated rather than fixed
 
 A fixture produced by the library satisfies whatever the library currently requires, by
@@ -318,6 +338,8 @@ stay in this build. The vectors are conformance material for this library's cryp
 application does not re-run; the receiver and the certificate are this build's plumbing; and the
 Vault pair belongs to the other trust domain entirely, the one where responses must be read.
 
-**No second artifact.** `push2u-testkit` keeps its single coordinate. The fixtures use neither JUnit
-nor AssertJ, so an application on another test runner can use them; the signer contract needs both
-and carries them on `api`.
+**No second artifact.** `push2u-testkit` keeps its single coordinate. A leaner fixtures-only jar
+would buy a consumer freedom from a transitive JUnit on a test classpath that has JUnit on it
+already, and would cost a coordinate, a JPMS identity, a publication surface and a second thing to
+keep in step — see [what the kit brings with it](#what-the-kit-brings-with-it) for what that
+transitive actually does.
