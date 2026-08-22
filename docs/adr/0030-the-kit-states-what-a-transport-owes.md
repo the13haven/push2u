@@ -1,6 +1,6 @@
 # ADR-030 — The kit states what a transport owes, and brings the server it needs
 
-**Status:** Proposed
+**Status:** Accepted
 
 Filed as https://github.com/the13haven/push2u/issues/195, together with the endpoint policy's
 contract. The two share a cause and not a design;
@@ -224,10 +224,15 @@ decision, not left to the implementation:
   to skip it.
 - Responses close the connection unless persistent connections are the subject of the scenario, so
   that connection reuse is never accidentally part of what a check asserts.
-- Every check that reaches the network carries its own test-level timeout. This is not a transport
-  obligation and states nothing about `PushHttpClient` — the seam promises no timeout and this
-  contract asks for none — but a subject that blocks forever has to fail a consumer's build rather
-  than hang it, and a contract that can hang the build it was added to gets removed from it.
+- Every check that reaches the network carries its own budget, and running out of it *aborts* the
+  check rather than failing it. This is not a transport obligation and states nothing about
+  `PushHttpClient` — the seam promises no timeout and this contract asks for none, which is exactly
+  why the expiry cannot be a verdict: from outside, a transport that hangs and a correct one that
+  is slow on a loaded machine are the same observation, and a failure would convict the second for
+  the first. The budget's reason stands unchanged — a subject that blocks forever has to end the
+  check rather than hang a consumer's build, since a contract that can hang the build it was added
+  to gets removed from it; an abort does that while reporting only what is true, that the check did
+  not conclude.
 
 ## Response-body materialisation is not in the contract
 

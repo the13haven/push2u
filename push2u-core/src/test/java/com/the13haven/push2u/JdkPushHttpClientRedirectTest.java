@@ -5,22 +5,12 @@
  */
 package com.the13haven.push2u;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.URI;
 import java.net.http.HttpClient;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsServer;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -29,10 +19,13 @@ import org.junit.jupiter.api.Test;
  * {@code 3xx} would POST the encrypted body and its headers to a host the policy never saw (the JDK strips
  * {@code Authorization} across origins but not custom headers or the body), and would report the redirect target's
  * answer as the delivery result.
+ *
+ * <p>These tests pin the constructor's refusal, which is this class's own invariant. The wire-level half — the 3xx
+ * handed back unfollowed and the Location host never contacted — is the published transport contract's fourth check,
+ * which {@link JdkPushHttpClientContractTest} runs against this client; the kit's own suite proves that check fails a
+ * redirect-following transport, which is what allowed the equivalent test here to be deleted.
  */
 class JdkPushHttpClientRedirectTest {
-
-    private static final byte[] BODY = new byte[] {1, 2, 3};
 
     @Test
     void aRedirectFollowingClientIsRejectedAtConstruction() {
@@ -58,53 +51,5 @@ class JdkPushHttpClientRedirectTest {
 
         assertThatCode(() -> new JdkPushHttpClient(never, Duration.ofSeconds(5)))
                 .doesNotThrowAnyException();
-    }
-
-    @Test
-    void theClientReturnsARedirectInsteadOfFollowingIt() throws Exception {
-        // Pins the safe behaviour every accepted client shares (the constructor tests above prove
-        // no other kind can be constructed): the 3xx comes back as an ordinary status (PushSender
-        // classifies it as a failure) instead of the redirect target's 200, and the target is
-        // never contacted. The fixture models a real push endpoint answering a redirect, so it
-        // serves TLS like one — which is also why the client here is the trusting test client
-        // rather than the no-arg constructor's, whose trust store rightly refuses the test
-        // certificate; both are built with Redirect.NEVER.
-        AtomicInteger targetHits = new AtomicInteger();
-        HttpsServer server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-        try {
-            server.setHttpsConfigurator(new HttpsConfigurator(LoopbackTls.serverContext()));
-            server.createContext("/push", exchange -> {
-                exchange.getRequestBody().readAllBytes();
-                exchange.getResponseHeaders().add("Location", "/stolen");
-                exchange.sendResponseHeaders(307, -1);
-                exchange.close();
-            });
-            server.createContext("/stolen", exchange -> {
-                exchange.getRequestBody().readAllBytes();
-                targetHits.incrementAndGet();
-                byte[] leaked = "leaked".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("X-Redirect-Target", "reached");
-                exchange.sendResponseHeaders(201, leaked.length);
-                try (OutputStream out = exchange.getResponseBody()) {
-                    out.write(leaked);
-                }
-            });
-            server.start();
-            URI endpoint = URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/push");
-
-            PushResponse response = new JdkPushHttpClient(
-                            PushTestSupport.trustingJavaHttpClient(), Duration.ofSeconds(30))
-                    .post(endpoint, Map.of("TTL", "60"), BODY);
-
-            assertThat(response.statusCode())
-                    .as("the redirect itself is the result, not the redirect target's 201")
-                    .isEqualTo(307);
-            assertThat(response.header("X-Redirect-Target")).isEmpty();
-            assertThat(targetHits)
-                    .as("the body and headers must never reach the Location host")
-                    .hasValue(0);
-        } finally {
-            server.stop(0);
-        }
     }
 }

@@ -1,9 +1,10 @@
 # The push2u test kit
 
 `push2u-testkit` is a test-scoped artifact with two sides. One is the executable conformance
-contracts an extension point must satisfy: `VapidSignerContractTest`, which is
-[`SIGNER.md`](SIGNER.md)'s subject, and `EndpointPolicyContractTest`, which is
-[below](#the-endpoint-policy-contract). The other is what most of this document covers: values and a
+contracts an extension point must satisfy — one per extension point: `VapidSignerContractTest`,
+which is [`SIGNER.md`](SIGNER.md)'s subject, `EndpointPolicyContractTest`, which is
+[below](#the-endpoint-policy-contract), and `PushHttpClientContractTest`, which is
+[below it](#the-transport-contract). The other is what most of this document covers: values and a
 transport fake for the tests an application writes around its own sending code — a VAPID pair, a
 browser subscription, and a `PushHttpClient` that answers a declared sequence of responses and
 records what it was asked to send. [`README.md` → Writing a
@@ -18,10 +19,11 @@ publishes the second kind.
 
 ## What the kit brings with it
 
-Everything the kit declares is `api`, and that is not an oversight. A consumer *extends*
-`VapidSignerContractTest` or `EndpointPolicyContractTest`, so the JUnit Jupiter annotations they
-carry, the AssertJ assertions their methods run and the library types their abstract methods return
-are all part of what compiling against the kit requires. The fixtures themselves use neither JUnit
+Everything the kit declares is `api`, and that is not an oversight. A consumer *extends* one of the
+contracts — `VapidSignerContractTest`, `EndpointPolicyContractTest`, `PushHttpClientContractTest` —
+so the JUnit Jupiter annotations they carry, the AssertJ assertions their methods run and the
+library types their abstract methods return are all part of what compiling against the kit
+requires. The fixtures themselves use neither JUnit
 nor AssertJ, so an application on another test runner can still use them — but the artifact is one,
 and the contracts need both.
 
@@ -461,6 +463,125 @@ does refuse things, or pick an `allowedEndpoint()` chosen to be easy — the sam
 `VapidSignerContractTest` states for itself, where a signer rotating a pool of buffers defeats every
 check made from outside. What binds there is the sentence in `EndpointPolicy`'s own contract.
 
+## The transport contract
+
+The kit's third executable contract, for the deployment that replaces `PushHttpClient` — OkHttp,
+Apache HttpClient 5, an instrumented stack of its own. The seam's obligations are the kind that pass
+every unit test and fail in production: a transport that quietly starts following redirects on a
+dependency bump has no other test anywhere that notices. An implementation extends the contract and
+supplies its subject through one method:
+
+```java
+class MyPushHttpClientContractTest extends PushHttpClientContractTest {
+    @Override
+    protected PushHttpClient transport(SSLContext sslContext, X509TrustManager trustManager) {
+        return new MyTransport(HttpClient.newBuilder()
+            .sslContext(sslContext)
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build());
+    }
+}
+```
+
+The contract brings its own server — a raw `SSLServerSocket` speaking minimal HTTP/1.1, bound to
+loopback only, presenting a throwaway self-signed certificate generated once per test JVM and never
+committed or shipped anywhere. It has to be TLS, because push endpoints are `https`-only and a
+contract passed over plaintext would clear a transport that fails at the handshake; and the trust
+material has to reach the transport under test, because no stack trusts a certificate the kit
+invented. Both standard JCA objects are handed over since the common stacks want different ones —
+the JDK's client and Apache HttpClient 5 take the `SSLContext`, OkHttp's supported configuration
+call takes the socket factory *and* the `X509TrustManager` beside it. Use whichever half your stack
+needs and ignore the other; there is no trust-all manager and no relaxed hostname verification
+anywhere, so the subject performs the same handshake and hostname check a production endpoint
+demands.
+
+Seven checks come with that:
+
+1. **An HTTP error status is an answer, not an exception** — a `410` comes back as a `PushResponse`
+   carrying `410`, never as a `PushDeliveryException`. A transport that throws on an error status
+   turns a subscription this library classifies as expired into an `Indeterminate` the caller will
+   keep repeating for the life of the stored row.
+2. **The response headers reach the caller**, `Retry-After` in particular — the sender reads the
+   repeat hint out of exactly that map, so a transport that returns the status and drops the
+   headers empties the hint silently for every `429` a deployment ever receives.
+3. **Exactly one request arrives, and it is the one that was handed over** — one observation of the
+   wire for both halves: one request (a transport retrying inside `post` delivers the notification
+   twice while the sender learns of one outcome), and that request — a POST, at the URI it was
+   given, carrying the headers it was given and the body it was given **compared byte for byte,
+   not by length**, on synthetic bytes the contract makes itself. Headers the transport adds of its
+   own are permitted; the exact set is never asserted.
+4. **A redirect is not followed** — the harness answers a `3xx` whose `Location` names a second
+   listener on another loopback port, and both halves are asserted: the caller was handed the `3xx`
+   itself, and the second listener accepted no connection at all. A different port is a different
+   origin, which is what makes this a claim about an origin the endpoint policy never assessed
+   rather than about a path.
+5. **A refused connection is a `PushDeliveryException`** — a port nothing is listening on.
+6. **A request sent with nothing answering it is a `PushDeliveryException`** — the harness completes
+   the handshake, reads the whole request, and closes without writing a status line. Kept separate
+   from the fifth deliberately: one fails before a byte of the request is written and one after all
+   of it is, and a transport can honestly report the first while swallowing the second.
+7. **A concurrency smoke check with teeth** — every caller sends a unique correlation header, the
+   harness echoes it back, and the check asserts that every caller got the response to its own
+   request, that the server saw exactly one request per caller, and that no request arrived with
+   another caller's body or missing the headers its caller gave. A transport keeping per-request
+   state in a field hands one caller another's response here; in production that is an accepted
+   status credited to a send that was refused. Still a smoke check — no schedule is forced, a
+   passing run proves nothing, and having no false positives is what earns it its place.
+
+### What the transport contract deliberately does not check
+
+**That the response body is never materialised.** The seam asks implementations to discard the body
+without buffering it, and that stays a written obligation: `PushResponse` has no slot a buffered
+body could reach the caller through — structurally the obligation is already kept as far as the API
+can tell — and what remains, draining a stream versus holding it in memory, is not observable from
+outside. A check streaming some number of megabytes would assert that a transport survives a large
+response, which is worth having in this library's own tests of its own client and not worth stating
+as a contract obligation that appears to test something it does not.
+
+**Timeouts, retry policies and schedules, connection pooling, persistent-connection behaviour** —
+the seam promises none of them. How many HTTP requests one `post` call produces is not on that list:
+the seam promises exactly one, and the third check holds it.
+
+**Every network check carries a budget, and running out of it aborts the check rather than failing
+it.** The seam sets no latency requirement, so a subject still silent when the budget expires may be
+hung or merely slow on a loaded machine, and nothing outside can tell those apart — a failure would
+be a verdict the check has not reached. The budget exists so that a hung subject ends the check
+instead of hanging the build it was added to, which is how a contract gets deleted from a build.
+
+### The contract invents no lifecycle for the transport
+
+`transport(...)` is called once per test method and the contract never closes what it hands back,
+because the seam itself has no lifecycle: a `PushSender` takes a transport when it is built, holds
+it for as long as it exists, and closes it never — a teardown step here would leave an implementor
+entitled to believe this library releases their client at some point, which it does not, anywhere.
+The cost lands on a stack holding resources: a subject building an OkHttp client or an HttpClient 5
+connection manager builds one per check and releases none of them, so such a subject keeps the
+reference in its own factory method and closes it in its own `@AfterEach` — ordinary JUnit, needing
+nothing from the kit.
+
+### The harness is machinery, not API
+
+The TLS server ships in the jar — it could hardly verify a transport otherwise — but nothing about
+it appears in the surface a consumer compiles against: not as public API, not as a `protected`
+member a subclass inherits, and no consumer may depend on its shape, its behaviour or its continued
+existence. A consumer's own send tests are served by [`ScriptedPushHttpClient`](#the-scripted-transport),
+which fakes the seam without a socket in sight. What the harness owes so the contract measures the
+transport rather than one HTTP stack is fixed: both `Content-Length` and chunked request bodies are
+read, header names are compared case-insensitively, extra headers are permitted, the URI is checked
+through what a server can observe of it — request target and `Host` — and every response closes the
+connection so reuse is never accidentally part of a check. It names no JCE provider, and the
+failure messages name headers, counts and statuses but never render an endpoint, a header value or
+a body, because the contract's failures go to the same build log a leaked value would.
+
+One thing is deliberately not withheld, and it is worth stating exactly rather than reassuringly. A
+subject's own exception travels as the failure's cause, and a test runner prints a cause with
+whatever text the subject put in it. That text is not guaranteed harmless: a transport adds headers
+out of the environment it runs in — a proxy credential is the usual example — and nothing stops one
+from quoting its own configuration back in a message. It is kept anyway, because it is the frame an
+implementor has to look at, and because it is their own exception printed in their own build. What
+every contract here does promise is narrower and is the half the kit controls: nothing the kit was
+given or observed is ever rendered by the kit.
+
 ## What the kit does not publish
 
 **No `VapidSigner` fake.** `SignerUnavailable` is one of the eight, and a signer that raises
@@ -501,11 +622,24 @@ statement about its egress, and the kit publishes the contract that says what an
 like rather than an answer of its own. The one policy that admits everything already exists in the
 library, named so that using it leaves a token in the deployment's source.
 
+**No general-purpose mock push service.** The transport contract's TLS server travels in the jar as
+package-private machinery of that one class and nothing else — no public type, no `protected`
+accessor handing a subclass the running server, no scripting, no promise about its behaviour. A
+consumer's own tests are served by `ScriptedPushHttpClient`, which fakes the seam without a socket;
+publishing the server beside the contract would freeze a second surface — ports, lifecycle,
+scripting, recording — that this library would owe compatibility on forever, in exchange for
+something the kit already provides.
+
 **None of this library's own fixtures.** The RFC vectors, the in-process mock push receiver, its
 self-signed loopback TLS identity, the shared send-pipeline helper, and the Vault module's fakes all
 stay in this build. The vectors are conformance material for this library's crypto, which an
 application does not re-run; the receiver and the certificate are this build's plumbing; and the
-Vault pair belongs to the other trust domain entirely, the one where responses must be read.
+Vault pair belongs to the other trust domain entirely, the one where responses must be read. One
+consequence is deliberate rather than an oversight: the kit's transport harness assembles a
+self-signed certificate by hand and so does the core's internal plumbing, and the two builders are
+not consolidated — neither side's may be published, so neither can serve the other, and a third
+artifact for shared test plumbing would cost a coordinate, a JPMS identity and a publication
+surface to remove a duplicated encoder from a test path.
 
 **No second artifact.** `push2u-testkit` keeps its single coordinate. A leaner fixtures-only jar
 would buy a consumer freedom from a transitive JUnit on a test classpath that has JUnit on it

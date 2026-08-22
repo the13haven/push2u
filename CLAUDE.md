@@ -74,10 +74,13 @@ application that only sends: the four fixtures, the whole setup in one block wit
 policy visible in it, the `getEncoder()`/`getUrlEncoder()` trap and why it presents differently at
 65 bytes than at 16, what a scripted sequence does under a fan-out, which `PushOutcome`
 combinations a real send can produce where the public constructors admit more, and what the kit
-refuses to publish with the reason for each refusal. It also carries `EndpointPolicyContractTest` —
-the kit's second contract, whose audience is neither of those two but the deployment writing its own
-egress rule, and which lands here rather than in a document of its own because this is the
-artifact's reference and where a reader looking at what the kit publishes arrives. It also carries
+refuses to publish with the reason for each refusal. It also carries the kit's other two contracts,
+whose audiences are neither of those two: `EndpointPolicyContractTest` for the deployment writing
+its own egress rule, and `PushHttpClientContractTest` for the one replacing the transport — the
+latter with the seven checks its loopback TLS harness runs, what that contract deliberately does
+not check, and why its network budget aborts a check rather than failing it. Both land here rather
+than in documents of their own because this is the artifact's reference and where a reader looking
+at what the kit publishes arrives. It also carries
 the one entry there with an
 operational consequence a build can hit: the kit puts JUnit, AssertJ and the JUnit BOM on `api`
 because a consumer extends the contract, and on a Gradle build the BOM's constraints meet Boot's
@@ -250,8 +253,8 @@ Notes that matter in practice:
 ```
 push2u-core                                  no runtime implementation dependencies (JSpecify only)
   ├── push2u-testkit                         api(push2u-core) + JUnit/AssertJ — the published
-  │                                          test kit (signer and endpoint-policy contracts +
-  │                                          sending fixtures), for a consumer's TEST classpath
+  │                                          test kit (one contract per SPI + sending fixtures),
+  │                                          for a consumer's TEST classpath
   ├── push2u-signer-vault                    api(push2u-core)
   │     └── push2u-signer-vault-spring-boot-starter
   └── push2u-spring-boot-starter             api(push2u-core) + Spring Boot 4 autoconfigure
@@ -468,6 +471,21 @@ cannot see each other.
   two answers to agree, which is why the refusal and the leak are one check over one `assess` call.
   Both `EndpointPolicies` factories and `unrestricted()` — with `Optional.empty()` for the refusal
   witness — are subjects in `push2u-core`'s tests.
+  `PushHttpClientContractTest` (ADR-030) completes the set — one contract per SPI: seven checks over
+  a real TLS exchange against the kit's own harness, a raw `SSLServerSocket` speaking minimal
+  HTTP/1.1, loopback only, with a per-JVM self-signed certificate whose SAN carries iPAddress
+  127.0.0.1 — package-private machinery of the contract class, never published surface, naming no
+  JCE provider, and deliberately duplicating the core's hand-built certificate encoder because
+  neither side's fixtures may be published. The checks: an error status answered as a
+  `PushResponse`, response headers reaching the caller, exactly one byte-for-byte faithful request
+  per `post` call, a redirect returned with the second listener never even connected to, a refused
+  connection and an unanswered (handshake done, request read, no status line) exchange each thrown
+  as `PushDeliveryException`, and a correlation-echo concurrency smoke check. Every network check
+  runs under a budget whose expiry *aborts* rather than fails — the seam promises no latency, so an
+  expired budget is not a verdict. Failure messages name headers, counts and statuses, never an
+  endpoint, a header value or body bytes. `JdkPushHttpClient` is the in-tree subject; the kit's
+  self-test proves a redirect-following transport fails the redirect check, which is what allowed
+  the core's own wire-level redirect test to be deleted.
   `VapidKeyPairFixture`, `SubscriptionFixture`, `ScriptedPushHttpClient` and `SentPush` serve the
   much larger audience that only sends. What admits a member is that the knowledge it carries is the
   library's own and moves with it — a value the library produces stays valid across an upgrade that

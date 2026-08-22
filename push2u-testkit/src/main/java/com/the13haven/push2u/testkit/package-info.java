@@ -19,7 +19,13 @@
  * {@link com.the13haven.push2u.EndpointPolicy} extends — every one that admits an endpoint, which is every one this
  * library has a use for: it checks that the policy answers with a value rather than an exception, that concurrent calls
  * all come back, and that a refusal's reason does not carry the capability part of the endpoint into the logs the
- * outcome reaches. A policy that permits nothing has no permitted endpoint to hand over and stays outside it. The
+ * outcome reaches. A policy that permits nothing has no permitted endpoint to hand over and stays outside it.
+ * {@link com.the13haven.push2u.testkit.PushHttpClientContractTest} is what a custom
+ * {@link com.the13haven.push2u.PushHttpClient} extends — it brings its own loopback TLS server as package-private
+ * machinery, hands the implementation the trust material for a throwaway per-JVM certificate, and checks over that wire
+ * what a transport owes: an error status answered rather than thrown, response headers reaching the caller, exactly one
+ * byte-for-byte-faithful request per call, redirects returned rather than followed, the two unanswered shapes thrown as
+ * {@link com.the13haven.push2u.PushDeliveryException}, and concurrent callers each getting their own response. The
  * fixture side serves the application that only sends: {@link com.the13haven.push2u.testkit.VapidKeyPairFixture}
  * generates a VAPID pair the builder and the configuration properties accept,
  * {@link com.the13haven.push2u.testkit.SubscriptionFixture} holds one coherent browser subscription in both the typed
