@@ -22,6 +22,22 @@ fine — nothing decoded it before — stopped being fine, and five of six tests
 an upgrade whose release notes could not have warned about them. The values were never wrong on
 purpose. They were written against a contract, and the contract moved.
 
+The same duplication is in this repository, and what makes it evidence is the distinction it forces
+rather than the count. A fixed-width writer for a 32-byte value is copied into eleven test sources,
+and they are not eleven instances of one thing. **Where a valid pair exists only so that a context
+can come up — so that `push2u.vapid.public-key` and `.private-key`, or
+`push2u.signer.vault.public-key`, have something to bind — the assembly is incidental, and it is
+what the fixture below replaces.** Six such sites are plain on inspection, five of them needing both
+halves and one only the public one, and every one is in a Spring starter module. **Where the
+encoding itself is the subject, the hand-assembly stays**: `P256PublicKeysTest` builds its boundary
+values out of the field prime, and a fixture there would be testing the fixture.
+
+The criterion is what this record fixes; which remaining site falls on which side is for the
+implementation to decide file by file, because the two look alike until you read what the value is
+for. What is already clear is that no starter module depends on `push2u-testkit` today, so putting
+the fixture to work inside this build is a step of the implementation rather than a consequence of
+it — the dependency is added where the setup is replaced, and nowhere else.
+
 **The question this record answers is not which helpers are convenient.** It is which knowledge
 belongs to the library and therefore has to travel with it. A consumer can write a stub transport
 answering one constant status in five lines and will get it right. A consumer cannot know what the
@@ -111,6 +127,21 @@ the one belonging to that point**. A mis-encoded public key therefore fails at `
 in the consumer's own build; a mis-padded scalar produces a fixture that looks coherent and whose
 JWTs a push service rejects, which is the failure this record exists to keep out of consumers'
 tests.
+
+**The fixture reaches for no provider at all, and two separate things make that so.** The first is a
+fact of this build: `push2u-core` already puts the kit on both its `test` and its `fipsTest`
+classpath, and those two carry deliberately incompatible BouncyCastle flavours that can never meet,
+so a fixture *referring to either* breaks whichever source set it is not on — in the library's own
+build rather than in a consumer's. That is the invariant the core's shared send-pipeline helper
+states for itself, and it reaches BouncyCastle only.
+
+The second is wider and is the one that governs a published artifact. Naming any provider — `SunEC`
+as much as another — would compile everywhere and still be wrong: a consumer's JVM may not have the
+one the kit named, or may deliberately run with a different one, and a fixture that pins its own
+would then produce keys through a provider the library under test is not using. So the contract is
+standard JCA types and standard algorithm names, with no provider selected, named or inspected. The
+lookup `KeyPairGenerator.getInstance("EC")` performs is exactly the right one: it leaves the choice
+to the environment, which is what the code the fixture is used to test does too.
 
 So the correspondence is pinned where it can be: a test in the kit signs with a generated pair and
 verifies the signature against its public half through `Es256Verifier`, which the core publishes for
@@ -457,6 +488,10 @@ readers who have neither this record nor those documents.
 - A `PushSender` fixture or factory, in any spelling, and an `EndpointPolicies.unrestricted()`
   reached through one.
 - A fixed VAPID pair, or any key-shaped constant, in a published artifact.
+- A fixture selecting, naming or inspecting a JCE provider, rather than taking whichever one the
+  environment offers for a standard algorithm name — and, narrower and harder, any reference from
+  the kit to either BouncyCastle flavour, which the core's two disjoint test classpaths make
+  unbuildable rather than merely unwise.
 - An encoder taking key material a caller already holds and returning its private scalar as a string
   — in the kit, the core or a starter. That is the property ADR-018's clause protects, which
   survives the one-clause supersession named above and reaches one artifact further than ADR-018
