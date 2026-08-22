@@ -1,6 +1,6 @@
 # ADR-030 — The kit states what a transport owes, and brings the server it needs
 
-**Status:** Proposed
+**Status:** Accepted
 
 Filed as https://github.com/the13haven/push2u/issues/195, together with the endpoint policy's
 contract. The two share a cause and not a design;
