@@ -133,27 +133,16 @@ public final class SubscriptionFixture {
     }
 
     /**
-     * The X9.62 uncompressed encoding: {@code 0x04}, then X and Y as fixed 32-byte big-endian values, each left-padded
-     * — never the variable-width form {@code BigInteger.toByteArray()} produces, whose shifted bytes would encode a
-     * different point.
+     * The X9.62 uncompressed encoding: {@code 0x04}, then X and Y as fixed 32-byte big-endian values, each written by
+     * {@link FixedWidth} — the same single writer the key-pair fixture encodes through, never the variable-width form
+     * {@code BigInteger.toByteArray()} produces, whose shifted bytes would encode a different point.
      */
     private static byte[] uncompressedPoint(ECPublicKey publicKey) {
         ECPoint point = publicKey.getW();
-        byte[] x = point.getAffineX().toByteArray();
-        byte[] y = point.getAffineY().toByteArray();
         byte[] encoded = new byte[65];
         encoded[0] = 0x04;
-        copyFixedWidth(x, encoded, 1);
-        copyFixedWidth(y, encoded, 33);
+        System.arraycopy(FixedWidth.of(point.getAffineX()), 0, encoded, 1, 32);
+        System.arraycopy(FixedWidth.of(point.getAffineY()), 0, encoded, 33, 32);
         return encoded;
-    }
-
-    /**
-     * Writes a minimal two's-complement coordinate into 32 bytes at {@code offset}: drops the leading sign byte a
-     * 33-byte value carries, left-pads a short one.
-     */
-    private static void copyFixedWidth(byte[] minimal, byte[] target, int offset) {
-        int length = Math.min(minimal.length, 32);
-        System.arraycopy(minimal, minimal.length - length, target, offset + 32 - length, length);
     }
 }

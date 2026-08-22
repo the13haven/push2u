@@ -50,7 +50,8 @@ public final class VapidKeyPairFixture {
      * P-256 coordinates and scalars serialize as exactly this many big-endian bytes, left-padded with zeros — never the
      * minimal length {@link BigInteger#toByteArray()} produces. A value quietly shortened or padded on the wrong side
      * still decodes as <em>some</em> key, just not this one, and the mismatch surfaces only when a push service rejects
-     * the JWT.
+     * the JWT. The writing itself is {@link FixedWidth}'s, shared with the subscription fixture so the rule has one
+     * implementation.
      */
     private static final int COORDINATE_LENGTH = 32;
 
@@ -79,7 +80,7 @@ public final class VapidKeyPairFixture {
         Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
         return new VapidKeyPairFixture(
                 base64Url.encodeToString(uncompressedPoint((ECPublicKey) keyPair.getPublic())),
-                base64Url.encodeToString(fixedWidthScalar(((ECPrivateKey) keyPair.getPrivate()).getS())));
+                base64Url.encodeToString(FixedWidth.of(((ECPrivateKey) keyPair.getPrivate()).getS())));
     }
 
     /**
@@ -135,23 +136,8 @@ public final class VapidKeyPairFixture {
         ECPoint point = publicKey.getW();
         byte[] encoded = new byte[1 + 2 * COORDINATE_LENGTH];
         encoded[0] = 0x04;
-        System.arraycopy(fixedWidthScalar(point.getAffineX()), 0, encoded, 1, COORDINATE_LENGTH);
-        System.arraycopy(fixedWidthScalar(point.getAffineY()), 0, encoded, 1 + COORDINATE_LENGTH, COORDINATE_LENGTH);
+        System.arraycopy(FixedWidth.of(point.getAffineX()), 0, encoded, 1, COORDINATE_LENGTH);
+        System.arraycopy(FixedWidth.of(point.getAffineY()), 0, encoded, 1 + COORDINATE_LENGTH, COORDINATE_LENGTH);
         return encoded;
-    }
-
-    /**
-     * A non-negative value below 2<sup>256</sup> as exactly 32 big-endian bytes. {@link BigInteger#toByteArray()}
-     * answers the <em>minimal</em> two's-complement form, which is almost never 32 bytes: a value whose top bit is set
-     * gets a 33rd leading {@code 0x00} sign byte, and a value with leading zero bytes comes back short. The sign byte
-     * is dropped and the value is left-padded — each roughly a coin flip per key, so an encoder that skipped either
-     * case would produce working pairs most of the time and unusable ones on a schedule no test suite keeps.
-     */
-    private static byte[] fixedWidthScalar(BigInteger value) {
-        byte[] minimal = value.toByteArray();
-        byte[] fixed = new byte[COORDINATE_LENGTH];
-        int length = Math.min(minimal.length, COORDINATE_LENGTH);
-        System.arraycopy(minimal, minimal.length - length, fixed, COORDINATE_LENGTH - length, length);
-        return fixed;
     }
 }

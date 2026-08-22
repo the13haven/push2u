@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -155,6 +156,54 @@ final class ScriptedPushHttpClientTest {
         assertThat(client.sent())
                 .as("every answered call was recorded, exactly once")
                 .hasSize(totalPosts);
+    }
+
+    /**
+     * The other half of the atomicity claim: not merely that counts add up, but that the recorded order <em>is</em> the
+     * order answers were handed out. An implementation that took the script cursor and recorded under two separate lock
+     * acquisitions would pass every counting assertion while letting the two orders interleave apart — so each
+     * concurrent caller posts a body of its own unique length and keeps the status it drew, and afterwards the call
+     * recorded at position {@code k} must be the very caller that drew script entry {@code k}.
+     */
+    @Test
+    void theRecordedOrderIsTheOrderAnswersWereHandedOut() throws Exception {
+        int threads = 8;
+        int totalPosts = 200;
+        int[] followingStatuses = new int[totalPosts - 1];
+        for (int position = 1; position < totalPosts; position++) {
+            followingStatuses[position - 1] = 1000 + position;
+        }
+        ScriptedPushHttpClient client = ScriptedPushHttpClient.respondingWith(1000, followingStatuses);
+
+        Map<Integer, Integer> statusDrawnByBodyLength = new ConcurrentHashMap<>();
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> callers = new ArrayList<>();
+            for (int caller = 0; caller < totalPosts; caller++) {
+                int bodyLength = caller + 1;
+                callers.add(pool.submit(() -> {
+                    start.await();
+                    PushResponse drawn = client.post(ENDPOINT, Map.of(), new byte[bodyLength]);
+                    statusDrawnByBodyLength.put(bodyLength, drawn.statusCode());
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> caller : callers) {
+                caller.get(30, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        List<SentPush> sent = client.sent();
+        assertThat(sent).hasSize(totalPosts);
+        for (int position = 0; position < totalPosts; position++) {
+            assertThat(statusDrawnByBodyLength.get(sent.get(position).bodyBytes()))
+                    .as("the caller recorded at position %d is the one that drew script entry %d", position, position)
+                    .isEqualTo(1000 + position);
+        }
     }
 
     @Test
