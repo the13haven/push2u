@@ -51,7 +51,9 @@ public abstract class PushHttpClientContractTest {
 }
 ```
 
-One abstract method, and no new published type of any kind. The contract stands the server up,
+One abstract method. The contract class is itself a new published type — there is no way to publish
+a contract without publishing the class an implementor extends — and it is the only one: no helper,
+no fixture, and no TLS type of this project's own joins it. The contract stands the server up,
 generates a throwaway certificate for it, hands the implementor the two standard JCA objects that
 trust that certificate, and receives back a transport configured to speak to it.
 
@@ -61,9 +63,16 @@ The harness is compiled into `push2u-testkit` and travels to every consumer that
 test classpath. Saying that no mock push service appears would be false. What is true, and what this
 record decides, is narrower and is the whole of the commitment:
 
-**The TLS harness ships as package-private implementation machinery of the contract. It is not a
-supported public fixture API, it cannot be instantiated or reached from outside its package, and no
-consumer may depend on its shape, its behaviour or its continued existence.**
+**The TLS harness ships as package-private implementation machinery of the contract. Nothing about
+it appears in the surface a consumer compiles against — not as public API, not as a `protected`
+member a subclass inherits — and no consumer may depend on its shape, its behaviour or its continued
+existence.**
+
+What that deliberately does not claim is physical unreachability. The kit is an automatic module and
+a consumer puts it on a test class path, so code declaring the same package reaches a package-private
+class as it does in any jar, and reflection reaches it regardless. The commitment is about what is
+supported, which is the only kind of commitment a library is able to keep; a record claiming the
+stronger thing would be making a promise the platform does not let it make.
 
 That distinction is the point rather than a technicality. ADR-028's admission test asks whether the
 knowledge a member carries is the library's own and moves with it; a general-purpose mock push
@@ -89,8 +98,8 @@ configured, so the kit hands over the material and the implementor does the conf
 `SSLSocketFactory` *and* the `X509TrustManager` beside it. Handing over one half and making OkHttp's
 author derive the other from a `TrustManagerFactory` would put the kit's own certificate handling
 into their test — which is the sort of thing that gets replaced with a trust-all manager on the
-second attempt. Neither type is ours, so no TLS abstraction is invented and nothing new is
-published.
+second attempt. Neither type is ours, so no TLS abstraction is invented and nothing of this project's own
+joins the published surface.
 
 ## The kit invents no lifecycle for the transport, and states how often it asks for one
 
@@ -136,21 +145,38 @@ Three reasons, and the first is about the artifact:
    exactly one POST, and `PushOutcome.RetryableFailure` carries the hint the push service sent. A
    transport that returns the status and drops the headers empties that hint, silently, for every
    `429` a deployment ever receives.
-3. **The request arrives as a POST**, at the URI it was given, carrying the headers it was given and
-   a body of the length it was given.
+3. **Exactly one request arrives, and it is the one that was handed over.** Two obligations, and
+   they are one check because they are one observation of the wire. *One request*: the seam says a
+   transport neither classifies nor repeats a request, and that however a repeat is scheduled each
+   attempt arrives as its own `post` call — so a transport retrying inside `post` delivers the
+   notification twice, and the sender it reports one outcome to never learns of the second. *That
+   request*: a POST, at the URI it was given, carrying the headers it was given and the body it was
+   given **compared byte for byte, not by length**. A transport that replaced every byte with a zero
+   of the same length passes a length check and hands every subscriber a message their browser
+   cannot decrypt. The bytes are synthetic, made by the contract for this check — nothing here holds
+   or publishes a real encrypted body, and the comparison happens inside the harness and ends
+   there.
 4. **A redirect is not followed.** The harness answers a `3xx` whose `Location` names a **second
    listener, on another loopback port**, and the check asserts both halves: the caller was handed
    that `3xx` itself, and the second listener accepted no connection at all. The second port is what
-   makes the claim the right one — a different port is a different origin, and the assertion is about
-   a host the endpoint policy never saw, which a target path on the same server would only weaken
-   into a claim about a path. The certificate is the same one and its subject alternative name covers
+   makes the claim the right one — a different port is a different origin, and the assertion is
+   about an origin the endpoint policy never assessed, which a target path on the same server would
+   weaken into a claim about a path. The host is the same one, a loopback harness being unable to
+   arrange otherwise, and the record says so rather than overstating what the check pins: what it
+   pins is that nothing was sent to an origin nobody vetted. The certificate is the same one and its
+   subject alternative name covers
    both listeners, so a transport that does follow the redirect arrives at the second one with no
    trust error to stop it and its silence means what the check needs it to mean; the loopback-only
    rule below is not bent to arrange this.
 5. **A refused connection is a `PushDeliveryException`** — a port nothing is listening on.
-6. **A connection accepted and dropped is a `PushDeliveryException`.** Kept separate from the fifth
-   deliberately: they fail at different points, one before the handshake begins and one during it,
-   and a transport can honestly report one while swallowing the other.
+6. **A request sent with nothing answering it is a `PushDeliveryException`.** The harness completes
+   the TLS handshake, reads the whole request, and closes the connection without writing a status
+   line. That is the case the seam names and the one `PushOutcome.Indeterminate` exists for — the
+   POST went out and no answer came — and it is the reason the drop is placed here rather than in
+   the handshake: a connection dropped mid-handshake tests a transport that never sent anything,
+   which is the fifth check again in a costume. Kept separate from the fifth deliberately: one fails
+   before a byte of the request is written and one after all of it is, a caller's exposure differs
+   between them, and a transport can honestly report the first while swallowing the second.
 7. **A concurrency smoke check**, described below.
 
 ## The concurrency check is a smoke check, and here it has teeth
@@ -192,6 +218,10 @@ decision, not left to the implementation:
   to skip it.
 - Responses close the connection unless persistent connections are the subject of the scenario, so
   that connection reuse is never accidentally part of what a check asserts.
+- Every check that reaches the network carries its own test-level timeout. This is not a transport
+  obligation and states nothing about `PushHttpClient` — the seam promises no timeout and this
+  contract asks for none — but a subject that blocks forever has to fail a consumer's build rather
+  than hang it, and a contract that can hang the build it was added to gets removed from it.
 
 ## Response-body materialisation is not in the contract
 
@@ -287,8 +317,14 @@ records having arrived together.
 - `com.sun.net.httpserver` reaching a published artifact.
 - A contract obligation that the response body is never materialised, in any spelling that asserts
   buffering did not happen; and a response-size check offered as one.
-- A contract check for a timeout, a retry, a connection-pool property or persistent-connection
-  behaviour — none of which the seam promises.
+- A contract check for a timeout, for a retry *policy* or *schedule*, for a connection-pool property
+  or for persistent-connection behaviour — none of which the seam promises. How many HTTP requests
+  one `post` call may produce is not on that list and is checked, the seam promising exactly that.
+- A request body compared by length rather than byte for byte, which passes a transport that
+  delivers the right number of wrong bytes.
+- An unanswered request modelled by dropping the connection before or during the TLS handshake,
+  which tests a transport that never sent anything and leaves the case `PushOutcome.Indeterminate`
+  exists for unchecked.
 - A lifecycle the kit invents for the transport: a teardown hook, a `close` call on the subject, an
   `AutoCloseable` expectation, or any other obligation `PushHttpClient` does not itself carry.
 - A redirect target on the harness's own listener, which would turn a check about a host the policy

@@ -157,11 +157,22 @@ forbidding the origin would fail this library's own policies for doing the right
 fingerprint is there so an operator can correlate log lines about one subscription without holding
 it, and it is likewise not a leak.
 
-So the check searches for the capability part specifically: the full URI string, and the user-info,
-path, query and fragment in both their raw and decoded forms — a policy that percent-decodes before
-building its message leaks just as much as one that does not. Only components with content are
-searched: an empty query and a bare `/` path are not evidence of anything, and searching for them
-would match every reason ever written.
+So the check searches for the capability part specifically, and it searches at three granularities,
+because a leak does not have to be a whole component. The full URI string; the user-info, path,
+query and fragment each entire; and, inside those, each path segment and each query value on its
+own. All of it in both the raw and the decoded spelling — a policy that percent-decodes before
+building its message leaks just as much as one that does not.
+
+**The third granularity is the one a first attempt leaves out, and it is where the leak actually
+happens.** A policy that writes the whole path into its message is caught by any version of this
+check. A policy that names the last segment alone — `"blocked subscription secret-token"`, for a
+witness whose path is `/tenant/secret-token` — has published the entire bearer credential while its
+message contains neither the full URI nor the whole path, and a check searching only entire
+components would pass it. A query behaves the same way: `token=<secret>` leaked as the value alone.
+What reaches a log is what a subscription can be replayed with, and one segment is enough for that.
+
+Only parts with content are searched: an empty query and a bare `/` path are not evidence of
+anything, and searching for them would match every reason ever written.
 
 **Which is why the kit demands a witness carrying a distinctive capability-shaped component, and
 fails loudly when it does not get one.** A refused endpoint of `https://blocked.example/` has no
@@ -170,18 +181,22 @@ outcome available, an assertion reporting success for a property it never tested
 path is `/api` is barely better: the search then answers a question about the policy's prose rather
 than about the endpoint.
 
-**The criterion for a usable witness is fixed here rather than left to judgement, and stating it
-closes a trap that would otherwise convict correct implementations.** A component qualifies when it
-is meaningful *and* neither of the spellings the search will look for — the raw one and the decoded
-one — occurs in `Endpoints.redact(witness)`, the exact string a conforming policy is entitled to
-print about that endpoint. The two spellings are held to the rule separately because they are
-searched separately: a decoded form can collide where its raw form does not, and a rule stated over
-"the component" would admit precisely that witness. One half of this rules out a marker that is
-merely the origin again. The other half is the trap: the redaction ends in a sixteen-character
-hexadecimal fingerprint, so a witness whose path is hex-shaped matches on the fingerprint and reports
-a leak against a policy that leaked nothing. Beside that the marker must be long enough that
-colliding with the prose of a refusal is not plausible — the number belongs to the implementing pull
-request, to choose and to justify; the rule is what this record fixes.
+**One criterion governs both ends of this, and fixing it here rather than leaving it to judgement is
+what closes a trap that would otherwise convict correct implementations.** A string is fit to be
+searched for when it is meaningful *and* does not occur in `Endpoints.redact(witness)` — the exact
+text a conforming policy is entitled to print about that endpoint — and it is held to that
+separately in each spelling the search uses, the raw one and the decoded one, because a decoded form
+can collide where its raw form does not. The search looks only for fit strings, and **the witness is
+unfit for the check when it yields none**: the two halves are one rule applied at two moments.
+
+The meaningfulness half rules out the segments every URI has — `v1`, `api`, a bare `/` — whose
+appearance in a refusal says something about the policy's prose and nothing about the endpoint. The
+other half is the trap: the redaction ends in a sixteen-character hexadecimal fingerprint, so a
+hex-shaped segment matches on the fingerprint and reports a leak against a policy that leaked
+nothing, and a marker that is merely the origin again matches on the origin the redaction prints on
+purpose. Beside that a fit string must be long enough that colliding with the prose of a refusal is
+not plausible — the number belongs to the implementing pull request, to choose and to justify; the
+rule is what this record fixes.
 
 A witness failing either half is refused **as unfit for the check**, with a message naming which
 half it failed and why. It is never converted into a failure of the policy: the kit is reporting on
@@ -280,6 +295,9 @@ index that answers it correctly whether or not anyone remembered anything.
   implementor's judgement instead of asserted with a message that says why.
 - The refusal and the leak stated as two checks over two calls, which would have the contract observe
   one witness twice and quietly require the two answers to agree.
+- A leak check searching only whole components, so that a reason naming one path segment or one
+  query value — the whole of the bearer credential, in the spelling a policy is most likely to write
+  — passes it.
 - A witness qualification rule admitting a marker that occurs, in either of the spellings the leak
   check searches, in the redaction a conforming policy may print — the fingerprint above all — and
   equally a fixture's unfitness reported as a failure of the policy.
