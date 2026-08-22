@@ -72,9 +72,9 @@ final class SubscriptionFixtureTest {
     }
 
     /**
-     * The boundary shape of the point writer, hunted for rather than sampled: a coordinate below 2<sup>248</sup> comes
+     * The boundary shape of the point writer, hunted for rather than sampled: a coordinate below 2<sup>247</sup> comes
      * out of {@code BigInteger.toByteArray()} short of 32 bytes and must be left-padded inside the 65-byte point —
-     * roughly one {@code at(...)} call in 128 across the two coordinates, so a writer padding the wrong side keeps an
+     * roughly one {@code at(...)} call in 256 across the two coordinates, so a writer padding the wrong side keeps an
      * ordinary run green while failing consumers intermittently. A mis-padded coordinate shifts every following byte
      * and encodes a different point, which the on-curve check inside {@code Subscription.fromBase64} refuses — so
      * surviving generation on this shape is most of the assertion, and the coherence check closes it.

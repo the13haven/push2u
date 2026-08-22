@@ -27,7 +27,7 @@ import com.the13haven.push2u.VapidKeys;
  * everywhere except in a signature verification — so a signature made from the scalar is verified against the public
  * half here, through {@link Es256Verifier}, and deliberately on the pairs where {@code BigInteger.toByteArray()}
  * disagrees with the fixed 32-byte form: a scalar carrying a leading sign byte (about half of all pairs) and a scalar
- * short of 32 bytes (about one pair in 256, hunted for explicitly because an ordinary run would sample it rarely).
+ * short of 32 bytes (about one pair in 512, hunted for explicitly because an ordinary run would sample it rarely).
  */
 final class VapidKeyPairFixtureTest {
 
@@ -53,9 +53,10 @@ final class VapidKeyPairFixtureTest {
     }
 
     /**
-     * The left-padding half: a scalar below 2<sup>248</sup> comes out of {@code toByteArray()} short of 32 bytes, and
-     * the fixture must left-pad it. This is the shape a wrong writer survives longest on — one pair in 256 — so it is
-     * hunted for rather than sampled.
+     * The left-padding half: a scalar below 2<sup>247</sup> comes out of {@code toByteArray()} short of 32 bytes, and
+     * the fixture must left-pad it (a scalar in [2<sup>247</sup>, 2<sup>248</sup>) is already 32 bytes, its first a
+     * genuine {@code 0x00} sign byte). The short shape is the one a wrong writer survives longest on — one pair in 512
+     * — so it is hunted for rather than sampled.
      */
     @Test
     void aScalarWithLeadingZeroBytesStillBelongsToThePublicKey() {
