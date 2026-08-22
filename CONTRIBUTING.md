@@ -281,10 +281,14 @@ the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a c
 vector fail, the change is wrong until proven otherwise.
 
 Every `VapidSigner` implementation extends the published conformance kit
-`com.the13haven.push2u.testkit.VapidSignerContractTest`. It is one half of the `push2u-testkit`
-module; the other is the fixtures a *sending* application tests with — a generated VAPID pair, a
-coherent browser subscription and a scripted, recording `PushHttpClient`, each carrying knowledge
-that is the library's own and moves with it, which is what admits anything there
+`com.the13haven.push2u.testkit.VapidSignerContractTest`, and every `EndpointPolicy` this build ships
+extends `EndpointPolicyContractTest` beside it
+([ADR-029](docs/adr/0029-the-kit-states-what-an-endpoint-policy-owes.md)) — the four subjects in
+`push2u-core`'s tests are what keeps a published contract from drifting away from what the library
+actually requires. Those two contracts are one side of the `push2u-testkit` module; the other is the
+fixtures a *sending* application tests with — a generated VAPID pair, a coherent browser
+subscription and a scripted, recording `PushHttpClient`, each carrying knowledge that is the
+library's own and moves with it, which is what admits anything there
 ([ADR-028](docs/adr/0028-the-test-kit-publishes-contracts-not-conveniences.md), and
 [`docs/TESTKIT.md`](docs/TESTKIT.md) for what it publishes and what it refuses to). The whole module
 is a `main` source set, so the full analyser set applies to all of it — treat it as published API,

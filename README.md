@@ -72,7 +72,7 @@ comes up; this is the whole list.
 | [`HEALTH.md`](docs/HEALTH.md) | The starter's health indicator — what its probe asserts, its two keys, and the health-group routes. |
 | [`VAULT.md`](docs/VAULT.md) | The Vault Transit signer — the three key modes, the `push2u.signer.vault.*` properties, namespaces, and its transport seam. |
 | [`SIGNER.md`](docs/SIGNER.md) | Writing a `VapidSigner` over an HSM, a KMS or a remote custodian, and the conformance kit that checks one. |
-| [`TESTKIT.md`](docs/TESTKIT.md) | The test kit's other half — fixtures and a scripted transport for a sending application's own tests. |
+| [`TESTKIT.md`](docs/TESTKIT.md) | The rest of the test kit — fixtures and a scripted transport for a sending application's own tests, and the `EndpointPolicy` conformance contract. |
 | [`VAPID.md`](docs/VAPID.md) | The one-time recipe for generating a VAPID key pair. |
 | [`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) | The operator runbook for replacing that pair on a running deployment. |
 | [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) | The browser push services and the allowlist entry each one needs, in both spellings. |
@@ -793,9 +793,19 @@ The string in a `Refused` is not private to your policy — `send` copies it ont
 application builds out of an outcome. A push endpoint is a capability URL, so a reason that quotes
 it verbatim publishes the credential to all of them. Render it with `Endpoints.redact(String)`
 first, which is what the standard allowlist does, and say what your rule objected to in your own
-words beside it. Nothing enforces this — `Refused` validates its reason no further than storing
-`""` for a `null` one, deliberately, because a refusal that threw out of the seam would stop the
-fan-out the value shape exists to keep running. The redacted endpoint on the outcome is not affected
+words beside it. Nothing at run time enforces this — `Refused` validates its reason no further than
+storing `""` for a `null` one, deliberately, because a refusal that threw out of the seam would stop
+the fan-out the value shape exists to keep running. Your own test suite can: extend
+`EndpointPolicyContractTest` from [`push2u-testkit`](#writing-a-vapidsigner), hand it one endpoint
+your policy permits and one it refuses, and it fails on a reason carrying the endpoint, any of its
+components, one path segment or one query value, in the raw spelling or the decoded one. What it
+searches for is bounded at the short end: a part of the witness under sixteen characters is left
+alone, because `v1` or `api` in a refusal says something about the policy's wording and nothing
+about the endpoint — so give it a refused endpoint whose path segment or query value looks like the
+capability URL a real subscription carries, and it will tell you if it cannot use the one you
+supplied. It also checks that a refusal is a value rather than an exception, and that concurrent
+calls all come back.
+[`TESTKIT.md`](docs/TESTKIT.md) is the reference. The redacted endpoint on the outcome is not affected
 either way: the library renders that one itself, from the subscription it holds, which is why
 `Refused` carries no endpoint component for you to fill in.
 
@@ -916,8 +926,9 @@ what writing a signer takes.
 
 `VapidSigner` is the seam for key custody: an implementation over an HSM, a KMS or a remote
 custodian keeps the private key wherever it belongs and answers with a raw 64-byte `r || s` ES256
-signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published test kit, and
-its conformance contract holds an implementation to that contract in its own test suite:
+signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published test kit; its
+signer contract holds an implementation to that contract in its own test suite, and the same
+artifact carries the one for a custom [endpoint policy](#endpoint-policy-ssrf-hardening):
 
 ```kotlin
 dependencies {
@@ -933,7 +944,7 @@ advertises may never change, and the six checks the kit runs.
 ## Testing an application that sends
 
 The same artifact carries what the other audience needs — the one that writes tests around its own
-sending code rather than around a signer. `VapidKeyPairFixture` and `SubscriptionFixture` produce a
+sending code rather than around a signer or an endpoint policy. `VapidKeyPairFixture` and `SubscriptionFixture` produce a
 VAPID pair and a browser subscription that are valid against the library's *current* input
 contracts, in both the typed and the base64url form, so a test does not carry literals that were
 valid on the day they were pasted. `ScriptedPushHttpClient` answers a declared sequence of responses
@@ -950,7 +961,7 @@ combinations a real send can actually produce, and what the kit deliberately doe
 | Module | Purpose | JPMS module name |
 |---|---|---|
 | `push2u-core` | Domain types, encryption, VAPID, response classification, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
-| `push2u-testkit` | The `VapidSigner` conformance contract and the fixtures a sending application tests with, for a **test** classpath | `com.the13haven.push2u.testkit` |
+| `push2u-testkit` | The `VapidSigner` and `EndpointPolicy` conformance contracts and the fixtures a sending application tests with, for a **test** classpath | `com.the13haven.push2u.testkit` |
 | `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
 | `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
 | `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |

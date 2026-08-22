@@ -69,12 +69,16 @@ its conformance-kit section, which leaves the first about choosing a provider an
 into the short *Writing a VapidSigner* introduction README gives `docs/SPRING.md` and
 `docs/VAULT.md`. The testkit coordinate stayed behind in README, under the rule below, and
 `docs/SIGNER.md` links to it rather than repeating it.
-`docs/TESTKIT.md` is the same shape for the same artifact's other half and the other audience — the
+`docs/TESTKIT.md` is the same shape for the rest of that artifact and the other audience — the
 application that only sends: the four fixtures, the whole setup in one block with the endpoint
 policy visible in it, the `getEncoder()`/`getUrlEncoder()` trap and why it presents differently at
 65 bytes than at 16, what a scripted sequence does under a fan-out, which `PushOutcome`
 combinations a real send can produce where the public constructors admit more, and what the kit
-refuses to publish with the reason for each refusal. It also carries the one entry there with an
+refuses to publish with the reason for each refusal. It also carries `EndpointPolicyContractTest` —
+the kit's second contract, whose audience is neither of those two but the deployment writing its own
+egress rule, and which lands here rather than in a document of its own because this is the
+artifact's reference and where a reader looking at what the kit publishes arrives. It also carries
+the one entry there with an
 operational consequence a build can hit: the kit puts JUnit, AssertJ and the JUnit BOM on `api`
 because a consumer extends the contract, and on a Gradle build the BOM's constraints meet Boot's
 managed versions on the test classpath, where resolution takes the higher — so adding the kit moves
@@ -246,8 +250,8 @@ Notes that matter in practice:
 ```
 push2u-core                                  no runtime implementation dependencies (JSpecify only)
   ├── push2u-testkit                         api(push2u-core) + JUnit/AssertJ — the published
-  │                                          test kit (signer contract + sending fixtures), for a
-  │                                          consumer's TEST classpath
+  │                                          test kit (signer and endpoint-policy contracts +
+  │                                          sending fixtures), for a consumer's TEST classpath
   ├── push2u-signer-vault                    api(push2u-core)
   │     └── push2u-signer-vault-spring-boot-starter
   └── push2u-spring-boot-starter             api(push2u-core) + Spring Boot 4 autoconfigure
@@ -447,8 +451,23 @@ cannot see each other.
   consumers, which is what keeps the two BouncyCastle flavours apart; the fixtures themselves name
   neither provider. They are **not** published: the variants are skipped from the publication, as
   `push2u-signer-vault` does with its internal `RecordingHttpClient` and `FakeTransitVault`.
-- `push2u-testkit` publishes two halves, for the two audiences (ADR-028). `VapidSignerContractTest`
-  is the signer contract every implementation extends, from this build or outside it.
+- `push2u-testkit` publishes two sides, for the two audiences (ADR-028). `VapidSignerContractTest`
+  is the signer contract every implementation extends, from this build or outside it, and
+  `EndpointPolicyContractTest` (ADR-029) is the same for a deployment's own `EndpointPolicy`: it
+  answers with a value and never throws, concurrent calls all come back, and a refusal's reason
+  carries no capability part of the endpoint — searched at three granularities, down to a single
+  path segment or query value, raw and percent-decoded, plus a form-decoded spelling for a query
+  value alone. **Whether the witness is usable is decided over its parts below the whole URI and
+  only those**: every endpoint has a whole-URI string that passes the fitness rule, so counting it
+  would accept `https://blocked.example/api` and leave the check able to catch only a policy quoting
+  the endpoint entire. A witness offering nothing below the URI is reported as an unfit *fixture*
+  rather than as a failure of the policy, and a leak is reported by naming the level and the
+  spelling that matched — never by printing the value, since the kit's own failure output reaches
+  the same log the leak would have. The marker length floor is 16 characters, and it lives in the
+  kit alone. Nothing in the contract observes one endpoint twice and requires the
+  two answers to agree, which is why the refusal and the leak are one check over one `assess` call.
+  Both `EndpointPolicies` factories and `unrestricted()` — with `Optional.empty()` for the refusal
+  witness — are subjects in `push2u-core`'s tests.
   `VapidKeyPairFixture`, `SubscriptionFixture`, `ScriptedPushHttpClient` and `SentPush` serve the
   much larger audience that only sends. What admits a member is that the knowledge it carries is the
   library's own and moves with it — a value the library produces stays valid across an upgrade that
