@@ -22,12 +22,18 @@ fine — nothing decoded it before — stopped being fine, and five of six tests
 an upgrade whose release notes could not have warned about them. The values were never wrong on
 purpose. They were written against a contract, and the contract moved.
 
-The same duplication is in this repository, which is worth saying because it makes the report's
-case without a consumer's word for it. A fixed-width scalar writer is copied into eleven test
-sources across four modules, and `Push2uAutoConfigurationTest` carries an X9.62 uncompressed-point
-writer beside it, for no other purpose than producing the two base64url strings
-`push2u.vapid.public-key` and `.private-key` bind — the very thing the fixture below exists to hand
-over.
+The same duplication is in this repository, and counting it precisely is what makes it evidence
+rather than a slogan. A fixed-width writer for a 32-byte value is copied into eleven test sources,
+but most of those encode the coordinates of a public point; **five encode a private scalar, and all
+five are in the two Spring starter modules**, where a valid pair exists only so that
+`push2u.vapid.public-key` and `.private-key` have something to bind and the context can come up.
+That is incidental setup, and it is what the fixture below replaces. The other six are a different thing
+and stay: in `P256PublicKeysTest` and the Vault module's key-validation tests the hand-assembly *is*
+the subject, and a fixture there would test the fixture.
+
+Those two starter modules do not depend on `push2u-testkit` today, so putting the fixture to work
+inside this build is a step of the implementation rather than a consequence of it — the dependency
+is added where the setup is replaced, and nowhere else.
 
 **The question this record answers is not which helpers are convenient.** It is which knowledge
 belongs to the library and therefore has to travel with it. A consumer can write a stub transport
@@ -119,12 +125,19 @@ in the consumer's own build; a mis-padded scalar produces a fixture that looks c
 JWTs a push service rejects, which is the failure this record exists to keep out of consumers'
 tests.
 
-**The fixture is provider-free, and that is a constraint of this build rather than a preference.**
-`push2u-core` already puts the kit on both its `test` and its `fipsTest` classpath, and those two
-carry deliberately incompatible BouncyCastle flavours that can never meet: a fixture naming either
-one breaks whichever source set it is not on, and breaks it in the library's own build rather than
-in a consumer's. Platform primitives only — the same invariant the core's shared send-pipeline
-helper states for itself, arrived at here for the same reason.
+**The fixture reaches for no provider at all, and two separate things make that so.** The first is a
+fact of this build: `push2u-core` already puts the kit on both its `test` and its `fipsTest`
+classpath, and those two carry deliberately incompatible BouncyCastle flavours that can never meet,
+so a fixture *referring to either* breaks whichever source set it is not on — in the library's own
+build rather than in a consumer's. That is the invariant the core's shared send-pipeline helper
+states for itself, and it reaches BouncyCastle only.
+
+The second is wider and is the one that governs a published artifact. Naming any provider — `SunEC`
+as much as another — would compile everywhere and still be wrong: a consumer's JVM may not have the
+one the kit named, or may deliberately run with a different one, and a fixture that pins its own
+would then produce keys through a provider the library under test is not using. So the contract is
+standard JCA types and algorithm names, no provider argument and no provider lookup; the environment
+chooses, exactly as it does for the code the fixture is used to test.
 
 So the correspondence is pinned where it can be: a test in the kit signs with a generated pair and
 verifies the signature against its public half through `Es256Verifier`, which the core publishes for
@@ -471,8 +484,10 @@ readers who have neither this record nor those documents.
 - A `PushSender` fixture or factory, in any spelling, and an `EndpointPolicies.unrestricted()`
   reached through one.
 - A fixed VAPID pair, or any key-shaped constant, in a published artifact.
-- A fixture naming a JCE provider, or reaching either BouncyCastle flavour, which the core's two
-  disjoint test classpaths make unbuildable rather than merely unwise.
+- A fixture selecting or naming a JCE provider, rather than taking whichever one the environment
+  offers for a standard algorithm name — and, narrower and harder, any reference from the kit to
+  either BouncyCastle flavour, which the core's two disjoint test classpaths make unbuildable rather
+  than merely unwise.
 - An encoder taking key material a caller already holds and returning its private scalar as a string
   — in the kit, the core or a starter. That is the property ADR-018's clause protects, which
   survives the one-clause supersession named above and reaches one artifact further than ADR-018
