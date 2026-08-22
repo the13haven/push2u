@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
 
@@ -252,6 +254,24 @@ final class PushHttpClientContractSelfTest {
                 .hasMessageContaining("exactly one request")
                 .hasMessageContaining("2 requests")
                 .hasMessageNotContaining("127.0.0.1");
+    }
+
+    /**
+     * The harness's chunked branch, pinned by a subject that uses it. Both framings are correct HTTP and the harness's
+     * own documentation promises to read either, so a transport choosing the one nothing exercises would meet a parser
+     * no test had ever run — and the failure would land on the implementor as a body mismatch in a contract they had
+     * every reason to trust. A publisher of unknown length is what makes the JDK client frame the request chunked;
+     * passing the third check then means the harness dechunked the body back to exactly the bytes that were handed
+     * over.
+     */
+    @Test
+    void aTransportFramingTheBodyChunkedSatisfiesTheSingleRequestCheck() {
+        Contract contract = Contract.over((ssl, trust) -> exchanging(
+                neverFollowing(ssl),
+                body -> HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(body))));
+
+        assertThatCode(contract::exactlyOneRequestArrivesAndItIsTheRequestThatWasHandedOver)
+                .doesNotThrowAnyException();
     }
 
     /**
@@ -516,10 +536,19 @@ final class PushHttpClientContractSelfTest {
      * above are built by wrapping this — each one breaks exactly the obligation its test is about and nothing else.
      */
     private static PushHttpClient exchanging(HttpClient client) {
+        return exchanging(client, HttpRequest.BodyPublishers::ofByteArray);
+    }
+
+    /**
+     * The same conforming transport over a chosen framing. A transport is free to frame the body either way, and the
+     * harness reads both; which one the JDK picks follows from the publisher — a known length declares
+     * {@code Content-Length}, an unknown one goes chunked.
+     */
+    private static PushHttpClient exchanging(HttpClient client, Function<byte[], HttpRequest.BodyPublisher> framing) {
         return (endpoint, headers, body) -> {
             HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
                     .timeout(Duration.ofSeconds(20))
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+                    .POST(framing.apply(body));
             headers.forEach(request::header);
             try {
                 HttpResponse<Void> response = client.send(request.build(), HttpResponse.BodyHandlers.discarding());
