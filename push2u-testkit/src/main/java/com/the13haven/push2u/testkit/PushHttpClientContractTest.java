@@ -6,7 +6,6 @@
 package com.the13haven.push2u.testkit;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.util.ArrayList;
@@ -187,7 +186,11 @@ public abstract class PushHttpClientContractTest {
             }
             requireGivenTarget(request, endpoint);
             TransportContractTraffic.requireGivenHeaders(request);
-            TransportContractTraffic.requireGivenBody(body, request.body());
+            // Compared against a fresh generation, never against the array handed to post: the
+            // expected bytes and the sent bytes must have separate lives, or a transport that
+            // rewrites the caller's array in place and sends the rewrite is compared with itself
+            // and passes while delivering the right number of wrong bytes.
+            TransportContractTraffic.requireGivenBody(TransportContractTraffic.syntheticBody(), request.body());
         }
     }
 
@@ -249,7 +252,8 @@ public abstract class PushHttpClientContractTest {
     @Test
     void aRefusedConnectionIsADeliveryFailure() throws Exception {
         URI unreachable = URI.create("https://"
-                + InetAddress.getLoopbackAddress().getHostAddress() + ":" + closedPort() + "/wpush/contract/refused");
+                + TransportContractServer.loopback().getHostAddress() + ":" + closedPort()
+                + "/wpush/contract/refused");
         PushHttpClient subject = subject();
 
         PostAttempt.one(
@@ -341,7 +345,7 @@ public abstract class PushHttpClientContractTest {
 
     /** A port nothing is listening on: bound to get a free one from the OS, then released. */
     private static int closedPort() throws IOException {
-        try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+        try (ServerSocket socket = new ServerSocket(0, 1, TransportContractServer.loopback())) {
             return socket.getLocalPort();
         }
     }

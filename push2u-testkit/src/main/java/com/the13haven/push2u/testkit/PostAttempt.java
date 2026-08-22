@@ -42,7 +42,15 @@ final class PostAttempt {
      * How long one check may wait for the transport to answer before it stops waiting and aborts. The budget is the
      * check's own limit, never a rule about the transport: the seam promises nothing about latency.
      */
-    private static final int ANSWER_BUDGET_SECONDS = 30;
+    private static final int PUBLISHED_ANSWER_BUDGET_SECONDS = 30;
+
+    /**
+     * The budget in force. Not a configuration surface: the published contract always runs under the constant above,
+     * and the one writer outside this class is the kit's own suite, which shortens the budget through the two
+     * package-private hooks below so the abort path is provable without every build of this repository waiting out the
+     * published thirty seconds — and restores it in a {@code finally}.
+     */
+    private static volatile int answerBudgetSeconds = PUBLISHED_ANSWER_BUDGET_SECONDS;
 
     private final @Nullable PushResponse response;
     private final @Nullable RuntimeException thrown;
@@ -63,7 +71,7 @@ final class PostAttempt {
         ExecutorService executor = Executors.newSingleThreadExecutor(PostAttempt::worker);
         try {
             Future<PushResponse> call = executor.submit(() -> subject.post(endpoint, headers, body));
-            return answerOf(call, System.nanoTime() + TimeUnit.SECONDS.toNanos(ANSWER_BUDGET_SECONDS));
+            return answerOf(call, System.nanoTime() + TimeUnit.SECONDS.toNanos(answerBudgetSeconds));
         } finally {
             executor.shutdownNow();
         }
@@ -97,7 +105,7 @@ final class PostAttempt {
             }
             start.countDown();
 
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(ANSWER_BUDGET_SECONDS);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(answerBudgetSeconds);
             List<PostAttempt> attempts = new ArrayList<>(pending.size());
             for (Future<PushResponse> call : pending) {
                 attempts.add(answerOf(call, deadline));
@@ -106,6 +114,16 @@ final class PostAttempt {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    /** Shortens the budget for the kit's own abort-path test; every other caller leaves the published value alone. */
+    static void shortenAnswerBudgetForSelfTest(int seconds) {
+        answerBudgetSeconds = seconds;
+    }
+
+    /** Restores the published budget; called in the {@code finally} of the one test that shortens it. */
+    static void restorePublishedAnswerBudget() {
+        answerBudgetSeconds = PUBLISHED_ANSWER_BUDGET_SECONDS;
     }
 
     /** The response, or a failure saying the transport threw where the seam owes an answer. */
@@ -188,7 +206,7 @@ final class PostAttempt {
         } catch (TimeoutException neverAnswered) {
             // Aborted, not failed: see the class Javadoc. The budget exists so that a subject
             // that never answers ends the check instead of hanging the build it was added to.
-            return Assumptions.abort("the post call had not answered within " + ANSWER_BUDGET_SECONDS
+            return Assumptions.abort("the post call had not answered within " + answerBudgetSeconds
                     + " seconds, so this check stopped waiting without reaching a verdict. That budget is this "
                     + "check's own limit and not a rule about how fast a transport has to be, so this is neither a "
                     + "pass nor a failure. If the call was merely slow, nothing here is wrong; if it never returns, "

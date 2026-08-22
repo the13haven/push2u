@@ -9,11 +9,14 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -112,6 +115,30 @@ final class PushHttpClientContractSelfTest {
     }
 
     /**
+     * The redirect check's second half, which the redirect-following subject above never reaches — it already fails on
+     * the status. This subject answers the caller truthfully with the 307 and still opens a connection to the host the
+     * {@code Location} names, which is the half whose failure means "something was sent towards an origin nobody vetted
+     * while the caller was told the truth". The harness counts the connection at accept time, before any TLS handshake,
+     * so a bare TCP probe is enough to be caught.
+     */
+    @Test
+    void aTransportConnectingToTheRedirectTargetFailsTheRedirectCheckOnTheConnectionCount() {
+        Contract contract = Contract.over((ssl, trust) -> {
+            PushHttpClient conforming = exchanging(neverFollowing(ssl));
+            return (endpoint, headers, body) -> {
+                PushResponse response = conforming.post(endpoint, headers, body);
+                response.header("Location").ifPresent(PushHttpClientContractSelfTest::openConnectionTowards);
+                return response;
+            };
+        });
+
+        assertThatThrownBy(contract::aRedirectIsNotFollowed)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("accepted 1 connection")
+                .hasMessageNotContaining("127.0.0.1");
+    }
+
+    /**
      * The classic mistake the first check exists for: a transport that reads an HTTP error status as a transport
      * failure. Every {@code 410} — a subscription this library classifies as expired — then reaches the caller as an
      * unanswered exchange it will keep repeating for the life of the stored row.
@@ -188,6 +215,45 @@ final class PushHttpClientContractSelfTest {
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("byte for byte")
                 .hasMessageContaining("first difference");
+    }
+
+    /**
+     * The regression for a comparison made against the caller's own array. A transport that rewrites the array it was
+     * handed <em>in place</em> and sends the rewrite delivers the right number of wrong bytes — and a check whose
+     * expected value is the same reference would be comparing the rewrite with itself and passing. The contract
+     * compares against a fresh generation of the deterministic body instead, so this subject must fail.
+     */
+    @Test
+    void aTransportRewritingTheCallersArrayInPlaceFailsTheSingleRequestCheck() {
+        Contract contract = Contract.over((ssl, trust) -> {
+            PushHttpClient conforming = exchanging(neverFollowing(ssl));
+            return (endpoint, headers, body) -> {
+                Arrays.fill(body, (byte) 0);
+                return conforming.post(endpoint, headers, body);
+            };
+        });
+
+        assertThatThrownBy(contract::exactlyOneRequestArrivesAndItIsTheRequestThatWasHandedOver)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("byte for byte");
+    }
+
+    /**
+     * The URI half of the same check: a transport that rewrites the URI it was handed — a normalising wrapper stack is
+     * the realistic shape — sends the request to a target the endpoint policy never assessed, and the request-target
+     * comparison must catch it. Here the query is stripped; the failure names the mismatch without printing either URI.
+     */
+    @Test
+    void aTransportRewritingTheUriFailsTheSingleRequestCheck() {
+        Contract contract = Contract.over((ssl, trust) -> {
+            PushHttpClient conforming = exchanging(neverFollowing(ssl));
+            return (endpoint, headers, body) -> conforming.post(withoutQuery(endpoint), headers, body);
+        });
+
+        assertThatThrownBy(contract::exactlyOneRequestArrivesAndItIsTheRequestThatWasHandedOver)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("request target")
+                .hasMessageNotContaining("127.0.0.1");
     }
 
     /**
@@ -286,10 +352,12 @@ final class PushHttpClientContractSelfTest {
      * The budget's semantics, pinned because the record deciding this contract was corrected on exactly this point: a
      * subject that never answers ends the check as an <em>abort</em>, never as a failure — the seam sets no latency
      * requirement, so an expired budget is not a verdict — and never as a hang, which is how a contract gets deleted
-     * from the build it was added to. This is the one deliberately slow test in the kit: it waits out the full budget.
+     * from the build it was added to. The budget is shortened through the package-private hook for this test alone and
+     * restored in the {@code finally}: what is being proved is the abort semantics, not the length of the published
+     * budget, and waiting out the real thirty seconds would tax every build of this repository forever.
      */
     @Test
-    @Timeout(90)
+    @Timeout(30)
     void aTransportThatNeverAnswersAbortsTheCheckInsteadOfFailingOrHangingIt() {
         Contract contract = Contract.over((ssl, trust) -> (endpoint, headers, body) -> {
             try {
@@ -301,9 +369,39 @@ final class PushHttpClientContractSelfTest {
             throw new AssertionError("unreachable");
         });
 
-        assertThatThrownBy(contract::anErrorStatusIsAnAnswerNotATransportFailure)
-                .isInstanceOf(TestAbortedException.class)
-                .hasMessageContaining("without reaching a verdict");
+        PostAttempt.shortenAnswerBudgetForSelfTest(1);
+        try {
+            assertThatThrownBy(contract::anErrorStatusIsAnAnswerNotATransportFailure)
+                    .isInstanceOf(TestAbortedException.class)
+                    .hasMessageContaining("without reaching a verdict");
+        } finally {
+            PostAttempt.restorePublishedAnswerBudget();
+        }
+    }
+
+    /** The URI with its query stripped: the rewriting subject's one alteration. */
+    private static URI withoutQuery(URI endpoint) {
+        String flat = endpoint.toString();
+        int query = flat.indexOf('?');
+        return query < 0 ? endpoint : URI.create(flat.substring(0, query));
+    }
+
+    /**
+     * One bare TCP connection towards the host and port a {@code Location} header names, then gone: the modelled defect
+     * is a transport leaking a connection to the redirect target, and the harness must count it at accept time. The
+     * short read gives the listener's accept loop a moment to run before the check reads the counter, so the count is
+     * there deterministically rather than by winning a race.
+     */
+    private static void openConnectionTowards(String location) {
+        URI target = URI.create(location);
+        try (Socket connection = new Socket()) {
+            connection.connect(new InetSocketAddress(target.getHost(), target.getPort()), 5_000);
+            connection.setSoTimeout(100);
+            connection.getInputStream().read();
+        } catch (IOException expected) {
+            // The server sends nothing on a plain TCP connection, so the read times out or the
+            // close races it; the connection itself — already counted — is all this probe is for.
+        }
     }
 
     /** A JDK client over the harness's trust material that never follows redirects — the conforming base. */

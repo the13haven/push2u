@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,7 +29,7 @@ import javax.net.ssl.SSLServerSocket;
  * parses the request into an object, decides the framing and manages the connection on the harness's behalf is a layer
  * whose behaviour would become part of what every check asserts. It also keeps the artifact's dependency surface where
  * it is — nothing here reaches outside {@code java.base}. The listener advertises nothing in ALPN, so a client that
- * prefers HTTP/2 over TLS falls back to HTTP/1.1 by itself. Every listener binds to the loopback address only, and
+ * prefers HTTP/2 over TLS falls back to HTTP/1.1 by itself. Every listener binds to {@link #loopback()} only, and
  * headers the transport adds of its own pass through untouched — the checks assert presence of what they gave, never
  * the exact set.
  */
@@ -71,9 +72,8 @@ final class TransportContractServer implements AutoCloseable {
     // closes it, and the contract's checks hold every server in a try-with-resources.
     @SuppressWarnings("PMD.CloseResource")
     static TransportContractServer answeringWith(Responder responder) throws IOException {
-        SSLServerSocket listener = (SSLServerSocket) TransportContractTls.serverContext()
-                .getServerSocketFactory()
-                .createServerSocket(0, 16, InetAddress.getLoopbackAddress());
+        SSLServerSocket listener = (SSLServerSocket)
+                TransportContractTls.serverContext().getServerSocketFactory().createServerSocket(0, 16, loopback());
         TransportContractServer server = new TransportContractServer(listener, responder);
         Thread acceptor = new Thread(server::acceptLoop, "push2u-transport-contract-server");
         acceptor.setDaemon(true);
@@ -83,8 +83,23 @@ final class TransportContractServer implements AutoCloseable {
 
     /** The endpoint a transport under test is pointed at: {@code https} on this listener, at the given target. */
     URI endpoint(String pathAndQuery) {
-        return URI.create("https://" + InetAddress.getLoopbackAddress().getHostAddress() + ":" + listener.getLocalPort()
-                + pathAndQuery);
+        return URI.create("https://" + loopback().getHostAddress() + ":" + listener.getLocalPort() + pathAndQuery);
+    }
+
+    /**
+     * The address of the whole harness, pinned to IPv4 {@code 127.0.0.1} rather than taken from the platform's loopback
+     * preference. The certificate's subject alternative name carries exactly this address as an iPAddress entry, and a
+     * JVM configured to prefer IPv6 answers {@code ::1} for its loopback — which would put the bind, the endpoint's
+     * host and the certificate out of agreement on a consumer's JVM this build never sees. Pinning all three to one
+     * constant makes them agree by construction rather than by the JVM's default.
+     */
+    static InetAddress loopback() {
+        try {
+            return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        } catch (UnknownHostException impossible) {
+            // getByAddress resolves nothing and refuses only an array that is not 4 or 16 bytes long.
+            throw new IllegalStateException("the fixed IPv4 loopback literal was rejected", impossible);
+        }
     }
 
     /** A point-in-time snapshot of every request read in full so far, in the order they completed. */
