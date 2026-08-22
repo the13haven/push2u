@@ -1,6 +1,6 @@
 # ADR-018 — The encoded VAPID public key is part of the signer contract
 
-**Status:** Accepted; one clause superseded by [ADR-021](0021-retry-belongs-to-the-caller.md)
+**Status:** Accepted; one clause superseded by [ADR-021](0021-retry-belongs-to-the-caller.md), another by [ADR-028](0028-the-test-kit-publishes-contracts-not-conveniences.md)
 
 Every Web Push deployment hands its VAPID public key to the browser as the `applicationServerKey`
 option of `pushManager.subscribe(...)`: the 65-byte X9.62 uncompressed P-256 point

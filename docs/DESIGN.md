@@ -74,7 +74,9 @@ push2u-core
 └── JdkPushHttpClient
 
 push2u-testkit
-└── VapidSignerContractTest (the published conformance kit, for a test classpath)
+├── VapidSignerContractTest (the published conformance kit, for a test classpath)
+├── VapidKeyPairFixture / SubscriptionFixture (values of the public input contracts)
+└── ScriptedPushHttpClient / SentPush (a scripted, recording transport fake)
 
 push2u-signer-vault
 ├── VaultTransitVapidSigner
@@ -92,6 +94,21 @@ The dependency direction is one-way: the optional modules depend on the core, an
 Vault type reaches it. `push2u-testkit` carries JUnit and AssertJ, which is why it is a module of
 its own rather than part of the core: it belongs on a consumer's test classpath and never on an
 application's runtime one.
+
+The kit has two halves, serving the two audiences this library has
+([ADR-028](adr/0028-the-test-kit-publishes-contracts-not-conveniences.md)). `VapidSignerContractTest`
+is the executable statement of what a `VapidSigner` owes, and serves whoever writes one. The
+fixtures serve the far larger audience that only sends: a generated VAPID pair and a coherent
+browser subscription, each published in both the typed and the base64url form and each valid by
+construction against the input contracts *as they currently stand*, plus a `PushHttpClient` that
+answers a declared response sequence and records what it was asked to send. What admits a member is
+that the knowledge it carries is the library's own and moves with it — what the contracts accept,
+what a transport owes — never that some assembly is tedious: a value produced by the library
+survives an upgrade that tightens validation, where a consumer's pasted literal breaks with no
+warning a release note could have carried. The fixtures reach no JCE provider by name, which the
+core's two deliberately disjoint BouncyCastle test classpaths make a build constraint rather than a
+preference. [`TESTKIT.md`](TESTKIT.md) is the consumer-facing reference for that half and
+[`SIGNER.md`](SIGNER.md) for the other.
 
 ### JPMS identity
 
@@ -1547,6 +1564,26 @@ The automated suite covers:
   way, or one publishing a different key altogether — plus the kit's DER-fallback verification and
   its minimal-DER re-encoding, exercised directly because no CI platform lacks the P1363 signature
   name (`VapidSignerContractSelfTest`);
+- the kit's fixtures held to the same standard, since a published value that is quietly wrong is a
+  defect in every consumer's suite at once. **`VapidKeyPairFixtureTest` verifies that the scalar the
+  fixture publishes really is the one belonging to the point it publishes**, by signing with it and
+  verifying through `Es256Verifier` — the correspondence the library's own construction-time checks
+  do not reach, since `VapidKeys.fromBase64` applies an on-curve check to the public half and a
+  length check to the scalar and nothing relates the two. That check is part of the fixture rather
+  than an extra: without it the fixture would carry a defect class this library's key handling does
+  not have, and one whose only symptom is a push service rejecting the JWT. It runs on the pairs
+  where the encoding is most likely to slip — a scalar with its high bit set, a scalar or a
+  coordinate with leading zero bytes — with `FixedWidthTest` pinning the writer underneath. Beside
+  it: both fixtures' decoded shapes, their alphabet and absence of padding, freshness per call, the
+  subscription's three components agreeing with each other, and the endpoint refusals inherited from
+  `Subscription` (`VapidKeyPairFixtureTest`, `SubscriptionFixtureTest`, `FixedWidthTest`);
+- the transport fake's own obligations, which are the ones a consumer's test rests on without
+  looking: answers handed out in script order, per-response headers kept apart, an exhausted script
+  raising after the call is recorded, `failingWith` recording before it throws, `sent()` as an
+  immutable point-in-time snapshot, and — under concurrent posts — every call drawing exactly one
+  answer, all of them recorded, and the recorded order being the order answers were handed out
+  (`ScriptedPushHttpClientTest`); plus `SentPush` keeping an immutable header copy and rendering
+  neither the capability path nor any header value (`SentPushTest`);
 - the RFC 8291 §4 record-size boundary, the encrypted-body overhead, and the `rs` derivation
   pinned across its whole range including both ends (`WebPushEncryptorTest`);
 - the payload size limit, builder validation, the derived `rs` in the emitted header, the

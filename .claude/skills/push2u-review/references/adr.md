@@ -43,6 +43,14 @@ improves. What it should have done instead:
   [ADR-NNN](NNNN-slug.md)`. *Which* clause is superseded belongs in the new ADR, not in this one's
   status line — naming it here would smuggle the new decision's reasoning into a file that may not
   carry it. ADR-004's status line, pointing at ADR-019, is the case to check this against;
+- a decision that *loses a second clause*, to a record arriving later: the partial form above
+  **accumulates** rather than being replaced — `**Status:** Accepted; one clause superseded by
+  [ADR-NNN](NNNN-slug.md), another by [ADR-MMM](MMMM-slug.md)`, each record named in the order it
+  arrived, and a third and beyond the same way. Rewriting the line to name only the newest erases a
+  supersession that still stands, and "two clauses superseded" without saying by what leaves the
+  reader with nowhere to go, which is the one thing the status line exists to prevent. Everything
+  else holds: the argument is still untouched, and which clause each record took still lives in that
+  record. ADR-018's status line, pointing at ADR-021 and ADR-028, is the case to check this against;
 - a link whose *target document was renamed*: the one other edit an implemented ADR takes, because
   the same document under a new name is the same artefact and only the path moves. It is worth the
   exception because a rename can leave the old path still resolving, at a document that is now

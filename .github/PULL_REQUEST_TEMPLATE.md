@@ -40,7 +40,9 @@ from the notes altogether rather than filing it anywhere.
       facing API or limits changed, `docs/SPRING.md` / `docs/VAULT.md` if a starter or Vault
       property did, `docs/HEALTH.md` if the health indicator did, `docs/SIGNER.md` if the
       `VapidSigner` contract did (the shape checks, which exception a custodian failure leaves in,
-      what the conformance kit asserts), `docs/VAPID.md` if the key-generation recipe did,
-      `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did — how or when a signer pins a
-      key version, anything that re-reads a key on a live signer, a key-version accessor, or a
-      change to how `401`/`403` is classified.
+      what the conformance kit asserts), `docs/TESTKIT.md` if the test kit's fixtures or its
+      transport fake did — what `ScriptedPushHttpClient` answers, what `SubscriptionFixture` or
+      `VapidKeyPairFixture` publishes, what `SentPush` keeps — `docs/VAPID.md` if the
+      key-generation recipe did, `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did —
+      how or when a signer pins a key version, anything that re-reads a key on a live signer, a
+      key-version accessor, or a change to how `401`/`403` is classified.
