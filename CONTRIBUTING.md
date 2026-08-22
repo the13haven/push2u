@@ -39,7 +39,10 @@ follows.
 decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
 its title and its body while its status line becomes `Superseded by ADR-NNN`. A decision that moves
 only in part takes the same status-line edit in a narrower form, `Accepted; one clause superseded
-by ADR-NNN`, beside the full form rather than in place of it. Descriptions of how the code works now
+by ADR-NNN`, beside the full form rather than in place of it — and that form accumulates: a later
+record taking a second clause extends the same line rather than replacing it, `Accepted; one clause
+superseded by ADR-NNN, another by ADR-MMM`, each record named in the order it arrived. Which clause
+each one took stays out of the superseded ADR and lives in the record that took it. Descriptions of how the code works now
 belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture moves.
 [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
@@ -277,9 +280,14 @@ the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a c
 vector fail, the change is wrong until proven otherwise.
 
 Every `VapidSigner` implementation extends the published conformance kit
-`com.the13haven.push2u.testkit.VapidSignerContractTest`, the whole of the `push2u-testkit` module.
-It is a module's `main` source set, so the full analyser set applies to it — treat it as published
-API, because it is.
+`com.the13haven.push2u.testkit.VapidSignerContractTest`. It is one half of the `push2u-testkit`
+module; the other is the fixtures a *sending* application tests with — a generated VAPID pair, a
+coherent browser subscription and a scripted, recording `PushHttpClient`, each carrying knowledge
+that is the library's own and moves with it, which is what admits anything there
+([ADR-028](docs/adr/0028-the-test-kit-publishes-contracts-not-conveniences.md), and
+[`docs/TESTKIT.md`](docs/TESTKIT.md) for what it publishes and what it refuses to). The whole module
+is a `main` source set, so the full analyser set applies to all of it — treat it as published API,
+because it is.
 
 The plumbing the suites share — the RFC vectors, the in-process mock push receiver, its loopback
 TLS identity — lives in `push2u-core`'s `src/testFixtures`, in `main`'s package because it needs

@@ -74,7 +74,9 @@ push2u-core
 └── JdkPushHttpClient
 
 push2u-testkit
-└── VapidSignerContractTest (the published conformance kit, for a test classpath)
+├── VapidSignerContractTest (the published conformance kit, for a test classpath)
+├── VapidKeyPairFixture / SubscriptionFixture (values of the public input contracts)
+└── ScriptedPushHttpClient / SentPush (a scripted, recording transport fake)
 
 push2u-signer-vault
 ├── VaultTransitVapidSigner
@@ -92,6 +94,21 @@ The dependency direction is one-way: the optional modules depend on the core, an
 Vault type reaches it. `push2u-testkit` carries JUnit and AssertJ, which is why it is a module of
 its own rather than part of the core: it belongs on a consumer's test classpath and never on an
 application's runtime one.
+
+The kit has two halves, serving the two audiences this library has
+([ADR-028](adr/0028-the-test-kit-publishes-contracts-not-conveniences.md)). `VapidSignerContractTest`
+is the executable statement of what a `VapidSigner` owes, and serves whoever writes one. The
+fixtures serve the far larger audience that only sends: a generated VAPID pair and a coherent
+browser subscription, each published in both the typed and the base64url form and each valid by
+construction against the input contracts *as they currently stand*, plus a `PushHttpClient` that
+answers a declared response sequence and records what it was asked to send. What admits a member is
+that the knowledge it carries is the library's own and moves with it — what the contracts accept,
+what a transport owes — never that some assembly is tedious: a value produced by the library
+survives an upgrade that tightens validation, where a consumer's pasted literal breaks with no
+warning a release note could have carried. The fixtures reach no JCE provider by name, which the
+core's two deliberately disjoint BouncyCastle test classpaths make a build constraint rather than a
+preference. [`TESTKIT.md`](TESTKIT.md) is the consumer-facing reference for that half and
+[`SIGNER.md`](SIGNER.md) for the other.
 
 ### JPMS identity
 

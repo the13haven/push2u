@@ -69,6 +69,16 @@ its conformance-kit section, which leaves the first about choosing a provider an
 into the short *Writing a VapidSigner* introduction README gives `docs/SPRING.md` and
 `docs/VAULT.md`. The testkit coordinate stayed behind in README, under the rule below, and
 `docs/SIGNER.md` links to it rather than repeating it.
+`docs/TESTKIT.md` is the same shape for the same artifact's other half and the other audience — the
+application that only sends: the four fixtures, the whole setup in one block with the endpoint
+policy visible in it, the `getEncoder()`/`getUrlEncoder()` trap and why it presents differently at
+65 bytes than at 16, what a scripted sequence does under a fan-out, which `PushOutcome`
+combinations a real send can produce where the public constructors admit more, and what the kit
+refuses to publish with the reason for each refusal. It is named for the artifact and not for the
+activity: a `docs/TESTING.md` would read as a contributor's guide to testing this repository, which
+is `CONTRIBUTING.md`'s subject, and the `docs/MIGRATION.md` rename is what that cost the last time.
+The coordinate stays in README under the rule below, so this document links across to the README
+section carrying it exactly as `docs/SIGNER.md` does.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
 how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…028) with
 `docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
@@ -110,7 +120,13 @@ and the superseded one keeps its number, title and body while its status line be
 `Superseded by ADR-NNN` — the only edit its argument ever takes, beside the link repair below. A
 decision that moves only in part takes the same one-line edit in a narrower form, `Accepted; one
 clause superseded by ADR-NNN`, beside the full form rather than in place of it — ADR-004's status
-line, superseded in part by ADR-019, is the worked example. The description of how things currently
+line, superseded in part by ADR-019, is the worked example. **That form accumulates**: a second
+clause taken by a later record extends the same line rather than replacing it, `Accepted; one
+clause superseded by ADR-NNN, another by ADR-MMM`, each record named in the order it arrived, and a
+third and beyond the same way. Nothing else about the line changes, and *which* clause each record
+took stays out of it and lives in the record that took it — a status line that named the clauses
+would be carrying the new decisions' reasoning in a document that may not hold it. ADR-018 is the
+worked example, one clause to ADR-021 and another to ADR-028. The description of how things currently
 work belongs in `docs/DESIGN.md`, which is the document that may be rewritten freely;
 `docs/adr/README.md` carries the procedure.
 
@@ -130,7 +146,7 @@ material, leave it.
 **A `com.the13haven:<module>:X.Y.Z` coordinate in a living document belongs in `README.md` and
 nowhere else.** The pre-release hook rewrites every one of them, in that file only, so the same
 string written into `docs/VAULT.md`, `docs/SPRING.md`, `docs/HEALTH.md`, `docs/SIGNER.md`,
-`docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md`,
+`docs/TESTKIT.md`, `docs/VAPID.md`, `docs/VAPID-KEY-ROTATION.md`, `docs/MIGRATION.md`,
 `docs/MIGRATION-FROM-WEB-PUSH.md` or anywhere else freezes at whatever version it was written with
 and starts lying at the next release. Those documents point at README's Installation section
 instead. The exception is a document that is *about* one version and is never read as current:
@@ -221,14 +237,15 @@ Notes that matter in practice:
 ```
 push2u-core                                  no runtime implementation dependencies (JSpecify only)
   ├── push2u-testkit                         api(push2u-core) + JUnit/AssertJ — the published
-  │                                          conformance kit, for a consumer's TEST classpath
+  │                                          test kit (signer contract + sending fixtures), for a
+  │                                          consumer's TEST classpath
   ├── push2u-signer-vault                    api(push2u-core)
   │     └── push2u-signer-vault-spring-boot-starter
   └── push2u-spring-boot-starter             api(push2u-core) + Spring Boot 4 autoconfigure
 ```
 
 Packages are `com.the13haven.push2u` plus `.signer.vault`, `.spring`, `.signer.vault.spring`, and
-`.testkit` for the published conformance kit, which is the whole of `push2u-testkit`.
+`.testkit` for the published test kit, which is the whole of `push2u-testkit`.
 
 `push2u-core` and `push2u-signer-vault` are explicit JPMS modules named after their package
 (ADR-014); the starters and the test kit are automatic modules with a fixed `Automatic-Module-Name`.
@@ -421,11 +438,18 @@ cannot see each other.
   consumers, which is what keeps the two BouncyCastle flavours apart; the fixtures themselves name
   neither provider. They are **not** published: the variants are skipped from the publication, as
   `push2u-signer-vault` does with its internal `RecordingHttpClient` and `FakeTransitVault`.
-- `push2u-testkit` is the published `VapidSignerContractTest` conformance kit and nothing else —
-  every signer implementation extends it, from this build or outside it. Its package
+- `push2u-testkit` publishes two halves, for the two audiences (ADR-028). `VapidSignerContractTest`
+  is the signer contract every implementation extends, from this build or outside it.
+  `VapidKeyPairFixture`, `SubscriptionFixture`, `ScriptedPushHttpClient` and `SentPush` serve the
+  much larger audience that only sends. What admits a member is that the knowledge it carries is the
+  library's own and moves with it — a value the library produces stays valid across an upgrade that
+  tightens validation, where a consumer's pasted literal breaks with nothing to warn it — never that
+  assembly is tedious; so there is no `PushSender` fixture, no `VapidSigner` fake, no `PushOutcome`
+  factory and no key-shaped constant, and the fixtures name no JCE provider, which the core's two
+  disjoint BouncyCastle classpaths make unbuildable rather than merely unwise. Its package
   `com.the13haven.push2u.testkit` is separate from the core's because the core is an explicit JPMS
   module and cannot share a package with a second artifact on the module path (ADR-014). Being a
-  module's `main`, the kit is under the full analyser set.
+  module's `main`, the whole kit is under the full analyser set — treat it as published API.
 - Conformance is pinned by published RFC vectors (RFC 5869 HKDF, the RFC 8291 worked example,
   RFC 8292 structure). When touching crypto, the vectors are the specification — not the current
   output.

@@ -14,9 +14,9 @@ import java.util.Objects;
  * no JCA state.
  *
  * <p>Both halves are commonly distributed as base64url — use {@link #fromBase64}. The other direction exists for the
- * public half alone: {@link #encodePublicKey} produces the string a browser needs as {@code applicationServerKey}. The
- * private scalar gets no encoder, because handing a secret back as a string is the one direction this library does not
- * provide.
+ * public half alone: {@link #encodePublicKey} produces the string a browser needs as {@code applicationServerKey}.
+ * There is no encoder for the private scalar and no accessor for it either, so nothing can be handed a pair and asked
+ * for its secret as text — the material a caller puts into this type never comes back out in that form.
  */
 public final class VapidKeys {
 

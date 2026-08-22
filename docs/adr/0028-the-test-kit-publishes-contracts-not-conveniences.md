@@ -1,6 +1,6 @@
 # ADR-028 — The test kit publishes contracts, not conveniences
 
-**Status:** Proposed
+**Status:** Accepted
 
 Reported as https://github.com/the13haven/push2u/issues/92, by a consumer whose controller tests
 broke on an upgrade that tightened the library's own validation.
