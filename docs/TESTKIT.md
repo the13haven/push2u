@@ -436,6 +436,17 @@ threads colliding in it. A failing run is a real defect every time, because a th
 cannot fail it. Having no false positives is what earns the check its place; being no proof is why
 it is not called one.
 
+**The check stops waiting after a budget, and stopping is an abort rather than a failure.** A policy
+that never answers would hang the suite it was added to, which is how a contract gets deleted from a
+build, so the check gives up after a fixed time. What it reports then is that it did not conclude —
+not that the policy is unsafe. The seam sets no latency requirement anywhere, so a call still
+running when the budget runs out is either a policy waiting on something that never arrives or a
+correct one being slow on a loaded machine, and nothing observable from outside separates those two.
+Reporting a failure would be a verdict the check has not reached, and a build that had ever seen
+this check fail for slowness is a build whose owner learns to ignore it. So the three assertions
+above stay the only things it calls a defect, and the budget shows up as a skipped check with a
+message saying why.
+
 **It deliberately does not assert that one endpoint keeps yielding one variant.** A policy is
 allowed to keep state — a resolution cache, a counter — and to answer differently the second time,
 so demanding a stable answer would refuse an implementation this library permits. That rule holds

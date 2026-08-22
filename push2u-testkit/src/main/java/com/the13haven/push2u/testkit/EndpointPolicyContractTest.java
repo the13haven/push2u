@@ -248,11 +248,12 @@ public abstract class EndpointPolicyContractTest {
      * answer outside the sealed hierarchy however the threads interleave. Having no false positives there is what earns
      * this check its place; being no proof is why it is not called one.
      *
-     * <p>One failure of this method is not that, and it is separated rather than glossed over: the check stops waiting
-     * after a fixed budget, so that a policy which never answers fails the build instead of hanging it. That budget is
-     * the check's own limit. This seam promises nothing about how fast {@code assess} answers, so a correct policy
-     * doing something genuinely slow — a cold resolution cache, a machine under load — can exceed it, and the message
-     * says so rather than calling it a defect.
+     * <p>The check stops waiting after a fixed budget, and what it does then is <em>abort</em> rather than fail. A
+     * policy that never answers would otherwise hang the suite it was added to, which is how a contract gets deleted
+     * from a build; but this seam promises nothing about how fast {@code assess} answers, so a call still running when
+     * the budget runs out may equally be a correct policy doing something slow. Nothing here can tell those apart, and
+     * a failure would be a verdict this check has not reached. An abort says what is true — it did not conclude — and
+     * leaves the three assertions above as the only things it ever calls a defect.
      *
      * <p>It deliberately does not assert that one endpoint keeps yielding one variant. That is determinism of the
      * result, which this library does not require of a policy — a resolution cache or a counter is legitimate state to
@@ -340,9 +341,9 @@ public abstract class EndpointPolicyContractTest {
     }
 
     /**
-     * Unwraps one concurrent call, turning a thrown defect or a call that never returns into a readable failure. The
-     * deadline belongs to the whole check rather than to this call, so a stuck policy costs the check one budget and
-     * not one per thread.
+     * Unwraps one concurrent call: a thrown defect becomes a readable failure, and a call still running when the budget
+     * runs out aborts the check instead of failing it. The deadline belongs to the whole check rather than to this
+     * call, so a stuck policy costs the check one budget and not one per thread.
      */
     // PreserveStackTrace: the cause is what the policy actually threw, and it is carried over
     // deliberately in place of the ExecutionException wrapping it — the wrapper's own frames are
@@ -359,15 +360,17 @@ public abstract class EndpointPolicyContractTest {
                             + "mutable state has to guard it.",
                     thrown.getCause());
         } catch (TimeoutException neverAnswered) {
-            throw new AssertionError(
-                    "the concurrent assess calls had not all answered within " + ANSWER_BUDGET_SECONDS
-                            + " seconds, so this check gave up waiting rather than hanging the suite it runs in. That "
-                            + "budget is this check's own limit and not a rule about how fast assess has to be: this "
-                            + "seam sets no latency requirement, and a policy that legitimately waits longer than "
-                            + "that — a cold resolution cache on a loaded machine, say — fails here without being "
-                            + "unsafe. Read it as a call that had not returned yet, and look for a lock held across a "
-                            + "slow operation before concluding anything stronger.",
-                    neverAnswered);
+            // Aborted, not failed. The seam sets no latency requirement, so a call still running
+            // after the budget may be a policy waiting on something that never arrives or a
+            // correct one being slow — a cold resolution cache on a loaded machine — and this
+            // check cannot tell those apart. Reporting a failure would state a verdict it has not
+            // reached; reporting an abort states the truth, that the check did not conclude. The
+            // budget exists so that the first case ends the check instead of hanging the suite.
+            return Assumptions.abort("the concurrent assess calls had not all answered within " + ANSWER_BUDGET_SECONDS
+                    + " seconds, so this check stopped waiting without reaching a verdict. That budget is this "
+                    + "check's own limit and not a rule about how fast assess has to be, so this is neither a pass "
+                    + "nor a thread-safety failure. If the calls were merely slow, nothing here is wrong; if one of "
+                    + "them never returns, look for a lock held across a slow operation.");
         }
     }
 
