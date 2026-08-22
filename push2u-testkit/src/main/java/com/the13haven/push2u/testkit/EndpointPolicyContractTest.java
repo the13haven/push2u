@@ -1,0 +1,481 @@
+/*
+ * Copyright 2026 The 13 Haven
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package com.the13haven.push2u.testkit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
+
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
+
+import com.the13haven.push2u.EndpointAssessment;
+import com.the13haven.push2u.EndpointPolicy;
+import com.the13haven.push2u.Endpoints;
+
+/**
+ * The conformance contract every {@link EndpointPolicy} must satisfy: an endpoint the policy permits is answered with
+ * {@link EndpointAssessment.Allowed}, an endpoint it refuses is answered with an {@link EndpointAssessment.Refused}
+ * whose reason does not carry the capability part of the endpoint, and several threads inside {@code assess} at once
+ * all come back with one of those two answers. An implementation extends this class and supplies its subject and its
+ * two example endpoints through the three methods below.
+ *
+ * <p><b>Which endpoints a policy ought to admit is deliberately not checked</b>, and could not be: that rule is the
+ * deployment's own — the set of push services its subscriptions may come from, or the egress its network permits — and
+ * nothing outside the deployment knows it. What this contract is about is the shape of the answer, which belongs to the
+ * library and moves with it.
+ *
+ * <p><b>Why a refusal's wording is checked at all.</b> A push endpoint is a capability URL: whoever holds it can send
+ * messages to that subscriber, so its path and query are a bearer credential rather than an identifier. A refusal's
+ * reason travels — {@link com.the13haven.push2u.PushSender#send} turns a {@code Refused} into
+ * {@link com.the13haven.push2u.PushOutcome.EndpointRejected}, pairing the policy's own sentence with this library's
+ * redaction of the endpoint, and an application logs the outcome. So a policy that writes the endpoint into its own
+ * sentence publishes that credential into every log aggregator the line reaches, past every redaction this library
+ * performs. {@link Endpoints#redact} renders the origin plus a short fingerprint —
+ * {@code https://push.example/…#a1b2c3d4e5f60718} — and drops the path, query and fragment; that rendering is what a
+ * refusal may name, and naming it is not a leak. The fingerprint exists so an operator can correlate log lines about
+ * one subscription without holding it.
+ *
+ * <p><b>The refusal check therefore needs a witness with something to leak, and that is a real demand on the
+ * fixture.</b> The check searches the reason for the capability part of {@link #refusedEndpoint()} at three
+ * granularities — the whole URI, each of user-info, path, query and fragment entire, and inside those each path segment
+ * and each query value on its own — in both the raw and the percent-decoded spelling. A string is searched for only
+ * when it is long enough that finding it in a sentence about an endpoint means something, and when it does not already
+ * occur in the redaction a conforming policy is entitled to print. A witness offering no such string is reported as
+ * unfit for the check, naming which of those two halves it failed: {@code https://blocked.example/} has nothing
+ * distinctive in it at all, so a search against it would report success for a property it never tested. Supply an
+ * endpoint that looks like the ones a real subscription store holds.
+ *
+ * <p>The segment-level search is the half a first attempt leaves out, and it is where the leak actually happens. A
+ * policy writing {@code "blocked subscription 9f8e7d6c5b4a39281706"} — the last segment of a path — has published the
+ * whole bearer credential while its sentence contains neither the full URI nor the whole path, and a check looking only
+ * at entire components would pass it.
+ *
+ * <p>Put {@code com.the13haven:push2u-testkit} on the test classpath and extend this class:
+ *
+ * <pre>{@code
+ * class MyEndpointPolicyContractTest extends EndpointPolicyContractTest {
+ *     @Override
+ *     protected EndpointPolicy policy() {
+ *         return new MyPolicy(...);
+ *     }
+ *
+ *     @Override
+ *     protected URI allowedEndpoint() {
+ *         return URI.create("https://push.example/wpush/v2/2f1c8a7e6d5b4a390817");
+ *     }
+ *
+ *     @Override
+ *     protected Optional<URI> refusedEndpoint() {
+ *         return Optional.of(URI.create("https://blocked.example/wpush/v2/9f8e7d6c5b4a39281706"));
+ *     }
+ * }
+ * }</pre>
+ *
+ * <p><b>What this contract never asserts.</b> No check here observes one endpoint twice and requires the two answers to
+ * agree. A policy is permitted to keep state — a resolution cache, a counter — and to answer differently the second
+ * time it is asked about the same URI, so a contract demanding a stable answer would refuse an implementation this
+ * library allows. That is why the refusal and its reason are one observation of one call rather than two tests over two
+ * calls, and why the concurrency check below asserts nothing about which variant came back.
+ *
+ * <p><b>A contract test protects against error, not against deliberate circumvention.</b> An implementor is free to
+ * answer {@link Optional#empty()} for a policy that does refuse things, or to pick an easy {@link #allowedEndpoint()};
+ * what binds there is the sentence in {@link EndpointPolicy}'s own contract, not this class.
+ */
+public abstract class EndpointPolicyContractTest {
+
+    /**
+     * How long a string taken out of the witness endpoint must be before the leak check will search a refusal's reason
+     * for it.
+     *
+     * <p>The number balances two failures against each other. Too low and the check convicts correct policies: the
+     * segments every endpoint carries — {@code v1}, {@code api}, {@code push} — say something about the wording of a
+     * refusal and nothing about the endpoint, and a short run of characters can turn up inside an ordinary English
+     * sentence by accident. Too high and a real credential goes unsearched. Sixteen is above every word an
+     * operator-facing refusal is likely to contain (the longest in this library's own policies is {@code subscription},
+     * at twelve) and far below the capability components real push services issue, which run to dozens or hundreds of
+     * characters. It also sits at the length of the fingerprint {@link Endpoints#redact} prints, so nothing shorter
+     * than the one endpoint-derived value a conforming policy may publish is ever hunted for.
+     */
+    private static final int MARKER_MIN_LENGTH = 16;
+
+    /** How many threads the concurrency check puts inside {@code assess} at the same moment. */
+    private static final int CONCURRENT_CALLS = 8;
+
+    /** How long one concurrent call may take before the check reports it as hung rather than waiting for ever. */
+    private static final int ANSWER_TIMEOUT_SECONDS = 30;
+
+    /**
+     * Splits a raw path into its segments, and a raw query into its parameters. Precompiled patterns rather than
+     * {@code String.split}, whose one-argument form silently drops trailing empty fields — a trailing separator would
+     * then change which parts the leak check sees.
+     */
+    private static final Pattern PATH_SEPARATOR = Pattern.compile("/");
+
+    /** The query's parameter separator; see {@link #PATH_SEPARATOR} for why it is a pattern. */
+    private static final Pattern QUERY_SEPARATOR = Pattern.compile("&");
+
+    /** For subclasses: the kit is extended, never instantiated on its own. */
+    protected EndpointPolicyContractTest() {}
+
+    /**
+     * The policy under test.
+     *
+     * @return a fully configured {@link EndpointPolicy}
+     */
+    protected abstract EndpointPolicy policy();
+
+    /**
+     * An endpoint this policy permits. Only the implementor knows what their policy admits, so the contract asks rather
+     * than inventing one; it must satisfy the seam's own precondition — an absolute {@code https} URL with a host —
+     * because that is what {@code assess} is ever handed.
+     *
+     * <p>There is no empty form of this method, and the asymmetry with {@link #refusedEndpoint()} is deliberate. A
+     * policy refusing every endpoint is a shape this library argues against — every factory of the standard allowlist
+     * refuses an empty rule list outright, an allowlist that admits nothing being far more likely a wiring bug than a
+     * policy — whereas a policy admitting everything is a shape this library builds, documents and ships. A policy that
+     * permits nothing therefore cannot be a subject of this contract; that cost is named rather than hidden.
+     *
+     * @return an endpoint the policy under test permits, absolute {@code https} with a host
+     */
+    protected abstract URI allowedEndpoint();
+
+    /**
+     * An endpoint this policy refuses, or {@link Optional#empty()} when the policy's declared behaviour is to admit
+     * every endpoint satisfying the seam's precondition — an absolute {@code https} URL with a host. That is the only
+     * legitimate reason for the empty answer, and a policy refusing nothing is a supported member of this library's
+     * public API rather than an oddity, which is why the witness is optional at all.
+     *
+     * <p>There is deliberately no {@code default} here. The empty answer is a statement an implementor writes in their
+     * own source, visible in a diff and in a review; a default would let a subject inherit "there is nothing to check
+     * here" without anyone having said it.
+     *
+     * <p><b>Supply an endpoint that carries a capability-shaped component</b> — a path segment or a query value like
+     * the ones a real subscription store holds, not {@code https://blocked.example/}. The leak check searches the
+     * refusal's reason for that component; a witness with nothing distinctive in it makes the search report success for
+     * a property it never tested, and the check refuses to run against one.
+     *
+     * @return an endpoint the policy under test refuses, or empty for a policy that refuses nothing
+     */
+    protected abstract Optional<URI> refusedEndpoint();
+
+    /**
+     * The permitted endpoint comes back as a value. Falling off the end of {@code assess}, returning {@code null} or
+     * throwing are all outside the seam's contract: the caller is owed an answer it can switch on, and at a
+     * registration boundary — where an application applies the same policy before it stores a row — there is nothing
+     * behind it to catch a policy that does something else.
+     */
+    @Test
+    void permittedEndpointIsAnsweredWithAllowed() {
+        URI endpoint = admissible(allowedEndpoint(), "allowedEndpoint()");
+
+        EndpointAssessment assessment = policy().assess(endpoint);
+
+        assertThat(assessment)
+                .as("assess must answer a permitted endpoint with Allowed — a value, never null and never an "
+                        + "exception")
+                .isInstanceOf(EndpointAssessment.Allowed.class);
+    }
+
+    /**
+     * The refused endpoint comes back as a {@link EndpointAssessment.Refused} whose reason keeps the capability part of
+     * the endpoint out of it.
+     *
+     * <p>A refusal is the ordinary case at the boundaries this seam serves, not an error: a policy that throws on the
+     * endpoint it refuses aborts a fan-out over a subscription store at its first hostile row, which is exactly what
+     * answering with a value exists to prevent. And a refusal's reason is read by an operator out of a log, so the one
+     * thing it must not contain is the credential that lets anyone message the subscriber.
+     *
+     * <p>Both halves are asserted of a single call, on purpose. Two calls would observe one endpoint twice and hold the
+     * two answers to one expectation — a stability requirement this contract does not make and this library does not
+     * impose. A value and what it contains are one thing anyway, and reporting "not a refusal" and "the reason leaked"
+     * as unrelated failures would describe one broken policy as two.
+     */
+    // UnitTestContainsTooManyAsserts: PMD analyses this module's main sources, and this is main
+    // source that happens to be a test. The two assertions are one claim about one observation —
+    // this endpoint is refused, and the refusal does not publish the subscription's credential —
+    // and splitting them would need a second assess call on the same endpoint, which is the
+    // determinism this contract deliberately never requires.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+    @Test
+    void refusalIsAValueWhoseReasonKeepsTheCapabilityUrlOut() {
+        Optional<URI> supplied = refusedEndpoint();
+        Assumptions.assumeTrue(
+                supplied.isPresent(),
+                "refusedEndpoint() is empty, so there is no refusal to observe. That is the answer for a policy whose "
+                        + "declared behaviour admits every endpoint satisfying the seam's precondition; this check is "
+                        + "reported as skipped rather than passed, because a green check nothing exercised would "
+                        + "misreport this policy's coverage.");
+        URI witness = admissible(supplied.orElseThrow(), "refusedEndpoint()");
+        Markers markers = markers(witness);
+        if (markers.searchable().isEmpty()) {
+            throw new AssertionError(markers.unfitWitnessMessage());
+        }
+
+        EndpointAssessment assessment = policy().assess(witness);
+
+        assertThat(assessment)
+                .as("assess must answer a refused endpoint with Refused — a refusal is the ordinary case here, and a "
+                        + "policy that throws instead aborts a fan-out at its first hostile row")
+                .isInstanceOf(EndpointAssessment.Refused.class);
+        assertThat(((EndpointAssessment.Refused) assessment).reason())
+                .as("a refusal's reason must not carry the capability part of the endpoint — it reaches an "
+                        + "application's logs, and whoever reads it there can then message the subscriber. Render the "
+                        + "endpoint with the library's own redaction (origin plus fingerprint) instead of naming the "
+                        + "URI, a component of it, one path segment or one query value")
+                .doesNotContain(markers.searchable().toArray(new String[0]));
+    }
+
+    /**
+     * A smoke check, and named one. Several threads enter {@code assess} at the same moment and every one of them must
+     * come back with one of the two variants of the sealed answer — nothing thrown, nothing {@code null}. One
+     * {@link com.the13haven.push2u.PushSender} is shared across threads and {@code sendAsync} makes concurrent
+     * assessments ordinary, so a policy guarding mutable state badly fails here rather than in production.
+     *
+     * <p>What it is worth is asymmetric, and saying so is part of the check. A passing run proves nothing: no schedule
+     * is forced, and an unguarded cache can go a thousand runs without two threads colliding in it. A failing run is a
+     * real defect every time, because a policy that is thread-safe cannot fail it. Having no false positives is what
+     * earns this check its place; being no proof is why it is not called one.
+     *
+     * <p>It deliberately does not assert that one endpoint keeps yielding one variant. That is determinism of the
+     * result, which this library does not require of a policy — a resolution cache or a counter is legitimate state to
+     * keep — and demanding it here would smuggle the assertion in under a name that hides it.
+     */
+    @Test
+    void concurrentAssessmentsAllComeBackWithAnAnswer() throws InterruptedException {
+        EndpointPolicy policy = policy();
+        List<URI> endpoints = new ArrayList<>();
+        endpoints.add(admissible(allowedEndpoint(), "allowedEndpoint()"));
+        refusedEndpoint().ifPresent(refused -> endpoints.add(admissible(refused, "refusedEndpoint()")));
+
+        List<EndpointAssessment> answers = assessConcurrently(policy, endpoints);
+
+        assertThat(answers)
+                .as("every concurrent assess call must answer with one of the two variants of the sealed assessment, "
+                        + "never null and never by throwing")
+                .hasSize(CONCURRENT_CALLS)
+                .doesNotContainNull()
+                .hasOnlyElementsOfTypes(EndpointAssessment.Allowed.class, EndpointAssessment.Refused.class);
+    }
+
+    /**
+     * Runs {@link #CONCURRENT_CALLS} assessments that genuinely overlap: one thread per call on an executor this check
+     * creates and shuts down itself, all of them held at a start gate until the last one is submitted.
+     *
+     * <p>The executor is its own rather than the platform's shared work-stealing pool. A rendezvous among tasks
+     * submitted to that pool deadlocks on a machine with few cores — a build agent, usually — and a check that hangs a
+     * suite is worse than one that does not exist.
+     */
+    // CloseResource: the executor is shut down in the finally block below, with shutdownNow rather
+    // than close. AutoCloseable's close waits for termination, so a policy that never answers would
+    // hang the suite here after the check had already reported the timeout — which is the one
+    // failure mode this check must be able to report rather than become.
+    @SuppressWarnings("PMD.CloseResource")
+    private static List<EndpointAssessment> assessConcurrently(EndpointPolicy policy, List<URI> endpoints)
+            throws InterruptedException {
+        ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLS);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<EndpointAssessment>> pending = new ArrayList<>(CONCURRENT_CALLS);
+            for (int call = 0; call < CONCURRENT_CALLS; call++) {
+                URI endpoint = endpoints.get(call % endpoints.size());
+                pending.add(executor.submit(() -> {
+                    start.await();
+                    return policy.assess(endpoint);
+                }));
+            }
+            start.countDown();
+
+            List<EndpointAssessment> answers = new ArrayList<>(pending.size());
+            for (Future<EndpointAssessment> call : pending) {
+                answers.add(answerOf(call));
+            }
+            return answers;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /** Unwraps one concurrent call, turning a thrown defect or a call that never returns into a readable failure. */
+    // PreserveStackTrace: the cause is what the policy actually threw, and it is carried over
+    // deliberately in place of the ExecutionException wrapping it — the wrapper's own frames are
+    // this method's, and reporting them would bury the frame the implementor has to look at.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    private static EndpointAssessment answerOf(Future<EndpointAssessment> call) throws InterruptedException {
+        try {
+            return call.get(ANSWER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (ExecutionException thrown) {
+            throw new AssertionError(
+                    "assess threw while other threads were inside it. Concurrent assessments are the ordinary case — "
+                            + "one sender is shared, and asynchronous sends assess in parallel — so a policy keeping "
+                            + "mutable state has to guard it.",
+                    thrown.getCause());
+        } catch (TimeoutException neverAnswered) {
+            throw new AssertionError(
+                    "a concurrent assess call had not answered after " + ANSWER_TIMEOUT_SECONDS
+                            + " seconds, which is a policy waiting on something that never arrives rather than a slow "
+                            + "one.",
+                    neverAnswered);
+        }
+    }
+
+    /**
+     * Checks an endpoint the implementor supplied against the precondition {@link EndpointPolicy#assess} is written for
+     * — an absolute {@code https} URL with a host — before the contract measures a policy against it. Holding a policy
+     * to an input the seam never promises to hand it would report on a question nobody asked.
+     */
+    private static URI admissible(URI endpoint, String accessor) {
+        try {
+            // String.valueOf rather than toString: an accessor answering null is a fixture mistake
+            // like any other, and it should arrive as this message rather than as a bare NPE.
+            Endpoints.requireSecure(String.valueOf(endpoint));
+        } catch (IllegalArgumentException outsideTheContract) {
+            throw new AssertionError(
+                    accessor + " must answer an endpoint this seam is ever handed: an absolute https URL with a host. "
+                            + "This is a problem with the fixture and not with the policy — " + outsideTheContract
+                            + ".",
+                    outsideTheContract);
+        }
+        return endpoint;
+    }
+
+    /**
+     * The strings the leak check may search a refusal's reason for, and — when there are none — the account of why the
+     * witness cannot be used.
+     *
+     * @param searchable the parts of the witness that are long enough to mean something and are absent from the
+     *     redaction a conforming policy may print
+     * @param tooShort how many parts were dropped for being shorter than {@link #MARKER_MIN_LENGTH}
+     * @param alreadyRedacted how many parts were dropped for occurring in the redaction of this very endpoint
+     */
+    private record Markers(List<String> searchable, int tooShort, int alreadyRedacted) {
+
+        /**
+         * Why this witness cannot be searched against, naming the half (or halves) of the rule its parts failed. The
+         * parts themselves are deliberately not printed: a witness may well be a real endpoint out of a real store, and
+         * this message goes to the same log everything else in a failing build goes to.
+         */
+        String unfitWitnessMessage() {
+            List<String> halves = new ArrayList<>(2);
+            if (tooShort > 0) {
+                halves.add(tooShort + " of them are shorter than " + MARKER_MIN_LENGTH
+                        + " characters, which is too short to tell a leaked credential apart from the ordinary words "
+                        + "of a refusal");
+            }
+            if (alreadyRedacted > 0) {
+                halves.add(alreadyRedacted
+                        + " of them already occur in the rendering a conforming policy is entitled to print for this "
+                        + "endpoint — its origin and a sixteen-character fingerprint — where finding one would "
+                        + "convict a policy that leaked nothing");
+            }
+            return "refusedEndpoint() is unfit for this check, which is a problem with the fixture and not with the "
+                    + "policy: none of the parts of that endpoint can be searched for, because "
+                    + String.join(" and ", halves)
+                    + ". Supply an endpoint carrying a capability-shaped path segment or query value, like the ones a "
+                    + "real subscription store holds — a bare host with no distinctive component would let this check "
+                    + "report success for a property it never tested. The parts are not named here: a witness may be "
+                    + "a real endpoint, and a capability URL must not travel into a log.";
+        }
+    }
+
+    /**
+     * Sorts every part of the witness into the ones worth searching for and the ones that would answer a question about
+     * the policy's prose instead of about the endpoint.
+     *
+     * <p>Both halves of the rule are applied to each spelling separately, the raw one and the decoded one, because a
+     * decoded form can collide with the redaction where its raw form does not.
+     */
+    private static Markers markers(URI witness) {
+        String redaction = Endpoints.redact(witness.toString());
+        List<String> searchable = new ArrayList<>();
+        int tooShort = 0;
+        int alreadyRedacted = 0;
+        for (String part : parts(witness)) {
+            if (part.length() < MARKER_MIN_LENGTH) {
+                tooShort++;
+            } else if (redaction.contains(part)) {
+                alreadyRedacted++;
+            } else {
+                searchable.add(part);
+            }
+        }
+        return new Markers(List.copyOf(searchable), tooShort, alreadyRedacted);
+    }
+
+    /**
+     * Every part of the witness the leak check considers, at the three granularities a leak can happen at: the whole
+     * URI, each component that can carry the credential entire, and each path segment and query value on its own. A
+     * policy naming one segment has published the whole credential while its sentence holds neither the URI nor the
+     * path.
+     *
+     * <p>Each part appears in both spellings a policy might write, raw and percent-decoded — one that decodes the
+     * endpoint before building its message leaks exactly as much as one that does not.
+     */
+    private static Set<String> parts(URI witness) {
+        Set<String> parts = new LinkedHashSet<>();
+        addSpellings(parts, witness.toString());
+        addSpellings(parts, witness.getRawUserInfo());
+        addSpellings(parts, witness.getRawPath());
+        addSpellings(parts, witness.getRawQuery());
+        addSpellings(parts, witness.getRawFragment());
+
+        String path = witness.getRawPath();
+        if (path != null) {
+            for (String segment : PATH_SEPARATOR.split(path, -1)) {
+                addSpellings(parts, segment);
+            }
+        }
+        String query = witness.getRawQuery();
+        if (query != null) {
+            for (String parameter : QUERY_SEPARATOR.split(query, -1)) {
+                int assignment = parameter.indexOf('=');
+                addSpellings(parts, assignment < 0 ? parameter : parameter.substring(assignment + 1));
+            }
+        }
+        return parts;
+    }
+
+    /** Adds one part in both spellings, skipping what has no content — an empty query or a bare path names nothing. */
+    private static void addSpellings(Set<String> parts, @Nullable String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return;
+        }
+        parts.add(raw);
+        parts.add(decode(raw));
+    }
+
+    /**
+     * The percent-decoded spelling of one part of a URI.
+     *
+     * <p>{@code +} is protected before decoding because it means a space only in a form-encoded query and stands for
+     * itself everywhere else in a URI — a path segment carrying one is ordinary, and turning it into a space would
+     * search for a string no policy could ever print. A part that is not valid percent-encoding is left as it is: this
+     * is a fixture being read, not input being validated.
+     */
+    private static String decode(String raw) {
+        try {
+            return URLDecoder.decode(raw.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException notPercentEncoded) {
+            return raw;
+        }
+    }
+}

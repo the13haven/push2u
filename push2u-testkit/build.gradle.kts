@@ -2,10 +2,10 @@ plugins {
     `java-library`
 }
 
-description = "push2u-testkit — the published test kit for push2u: the conformance contract every VapidSigner " +
-    "implementation extends, plus fixtures for a sending application's own tests — a generated VAPID pair and a " +
-    "coherent browser subscription, each valid against the library's current input contracts, and a scripted, " +
-    "recording PushHttpClient fake."
+description = "push2u-testkit — the published test kit for push2u: the conformance contracts every VapidSigner and " +
+    "every custom EndpointPolicy implementation extends, plus fixtures for a sending application's own tests — a " +
+    "generated VAPID pair and a coherent browser subscription, each valid against the library's current input " +
+    "contracts, and a scripted, recording PushHttpClient fake."
 
 // The kit is a MODULE rather than push2u-core's test fixtures, and the reason is that one source set
 // cannot be half published. The core's fixtures now hold internal plumbing (the mock push receiver,
@@ -13,9 +13,9 @@ description = "push2u-testkit — the published test kit for push2u: the conform
 // the kit is meant to be on a consumer's test classpath. Splitting them along the artifact boundary
 // is what lets the core's fixtures be skipped from its publication and this one be published whole.
 //
-// Everything here is `api`: a consumer extends VapidSignerContractTest, so the JUnit annotations it
-// carries, the AssertJ assertions its methods run, and the VapidSigner its abstract method returns
-// are all part of what compiling against this kit requires.
+// Everything here is `api`: a consumer extends VapidSignerContractTest or EndpointPolicyContractTest,
+// so the JUnit annotations they carry, the AssertJ assertions their methods run, and the library
+// types their abstract methods return are all part of what compiling against this kit requires.
 dependencies {
     api(project(":push2u-core"))
     // Declared directly, not leaned on transitively through the core: this module annotates its own
@@ -26,7 +26,7 @@ dependencies {
     api(libs.junit.jupiter)
     api(libs.assertj.core)
 
-    // The kit's own tests: they check that the contract passes a conforming signer and fails a
+    // The kit's own tests: they check that each contract passes a conforming subject and fails a
     // non-conforming one, so they need a runnable JUnit platform of their own.
     testRuntimeOnly(libs.junit.platform.launcher)
 }

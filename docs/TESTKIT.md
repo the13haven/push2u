@@ -1,10 +1,12 @@
 # The push2u test kit
 
-`push2u-testkit` is a test-scoped artifact with two halves. One is the conformance contract every
-`VapidSigner` implementation extends, which is [`SIGNER.md`](SIGNER.md)'s subject. The other is what
-this document covers: values and a transport fake for the tests an application writes around its
-own sending code — a VAPID pair, a browser subscription, and a `PushHttpClient` that answers a
-declared sequence of responses and records what it was asked to send. [`README.md` → Writing a
+`push2u-testkit` is a test-scoped artifact with two sides. One is the executable conformance
+contracts an extension point must satisfy: `VapidSignerContractTest`, which is
+[`SIGNER.md`](SIGNER.md)'s subject, and `EndpointPolicyContractTest`, which is
+[below](#the-endpoint-policy-contract). The other is what most of this document covers: values and a
+transport fake for the tests an application writes around its own sending code — a VAPID pair, a
+browser subscription, and a `PushHttpClient` that answers a declared sequence of responses and
+records what it was asked to send. [`README.md` → Writing a
 VapidSigner](../README.md#writing-a-vapidsigner) carries the dependency coordinate; the kit belongs
 on a **test** classpath and never on an application's runtime one.
 
@@ -17,10 +19,11 @@ publishes the second kind.
 ## What the kit brings with it
 
 Everything the kit declares is `api`, and that is not an oversight. A consumer *extends*
-`VapidSignerContractTest`, so the JUnit Jupiter annotations it carries, the AssertJ assertions its
-methods run and the `VapidSigner` its abstract method returns are all part of what compiling against
-the kit requires. The fixtures themselves use neither JUnit nor AssertJ, so an application on
-another test runner can still use them — but the artifact is one, and the contract needs both.
+`VapidSignerContractTest` or `EndpointPolicyContractTest`, so the JUnit Jupiter annotations they
+carry, the AssertJ assertions their methods run and the library types their abstract methods return
+are all part of what compiling against the kit requires. The fixtures themselves use neither JUnit
+nor AssertJ, so an application on another test runner can still use them — but the artifact is one,
+and the contracts need both.
 
 The JUnit **BOM** travels the same way, and on a Gradle build it is the part worth knowing about
 before it happens. Its constraints reach whatever test classpath the kit lands on, and a Spring Boot
@@ -302,6 +305,135 @@ it in the application's own wiring — that is the reachable path to every row a
 the kit publishes no catalogue of the eight. A consumer needs to handle a `RetryableFailure`, not to
 re-derive that `429` is one.
 
+## The endpoint policy contract
+
+The kit's second executable contract, for the other extension point a deployment is likely to write
+itself. An implementation extends it and supplies its subject and two example endpoints:
+
+```java
+class MyEndpointPolicyContractTest extends EndpointPolicyContractTest {
+    @Override
+    protected EndpointPolicy policy() {
+        return new MyPolicy(...);
+    }
+
+    @Override
+    protected URI allowedEndpoint() {
+        return URI.create("https://push.example/wpush/v2/2f1c8a7e6d5b4a390817");
+    }
+
+    @Override
+    protected Optional<URI> refusedEndpoint() {
+        return Optional.of(URI.create("https://blocked.example/wpush/v2/9f8e7d6c5b4a39281706"));
+    }
+}
+```
+
+Three checks come with that. The permitted endpoint is answered with `EndpointAssessment.Allowed` —
+a value, never `null` and never an exception. The refused one is answered with an
+`EndpointAssessment.Refused` whose reason does not carry the capability part of the endpoint. And a
+handful of threads enter `assess` at the same moment and all come back.
+
+**Which endpoints a policy ought to admit is deliberately not checked**, and could not be: that rule
+is the deployment's own — the push services its subscriptions arrive from, the egress its network
+permits — and nothing outside the deployment knows it. What the contract is about is the shape of
+the answer, which belongs to the library.
+
+### Why a refusal's wording is checked at all
+
+A push endpoint is a capability URL: whoever holds it can message that subscriber, so its path and
+query are a bearer credential rather than an identifier. A refusal's reason **travels** —
+`PushSender.send` turns a `Refused` into `PushOutcome.EndpointRejected`, pairing the policy's own
+sentence with this library's redaction of the endpoint, and an application logs the outcome. So a
+custom policy's refusal message is the one place in this pipeline where a capability URL can walk
+into a log aggregator the whole company can search, past every redaction the library performs.
+
+`Endpoints.redact` renders the origin plus a truncated fingerprint —
+`https://push.example/…#a1b2c3d4e5f60718` — and drops the path, query and fragment. That rendering
+is what a refusal may name; naming it is not a leak, and the fingerprint is there so an operator can
+correlate log lines about one subscription without holding it. The standard allowlist prints exactly
+that in all three of its refusals.
+
+The search goes at three granularities, because a leak does not have to be a whole component: the
+full URI, each of user-info, path, query and fragment entire, and — inside those — each path segment
+and each query value on its own, all of it in both the raw and the percent-decoded spelling. **The
+third granularity is the one that matters most.** A policy writing `"blocked subscription
+9f8e7d6c5b4a39281706"` has published the whole bearer credential while its sentence contains neither
+the full URI nor the whole path, and a check looking only at entire components would pass it.
+
+### The refusal witness carries a demand, and it is a real one
+
+A string is searched for only when it is **at least 16 characters long** and does **not already
+occur in `Endpoints.redact` of that same endpoint**, and each spelling is held to both halves on its
+own — a decoded form can collide where its raw form does not. The first half rules out the segments
+every URI has, `v1` and `api` and a bare `/`, whose appearance in a refusal says something about the
+policy's prose and nothing about the endpoint. The second closes a trap that would otherwise convict
+correct implementations: the redaction ends in a sixteen-character hexadecimal fingerprint, so a
+hex-shaped marker could match on the fingerprint and report a leak against a policy that leaked
+nothing.
+
+A witness yielding no searchable string at all — `https://blocked.example/` has nothing distinctive
+in it — is reported as **unfit for the check**, naming which half it failed. It is never converted
+into a failure of the policy: the kit is reporting on its own fixture there. So supply an endpoint
+that looks like the ones a real subscription store holds. You will meet this as a failing test
+before you meet it as a sentence here, and it is named rather than buried because it is a genuine
+cost: the kit will not rewrite the endpoint you supplied into a probe of its own, since a policy
+that discriminates by path — perfectly legal, the seam constrains nothing but the answer type —
+would then be assessed on a URI its author never offered.
+
+### `refusedEndpoint()` is optional; `allowedEndpoint()` is not
+
+`refusedEndpoint()` answers `Optional<URI>` and is abstract, with no `default`. The empty answer is
+for one situation only: a policy whose declared behaviour is to admit every endpoint satisfying the
+seam's precondition. `EndpointPolicies.unrestricted()` is exactly that, and it is a supported member
+of this library's public API — a contract requiring a refusal witness would be a contract for
+refusing policies only, and would leave the one policy shipped for the opposite case with nothing at
+all. The refusal check is then reported as **skipped** rather than passed, because a green check
+that exercised nothing would misreport the subject's coverage. There is no `default` so that the
+empty answer is a sentence in the implementor's own source, visible in a diff and a review, rather
+than something a subject inherits.
+
+`allowedEndpoint()` has no empty form, and the asymmetry is not an oversight. This library has
+already ruled on the two extremes and ruled on them differently: every factory of the standard
+allowlist refuses an empty rule list outright, because an allowlist admitting nothing is far more
+likely a wiring bug than a policy, while `unrestricted()` exists precisely so a deployment can state
+the other extreme. So a policy that refuses *every* endpoint cannot be a subject of this contract.
+That cost is named rather than hidden — it excludes a shape this library argues against, where a
+required witness would have excluded one it publishes.
+
+Both endpoints are checked against `Endpoints.requireSecure` — an absolute `https` URL with a host —
+before they are used. That is the precondition `assess` carries at both of its call sites, and
+holding a policy to an input the seam never promises to hand it would report on a question nobody
+asked. An endpoint that fails it is reported against the fixture, by accessor name.
+
+### The concurrency check is a smoke check and is named one
+
+A small number of threads on an executor the check creates and shuts down itself — never the common
+`ForkJoinPool`, where a rendezvous among tasks deadlocks on a runner with few cores — released
+together by a start gate so the calls genuinely overlap. It asserts three things: no call threw, no
+call answered `null`, and every answer is one of the two variants of the sealed hierarchy. That is
+all.
+
+What it is worth is asymmetric, and the contract says so rather than overselling it. A passing run
+proves nothing: no schedule is forced, and an unguarded cache can go a thousand runs without two
+threads colliding in it. A failing run is a real defect every time, because a thread-safe policy
+cannot fail it. Having no false positives is what earns the check its place; being no proof is why
+it is not called one.
+
+**It deliberately does not assert that one endpoint keeps yielding one variant.** A policy is
+allowed to keep state — a resolution cache, a counter — and to answer differently the second time,
+so demanding a stable answer would refuse an implementation this library permits. That rule holds
+across the whole contract: no check in it observes one endpoint twice and requires the two answers
+to agree, which is also why the refusal and its reason are asserted of one `assess` call rather than
+split into two tests over two calls.
+
+### What it protects against, and what it does not
+
+Error, not deliberate circumvention. An implementor can answer `Optional.empty()` for a policy that
+does refuse things, or pick an `allowedEndpoint()` chosen to be easy — the same limit
+`VapidSignerContractTest` states for itself, where a signer rotating a pool of buffers defeats every
+check made from outside. What binds there is the sentence in `EndpointPolicy`'s own contract.
+
 ## What the kit does not publish
 
 **No `VapidSigner` fake.** `SignerUnavailable` is one of the eight, and a signer that raises
@@ -336,6 +468,11 @@ at all.
 **No `PushSender` fixture, in any spelling** — the reason is in the worked example above.
 
 **No `PushOutcome` factory and no catalogue of the eight**, for the reason in the section above it.
+
+**No `EndpointPolicy` fake, fixture or preconfigured subject.** A policy is a deployment's own
+statement about its egress, and the kit publishes the contract that says what an answer must look
+like rather than an answer of its own. The one policy that admits everything already exists in the
+library, named so that using it leaves a token in the deployment's source.
 
 **None of this library's own fixtures.** The RFC vectors, the in-process mock push receiver, its
 self-signed loopback TLS identity, the shared send-pipeline helper, and the Vault module's fakes all

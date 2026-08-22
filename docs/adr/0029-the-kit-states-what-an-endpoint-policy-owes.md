@@ -1,6 +1,6 @@
 # ADR-029 — The kit states what an endpoint policy owes
 
-**Status:** Proposed
+**Status:** Accepted
 
 Filed as https://github.com/the13haven/push2u/issues/195, together with the transport's contract.
 The two were filed in one issue because they share a cause and not a design, and either one lands
