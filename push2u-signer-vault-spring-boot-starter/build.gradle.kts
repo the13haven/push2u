@@ -33,6 +33,13 @@ dependencies {
     // The published kit, for the generated VAPID pair the push2u.vapid.* and
     // push2u.signer.vault.public-key properties bind — key material valid against whatever the
     // library's current input contract is, rather than a shape these tests froze once.
+    //
+    // It brings the JUnit platform with it: the kit carries the BOM on `api`, because a consumer
+    // extending its contract test compiles against those annotations. So a module taking the kit
+    // takes the catalog's JUnit in place of whatever else was managing it — for this one, Boot,
+    // which is why the version here moved up to the one the rest of the build already runs. That
+    // is the state worth having, one JUnit across every module, and it is stated rather than left
+    // to be discovered in a resolution report.
     testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
