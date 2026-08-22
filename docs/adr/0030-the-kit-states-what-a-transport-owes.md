@@ -280,7 +280,7 @@ the moment its decision is implemented, and travels with the record instead.
   is ADR-028's entry and stands unchanged; and equally the two certificate builders consolidated by
   publishing either one.
 - A TLS private key or certificate committed to this repository, or a fixed one shipped inside a
-  published artifact. The identity is generated per test JVM and never leaves it.
+  published artifact — the identity is generated per test JVM and never leaves it.
 - `com.sun.net.httpserver` reaching a published artifact.
 - A contract obligation that the response body is never materialised, in any spelling that asserts
   buffering did not happen; and a response-size check offered as one.

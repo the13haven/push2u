@@ -12,8 +12,10 @@ gave the kit its charter — executable contracts, coherent values of the librar
 contracts, correct fakes of seams that already exist — and left the two remaining contracts
 undecided on purpose, in a section that says so, so that the consumer-side values it did decide were
 not held up behind the transport's unsolved TLS cost. **Nothing in that record is superseded here.**
-Its ruled-out entry about determinism is not narrowed either: it is executed, below, in the one place
-where a contract test would otherwise have smuggled the assertion back in.
+Its ruled-out entry about determinism is not narrowed either: it is executed, below, at both of the
+points where a contract test would otherwise have smuggled the assertion back in — a concurrency
+check demanding that one endpoint keep yielding one variant, and a refusal check split from its leak
+check, which would observe one endpoint twice and hold the two answers to one expectation.
 
 **What an `EndpointPolicy` owes is written down and nothing executes it.** The seam's own Javadoc
 obliges four things: `assess` answers with a value and never `null`; a refusal is an
@@ -170,13 +172,16 @@ than about the endpoint.
 
 **The criterion for a usable witness is fixed here rather than left to judgement, and stating it
 closes a trap that would otherwise convict correct implementations.** A component qualifies when it
-is meaningful *and* does not occur in `Endpoints.redact(witness)` — the exact string a conforming
-policy is entitled to print about that endpoint. One half of that rules out a marker that is merely
-the origin again. The other half is the trap: the redaction ends in a sixteen-character hexadecimal
-fingerprint, so a witness whose path is hex-shaped matches on the fingerprint and reports a leak
-against a policy that leaked nothing. Beside it the marker must be long enough that colliding with
-the prose of a refusal is not plausible — the number is the implementing record's to choose and
-justify, and the rule is what this one fixes.
+is meaningful *and* neither of the spellings the search will look for — the raw one and the decoded
+one — occurs in `Endpoints.redact(witness)`, the exact string a conforming policy is entitled to
+print about that endpoint. The two spellings are held to the rule separately because they are
+searched separately: a decoded form can collide where its raw form does not, and a rule stated over
+"the component" would admit precisely that witness. One half of this rules out a marker that is
+merely the origin again. The other half is the trap: the redaction ends in a sixteen-character
+hexadecimal fingerprint, so a witness whose path is hex-shaped matches on the fingerprint and reports
+a leak against a policy that leaked nothing. Beside that the marker must be long enough that
+colliding with the prose of a refusal is not plausible — the number belongs to the implementing pull
+request, to choose and to justify; the rule is what this record fixes.
 
 A witness failing either half is refused **as unfit for the check**, with a message naming which
 half it failed and why. It is never converted into a failure of the policy: the kit is reporting on
@@ -269,12 +274,13 @@ travels with this record for that reason.
   implementor's judgement instead of asserted with a message that says why.
 - The refusal and the leak stated as two checks over two calls, which would have the contract observe
   one witness twice and quietly require the two answers to agree.
-- A witness qualification rule admitting a marker that occurs in the redaction a conforming policy
-  may print — the fingerprint above all — or a fixture's unfitness reported as a failure of the
-  policy.
-- A contract that cannot be extended by a policy which permits nothing, sought by making
-  `allowedEndpoint()` optional in the name of symmetry; the two extremes have different standing in
-  this library and the contract follows it.
+- A witness qualification rule admitting a marker that occurs, in either of the spellings the leak
+  check searches, in the redaction a conforming policy may print — the fingerprint above all — and
+  equally a fixture's unfitness reported as a failure of the policy.
+- An optional, empty-able or otherwise skippable `allowedEndpoint()`, in any spelling that lets a
+  subject declare it has no permitted endpoint to offer — sought for symmetry with the refusal
+  witness, where the two extremes have different standing in this library and the contract follows
+  that standing rather than the symmetry.
 - A kit that derives its own probe endpoint by rewriting the one the implementor supplied.
 - A contract check on which endpoints a policy admits or refuses, that being the deployment's rule
   and not this library's.
