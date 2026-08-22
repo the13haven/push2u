@@ -253,9 +253,15 @@ describe the artifact in the same terms, and `docs/DESIGN.md` describes the modu
 
 All of that belongs to the implementation, together with this record's move to `Accepted`. While it
 is `Proposed` those documents are still accurate — a kit that holds one contract is what the tree
-holds until the code lands. The one edit that cannot wait is `CLAUDE.md`'s range of ADR numbers,
-which becomes wrong the moment this file exists rather than when its decision is implemented, and it
-travels with this record for that reason.
+holds until the code lands.
+
+One edit does travel with this record rather than with its implementation, and it is a deletion.
+`CLAUDE.md` carried the range of ADR numbers, which went stale the moment any new record appeared
+and so had to be bumped by every record that added one — an edit carrying no information about the
+decision that forced it. It is removed rather than bumped. What makes removal better than diligence
+is when the number is read: someone reaches for it to find the next free number, which is exactly
+the use a range that nobody remembered to bump answers wrongly, and `docs/adr/README.md` is the
+index that answers it correctly whether or not anyone remembered anything.
 
 ## What this rules out
 

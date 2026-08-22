@@ -267,9 +267,12 @@ describe the artifact in the same terms; `docs/DESIGN.md` describes the module l
 transport's author is sent. `CLAUDE.md` and `CONTRIBUTING.md` carry a sentence about what the kit
 holds.
 
-All of it belongs to the implementation, together with this record's move to `Accepted` — except
-`CLAUDE.md`'s range of ADR numbers, which is wrong from the moment this file exists rather than from
-the moment its decision is implemented, and travels with the record instead.
+All of it belongs to the implementation, together with this record's move to `Accepted` — except one
+deletion that travels with this record instead. `CLAUDE.md` carried a range of ADR numbers, which
+every record adding a file had to bump; it is removed rather than bumped, so that the next free
+number is read from `docs/adr/README.md`, which is right without anyone maintaining it.
+[ADR-029](0029-the-kit-states-what-an-endpoint-policy-owes.md) carries the same deletion, the two
+records having arrived together.
 
 ## What this rules out
 

@@ -86,8 +86,11 @@ subject, and the `docs/MIGRATION.md` rename is what that cost the last time.
 The coordinate stays in README under the rule below, so this document links across to the README
 section carrying it exactly as `docs/SIGNER.md` does.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never
-how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR (ADR-001…030) with
-`docs/adr/README.md` as the index. Read the relevant ADR before changing anything structural.
+how to use it — and `docs/adr/` holds the decisions behind it, one file per ADR, numbered from 001,
+with `docs/adr/README.md` as the index. **No count of them is kept here**, and the omission is
+deliberate: the index is where a new record reads its next free number, and a total written in a
+second place is wrong precisely when someone uses it for that. Read the relevant ADR before changing
+anything structural.
 `docs/PERFORMANCE.md` records what one message costs step by step, per JCE provider, together with
 the environment the numbers were taken on — a snapshot someone took, not an output the build
 maintains, and README links consumers to it from the `cryptoProvider` section because the provider
