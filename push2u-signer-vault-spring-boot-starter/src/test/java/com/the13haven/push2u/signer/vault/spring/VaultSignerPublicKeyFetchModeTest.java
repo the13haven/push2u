@@ -8,12 +8,6 @@ package com.the13haven.push2u.signer.vault.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
-import java.util.Base64;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -34,6 +28,7 @@ import com.the13haven.push2u.spring.Push2uAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthIndicator;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * The four readings of {@code push2u.signer.vault.public-key-fetch}, pinned by behaviour rather than by inspecting a
@@ -50,17 +45,10 @@ class VaultSignerPublicKeyFetchModeTest {
             new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(VaultSignerAutoConfiguration.class));
 
     @BeforeAll
-    static void generateSuppliedKey() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        KeyPair keyPair = generator.generateKeyPair();
-        byte[] point = new byte[65];
-        point[0] = 0x04;
-        copyFixed32(((ECPublicKey) keyPair.getPublic()).getW().getAffineX().toByteArray(), point, 1);
-        copyFixed32(((ECPublicKey) keyPair.getPublic()).getW().getAffineY().toByteArray(), point, 33);
-        publicKeyB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(point);
-        // Referenced so the private half is visibly unused rather than accidentally dropped.
-        assertThat(((ECPrivateKey) keyPair.getPrivate()).getS()).isNotNull();
+    static void generateSuppliedKey() {
+        // Only the public half is configured here: what a supplied key means to this starter is
+        // that no Vault read is needed for it, and the private half stays with Vault.
+        publicKeyB64 = VapidKeyPairFixture.generate().publicKeyBase64Url();
     }
 
     @BeforeEach
@@ -274,12 +262,6 @@ class VaultSignerPublicKeyFetchModeTest {
             "push2u.signer.vault.key-name=vapid",
             "push2u.signer.vault.token=test-token"
         };
-    }
-
-    private static void copyFixed32(byte[] value, byte[] out, int offset) {
-        int start = value.length > 32 ? value.length - 32 : 0;
-        int length = value.length - start;
-        System.arraycopy(value, start, out, offset + 32 - length, length);
     }
 
     /**

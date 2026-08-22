@@ -32,6 +32,11 @@ dependencies {
     testImplementation(libs.jackson.annotations)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
+    // The published kit, used here exactly as a consumer uses it: a generated VAPID pair for the
+    // push2u.vapid.* properties to bind and a coherent subscription for a send. Standing those up
+    // by hand is what let this module's tests encode key material the library later stopped
+    // accepting — the same drift the kit exists to absorb for applications.
+    testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

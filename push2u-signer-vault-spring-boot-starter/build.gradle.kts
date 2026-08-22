@@ -30,6 +30,10 @@ dependencies {
     testImplementation(testFixtures(project(":push2u-signer-vault")))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
+    // The published kit, for the generated VAPID pair the push2u.vapid.* and
+    // push2u.signer.vault.public-key properties bind — key material valid against whatever the
+    // library's current input contract is, rather than a shape these tests froze once.
+    testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
