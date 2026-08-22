@@ -5,6 +5,7 @@
  */
 package com.the13haven.push2u.testkit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -12,6 +13,7 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
@@ -373,6 +375,53 @@ final class EndpointPolicyContractSelfTest {
                 .hasMessageContaining("neither Allowed nor Refused")
                 .hasMessageNotContaining(REFUSED_CREDENTIAL)
                 .hasMessageNotContaining(ALLOWED_CREDENTIAL);
+    }
+
+    /**
+     * The regression for the disclosure this check used to carry, and the shape matters: a list of nothing but
+     * {@code null} has nothing to print, so it would have passed even while the check rendered its answers. Here half
+     * the calls answer {@code null} — which is what makes the check fail — and the other half answer a refusal quoting
+     * the endpoint, which is what an assertion over the list would have printed while reporting the {@code null}s. The
+     * failure has to name counts and reach neither endpoint.
+     */
+    @Test
+    void aConcurrencyFailureNeverRendersTheAnswersItCollected() {
+        AtomicInteger calls = new AtomicInteger();
+        Contract contract = Contract.over(endpoint ->
+                calls.getAndIncrement() % 2 == 0 ? null : new EndpointAssessment.Refused("refused " + endpoint));
+
+        assertThatThrownBy(contract::concurrentAssessmentsAllComeBackWithAnAnswer)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("neither Allowed nor Refused")
+                .hasMessageNotContaining(REFUSED_CREDENTIAL)
+                .hasMessageNotContaining(ALLOWED_CREDENTIAL)
+                .hasMessageNotContaining(REFUSED.toString())
+                .hasMessageNotContaining(ALLOWED.toString());
+    }
+
+    /**
+     * The marker machinery's own rendering, pinned because a record's generated {@code toString} is what it would fall
+     * back to. These two hold the search strings themselves — pieces of a capability URL — and they are reached by
+     * accident rather than on purpose: an assertion taking one as its actual value, a debug line, a collection a runner
+     * prints. A future simplification that dropped either written rendering would restore the disclosure silently,
+     * which is what these two checks are here to stop.
+     */
+    @Test
+    void theMarkerMachineryRendersWithoutTheStringsItSearchesFor() {
+        EndpointLeakMarkers markers = EndpointLeakMarkers.of(REFUSED);
+
+        assertThat(markers.toString())
+                .as("the marker set renders as counts, never as the strings it holds")
+                .doesNotContain(REFUSED_CREDENTIAL)
+                .doesNotContain(REFUSED.toString())
+                .contains("searchable=");
+        for (EndpointLeakMarkers.Marker marker : markers.searchable()) {
+            assertThat(marker.toString())
+                    .as("a marker renders as where it came from and how it is spelled, never as its value")
+                    .doesNotContain(marker.value())
+                    .contains(marker.level())
+                    .contains(marker.spelling());
+        }
     }
 
     /**
