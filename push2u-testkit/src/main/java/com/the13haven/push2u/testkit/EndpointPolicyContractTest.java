@@ -5,8 +5,6 @@
  */
 package com.the13haven.push2u.testkit;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -164,16 +162,21 @@ public abstract class EndpointPolicyContractTest {
      * registration boundary — where an application applies the same policy before it stores a row — there is nothing
      * behind it to catch a policy that does something else.
      */
+    // UnitTestShouldIncludeAssert: the check is made by hand and throws, rather than through an
+    // assertion library, because an assertion prints its actual value — here an assessment whose
+    // reason may hold the capability URL this contract exists to keep out of a build log. The
+    // failure below names the variant and nothing else, which is the whole point of not asserting.
+    @SuppressWarnings("PMD.UnitTestShouldIncludeAssert")
     @Test
     void permittedEndpointIsAnsweredWithAllowed() {
         URI endpoint = admissible(allowedEndpoint(), "allowedEndpoint()");
 
         EndpointAssessment assessment = policy().assess(endpoint);
 
-        assertThat(assessment)
-                .as("assess must answer a permitted endpoint with Allowed — a value, never null and never an "
-                        + "exception")
-                .isInstanceOf(EndpointAssessment.Allowed.class);
+        if (!(assessment instanceof EndpointAssessment.Allowed)) {
+            throw new AssertionError("assess must answer a permitted endpoint with Allowed — a value, never null and "
+                    + "never an exception. It answered " + describe(assessment) + ".");
+        }
     }
 
     /**
@@ -194,6 +197,11 @@ public abstract class EndpointPolicyContractTest {
     // and the refusal does not publish the subscription's credential. Splitting them would need a
     // second assess call on the same endpoint, which is the determinism this contract deliberately
     // never requires.
+    // UnitTestShouldIncludeAssert: the check is made by hand and throws, rather than through an
+    // assertion library, because an assertion prints its actual value — here an assessment whose
+    // reason may hold the capability URL this contract exists to keep out of a build log. The
+    // failure below names the variant and nothing else, which is the whole point of not asserting.
+    @SuppressWarnings("PMD.UnitTestShouldIncludeAssert")
     @Test
     void refusalIsAValueWhoseReasonKeepsTheCapabilityUrlOut() {
         Optional<URI> supplied = refusedEndpoint();
@@ -211,11 +219,12 @@ public abstract class EndpointPolicyContractTest {
 
         EndpointAssessment assessment = policy().assess(witness);
 
-        assertThat(assessment)
-                .as("assess must answer a refused endpoint with Refused — a refusal is the ordinary case here, and a "
-                        + "policy that throws instead aborts a fan-out at its first hostile row")
-                .isInstanceOf(EndpointAssessment.Refused.class);
-        String reason = ((EndpointAssessment.Refused) assessment).reason();
+        if (!(assessment instanceof EndpointAssessment.Refused refusal)) {
+            throw new AssertionError("assess must answer a refused endpoint with Refused — a refusal is the ordinary "
+                    + "case here, and a policy that throws instead aborts a fan-out at its first hostile row. It "
+                    + "answered " + describe(assessment) + ".");
+        }
+        String reason = refusal.reason();
         for (EndpointLeakMarkers.Marker marker : markers.searchable()) {
             // Checked here rather than through an assertion that takes the expected values: an
             // assertion library prints what it was looking for, which for this check is the
@@ -234,14 +243,26 @@ public abstract class EndpointPolicyContractTest {
      * assessments ordinary, so a policy guarding mutable state badly fails here rather than in production.
      *
      * <p>What it is worth is asymmetric, and saying so is part of the check. A passing run proves nothing: no schedule
-     * is forced, and an unguarded cache can go a thousand runs without two threads colliding in it. A failing run is a
-     * real defect every time, because a policy that is thread-safe cannot fail it. Having no false positives is what
-     * earns this check its place; being no proof is why it is not called one.
+     * is forced, and an unguarded cache can go a thousand runs without two threads colliding in it. Failing what it
+     * <em>asserts</em> is a real defect every time, because a thread-safe policy cannot throw, answer {@code null} or
+     * answer outside the sealed hierarchy however the threads interleave. Having no false positives there is what earns
+     * this check its place; being no proof is why it is not called one.
+     *
+     * <p>One failure of this method is not that, and it is separated rather than glossed over: the check stops waiting
+     * after a fixed budget, so that a policy which never answers fails the build instead of hanging it. That budget is
+     * the check's own limit. This seam promises nothing about how fast {@code assess} answers, so a correct policy
+     * doing something genuinely slow — a cold resolution cache, a machine under load — can exceed it, and the message
+     * says so rather than calling it a defect.
      *
      * <p>It deliberately does not assert that one endpoint keeps yielding one variant. That is determinism of the
      * result, which this library does not require of a policy — a resolution cache or a counter is legitimate state to
      * keep — and demanding it here would smuggle the assertion in under a name that hides it.
      */
+    // UnitTestShouldIncludeAssert: counted and classified by hand, then thrown, rather than through
+    // an assertion library — an assertion over the answers prints them, and a refusal's reason may
+    // hold the capability URL this contract exists to keep out of a build log. The failure below
+    // reports counts only.
+    @SuppressWarnings("PMD.UnitTestShouldIncludeAssert")
     @Test
     void concurrentAssessmentsAllComeBackWithAnAnswer() throws InterruptedException {
         EndpointPolicy policy = policy();
@@ -251,12 +272,17 @@ public abstract class EndpointPolicyContractTest {
 
         List<EndpointAssessment> answers = assessConcurrently(policy, endpoints);
 
-        assertThat(answers)
-                .as("every concurrent assess call must answer with one of the two variants of the sealed assessment, "
-                        + "never null and never by throwing")
-                .hasSize(CONCURRENT_CALLS)
-                .doesNotContainNull()
-                .hasOnlyElementsOfTypes(EndpointAssessment.Allowed.class, EndpointAssessment.Refused.class);
+        int unanswered = 0;
+        for (EndpointAssessment answer : answers) {
+            if (!(answer instanceof EndpointAssessment.Allowed) && !(answer instanceof EndpointAssessment.Refused)) {
+                unanswered++;
+            }
+        }
+        if (answers.size() != CONCURRENT_CALLS || unanswered > 0) {
+            throw new AssertionError("every concurrent assess call must answer with one of the two variants of the "
+                    + "sealed assessment, never null and never by throwing. Of " + CONCURRENT_CALLS + " calls, "
+                    + answers.size() + " came back and " + unanswered + " of those were neither Allowed nor Refused.");
+        }
     }
 
     /**
@@ -335,10 +361,24 @@ public abstract class EndpointPolicyContractTest {
         } catch (TimeoutException neverAnswered) {
             throw new AssertionError(
                     "the concurrent assess calls had not all answered within " + ANSWER_BUDGET_SECONDS
-                            + " seconds, which is a policy waiting on something that never arrives rather than a slow "
-                            + "one.",
+                            + " seconds, so this check gave up waiting rather than hanging the suite it runs in. That "
+                            + "budget is this check's own limit and not a rule about how fast assess has to be: this "
+                            + "seam sets no latency requirement, and a policy that legitimately waits longer than "
+                            + "that — a cold resolution cache on a loaded machine, say — fails here without being "
+                            + "unsafe. Read it as a call that had not returned yet, and look for a lock held across a "
+                            + "slow operation before concluding anything stronger.",
                     neverAnswered);
         }
+    }
+
+    /**
+     * Names an answer without rendering it: the variant's simple name, or {@code null}. The assessment itself is never
+     * printed, and neither is a refusal's reason — a policy under suspicion of putting the endpoint in its reason is
+     * exactly the one whose reason must not be copied into a build log by the check that suspects it. The implementor
+     * has the reason in their own source and their own debugger; a CI archive does not need it.
+     */
+    private static String describe(EndpointAssessment assessment) {
+        return assessment == null ? "null" : assessment.getClass().getSimpleName();
     }
 
     /**

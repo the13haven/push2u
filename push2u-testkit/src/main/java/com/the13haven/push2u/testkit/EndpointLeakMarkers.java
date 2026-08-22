@@ -41,6 +41,17 @@ import com.the13haven.push2u.Endpoints;
 record EndpointLeakMarkers(List<Marker> searchable, int searchableComponents, int tooShort, int alreadyRedacted) {
 
     /**
+     * Written by hand for the reason {@link Marker#toString()} gives, one level up: the generated rendering would print
+     * the whole marker list, and with it every piece of the endpoint this class searches for. Counts carry what a
+     * failure or a debug line needs to be readable and disclose nothing about the endpoint they were derived from.
+     */
+    @Override
+    public String toString() {
+        return "EndpointLeakMarkers[searchable=" + searchable.size() + ", searchableComponents=" + searchableComponents
+                + ", tooShort=" + tooShort + ", alreadyRedacted=" + alreadyRedacted + "]";
+    }
+
+    /**
      * How long a string taken out of the witness endpoint must be before a refusal's reason is searched for it.
      *
      * <p>The number balances two failures against each other. Too low and the check convicts correct policies: the
@@ -72,7 +83,20 @@ record EndpointLeakMarkers(List<Marker> searchable, int searchableComponents, in
      * @param level where in the endpoint it came from
      * @param spelling how it is written, since a policy may render a component decoded
      */
-    record Marker(String value, String level, String spelling) {}
+    record Marker(String value, String level, String spelling) {
+
+        /**
+         * Written by hand, because the generated rendering would print {@link #value()} — which is a piece of a
+         * capability URL, the one thing this whole class exists to keep out of a build log. A record's {@code toString}
+         * is reached by accident rather than on purpose: an assertion that takes one of these as its actual value, a
+         * debug line left in, a collection printed by a test runner. Naming the level and the spelling says everything
+         * a failure needs and discloses nothing; the accessor is unchanged, so the search still reads the value.
+         */
+        @Override
+        public String toString() {
+            return "Marker[level=" + level + ", spelling=" + spelling + "]";
+        }
+    }
 
     /**
      * Sorts every part of one refused endpoint into the strings worth searching for and the ones that would answer a

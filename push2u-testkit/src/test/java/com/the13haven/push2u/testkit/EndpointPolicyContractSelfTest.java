@@ -49,6 +49,9 @@ final class EndpointPolicyContractSelfTest {
     /** The credential in {@link #REFUSED}: asserted to be absent from every failure message the kit produces. */
     private static final String REFUSED_CREDENTIAL = "9f8e7d6c5b4a39281706";
 
+    /** The credential in {@link #ALLOWED}, for the checks whose subject is the permitted endpoint. */
+    private static final String ALLOWED_CREDENTIAL = "2f1c8a7e6d5b4a390817";
+
     /** Drives one contract instance over a supplied policy and pair of witnesses. */
     private static final class Contract extends EndpointPolicyContractTest {
 
@@ -320,6 +323,56 @@ final class EndpointPolicyContractSelfTest {
         Contract contract = Contract.over(endpoint -> new EndpointAssessment.Refused("everything is refused"));
 
         assertThatThrownBy(contract::permittedEndpointIsAnsweredWithAllowed).isInstanceOf(AssertionError.class);
+    }
+
+    /**
+     * The kit's own failure output is held to the rule the kit convicts a policy for. A policy answering the permitted
+     * endpoint with a refusal fails the first check, and the value it answered with carries the endpoint — so a check
+     * that rendered that value would copy a capability URL into the build log of every consumer whose policy has this
+     * defect, which is the disclosure the whole contract exists to prevent. The message names the variant and stops
+     * there.
+     */
+    @Test
+    void aFailingClassificationCheckNamesTheVariantWithoutRenderingIt() {
+        Contract contract = Contract.over(endpoint -> new EndpointAssessment.Refused("refused " + endpoint));
+
+        assertThatThrownBy(contract::permittedEndpointIsAnsweredWithAllowed)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Refused")
+                .hasMessageNotContaining(ALLOWED_CREDENTIAL)
+                .hasMessageNotContaining(ALLOWED.toString());
+    }
+
+    /**
+     * The concurrency check's negative direction, without which it would be a method nothing has ever seen fail. A
+     * policy throwing out of {@code assess} is the failure it is for — one shared sender, concurrent sends, unguarded
+     * state — and the check reports it against the seam's obligation rather than letting an executor wrapper surface.
+     */
+    @Test
+    void aPolicyThrowingUnderConcurrencyFailsTheSmokeCheck() {
+        Contract contract = Contract.over(endpoint -> {
+            throw new IllegalStateException("not thread-safe");
+        });
+
+        assertThatThrownBy(contract::concurrentAssessmentsAllComeBackWithAnAnswer)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("assess threw while other threads were inside it")
+                .hasCauseInstanceOf(IllegalStateException.class);
+    }
+
+    /**
+     * The other half of that direction: an answer outside the sealed hierarchy. The failure reports counts — how many
+     * calls came back and how many were neither variant — and nothing derived from either endpoint.
+     */
+    @Test
+    void aPolicyAnsweringNullUnderConcurrencyFailsTheSmokeCheck() {
+        Contract contract = Contract.over(endpoint -> null);
+
+        assertThatThrownBy(contract::concurrentAssessmentsAllComeBackWithAnAnswer)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("neither Allowed nor Refused")
+                .hasMessageNotContaining(REFUSED_CREDENTIAL)
+                .hasMessageNotContaining(ALLOWED_CREDENTIAL);
     }
 
     /**

@@ -2,10 +2,10 @@ plugins {
     `java-library`
 }
 
-description = "push2u-testkit — the published test kit for push2u: the conformance contracts every VapidSigner and " +
-    "every custom EndpointPolicy implementation extends, plus fixtures for a sending application's own tests — a " +
-    "generated VAPID pair and a coherent browser subscription, each valid against the library's current input " +
-    "contracts, and a scripted, recording PushHttpClient fake."
+description = "push2u-testkit — the published test kit for push2u: the conformance contract every VapidSigner " +
+    "implementation extends and the one a custom EndpointPolicy does, plus fixtures for a sending application's own " +
+    "tests — a generated VAPID pair and a coherent browser subscription, each valid against the library's current " +
+    "input contracts, and a scripted, recording PushHttpClient fake."
 
 // The kit is a MODULE rather than push2u-core's test fixtures, and the reason is that one source set
 // cannot be half published. The core's fixtures now hold internal plumbing (the mock push receiver,

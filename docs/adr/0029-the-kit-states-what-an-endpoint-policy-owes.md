@@ -242,9 +242,18 @@ the subject is classification; the concurrent one is about what happens when sev
 inside `assess` at the same moment, and asserts only what that question can support.
 
 What it is worth is asymmetric and the Javadoc says so. A passing run proves nothing: no schedule
-was forced, and an unguarded cache can go a thousand runs without colliding. A failing run is a real
-defect every time, because a correct policy cannot fail it. Having no false positives is what earns
-it its place; being no proof is why it is not called one.
+was forced, and an unguarded cache can go a thousand runs without colliding. Failing what it
+*asserts* is a real defect every time, because a thread-safe policy cannot throw, answer `null` or
+answer outside the sealed hierarchy however the threads interleave. Having no false positives there
+is what earns it its place; being no proof is why it is not called one.
+
+**One way of failing the method is not one of its assertions, and the two are kept apart rather than
+counted together.** The check stops waiting after a fixed budget, so that a policy which never
+answers fails the build instead of hanging it — a check that can hang the suite it was added to gets
+removed from that suite. That budget belongs to the check. This seam promises nothing about how fast
+`assess` answers, and a correct policy doing something genuinely slow can exceed it, so exhausting
+it is the check giving up rather than a verdict, and the message it produces says exactly that
+instead of naming a defect it has not established.
 
 ## The library's own policies are the first subjects
 
