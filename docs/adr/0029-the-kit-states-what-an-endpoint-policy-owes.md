@@ -142,10 +142,15 @@ it is a `Refused` and what its reason does not contain. The two halves are not s
 value and its contents are one thing — and reporting "not a `Refused`" and "the reason leaked" as
 unrelated failures would describe one broken policy as two unrelated ones.
 
-The kit already has the precedent and the implementation takes it: `VapidSignerContractTest` puts
-several assertions in one method wherever they form a chain rather than a list, carrying
-`@SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")` beside a comment saying why — the kit is a
-module's `main` source set, so PMD analyses it, and this is `main` source that happens to be a test.
+What this record fixes is that the two halves are made of one observation; how they are then
+written is the implementation's to choose. The kit already carries one way of writing them:
+`VapidSignerContractTest` puts several assertions in one method wherever they form a chain rather
+than a list, and every such method carries `@SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")`
+beside a comment saying why — the kit is a module's `main` source set, so PMD analyses it, and this
+is `main` source that happens to be a test. A composite assertion offered by the assertion library
+is as open as an ordinary comparison that throws naming what did not match. Whichever is taken, that
+suppression is owed wherever a method does end up making more than one assertion, and it is owed
+with its reason beside it.
 
 ## The leak check needs a witness with something to leak, and that is a price
 
