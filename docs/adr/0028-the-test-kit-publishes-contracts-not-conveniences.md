@@ -22,6 +22,13 @@ fine — nothing decoded it before — stopped being fine, and five of six tests
 an upgrade whose release notes could not have warned about them. The values were never wrong on
 purpose. They were written against a contract, and the contract moved.
 
+The same duplication is in this repository, which is worth saying because it makes the report's
+case without a consumer's word for it. A fixed-width scalar writer is copied into eleven test
+sources across four modules, and `Push2uAutoConfigurationTest` carries an X9.62 uncompressed-point
+writer beside it, for no other purpose than producing the two base64url strings
+`push2u.vapid.public-key` and `.private-key` bind — the very thing the fixture below exists to hand
+over.
+
 **The question this record answers is not which helpers are convenient.** It is which knowledge
 belongs to the library and therefore has to travel with it. A consumer can write a stub transport
 answering one constant status in five lines and will get it right. A consumer cannot know what the
@@ -111,6 +118,13 @@ the one belonging to that point**. A mis-encoded public key therefore fails at `
 in the consumer's own build; a mis-padded scalar produces a fixture that looks coherent and whose
 JWTs a push service rejects, which is the failure this record exists to keep out of consumers'
 tests.
+
+**The fixture is provider-free, and that is a constraint of this build rather than a preference.**
+`push2u-core` already puts the kit on both its `test` and its `fipsTest` classpath, and those two
+carry deliberately incompatible BouncyCastle flavours that can never meet: a fixture naming either
+one breaks whichever source set it is not on, and breaks it in the library's own build rather than
+in a consumer's. Platform primitives only — the same invariant the core's shared send-pipeline
+helper states for itself, arrived at here for the same reason.
 
 So the correspondence is pinned where it can be: a test in the kit signs with a generated pair and
 verifies the signature against its public half through `Es256Verifier`, which the core publishes for
@@ -457,6 +471,8 @@ readers who have neither this record nor those documents.
 - A `PushSender` fixture or factory, in any spelling, and an `EndpointPolicies.unrestricted()`
   reached through one.
 - A fixed VAPID pair, or any key-shaped constant, in a published artifact.
+- A fixture naming a JCE provider, or reaching either BouncyCastle flavour, which the core's two
+  disjoint test classpaths make unbuildable rather than merely unwise.
 - An encoder taking key material a caller already holds and returning its private scalar as a string
   — in the kit, the core or a starter. That is the property ADR-018's clause protects, which
   survives the one-clause supersession named above and reaches one artifact further than ADR-018
