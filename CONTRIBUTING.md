@@ -358,14 +358,14 @@ Also update, when your change touches them:
 - **The reference document that owns the subject**, which is where most of a change's prose belongs:
   `docs/SPRING.md` for a `push2u.*` property, `docs/HEALTH.md` for the health indicator,
   `docs/VAULT.md` for the Vault Transit signer, `docs/SIGNER.md` for the `VapidSigner` contract and
-  the conformance kit that checks one, `docs/TESTKIT.md` for the kit's other half — the fixtures
-  and the transport fake a sending application tests with, so a change to what
-  `ScriptedPushHttpClient` answers or what `SubscriptionFixture` publishes lands there —
-  `docs/VAPID.md` for key generation, `docs/VAPID-KEY-ROTATION.md` for replacing a live VAPID
-  identity, `docs/PUSH-SERVICES.md` for a browser push service's allowlist
-  entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a reader arriving from
-  `nl.martijndwars:web-push` compares against — that document states the other library's API and
-  dependency set as verified facts, so an addition there is checked against the published artifact.
+  the conformance kit that checks one, `docs/TESTKIT.md` for the kit's other half — the fixtures and
+  the transport fake a sending application tests with, so a change to what `ScriptedPushHttpClient`
+  answers or what `SubscriptionFixture` publishes lands there — `docs/VAPID.md` for key generation,
+  `docs/VAPID-KEY-ROTATION.md` for replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a
+  browser push service's allowlist entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a
+  reader arriving from `nl.martijndwars:web-push` compares against — that document states the other
+  library's API and dependency set as verified facts, so an addition there is checked against the
+  published artifact.
 - `docs/MIGRATION.md` — whenever the change breaks a consumer upgrading from the previous release,
   and *especially* when it breaks one without breaking their compilation. A narrowed exception, a
   changed default, a value that used to be an exception, a stricter constructor: each of those

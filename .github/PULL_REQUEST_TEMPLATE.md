@@ -43,7 +43,6 @@ from the notes altogether rather than filing it anywhere.
       what the conformance kit asserts), `docs/TESTKIT.md` if the test kit's fixtures or its
       transport fake did — what `ScriptedPushHttpClient` answers, what `SubscriptionFixture` or
       `VapidKeyPairFixture` publishes, what `SentPush` keeps — `docs/VAPID.md` if the
-      key-generation recipe did,
-      `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did — how or when a signer pins a
-      key version, anything that re-reads a key on a live signer, a key-version accessor, or a
-      change to how `401`/`403` is classified.
+      key-generation recipe did, `docs/VAPID-KEY-ROTATION.md` if the identity's lifecycle did —
+      how or when a signer pins a key version, anything that re-reads a key on a live signer, a
+      key-version accessor, or a change to how `401`/`403` is classified.

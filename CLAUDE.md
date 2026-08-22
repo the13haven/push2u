@@ -74,9 +74,15 @@ application that only sends: the four fixtures, the whole setup in one block wit
 policy visible in it, the `getEncoder()`/`getUrlEncoder()` trap and why it presents differently at
 65 bytes than at 16, what a scripted sequence does under a fan-out, which `PushOutcome`
 combinations a real send can produce where the public constructors admit more, and what the kit
-refuses to publish with the reason for each refusal. It is named for the artifact and not for the
-activity: a `docs/TESTING.md` would read as a contributor's guide to testing this repository, which
-is `CONTRIBUTING.md`'s subject, and the `docs/MIGRATION.md` rename is what that cost the last time.
+refuses to publish with the reason for each refusal. It also carries the one entry there with an
+operational consequence a build can hit: the kit puts JUnit, AssertJ and the JUnit BOM on `api`
+because a consumer extends the contract, and on a Gradle build the BOM's constraints meet Boot's
+managed versions on the test classpath, where resolution takes the higher — so adding the kit moves
+a Spring Boot build's test JUnit up, as it did to this repository's own starter tests, and a
+deployment that must stay on Boot's has to say so *strictly*, since an ordinary constraint cannot
+pull a version down. It is named for the artifact and not for the activity: a `docs/TESTING.md`
+would read as a contributor's guide to testing this repository, which is `CONTRIBUTING.md`'s
+subject, and the `docs/MIGRATION.md` rename is what that cost the last time.
 The coordinate stays in README under the rule below, so this document links across to the README
 section carrying it exactly as `docs/SIGNER.md` does.
 `docs/DESIGN.md` describes the architecture as it stands — why it is shaped this way, never

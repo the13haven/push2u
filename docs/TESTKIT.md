@@ -30,9 +30,14 @@ manages and onto the one the kit's BOM names. Nothing about the kit requires tha
 nothing about it is fragile — this repository's own Spring starter tests took exactly this shift
 when they picked the kit up, and it was accepted rather than pinned back, because one JUnit across a
 build is the better state. But a build that has to stay on Boot's managed JUnit should learn that
-here rather than from a conflict-resolution report: state the version you want explicitly instead of
-leaving it to resolution — an `enforcedPlatform` of Boot's BOM on the test classpath, or a
-dependency constraint naming the JUnit version — and the kit will compile against it unchanged.
+here rather than from a conflict-resolution report: the version has to be stated *strictly* rather
+than merely stated, because an ordinary constraint is one more participant in the same resolution
+and resolution only ever picks the higher — it cannot pull a version down, which is the whole of
+what this build wants. So an `enforcedPlatform` of Boot's BOM on the test classpath, which applies
+that BOM's versions as strict, or a `strictly(…)` version on the JUnit dependency itself. Either
+resolves cleanly: the kit names `org.junit.jupiter:junit-jupiter` with no version of its own, so a
+strict version has no hard requirement of the kit's to collide with, and the contract compiles
+against whatever it selects.
 
 ## Why the values are generated rather than fixed
 
