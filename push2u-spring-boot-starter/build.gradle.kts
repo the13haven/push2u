@@ -38,11 +38,11 @@ dependencies {
     // accepting — the same drift the kit exists to absorb for applications.
     //
     // It brings the JUnit platform with it: the kit carries the BOM on `api`, because a consumer
-    // extending its contract test compiles against those annotations. So a module taking the kit
-    // takes the catalog's JUnit in place of whatever else was managing it — for this one, Boot,
-    // which is why the version here moved up to the one the rest of the build already runs. That
-    // is the state worth having, one JUnit across every module, and it is stated rather than left
-    // to be discovered in a resolution report.
+    // extending its contract test compiles against those annotations. So the kit's constraint lands
+    // beside the one Boot already manages here, and resolution takes the higher — which today is
+    // the catalog's, so the version in this module moved up to the one the rest of the build
+    // already runs. That is the state worth having, one JUnit across every module, and it is
+    // stated rather than left to be discovered in a resolution report.
     testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
