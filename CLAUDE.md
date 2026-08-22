@@ -456,9 +456,15 @@ cannot see each other.
   `EndpointPolicyContractTest` (ADR-029) is the same for a deployment's own `EndpointPolicy`: it
   answers with a value and never throws, concurrent calls all come back, and a refusal's reason
   carries no capability part of the endpoint — searched at three granularities, down to a single
-  path segment or query value, raw and decoded, with a witness offering no fit marker reported as an
-  unfit *fixture* rather than as a failure of the policy. The marker length floor is 16 characters,
-  and it lives in the kit alone. Nothing in the contract observes one endpoint twice and requires the
+  path segment or query value, raw and percent-decoded, plus a form-decoded spelling for a query
+  value alone. **Whether the witness is usable is decided over its parts below the whole URI and
+  only those**: every endpoint has a whole-URI string that passes the fitness rule, so counting it
+  would accept `https://blocked.example/api` and leave the check able to catch only a policy quoting
+  the endpoint entire. A witness offering nothing below the URI is reported as an unfit *fixture*
+  rather than as a failure of the policy, and a leak is reported by naming the level and the
+  spelling that matched — never by printing the value, since the kit's own failure output reaches
+  the same log the leak would have. The marker length floor is 16 characters, and it lives in the
+  kit alone. Nothing in the contract observes one endpoint twice and requires the
   two answers to agree, which is why the refusal and the leak are one check over one `assess` call.
   Both `EndpointPolicies` factories and `unrestricted()` — with `Optional.empty()` for the refusal
   witness — are subjects in `push2u-core`'s tests.

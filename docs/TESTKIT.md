@@ -331,8 +331,10 @@ class MyEndpointPolicyContractTest extends EndpointPolicyContractTest {
 
 Three checks come with that. The permitted endpoint is answered with `EndpointAssessment.Allowed` —
 a value, never `null` and never an exception. The refused one is answered with an
-`EndpointAssessment.Refused` whose reason does not carry the capability part of the endpoint. And a
-handful of threads enter `assess` at the same moment and all come back.
+`EndpointAssessment.Refused` whose reason does not carry the capability part of the endpoint — of
+those parts of it that are long enough to be told apart from the words of a refusal, which the next
+section but one makes precise. And a handful of threads enter `assess` at the same moment and all
+come back.
 
 **Which endpoints a policy ought to admit is deliberately not checked**, and could not be: that rule
 is the deployment's own — the push services its subscriptions arrive from, the egress its network
@@ -356,7 +358,9 @@ that in all three of its refusals.
 
 The search goes at three granularities, because a leak does not have to be a whole component: the
 full URI, each of user-info, path, query and fragment entire, and — inside those — each path segment
-and each query value on its own, all of it in both the raw and the percent-decoded spelling. **The
+and each query value on its own, all of it in the raw spelling and the percent-decoded one. A query
+value takes a third spelling, form-decoded with `+` read as a space, because that is what a value
+handed to `URLDecoder` comes back as and a standard-alphabet base64 token is full of pluses. **The
 third granularity is the one that matters most.** A policy writing `"blocked subscription
 9f8e7d6c5b4a39281706"` has published the whole bearer credential while its sentence contains neither
 the full URI nor the whole path, and a check looking only at entire components would pass it.
@@ -372,14 +376,26 @@ correct implementations: the redaction ends in a sixteen-character hexadecimal f
 hex-shaped marker could match on the fingerprint and report a leak against a policy that leaked
 nothing.
 
-A witness yielding no searchable string at all — `https://blocked.example/` has nothing distinctive
-in it — is reported as **unfit for the check**, naming which half it failed. It is never converted
-into a failure of the policy: the kit is reporting on its own fixture there. So supply an endpoint
-that looks like the ones a real subscription store holds. You will meet this as a failing test
-before you meet it as a sentence here, and it is named rather than buried because it is a genuine
-cost: the kit will not rewrite the endpoint you supplied into a probe of its own, since a policy
-that discriminates by path — perfectly legal, the seam constrains nothing but the answer type —
-would then be assessed on a URI its author never offered.
+**Whether the witness can be used at all is decided over its parts below the whole URI, and only
+those.** Every endpoint has a whole-URI string and it passes the rule almost always, so a witness
+judged by that string would always be accepted — and the check would then be able to catch only a
+policy quoting the endpoint entire, which is the one leak nobody writes by accident.
+`https://blocked.example/` has nothing distinctive in it at all; `https://blocked.example/api` is
+barely better, since searching for `api` answers a question about the policy's prose. Both are
+reported as **unfit for the check**, naming which half of the rule their parts failed. It is never
+converted into a failure of the policy: the kit is reporting on its own fixture there.
+
+So supply an endpoint that looks like the ones a real subscription store holds. You will meet this
+as a failing test before you meet it as a sentence here, and it is named rather than buried because
+it is a genuine cost: the kit will not rewrite the endpoint you supplied into a probe of its own,
+since a policy that discriminates by path — perfectly legal, the seam constrains nothing but the
+answer type — would then be assessed on a URI its author never offered.
+
+**A failure names the level and the spelling that matched, and prints neither the endpoint nor the
+part of it that leaked.** The kit's own output goes to the same build log the leak it is reporting
+would have gone to, and a witness may well be a real endpoint out of a real store. "It contains one
+path segment of the refused endpoint, raw, as the endpoint carries it" is enough to act on with the
+fixture and the policy's source both in front of you.
 
 ### `refusedEndpoint()` is optional; `allowedEndpoint()` is not
 

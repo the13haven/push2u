@@ -8,13 +8,9 @@ package com.the13haven.push2u.testkit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -22,9 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.regex.Pattern;
 
-import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
@@ -58,12 +52,17 @@ import com.the13haven.push2u.Endpoints;
  * <p><b>The refusal check therefore needs a witness with something to leak, and that is a real demand on the
  * fixture.</b> The check searches the reason for the capability part of {@link #refusedEndpoint()} at three
  * granularities — the whole URI, each of user-info, path, query and fragment entire, and inside those each path segment
- * and each query value on its own — in both the raw and the percent-decoded spelling. A string is searched for only
- * when it is long enough that finding it in a sentence about an endpoint means something, and when it does not already
- * occur in the redaction a conforming policy is entitled to print. A witness offering no such string is reported as
- * unfit for the check, naming which of those two halves it failed: {@code https://blocked.example/} has nothing
- * distinctive in it at all, so a search against it would report success for a property it never tested. Supply an
- * endpoint that looks like the ones a real subscription store holds.
+ * and each query value on its own — in the raw spelling and the decoded one. A string is searched for only when it is
+ * long enough that finding it in a sentence about an endpoint means something, and when it does not already occur in
+ * the redaction a conforming policy is entitled to print.
+ *
+ * <p><b>Whether the witness can be used at all is then decided over the parts below the whole URI, and only those.</b>
+ * Every endpoint has a whole-URI string and it passes the rule almost always, so a witness judged by that string would
+ * always be accepted — leaving the check able to catch nothing but a policy quoting the endpoint entire, which is the
+ * one leak nobody writes by accident. {@code https://blocked.example/} has nothing distinctive in it at all;
+ * {@code https://blocked.example/api} is barely better, since searching for {@code api} answers a question about the
+ * policy's prose rather than about the endpoint. Both are reported as unfit for the check, naming which half of the
+ * rule their parts failed. Supply an endpoint that looks like the ones a real subscription store holds.
  *
  * <p>The segment-level search is the half a first attempt leaves out, and it is where the leak actually happens. A
  * policy writing {@code "blocked subscription 9f8e7d6c5b4a39281706"} — the last segment of a path — has published the
@@ -103,36 +102,15 @@ import com.the13haven.push2u.Endpoints;
  */
 public abstract class EndpointPolicyContractTest {
 
-    /**
-     * How long a string taken out of the witness endpoint must be before the leak check will search a refusal's reason
-     * for it.
-     *
-     * <p>The number balances two failures against each other. Too low and the check convicts correct policies: the
-     * segments every endpoint carries — {@code v1}, {@code api}, {@code push} — say something about the wording of a
-     * refusal and nothing about the endpoint, and a short run of characters can turn up inside an ordinary English
-     * sentence by accident. Too high and a real credential goes unsearched. Sixteen is above every word an
-     * operator-facing refusal is likely to contain (the longest in this library's own policies is {@code subscription},
-     * at twelve) and far below the capability components real push services issue, which run to dozens or hundreds of
-     * characters. It also sits at the length of the fingerprint {@link Endpoints#redact} prints, so nothing shorter
-     * than the one endpoint-derived value a conforming policy may publish is ever hunted for.
-     */
-    private static final int MARKER_MIN_LENGTH = 16;
-
     /** How many threads the concurrency check puts inside {@code assess} at the same moment. */
     private static final int CONCURRENT_CALLS = 8;
 
-    /** How long one concurrent call may take before the check reports it as hung rather than waiting for ever. */
-    private static final int ANSWER_TIMEOUT_SECONDS = 30;
-
     /**
-     * Splits a raw path into its segments, and a raw query into its parameters. Precompiled patterns rather than
-     * {@code String.split}, whose one-argument form silently drops trailing empty fields — a trailing separator would
-     * then change which parts the leak check sees.
+     * How long the concurrency check as a whole may wait for its calls to answer. One budget for the check rather than
+     * one timeout per call: the calls are collected in a loop, so a per-call timeout would multiply by the number of
+     * threads and a stuck policy would hold the suite for that product instead of for this.
      */
-    private static final Pattern PATH_SEPARATOR = Pattern.compile("/");
-
-    /** The query's parameter separator; see {@link #PATH_SEPARATOR} for why it is a pattern. */
-    private static final Pattern QUERY_SEPARATOR = Pattern.compile("&");
+    private static final int ANSWER_BUDGET_SECONDS = 30;
 
     /** For subclasses: the kit is extended, never instantiated on its own. */
     protected EndpointPolicyContractTest() {}
@@ -170,9 +148,10 @@ public abstract class EndpointPolicyContractTest {
      * here" without anyone having said it.
      *
      * <p><b>Supply an endpoint that carries a capability-shaped component</b> — a path segment or a query value like
-     * the ones a real subscription store holds, not {@code https://blocked.example/}. The leak check searches the
-     * refusal's reason for that component; a witness with nothing distinctive in it makes the search report success for
-     * a property it never tested, and the check refuses to run against one.
+     * the ones a real subscription store holds, not {@code https://blocked.example/} and not
+     * {@code https://blocked.example/api}. The leak check searches the refusal's reason for that component; a witness
+     * whose only distinctive string is the whole URI leaves the check able to catch nothing but a policy quoting the
+     * endpoint entire, so it is reported as unfit rather than run against.
      *
      * @return an endpoint the policy under test refuses, or empty for a policy that refuses nothing
      */
@@ -210,12 +189,10 @@ public abstract class EndpointPolicyContractTest {
      * impose. A value and what it contains are one thing anyway, and reporting "not a refusal" and "the reason leaked"
      * as unrelated failures would describe one broken policy as two.
      */
-    // UnitTestContainsTooManyAsserts: PMD analyses this module's main sources, and this is main
-    // source that happens to be a test. The two assertions are one claim about one observation —
-    // this endpoint is refused, and the refusal does not publish the subscription's credential —
-    // and splitting them would need a second assess call on the same endpoint, which is the
-    // determinism this contract deliberately never requires.
-    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+    // The refusal and the leak are one claim about one observation — this endpoint is refused,
+    // and the refusal does not publish the subscription's credential. Splitting them would need a
+    // second assess call on the same endpoint, which is the determinism this contract deliberately
+    // never requires.
     @Test
     void refusalIsAValueWhoseReasonKeepsTheCapabilityUrlOut() {
         Optional<URI> supplied = refusedEndpoint();
@@ -226,8 +203,8 @@ public abstract class EndpointPolicyContractTest {
                         + "reported as skipped rather than passed, because a green check nothing exercised would "
                         + "misreport this policy's coverage.");
         URI witness = admissible(supplied.orElseThrow(), "refusedEndpoint()");
-        Markers markers = markers(witness);
-        if (markers.searchable().isEmpty()) {
+        EndpointLeakMarkers markers = EndpointLeakMarkers.of(witness);
+        if (!markers.hasSearchableComponent()) {
             throw new AssertionError(markers.unfitWitnessMessage());
         }
 
@@ -237,12 +214,16 @@ public abstract class EndpointPolicyContractTest {
                 .as("assess must answer a refused endpoint with Refused — a refusal is the ordinary case here, and a "
                         + "policy that throws instead aborts a fan-out at its first hostile row")
                 .isInstanceOf(EndpointAssessment.Refused.class);
-        assertThat(((EndpointAssessment.Refused) assessment).reason())
-                .as("a refusal's reason must not carry the capability part of the endpoint — it reaches an "
-                        + "application's logs, and whoever reads it there can then message the subscriber. Render the "
-                        + "endpoint with the library's own redaction (origin plus fingerprint) instead of naming the "
-                        + "URI, a component of it, one path segment or one query value")
-                .doesNotContain(markers.searchable().toArray(new String[0]));
+        String reason = ((EndpointAssessment.Refused) assessment).reason();
+        for (EndpointLeakMarkers.Marker marker : markers.searchable()) {
+            // Checked here rather than through an assertion that takes the expected values: an
+            // assertion library prints what it was looking for, which for this check is the
+            // capability URL and every component of it. The failure below says which level and
+            // which spelling matched and prints neither.
+            if (reason.contains(marker.value())) {
+                throw new AssertionError(EndpointLeakMarkers.leakMessage(marker));
+            }
+        }
     }
 
     /**
@@ -288,11 +269,12 @@ public abstract class EndpointPolicyContractTest {
     // CloseResource: the executor is shut down in the finally block below, with shutdownNow rather
     // than close. AutoCloseable's close waits for termination, so a policy that never answers would
     // hang the suite here after the check had already reported the timeout — which is the one
-    // failure mode this check must be able to report rather than become.
+    // failure mode this check must be able to report rather than become. Interrupting is not
+    // guaranteed to end such a call either, which is what the daemon threads below are for.
     @SuppressWarnings("PMD.CloseResource")
     private static List<EndpointAssessment> assessConcurrently(EndpointPolicy policy, List<URI> endpoints)
             throws InterruptedException {
-        ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLS);
+        ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLS, EndpointPolicyContractTest::worker);
         try {
             CountDownLatch start = new CountDownLatch(1);
             List<Future<EndpointAssessment>> pending = new ArrayList<>(CONCURRENT_CALLS);
@@ -305,9 +287,10 @@ public abstract class EndpointPolicyContractTest {
             }
             start.countDown();
 
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(ANSWER_BUDGET_SECONDS);
             List<EndpointAssessment> answers = new ArrayList<>(pending.size());
             for (Future<EndpointAssessment> call : pending) {
-                answers.add(answerOf(call));
+                answers.add(answerOf(call, deadline));
             }
             return answers;
         } finally {
@@ -315,14 +298,33 @@ public abstract class EndpointPolicyContractTest {
         }
     }
 
-    /** Unwraps one concurrent call, turning a thrown defect or a call that never returns into a readable failure. */
+    /**
+     * One worker of the concurrency check, and a <em>daemon</em> one deliberately.
+     *
+     * <p>{@code shutdownNow} interrupts, and interrupting does not end every wait — a thread blocked entering a monitor
+     * or inside a native call keeps running whatever the check has already reported. Non-daemon workers would then hold
+     * the JVM open after the suite finished, moving the hang from the check to the exit rather than removing it. A
+     * daemon thread cannot do that.
+     */
+    private static Thread worker(Runnable task) {
+        Thread thread = new Thread(task, "push2u-endpoint-policy-contract");
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    /**
+     * Unwraps one concurrent call, turning a thrown defect or a call that never returns into a readable failure. The
+     * deadline belongs to the whole check rather than to this call, so a stuck policy costs the check one budget and
+     * not one per thread.
+     */
     // PreserveStackTrace: the cause is what the policy actually threw, and it is carried over
     // deliberately in place of the ExecutionException wrapping it — the wrapper's own frames are
     // this method's, and reporting them would bury the frame the implementor has to look at.
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static EndpointAssessment answerOf(Future<EndpointAssessment> call) throws InterruptedException {
+    private static EndpointAssessment answerOf(Future<EndpointAssessment> call, long deadline)
+            throws InterruptedException {
         try {
-            return call.get(ANSWER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return call.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (ExecutionException thrown) {
             throw new AssertionError(
                     "assess threw while other threads were inside it. Concurrent assessments are the ordinary case — "
@@ -331,7 +333,7 @@ public abstract class EndpointPolicyContractTest {
                     thrown.getCause());
         } catch (TimeoutException neverAnswered) {
             throw new AssertionError(
-                    "a concurrent assess call had not answered after " + ANSWER_TIMEOUT_SECONDS
+                    "the concurrent assess calls had not all answered within " + ANSWER_BUDGET_SECONDS
                             + " seconds, which is a policy waiting on something that never arrives rather than a slow "
                             + "one.",
                     neverAnswered);
@@ -356,126 +358,5 @@ public abstract class EndpointPolicyContractTest {
                     outsideTheContract);
         }
         return endpoint;
-    }
-
-    /**
-     * The strings the leak check may search a refusal's reason for, and — when there are none — the account of why the
-     * witness cannot be used.
-     *
-     * @param searchable the parts of the witness that are long enough to mean something and are absent from the
-     *     redaction a conforming policy may print
-     * @param tooShort how many parts were dropped for being shorter than {@link #MARKER_MIN_LENGTH}
-     * @param alreadyRedacted how many parts were dropped for occurring in the redaction of this very endpoint
-     */
-    private record Markers(List<String> searchable, int tooShort, int alreadyRedacted) {
-
-        /**
-         * Why this witness cannot be searched against, naming the half (or halves) of the rule its parts failed. The
-         * parts themselves are deliberately not printed: a witness may well be a real endpoint out of a real store, and
-         * this message goes to the same log everything else in a failing build goes to.
-         */
-        String unfitWitnessMessage() {
-            List<String> halves = new ArrayList<>(2);
-            if (tooShort > 0) {
-                halves.add(tooShort + " of them are shorter than " + MARKER_MIN_LENGTH
-                        + " characters, which is too short to tell a leaked credential apart from the ordinary words "
-                        + "of a refusal");
-            }
-            if (alreadyRedacted > 0) {
-                halves.add(alreadyRedacted
-                        + " of them already occur in the rendering a conforming policy is entitled to print for this "
-                        + "endpoint — its origin and a sixteen-character fingerprint — where finding one would "
-                        + "convict a policy that leaked nothing");
-            }
-            return "refusedEndpoint() is unfit for this check, which is a problem with the fixture and not with the "
-                    + "policy: none of the parts of that endpoint can be searched for, because "
-                    + String.join(" and ", halves)
-                    + ". Supply an endpoint carrying a capability-shaped path segment or query value, like the ones a "
-                    + "real subscription store holds — a bare host with no distinctive component would let this check "
-                    + "report success for a property it never tested. The parts are not named here: a witness may be "
-                    + "a real endpoint, and a capability URL must not travel into a log.";
-        }
-    }
-
-    /**
-     * Sorts every part of the witness into the ones worth searching for and the ones that would answer a question about
-     * the policy's prose instead of about the endpoint.
-     *
-     * <p>Both halves of the rule are applied to each spelling separately, the raw one and the decoded one, because a
-     * decoded form can collide with the redaction where its raw form does not.
-     */
-    private static Markers markers(URI witness) {
-        String redaction = Endpoints.redact(witness.toString());
-        List<String> searchable = new ArrayList<>();
-        int tooShort = 0;
-        int alreadyRedacted = 0;
-        for (String part : parts(witness)) {
-            if (part.length() < MARKER_MIN_LENGTH) {
-                tooShort++;
-            } else if (redaction.contains(part)) {
-                alreadyRedacted++;
-            } else {
-                searchable.add(part);
-            }
-        }
-        return new Markers(List.copyOf(searchable), tooShort, alreadyRedacted);
-    }
-
-    /**
-     * Every part of the witness the leak check considers, at the three granularities a leak can happen at: the whole
-     * URI, each component that can carry the credential entire, and each path segment and query value on its own. A
-     * policy naming one segment has published the whole credential while its sentence holds neither the URI nor the
-     * path.
-     *
-     * <p>Each part appears in both spellings a policy might write, raw and percent-decoded — one that decodes the
-     * endpoint before building its message leaks exactly as much as one that does not.
-     */
-    private static Set<String> parts(URI witness) {
-        Set<String> parts = new LinkedHashSet<>();
-        addSpellings(parts, witness.toString());
-        addSpellings(parts, witness.getRawUserInfo());
-        addSpellings(parts, witness.getRawPath());
-        addSpellings(parts, witness.getRawQuery());
-        addSpellings(parts, witness.getRawFragment());
-
-        String path = witness.getRawPath();
-        if (path != null) {
-            for (String segment : PATH_SEPARATOR.split(path, -1)) {
-                addSpellings(parts, segment);
-            }
-        }
-        String query = witness.getRawQuery();
-        if (query != null) {
-            for (String parameter : QUERY_SEPARATOR.split(query, -1)) {
-                int assignment = parameter.indexOf('=');
-                addSpellings(parts, assignment < 0 ? parameter : parameter.substring(assignment + 1));
-            }
-        }
-        return parts;
-    }
-
-    /** Adds one part in both spellings, skipping what has no content — an empty query or a bare path names nothing. */
-    private static void addSpellings(Set<String> parts, @Nullable String raw) {
-        if (raw == null || raw.isEmpty()) {
-            return;
-        }
-        parts.add(raw);
-        parts.add(decode(raw));
-    }
-
-    /**
-     * The percent-decoded spelling of one part of a URI.
-     *
-     * <p>{@code +} is protected before decoding because it means a space only in a form-encoded query and stands for
-     * itself everywhere else in a URI — a path segment carrying one is ordinary, and turning it into a space would
-     * search for a string no policy could ever print. A part that is not valid percent-encoding is left as it is: this
-     * is a fixture being read, not input being validated.
-     */
-    private static String decode(String raw) {
-        try {
-            return URLDecoder.decode(raw.replace("+", "%2B"), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException notPercentEncoded) {
-            return raw;
-        }
     }
 }

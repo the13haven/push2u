@@ -798,8 +798,13 @@ storing `""` for a `null` one, deliberately, because a refusal that threw out of
 the fan-out the value shape exists to keep running. Your own test suite can: extend
 `EndpointPolicyContractTest` from [`push2u-testkit`](#writing-a-vapidsigner), hand it one endpoint
 your policy permits and one it refuses, and it fails on a reason carrying the endpoint, any of its
-components, one path segment or one query value, in the raw spelling or the decoded one. It also
-checks that a refusal is a value rather than an exception, and that concurrent calls all come back.
+components, one path segment or one query value, in the raw spelling or the decoded one. What it
+searches for is bounded at the short end: a part of the witness under sixteen characters is left
+alone, because `v1` or `api` in a refusal says something about the policy's wording and nothing
+about the endpoint — so give it a refused endpoint whose path segment or query value looks like the
+capability URL a real subscription carries, and it will tell you if it cannot use the one you
+supplied. It also checks that a refusal is a value rather than an exception, and that concurrent
+calls all come back.
 [`TESTKIT.md`](docs/TESTKIT.md) is the reference. The redacted endpoint on the outcome is not affected
 either way: the library renders that one itself, from the subscription it holds, which is why
 `Refused` carries no endpoint component for you to fill in.

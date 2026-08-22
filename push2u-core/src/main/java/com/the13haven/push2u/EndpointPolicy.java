@@ -58,6 +58,15 @@ import java.net.URI;
  * {@link PushSender#sendAsync} makes concurrent {@link #assess} calls the normal case; a policy keeping mutable state —
  * a resolution cache, a counter — has to guard it. The policies {@link EndpointPolicies#allowedOrigins} and
  * {@link EndpointPolicies#allowedEndpoints} return close over an immutable list of immutable rules and need none.
+ *
+ * <p><b>The four obligations above are executable.</b> The {@code push2u-testkit} artifact publishes
+ * {@code EndpointPolicyContractTest}, a contract a custom policy extends in its own test suite, handing it one endpoint
+ * the policy permits and one it refuses. It checks that both are answered with a value rather than an exception, that
+ * concurrent calls all come back, and that the refusal's reason carries none of the endpoint's capability part —
+ * searched down to a single path segment and a single query value, in the spelling the endpoint carries and in the
+ * decoded one, since a refusal naming one segment publishes the whole credential as surely as one quoting the URI does.
+ * Which endpoints a policy ought to admit is deliberately not among the checks: that rule is the deployment's own, and
+ * nothing outside it knows the answer.
  */
 @FunctionalInterface
 public interface EndpointPolicy {
