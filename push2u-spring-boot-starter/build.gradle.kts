@@ -32,6 +32,18 @@ dependencies {
     testImplementation(libs.jackson.annotations)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
+    // The published kit, used here exactly as a consumer uses it: a generated VAPID pair for the
+    // push2u.vapid.* properties to bind and a coherent subscription for a send. Standing those up
+    // by hand is what let this module's tests encode key material the library later stopped
+    // accepting — the same drift the kit exists to absorb for applications.
+    //
+    // It brings the JUnit platform with it: the kit carries the BOM on `api`, because a consumer
+    // extending its contract test compiles against those annotations. So a module taking the kit
+    // takes the catalog's JUnit in place of whatever else was managing it — for this one, Boot,
+    // which is why the version here moved up to the one the rest of the build already runs. That
+    // is the state worth having, one JUnit across every module, and it is stated rather than left
+    // to be discovered in a resolution report.
+    testImplementation(project(":push2u-testkit"))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

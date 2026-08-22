@@ -7,13 +7,6 @@ package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
-import java.util.Base64;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -34,6 +27,7 @@ import com.the13haven.push2u.EndpointPolicy;
 import com.the13haven.push2u.PushHttpClient;
 import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * {@code push2u.enabled} — the statement a deployment makes about whether it sends — and the refusal that answers the
@@ -58,13 +52,10 @@ class Push2uDeliverySwitchTest {
                     Push2uStartupChecksAutoConfiguration.class));
 
     @BeforeAll
-    static void generateVapidKeys() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        KeyPair keyPair = generator.generateKeyPair();
-        Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
-        publicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) keyPair.getPublic()));
-        privateKeyB64 = base64Url.encodeToString(toFixed32(((ECPrivateKey) keyPair.getPrivate()).getS()));
+    static void generateVapidKeys() {
+        VapidKeyPairFixture vapid = VapidKeyPairFixture.generate();
+        publicKeyB64 = vapid.publicKeyBase64Url();
+        privateKeyB64 = vapid.privateKeyBase64Url();
     }
 
     @Test
@@ -462,27 +453,5 @@ class Push2uDeliverySwitchTest {
                 return key;
             }
         };
-    }
-
-    private static byte[] uncompressed(ECPublicKey key) {
-        byte[] out = new byte[65];
-        out[0] = 0x04;
-        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
-        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
-        return out;
-    }
-
-    private static byte[] toFixed32(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length == 32) {
-            return bytes;
-        }
-        byte[] out = new byte[32];
-        if (bytes.length > 32) {
-            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
-        } else {
-            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
-        }
-        return out;
     }
 }

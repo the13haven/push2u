@@ -8,12 +8,6 @@ package com.the13haven.push2u.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,7 +16,6 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -45,8 +38,8 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 
 import com.the13haven.push2u.LocalEcVapidSigner;
-import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * {@link Push2uHealthIndicator} caches the probe result (health endpoints are polled, and with a remote signer every
@@ -64,16 +57,11 @@ class Push2uHealthIndicatorTest {
     private final MutableClock clock = new MutableClock();
 
     @BeforeAll
-    static void generateVapidKeys() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        KeyPair keyPair = generator.generateKeyPair();
-        Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
-        realSigner = new LocalEcVapidSigner(VapidKeys.fromBase64(
-                base64Url.encodeToString(uncompressed((ECPublicKey) keyPair.getPublic())),
-                base64Url.encodeToString(toFixed32(((ECPrivateKey) keyPair.getPrivate()).getS()))));
-        foreignPublicKey =
-                uncompressed((ECPublicKey) generator.generateKeyPair().getPublic());
+    static void generateVapidKeys() {
+        realSigner = new LocalEcVapidSigner(VapidKeyPairFixture.generate().vapidKeys());
+        // A second generated pair is unrelated to the first by construction, which is what the
+        // mismatch case needs: a key the real signer's signatures cannot verify against.
+        foreignPublicKey = VapidKeyPairFixture.generate().vapidKeys().publicKey();
     }
 
     @Test
@@ -663,27 +651,5 @@ class Push2uHealthIndicatorTest {
         public Clock withZone(ZoneId zone) {
             return this;
         }
-    }
-
-    private static byte[] uncompressed(ECPublicKey key) {
-        byte[] out = new byte[65];
-        out[0] = 0x04;
-        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
-        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
-        return out;
-    }
-
-    private static byte[] toFixed32(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length == 32) {
-            return bytes;
-        }
-        byte[] out = new byte[32];
-        if (bytes.length > 32) {
-            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
-        } else {
-            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
-        }
-        return out;
     }
 }
