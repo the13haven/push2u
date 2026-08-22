@@ -7,14 +7,7 @@ package com.the13haven.push2u.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.math.BigInteger;
 import java.net.URI;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +48,8 @@ import com.the13haven.push2u.PushSender;
 import com.the13haven.push2u.Subscription;
 import com.the13haven.push2u.VapidKeys;
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.testkit.SubscriptionFixture;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * {@link Push2uAutoConfiguration} wires a {@link PushSender} (and an Actuator health indicator) from {@code push2u.*}
@@ -66,8 +61,6 @@ class Push2uAutoConfigurationTest {
     private static String privateKeyB64;
     /** The public half of an unrelated pair, for the mismatch case. */
     private static String otherPublicKeyB64;
-    /** A well-formed subscription {@code p256dh} point, unrelated to the VAPID pair above. */
-    private static String subscriptionKeyB64;
 
     // The full starter composition, exactly as the imports file ships it. The removed-properties
     // tombstone rides along so every scenario here also proves that a context without the removed
@@ -83,19 +76,13 @@ class Push2uAutoConfigurationTest {
                     Push2uStartupChecksAutoConfiguration.class));
 
     @BeforeAll
-    static void generateVapidKeys() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        KeyPair keyPair = generator.generateKeyPair();
-        Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
-        publicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) keyPair.getPublic()));
-        privateKeyB64 = base64Url.encodeToString(toFixed32(((ECPrivateKey) keyPair.getPrivate()).getS()));
-
-        KeyPair otherPair = generator.generateKeyPair();
-        otherPublicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) otherPair.getPublic()));
-
-        KeyPair subscriptionPair = generator.generateKeyPair();
-        subscriptionKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) subscriptionPair.getPublic()));
+    static void generateVapidKeys() {
+        VapidKeyPairFixture vapid = VapidKeyPairFixture.generate();
+        publicKeyB64 = vapid.publicKeyBase64Url();
+        privateKeyB64 = vapid.privateKeyBase64Url();
+        // A second generated pair is an unrelated pair by construction, which is exactly what the
+        // mismatch case needs: a public half that does not belong to the private half beside it.
+        otherPublicKeyB64 = VapidKeyPairFixture.generate().publicKeyBase64Url();
     }
 
     @Test
@@ -1398,10 +1385,7 @@ class Push2uAutoConfigurationTest {
 
     /** The same, on a caller-chosen endpoint — for the cases where the endpoint is what is under test. */
     private static Subscription subscription(String endpoint) {
-        return Subscription.fromBase64(
-                endpoint,
-                subscriptionKeyB64,
-                Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]));
+        return SubscriptionFixture.at(URI.create(endpoint)).subscription();
     }
 
     /**
@@ -1636,27 +1620,5 @@ class Push2uAutoConfigurationTest {
                 }
             };
         }
-    }
-
-    private static byte[] uncompressed(ECPublicKey key) {
-        byte[] out = new byte[65];
-        out[0] = 0x04;
-        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
-        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
-        return out;
-    }
-
-    private static byte[] toFixed32(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length == 32) {
-            return bytes;
-        }
-        byte[] out = new byte[32];
-        if (bytes.length > 32) {
-            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
-        } else {
-            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
-        }
-        return out;
     }
 }

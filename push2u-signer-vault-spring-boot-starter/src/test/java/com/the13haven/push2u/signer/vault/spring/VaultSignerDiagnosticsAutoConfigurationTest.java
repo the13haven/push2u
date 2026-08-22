@@ -7,14 +7,7 @@ package com.the13haven.push2u.signer.vault.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.math.BigInteger;
 import java.net.URI;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECGenParameterSpec;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -33,6 +26,7 @@ import com.the13haven.push2u.signer.vault.VaultHttpResponse;
 import com.the13haven.push2u.signer.vault.VaultHttpTransport;
 import com.the13haven.push2u.spring.Push2uAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * This starter's diagnostic over a half-stated {@code push2u.signer.vault.*} block: when it fires, when it stands down,
@@ -54,15 +48,13 @@ class VaultSignerDiagnosticsAutoConfigurationTest {
                     VaultSignerAutoConfiguration.class, VaultSignerDiagnosticsAutoConfiguration.class));
 
     @BeforeAll
-    static void generateKeys() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
-        publicKeyB64 = base64Url.encodeToString(
-                uncompressed((ECPublicKey) generator.generateKeyPair().getPublic()));
-        KeyPair vapid = generator.generateKeyPair();
-        vapidPublicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) vapid.getPublic()));
-        vapidPrivateKeyB64 = base64Url.encodeToString(toFixed32(((ECPrivateKey) vapid.getPrivate()).getS()));
+    static void generateKeys() {
+        // The supplied Vault key: only its public half is ever configured, the private half being
+        // Vault's to hold.
+        publicKeyB64 = VapidKeyPairFixture.generate().publicKeyBase64Url();
+        VapidKeyPairFixture vapid = VapidKeyPairFixture.generate();
+        vapidPublicKeyB64 = vapid.publicKeyBase64Url();
+        vapidPrivateKeyB64 = vapid.privateKeyBase64Url();
     }
 
     @Test
@@ -268,27 +260,5 @@ class VaultSignerDiagnosticsAutoConfigurationTest {
                 return key;
             }
         };
-    }
-
-    private static byte[] uncompressed(ECPublicKey key) {
-        byte[] out = new byte[65];
-        out[0] = 0x04;
-        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
-        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
-        return out;
-    }
-
-    private static byte[] toFixed32(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length == 32) {
-            return bytes;
-        }
-        byte[] out = new byte[32];
-        if (bytes.length > 32) {
-            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
-        } else {
-            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
-        }
-        return out;
     }
 }

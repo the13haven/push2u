@@ -64,8 +64,8 @@ about the next one, and states it as contract instead.
 ## The conformance kit
 
 The two shape checks above are what your signer meets on the sends that reach it; `push2u-testkit`
-is how it finds out in its own test suite instead. It is a test-scoped artifact holding one
-abstract JUnit Jupiter class — [`README.md` → Writing a
+is how it finds out in its own test suite instead. The contract is one abstract JUnit Jupiter class
+in that test-scoped artifact — [`README.md` → Writing a
 VapidSigner](../README.md#writing-a-vapidsigner) carries its coordinate:
 
 ```java
@@ -90,3 +90,9 @@ on a FIPS-only JVM: the kit prefers
 fallback the library itself makes](../README.md#jce-provider-selection). It is the same contract
 `LocalEcVapidSigner` and the Vault Transit signer are held to. The kit brings JUnit Jupiter and
 AssertJ with it, which is why it is a separate artifact and never a dependency of `push2u-core`.
+
+The same artifact carries a second half, for the other audience: fixtures producing a VAPID pair
+and a browser subscription valid against the library's current input contracts, and a scripted,
+recording `PushHttpClient` for the tests an application writes around its own sending code.
+[`TESTKIT.md`](TESTKIT.md) is its reference; nothing there is needed to write a signer, and a
+signer's own test suite may still find the pair fixture useful for the sends it drives end to end.

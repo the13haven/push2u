@@ -39,8 +39,12 @@ follows.
 decision that moves gets a *new* ADR with the next free number, and the old one keeps its number,
 its title and its body while its status line becomes `Superseded by ADR-NNN`. A decision that moves
 only in part takes the same status-line edit in a narrower form, `Accepted; one clause superseded
-by ADR-NNN`, beside the full form rather than in place of it. Descriptions of how the code works now
-belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture moves.
+by ADR-NNN`, beside the full form rather than in place of it — and that form accumulates: a later
+record taking a second clause extends the same line rather than replacing it, `Accepted; one clause
+superseded by ADR-NNN, another by ADR-MMM`, each record named in the order it arrived. Which clause
+each one took stays out of the superseded ADR and lives in the record that took it. Descriptions of
+how the code works now belong in `docs/DESIGN.md`, which is meant to be rewritten as the
+architecture moves.
 [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
 The [non-goals](docs/DESIGN.md#non-goals) are equally settled: subscription persistence,
@@ -277,9 +281,14 @@ the RFC 8291 worked example for encryption, RFC 8292 for VAPID structure. If a c
 vector fail, the change is wrong until proven otherwise.
 
 Every `VapidSigner` implementation extends the published conformance kit
-`com.the13haven.push2u.testkit.VapidSignerContractTest`, the whole of the `push2u-testkit` module.
-It is a module's `main` source set, so the full analyser set applies to it — treat it as published
-API, because it is.
+`com.the13haven.push2u.testkit.VapidSignerContractTest`. It is one half of the `push2u-testkit`
+module; the other is the fixtures a *sending* application tests with — a generated VAPID pair, a
+coherent browser subscription and a scripted, recording `PushHttpClient`, each carrying knowledge
+that is the library's own and moves with it, which is what admits anything there
+([ADR-028](docs/adr/0028-the-test-kit-publishes-contracts-not-conveniences.md), and
+[`docs/TESTKIT.md`](docs/TESTKIT.md) for what it publishes and what it refuses to). The whole module
+is a `main` source set, so the full analyser set applies to all of it — treat it as published API,
+because it is.
 
 The plumbing the suites share — the RFC vectors, the in-process mock push receiver, its loopback
 TLS identity — lives in `push2u-core`'s `src/testFixtures`, in `main`'s package because it needs
@@ -349,11 +358,14 @@ Also update, when your change touches them:
 - **The reference document that owns the subject**, which is where most of a change's prose belongs:
   `docs/SPRING.md` for a `push2u.*` property, `docs/HEALTH.md` for the health indicator,
   `docs/VAULT.md` for the Vault Transit signer, `docs/SIGNER.md` for the `VapidSigner` contract and
-  the conformance kit, `docs/VAPID.md` for key generation, `docs/VAPID-KEY-ROTATION.md` for
-  replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a browser push service's allowlist
-  entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a reader arriving from
-  `nl.martijndwars:web-push` compares against — that document states the other library's API and
-  dependency set as verified facts, so an addition there is checked against the published artifact.
+  the conformance kit that checks one, `docs/TESTKIT.md` for the kit's other half — the fixtures and
+  the transport fake a sending application tests with, so a change to what `ScriptedPushHttpClient`
+  answers or what `SubscriptionFixture` publishes lands there — `docs/VAPID.md` for key generation,
+  `docs/VAPID-KEY-ROTATION.md` for replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a
+  browser push service's allowlist entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a
+  reader arriving from `nl.martijndwars:web-push` compares against — that document states the other
+  library's API and dependency set as verified facts, so an addition there is checked against the
+  published artifact.
 - `docs/MIGRATION.md` — whenever the change breaks a consumer upgrading from the previous release,
   and *especially* when it breaks one without breaking their compilation. A narrowed exception, a
   changed default, a value that used to be an exception, a stricter constructor: each of those

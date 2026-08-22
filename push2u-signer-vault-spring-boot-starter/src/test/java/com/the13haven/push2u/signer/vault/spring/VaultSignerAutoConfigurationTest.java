@@ -11,7 +11,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -20,8 +19,6 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.interfaces.ECPrivateKey;
-import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -49,6 +46,7 @@ import com.the13haven.push2u.spring.Push2uAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uEndpointPolicyAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthAutoConfiguration;
 import com.the13haven.push2u.spring.Push2uHealthIndicator;
+import com.the13haven.push2u.testkit.VapidKeyPairFixture;
 
 /**
  * {@link VaultSignerAutoConfiguration} wires a {@link VaultTransitVapidSigner} from {@code push2u.signer.vault.*},
@@ -66,13 +64,10 @@ class VaultSignerAutoConfigurationTest {
             new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(VaultSignerAutoConfiguration.class));
 
     @BeforeAll
-    static void generateVapidKeys() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
-        generator.initialize(new ECGenParameterSpec("secp256r1"));
-        KeyPair keyPair = generator.generateKeyPair();
-        Base64.Encoder base64Url = Base64.getUrlEncoder().withoutPadding();
-        publicKeyB64 = base64Url.encodeToString(uncompressed((ECPublicKey) keyPair.getPublic()));
-        privateKeyB64 = base64Url.encodeToString(toFixed32(((ECPrivateKey) keyPair.getPrivate()).getS()));
+    static void generateVapidKeys() {
+        VapidKeyPairFixture vapid = VapidKeyPairFixture.generate();
+        publicKeyB64 = vapid.publicKeyBase64Url();
+        privateKeyB64 = vapid.privateKeyBase64Url();
     }
 
     @Test
@@ -1170,27 +1165,5 @@ class VaultSignerAutoConfigurationTest {
         VapidSigner applicationSigner() {
             return SIGNER;
         }
-    }
-
-    private static byte[] uncompressed(ECPublicKey key) {
-        byte[] out = new byte[65];
-        out[0] = 0x04;
-        System.arraycopy(toFixed32(key.getW().getAffineX()), 0, out, 1, 32);
-        System.arraycopy(toFixed32(key.getW().getAffineY()), 0, out, 33, 32);
-        return out;
-    }
-
-    private static byte[] toFixed32(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length == 32) {
-            return bytes;
-        }
-        byte[] out = new byte[32];
-        if (bytes.length > 32) {
-            System.arraycopy(bytes, bytes.length - 32, out, 0, 32);
-        } else {
-            System.arraycopy(bytes, 0, out, 32 - bytes.length, bytes.length);
-        }
-        return out;
     }
 }

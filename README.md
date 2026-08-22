@@ -72,6 +72,7 @@ comes up; this is the whole list.
 | [`HEALTH.md`](docs/HEALTH.md) | The starter's health indicator — what its probe asserts, its two keys, and the health-group routes. |
 | [`VAULT.md`](docs/VAULT.md) | The Vault Transit signer — the three key modes, the `push2u.signer.vault.*` properties, namespaces, and its transport seam. |
 | [`SIGNER.md`](docs/SIGNER.md) | Writing a `VapidSigner` over an HSM, a KMS or a remote custodian, and the conformance kit that checks one. |
+| [`TESTKIT.md`](docs/TESTKIT.md) | The test kit's other half — fixtures and a scripted transport for a sending application's own tests. |
 | [`VAPID.md`](docs/VAPID.md) | The one-time recipe for generating a VAPID key pair. |
 | [`VAPID-KEY-ROTATION.md`](docs/VAPID-KEY-ROTATION.md) | The operator runbook for replacing that pair on a running deployment. |
 | [`PUSH-SERVICES.md`](docs/PUSH-SERVICES.md) | The browser push services and the allowlist entry each one needs, in both spellings. |
@@ -915,8 +916,8 @@ what writing a signer takes.
 
 `VapidSigner` is the seam for key custody: an implementation over an HSM, a KMS or a remote
 custodian keeps the private key wherever it belongs and answers with a raw 64-byte `r || s` ES256
-signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published conformance
-kit that holds one to that contract in its own test suite:
+signature and the 65-byte uncompressed P-256 point. `push2u-testkit` is the published test kit, and
+its conformance contract holds an implementation to that contract in its own test suite:
 
 ```kotlin
 dependencies {
@@ -929,12 +930,27 @@ passes on its way into a send, the split between `VapidSignerUnavailableExceptio
 `PushCryptoException` an implementation is most likely to get wrong, why the key a signer
 advertises may never change, and the six checks the kit runs.
 
+## Testing an application that sends
+
+The same artifact carries what the other audience needs — the one that writes tests around its own
+sending code rather than around a signer. `VapidKeyPairFixture` and `SubscriptionFixture` produce a
+VAPID pair and a browser subscription that are valid against the library's *current* input
+contracts, in both the typed and the base64url form, so a test does not carry literals that were
+valid on the day they were pasted. `ScriptedPushHttpClient` answers a declared sequence of responses
+— `429`, `429`, `201` is the shape a repeat loop has to handle — and records every call as a
+`SentPush` that keeps the body's length and not the body, and redacts the capability URL when it
+prints.
+
+[`TESTKIT.md`](docs/TESTKIT.md) is the reference: the whole setup in one block, the base64 alphabet
+trap the fixtures close, what a scripted sequence does under a fan-out, which `PushOutcome`
+combinations a real send can actually produce, and what the kit deliberately does not publish.
+
 ## Modules
 
 | Module | Purpose | JPMS module name |
 |---|---|---|
 | `push2u-core` | Domain types, encryption, VAPID, response classification, `PushSender`, local signer, and JDK HTTP transport | `com.the13haven.push2u` |
-| `push2u-testkit` | The `VapidSigner` conformance contract, for a **test** classpath | `com.the13haven.push2u.testkit` |
+| `push2u-testkit` | The `VapidSigner` conformance contract and the fixtures a sending application tests with, for a **test** classpath | `com.the13haven.push2u.testkit` |
 | `push2u-signer-vault` | `VapidSigner` backed by HashiCorp Vault Transit | `com.the13haven.push2u.signer.vault` |
 | `push2u-spring-boot-starter` | Spring Boot auto-configuration for `PushSender` and optional health indicator | `com.the13haven.push2u.spring` |
 | `push2u-signer-vault-spring-boot-starter` | Spring Boot auto-configuration for the Vault Transit signer | `com.the13haven.push2u.signer.vault.spring` |
