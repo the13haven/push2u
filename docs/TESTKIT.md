@@ -86,9 +86,13 @@ Without those accessors it writes a literal, which is the defect this kit exists
 The strings are the primary form and `vapidKeys()` is `VapidKeys.fromBase64` applied to them, which
 makes the round trip the fixture's own acceptance test: the library checks the public half against
 the curve and the scalar's length, so a mis-encoded public key fails inside `generate()`. That check
-reaches half of what could go wrong and no further — nothing anywhere verifies that a scalar belongs
-to a point — which is why the fixture's fixed-width encoding of coordinates and scalar is the one
-piece of it worth reading twice.
+reaches half of what could go wrong and no further, because nothing in the library's runtime checks
+relates a scalar to a point. So the kit pins that correspondence where it can: a test inside the kit
+signs with a generated pair and verifies the signature against its public half through
+`Es256Verifier`, on the pairs where a fixed-width encoding is most likely to slip. That test is part
+of the fixture rather than an extra — without it the fixture would carry a defect class this
+library's own key handling does not have, and one whose only symptom is a push service rejecting the
+JWT.
 
 The pair comes from the JCA's standard `"EC"` and `secp256r1` names with no provider selected,
 named or inspected. The environment chooses, exactly as it does for the code under test. A fixture
@@ -261,7 +265,7 @@ send can produce:
 |---|---|
 | `Accepted(statusCode)` | `statusCode` is a `2xx`, always. |
 | `SubscriptionExpired(statusCode)` | `404` or `410`, and nothing else. |
-| `RetryableFailure(statusCode, retryAfter)` | `408`, `421`, `429`, any `5xx` other than `501`, `505`, `506`, `508`, `511` — and `413` only when the response carried a parseable `Retry-After`, so a real `RetryableFailure(413, …)` always has the hint present. On every other status the hint is present exactly when the response carried one, reported with no ceiling applied. |
+| `RetryableFailure(statusCode, retryAfter)` | `408`, `421`, `429`, any `5xx` other than `501`, `505`, `506`, `508`, `511` — and `413` only when the response carried a parseable `Retry-After`, so a real `RetryableFailure(413, …)` always has the hint present. On every other status the hint is present exactly when the response carried a *parseable* one — `RetryAfter` reads delta-seconds and the three HTTP-date forms and answers empty for anything else — and it is reported with no ceiling applied. |
 | `NonRetryableFailure(statusCode)` | Everything answered that no row above claims: a `3xx`, a `4xx` other than the named ones, a bare `413`, and the five carved-out `5xx`. Never a `2xx`, never `404`/`410`. |
 | `SignerUnavailable(cause)` | `cause` is the `VapidSignerUnavailableException` the signer raised; `status()` and `retryAfter()` are snapshotted from it at construction. |
 | `Indeterminate(cause)` | `cause` is the `PushDeliveryException` the transport raised for a POST that got no answer. |
@@ -296,11 +300,13 @@ VapidSigner unavailable = new VapidSigner() {
 ```
 
 **Raising from both methods is the correct form, and the trap sits the other way round from where
-you would look for it.** The send asks for the signature *first* and validates the advertised key
-*after* it. A fake that returns from both therefore has to return a structurally valid 65-byte
-uncompressed point: a placeholder there ends the send as a `PushCryptoException`, with the signature
-already produced, and the test never reaches the outcome it was written for. A fake that raises has
-no returned value read at all.
+you would look for it.** The send validates the advertised key only *after* the signature is taken.
+On the default reuse path it does read `publicKey()` first, to build the token-cache key, but it
+reads it unvalidated; the shape check happens on the way into the signed token. So a fake that
+*returns* from both methods has to return a structurally valid 65-byte uncompressed point: a
+placeholder there ends the send as a `PushCryptoException`, with the signature already produced, and
+the test never reaches the outcome it was written for. A fake that raises has no returned value read
+at all.
 
 **No `PushSender` fixture, in any spelling** — the reason is in the worked example above.
 

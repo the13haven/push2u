@@ -15,8 +15,8 @@ import java.util.Objects;
  *
  * <p>Both halves are commonly distributed as base64url — use {@link #fromBase64}. The other direction exists for the
  * public half alone: {@link #encodePublicKey} produces the string a browser needs as {@code applicationServerKey}.
- * There is no encoder for the private scalar and no accessor for it either, so nothing can be handed a pair and asked
- * for its secret as text — the material a caller puts into this type never comes back out in that form.
+ * There is no encoder for the private scalar and no published accessor for it either, so nothing can be handed a pair
+ * and asked for its secret as text — the material a caller puts into this type never comes back out in that form.
  */
 public final class VapidKeys {
 

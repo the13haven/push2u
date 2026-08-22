@@ -42,8 +42,9 @@ only in part takes the same status-line edit in a narrower form, `Accepted; one 
 by ADR-NNN`, beside the full form rather than in place of it — and that form accumulates: a later
 record taking a second clause extends the same line rather than replacing it, `Accepted; one clause
 superseded by ADR-NNN, another by ADR-MMM`, each record named in the order it arrived. Which clause
-each one took stays out of the superseded ADR and lives in the record that took it. Descriptions of how the code works now
-belong in `docs/DESIGN.md`, which is meant to be rewritten as the architecture moves.
+each one took stays out of the superseded ADR and lives in the record that took it. Descriptions of
+how the code works now belong in `docs/DESIGN.md`, which is meant to be rewritten as the
+architecture moves.
 [`docs/adr/README.md`](docs/adr/README.md) has the full procedure and the house style.
 
 The [non-goals](docs/DESIGN.md#non-goals) are equally settled: subscription persistence,
@@ -357,8 +358,11 @@ Also update, when your change touches them:
 - **The reference document that owns the subject**, which is where most of a change's prose belongs:
   `docs/SPRING.md` for a `push2u.*` property, `docs/HEALTH.md` for the health indicator,
   `docs/VAULT.md` for the Vault Transit signer, `docs/SIGNER.md` for the `VapidSigner` contract and
-  the conformance kit, `docs/VAPID.md` for key generation, `docs/VAPID-KEY-ROTATION.md` for
-  replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a browser push service's allowlist
+  the conformance kit that checks one, `docs/TESTKIT.md` for the kit's other half — the fixtures
+  and the transport fake a sending application tests with, so a change to what
+  `ScriptedPushHttpClient` answers or what `SubscriptionFixture` publishes lands there —
+  `docs/VAPID.md` for key generation, `docs/VAPID-KEY-ROTATION.md` for replacing a live VAPID
+  identity, `docs/PUSH-SERVICES.md` for a browser push service's allowlist
   entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a reader arriving from
   `nl.martijndwars:web-push` compares against — that document states the other library's API and
   dependency set as verified facts, so an addition there is checked against the published artifact.

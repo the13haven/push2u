@@ -244,10 +244,12 @@ it leaves the documents describing a design the code no longer follows.
 Two edits are findings on sight: an ADR whose decision is implemented being reworded or amended
 (immutable — a moved decision is a new ADR, and the old one only ever gets `Superseded by ADR-NNN`
 on its status line, or, for a decision superseded only in part, `Accepted; one clause superseded
-by ADR-NNN` beside the full form — either is legal, a third spelling is not; the one edit that is
-not a status line is a link repointed at a document that was *renamed*, never at one the material
-moved to), and a description of how the code currently works being added to an ADR instead of to
-`docs/DESIGN.md`.
+by ADR-NNN` beside the full form, which **accumulates** where a later record takes a second clause:
+`Accepted; one clause superseded by ADR-NNN, another by ADR-MMM`, each record named in the order it
+arrived, and a third and beyond the same way — those are the legal spellings and no other is; the
+one edit that is not a status line is a link repointed at a document that was *renamed*, never at
+one the material moved to), and a description of how the code currently works being added to an ADR
+instead of to `docs/DESIGN.md`.
 
 ### 5.7 Dependencies and supply chain
 
@@ -300,12 +302,16 @@ Cheap to check, silently wrong when missed: the pull request carries a changelog
 workflow derives `enhancement`/`bug`/`documentation` from the title, but `security` and, on a title
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
 a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
-`docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/SIGNER.md` / `docs/VAPID.md` — is
+`docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/SIGNER.md` / `docs/TESTKIT.md` /
+`docs/VAPID.md` — is
 updated if consumer-facing API, properties or limits changed, `docs/SIGNER.md` in particular if the
 `VapidSigner` contract moved, since it and not README is where the shape checks, the split between
 `VapidSignerUnavailableException` and `PushCryptoException` and the conformance kit's assertions
 are stated — a seam-taxonomy change that updates README's one sentence and leaves that document
-alone leaves the signer author reading a contract that no longer holds — and
+alone leaves the signer author reading a contract that no longer holds — and `docs/TESTKIT.md` if
+the test kit's other half moved: what `ScriptedPushHttpClient` answers or refuses to script, what
+`VapidKeyPairFixture` and `SubscriptionFixture` publish, what `SentPush` keeps and how it prints,
+each of which that document states to consumers in a form no README sentence carries — and
 `docs/VAPID-KEY-ROTATION.md` if the VAPID identity's lifecycle did — how or *when* a signer pins a
 key version (a new fetch mode moves that moment as surely as a new accessor would), anything that
 re-reads a key on a live signer, a key-version accessor — or if outcome classification moved, since
