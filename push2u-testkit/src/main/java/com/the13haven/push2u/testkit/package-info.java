@@ -4,15 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 /**
- * The published test kit: conformance contracts a {@code push2u} extension point must satisfy.
+ * The published test kit: conformance contracts a {@code push2u} extension point must satisfy, and coherent values of
+ * the library's public input contracts for the tests an application writes around its own sending code.
  *
  * <p>This package is the whole of the {@code push2u-testkit} artifact, which belongs on a consumer's <em>test</em>
  * classpath and not in an application's runtime. It is a separate package from {@code com.the13haven.push2u} because
  * the core is an explicit JPMS module: a package split across two artifacts cannot be resolved from the module path, so
  * a consumer holding both jars would get a {@code ResolutionException} rather than a test kit.
  *
- * <p>Its one member today is {@link com.the13haven.push2u.testkit.VapidSignerContractTest}, which every
- * {@link com.the13haven.push2u.VapidSigner} implementation extends.
+ * <p>The contract side is {@link com.the13haven.push2u.testkit.VapidSignerContractTest}, which every
+ * {@link com.the13haven.push2u.VapidSigner} implementation extends. The fixture side serves the application that only
+ * sends: {@link com.the13haven.push2u.testkit.VapidKeyPairFixture} generates a VAPID pair the builder and the
+ * configuration properties accept, {@link com.the13haven.push2u.testkit.SubscriptionFixture} holds one coherent browser
+ * subscription in both the typed and the base64url form, and
+ * {@link com.the13haven.push2u.testkit.ScriptedPushHttpClient} answers a declared response sequence while recording
+ * each call as a {@link com.the13haven.push2u.testkit.SentPush}. What admits a member here is that the knowledge it
+ * carries is the library's own and moves with it — what the current contracts accept, what a transport owes — never
+ * that some assembly is tedious; values produced by the library stay valid across an upgrade that tightens validation,
+ * where a pasted literal breaks with no warning a release note could give.
  */
 @NullMarked
 package com.the13haven.push2u.testkit;
