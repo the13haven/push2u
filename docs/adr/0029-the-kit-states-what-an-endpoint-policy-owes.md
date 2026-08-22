@@ -88,20 +88,62 @@ moving the statement from a method body into the name of the class a subject ext
 second permanent public type in an artifact whose entire argument is to publish as little as it can.
 The explicit `Optional` says the same thing at the price of a method call.
 
+## The permitted endpoint stays required, and the asymmetry is not an oversight
+
+`allowedEndpoint()` is a plain `URI` with no empty form, which invites the mirror of everything
+above: a policy that permits nothing cannot supply one either, and the contract would then be a
+contract for permitting implementations only.
+
+The mirror does not hold, because this library has already ruled on the two extremes and ruled on
+them differently. All three factories of the standard allowlist refuse an empty rule list in so many
+words — an empty allowlist would reject every send, which is far more likely a wiring bug than a
+policy. Deny-all is a shape this library declines to build and calls a probable defect; allow-all is
+a shape it builds, documents and ships, because `EndpointPolicies.unrestricted()` exists precisely
+so that a deployment can state it. A contract that treated the two symmetrically would be the thing
+out of step with the seam it is testing.
+
+The cost is real and is named rather than buried. **A policy that refuses every endpoint cannot be a
+subject of this contract**: the seam constrains the type of the answer and not its content, so
+writing one is legal, and its author is left exactly where every implementor stood before this
+record. That is the smaller hole. A required witness would exclude a shape this library publishes;
+this excludes a shape this library argues against.
+
 ## What the contract checks
 
 1. **`allowedEndpoint()` is answered with `Allowed`** — a value, not `null`, and not an exception.
-2. **`refusedEndpoint()`, where there is one, is answered with `Refused`** — again a value. A policy
-   that throws on the endpoint it refuses aborts a fan-out over a subscription store on the first
-   hostile row, which is the failure [ADR-027](0027-the-endpoint-policy-answers-with-a-value.md)
-   moved the seam off the exception channel to prevent.
-3. **The refusal's reason does not carry the capability part of the endpoint.** The section below is
-   about this one.
-4. **A concurrency smoke check**, named as such, described two sections down.
+2. **`refusedEndpoint()`, where there is one, is answered with a `Refused` whose reason carries no
+   capability part of the endpoint** — one check, over one call, for the reason the next section
+   gives. A policy that throws on the endpoint it refuses aborts a fan-out over a subscription store
+   at the first hostile row, which is the failure
+   [ADR-027](0027-the-endpoint-policy-answers-with-a-value.md) moved the seam off the exception
+   channel to prevent; what the reason must not contain is two sections down.
+3. **A concurrency smoke check**, named as such, described three sections down.
 
 Which endpoints a policy *ought* to refuse is not checked and cannot be: that is the deployment's
 rule, and ADR-016 and [ADR-017](0017-domain-rule-in-the-endpoint-allowlist.md) are where the
 library's own answer to it lives.
+
+## One call per witness, which is what lets the determinism clause be literal
+
+The refusal check and the leak check are one test making one `assess` call. The merge is for
+correctness, not for brevity.
+
+As two tests they would call `assess` twice on the same witness and hold both answers to one
+expectation — the first refuses, and the second refuses *and* has a clean reason. That is a weak
+form of the very property ADR-028 ruled out. A policy keeping a counter or a resolution cache is
+permitted to answer differently the second time, and would fail a contract that never states it
+requires stability; the clause further down promising that determinism is assumed nowhere would then
+be true of the concurrency check and false of the refusal check itself.
+
+So the contract makes exactly one observation per witness and asserts of that single value both that
+it is a `Refused` and what its reason does not contain. The two halves are not separable anyway — a
+value and its contents are one thing — and reporting "not a `Refused`" and "the reason leaked" as
+unrelated failures would describe one broken policy as two unrelated ones.
+
+The kit already has the precedent and the implementation takes it: `VapidSignerContractTest` puts
+several assertions in one method wherever they form a chain rather than a list, carrying
+`@SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")` beside a comment saying why — the kit is a
+module's `main` source set, so PMD analyses it, and this is `main` source that happens to be a test.
 
 ## The leak check needs a witness with something to leak, and that is a price
 
@@ -122,10 +164,24 @@ would match every reason ever written.
 **Which is why the kit demands a witness carrying a distinctive capability-shaped component, and
 fails loudly when it does not get one.** A refused endpoint of `https://blocked.example/` has no
 meaningful component at all, so the check would pass without having looked at anything — the worst
-outcome available, an assertion that reports success for a property it never tested. A witness whose
+outcome available, an assertion reporting success for a property it never tested. A witness whose
 path is `/api` is barely better: the search then answers a question about the policy's prose rather
-than about the endpoint. The kit therefore asserts that the supplied witness carries a component
-distinctive enough to be found, and its failure message says why rather than merely that.
+than about the endpoint.
+
+**The criterion for a usable witness is fixed here rather than left to judgement, and stating it
+closes a trap that would otherwise convict correct implementations.** A component qualifies when it
+is meaningful *and* does not occur in `Endpoints.redact(witness)` — the exact string a conforming
+policy is entitled to print about that endpoint. One half of that rules out a marker that is merely
+the origin again. The other half is the trap: the redaction ends in a sixteen-character hexadecimal
+fingerprint, so a witness whose path is hex-shaped matches on the fingerprint and reports a leak
+against a policy that leaked nothing. Beside it the marker must be long enough that colliding with
+the prose of a refusal is not plausible — the number is the implementing record's to choose and
+justify, and the rule is what this one fixes.
+
+A witness failing either half is refused **as unfit for the check**, with a message naming which
+half it failed and why. It is never converted into a failure of the policy: the kit is reporting on
+its own fixture there, and a contract that blamed the subject for the fixture's shape would teach an
+implementor to distrust it.
 
 This is the contract's one demand on the fixture, and it is a real cost rather than a formality: an
 implementor cannot hand over an arbitrary endpoint their policy happens to refuse, and will meet the
@@ -152,10 +208,13 @@ variants of the sealed hierarchy. That is all.
 of the result, and ADR-028 ruled out a contract test asserting it, naming a resolution cache and a
 counter as legitimate state for a policy to keep. A concurrency check demanding a stable subtype
 would reintroduce the same assertion under a name that hides it, and would refuse an implementation
-this library permits. The classification checks — allowed endpoint to `Allowed`, refused endpoint to
-`Refused` — are made once each, in their own tests, where the subject is classification; the
-concurrent one is about what happens when several threads are inside `assess` at the same moment,
-and it asserts only what that question can support.
+this library permits.
+
+With the refusal and its reason merged into one observation two sections above, the clause can be
+stated without a qualification: **no check in this contract observes one endpoint twice and requires
+the two answers to agree.** The classification checks are one call each, in their own tests, where
+the subject is classification; the concurrent one is about what happens when several threads are
+inside `assess` at the same moment, and asserts only what that question can support.
 
 What it is worth is asymmetric and the Javadoc says so. A passing run proves nothing: no schedule
 was forced, and an unguarded cache can go a thousand runs without colliding. A failing run is a real
@@ -208,6 +267,14 @@ travels with this record for that reason.
   equally one that searches only the raw spelling of a component a policy may have decoded.
 - A leak check run against a witness with nothing to leak, and so a witness requirement left to the
   implementor's judgement instead of asserted with a message that says why.
+- The refusal and the leak stated as two checks over two calls, which would have the contract observe
+  one witness twice and quietly require the two answers to agree.
+- A witness qualification rule admitting a marker that occurs in the redaction a conforming policy
+  may print — the fingerprint above all — or a fixture's unfitness reported as a failure of the
+  policy.
+- A contract that cannot be extended by a policy which permits nothing, sought by making
+  `allowedEndpoint()` optional in the name of symmetry; the two extremes have different standing in
+  this library and the contract follows it.
 - A kit that derives its own probe endpoint by rewriting the one the implementor supplied.
 - A contract check on which endpoints a policy admits or refuses, that being the deployment's rule
   and not this library's.

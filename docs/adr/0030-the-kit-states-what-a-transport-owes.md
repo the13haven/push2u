@@ -12,11 +12,13 @@ instrumented transport, and its obligations are the kind that pass every unit te
 production:
 
 - **redirects are not followed** — a `3xx` surfaces as a status the sender classifies, never as a
-  POST to a host the endpoint policy never saw. `EndpointPolicy`'s own Javadoc names this as the one
-  gap a URI-level check cannot close and delegates here; `JdkPushHttpClient` refuses a
-  redirect-following client at construction, and a client built on another stack carries the
-  property itself. OkHttp's `followRedirects` defaults to `true`, so the straightforward
-  implementation there is unsafe until someone turns it off, and its `followSslRedirects` with it;
+  POST to a host the endpoint policy never saw. `EndpointPolicy`'s own Javadoc lists several things a
+  URI-level check cannot reach — DNS rebinding, anything the remote server does once connected — and
+  says that this one, alone among them, is closed in the transport rather than lived with;
+  `JdkPushHttpClient` refuses a redirect-following client at construction, and a client built on
+  another stack carries the property itself. OkHttp's `followRedirects` defaults to `true`, so the
+  straightforward implementation there is unsafe until someone turns it off, and its
+  `followSslRedirects` with it;
 - **an HTTP error status is not a transport failure** — `PushDeliveryException` means nothing
   answered, and a transport that throws on `410` turns a subscription this library classifies as
   gone into an `Indeterminate` the caller will keep repeating for the life of the row;
@@ -83,12 +85,31 @@ to reach the transport under test; the implementor is the only party who knows h
 configured, so the kit hands over the material and the implementor does the configuring.
 
 **Both halves are handed over because the three stacks that matter want different ones.** The JDK's
-`HttpClient` and Apache HttpClient 5 take an `SSLContext`; OkHttp's `sslSocketFactory` requires the
-factory *and* the `X509TrustManager` beside it, and refuses to guess the second from the first.
-Handing over one and making OkHttp's author dig the other out of a `TrustManagerFactory` would put
-the kit's own certificate handling into their test — which is the sort of thing that gets replaced
-with a trust-all manager on the second attempt. Neither type is ours, so no TLS abstraction is
-invented and nothing new is published.
+`HttpClient` and Apache HttpClient 5 take an `SSLContext`; OkHttp's supported overload takes the
+`SSLSocketFactory` *and* the `X509TrustManager` beside it. Handing over one half and making OkHttp's
+author derive the other from a `TrustManagerFactory` would put the kit's own certificate handling
+into their test — which is the sort of thing that gets replaced with a trust-all manager on the
+second attempt. Neither type is ours, so no TLS abstraction is invented and nothing new is
+published.
+
+## The kit invents no lifecycle for the transport, and states how often it asks for one
+
+**`transport(...)` is called once per test method, and the contract never closes what it hands
+back.**
+
+That is a decision rather than an omission, and the seam is what decides it. `PushHttpClient` is not
+`AutoCloseable` and has no lifecycle at all: a `PushSender` takes a transport when it is built, holds
+it for as long as it exists, and closes it never. A contract introducing a teardown step would be
+stating an obligation the seam does not carry, and would leave an implementor entitled to believe
+this library releases their client at some point — which it does not, anywhere.
+
+The cost of that lands on a stack holding resources, so it is named together with its answer. JUnit
+creates a new test instance per test method by default, so a subject building an OkHttp client or an
+HttpClient 5 connection manager builds one per check in this contract and releases none of them. **A
+subject in that position keeps the reference in its own factory method and closes it in its own
+`@AfterEach`** — ordinary JUnit, needing nothing from the kit and adding nothing to the published
+surface. The call count is stated here because it is the fact an implementor cannot make that
+decision without.
 
 ## The server is a raw `SSLServerSocket` speaking minimal HTTP/1.1
 
@@ -117,10 +138,15 @@ Three reasons, and the first is about the artifact:
    `429` a deployment ever receives.
 3. **The request arrives as a POST**, at the URI it was given, carrying the headers it was given and
    a body of the length it was given.
-4. **A redirect is not followed.** A `3xx` with a `Location` comes back as that status, and the
-   location's path receives no request at all. This is the SSRF gap `EndpointPolicy` cannot close
-   and delegates here, so the check asserts both halves: what the caller was told, and what the
-   other host was not sent.
+4. **A redirect is not followed.** The harness answers a `3xx` whose `Location` names a **second
+   listener, on another loopback port**, and the check asserts both halves: the caller was handed
+   that `3xx` itself, and the second listener accepted no connection at all. The second port is what
+   makes the claim the right one — a different port is a different origin, and the assertion is about
+   a host the endpoint policy never saw, which a target path on the same server would only weaken
+   into a claim about a path. The certificate is the same one and its subject alternative name covers
+   both listeners, so a transport that does follow the redirect arrives at the second one with no
+   trust error to stop it and its silence means what the check needs it to mean; the loopback-only
+   rule below is not bent to arrange this.
 5. **A refused connection is a `PushDeliveryException`** — a port nothing is listening on.
 6. **A connection accepted and dropped is a `PushDeliveryException`.** Kept separate from the fifth
    deliberately: they fail at different points, one before the handshake begins and one during it,
@@ -159,9 +185,11 @@ decision, not left to the implementation:
   the values it gave; it never asserts the exact set.
 - The URI is checked through the request target, the `Host` header, the path and the query, since
   that is what a server can observe of it.
-- The server listens on the loopback address only.
-- The certificate's subject alternative name matches the address the endpoint URI names, so the
-  transport performs real hostname verification rather than being handed a reason to skip it.
+- Every listener the harness opens — the one under test and the redirect target beside it — is bound
+  to the loopback address only.
+- One certificate serves all of them, and its subject alternative name matches the address they are
+  bound to, so the transport performs real hostname verification rather than being handed a reason
+  to skip it.
 - Responses close the connection unless persistent connections are the subject of the scenario, so
   that connection reuse is never accidentally part of what a check asserts.
 
@@ -219,9 +247,14 @@ one transport it is pointed at does not follow them, which is evidence of nothin
 redirect never reaches the client passes every subject, including the unsafe ones it exists to fail.
 The self-test is the precondition, not a nicety, and the deletion waits for it.
 
-The tests that are about `JdkPushHttpClient` rather than about the seam stay where they are: the
-constructor's refusal of a redirect-following `HttpClient`, the redaction of the endpoint in a
-delivery failure's message, the interrupt-flag restoration, and the streamed 64 MiB response.
+**Exactly one test method is deleted, and everything else in those files stays untouched** — the
+sentence is about a count, not about a list. Naming a few of the survivors is only useful for the
+ones a reader might expect the contract to have absorbed: the constructor's refusal of a
+redirect-following `HttpClient`, and its acceptance of a conforming one, are about this class's own
+invariant rather than about the seam; the redaction of the endpoint in a delivery failure's message,
+the interrupt-flag restoration, the request timeout and the streamed 64 MiB response are each about
+`JdkPushHttpClient` and not about what a transport owes. Those are examples of the distinction, and
+not an inventory of what survives.
 
 ## Documents
 
@@ -253,6 +286,10 @@ the moment its decision is implemented, and travels with the record instead.
   buffering did not happen; and a response-size check offered as one.
 - A contract check for a timeout, a retry, a connection-pool property or persistent-connection
   behaviour — none of which the seam promises.
+- A lifecycle the kit invents for the transport: a teardown hook, a `close` call on the subject, an
+  `AutoCloseable` expectation, or any other obligation `PushHttpClient` does not itself carry.
+- A redirect target on the harness's own listener, which would turn a check about a host the policy
+  never saw into a check about a path.
 - A harness asserting the exact set of request headers, or comparing header names case-sensitively,
   or rejecting a chunked request body.
 - A harness listening on anything but loopback, or a certificate whose subject alternative name does
