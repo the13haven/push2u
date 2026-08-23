@@ -301,11 +301,12 @@ public byte[] sign(byte[] signingInput) {
 ```
 
 `returned` and not `ok`: a custodian that answers is not yet a custodian that answered *correctly*.
-A `null` or a wrong-length signature is refused downstream — `sign` owes a raw 64-byte `r||s`, and
-anything else becomes a `PushCryptoException` while the token is minted — so a decorator labelling
-every return a success reports one where the send is about to fail. Do not re-check the length here:
-that duplicates a rule the library already owns, in a second place that can drift from it. Name what
-the decorator actually sees, and let `outcome=error` on the send meter carry the rest.
+Both are refused downstream while the token is minted, and not as the same thing: `sign` owes a raw
+64-byte `r||s`, so a `null` signature becomes a `NullPointerException` and a wrong-length one a
+`PushCryptoException`. A decorator labelling every return a success reports one where the send is
+about to fail either way. Do not re-check the length here: that duplicates a rule the library already
+owns, in a second place that can drift from it. Name what the decorator actually sees, and let
+`outcome=error` on the send meter carry the rest.
 
 ## What a signer counter actually counts
 
