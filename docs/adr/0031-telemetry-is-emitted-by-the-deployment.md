@@ -209,15 +209,24 @@ new document says it. `docs/DESIGN.md` describes the architecture, which this re
   the deployment did not itself wrap, and any property that switches such wrapping on.
 - A host-to-push-service mapping shipped as code from any module, which is ADR-017's entry reaching
   one artifact further; the table stays a document's snapshot.
-- The endpoint, any component of it, a path segment, a query value or a policy's refusal reason
-  offered as a metric tag, a span attribute or a meter name — the reason being a free-text sentence
-  whose author is the deployment's own policy, so nothing bounds what it contains.
-- A raw origin or host published as a low-cardinality tag, or a cap on a metrics backend offered as
-  what makes one safe rather than as the last defence behind a closed set.
+- **The capability-bearing part of an endpoint — the whole URI, its path, a path segment, its query,
+  a query value, its fragment — offered as a metric tag, a span attribute or a meter name**, in any
+  spelling and at any cardinality. Possession of it is authority to push, so the objection is
+  disclosure and holds wherever the value lands.
+- A policy's refusal reason in any of those places: a free-text sentence whose author is the
+  deployment's own policy, so nothing bounds its length, its cardinality or what it quotes.
+- A raw origin or host published as a *low-cardinality* tag, or a cap on a metrics backend offered
+  as what makes one safe rather than as the last defence behind a closed set. The origin is the one
+  part of an endpoint that is not a credential — this library prints it in its own redaction — so
+  whether it goes on a trace attribute or a log line, where cardinality is expected and the field is
+  not an aggregation key, is the deployment's decision and not this record's. What is ruled out is
+  the meter tag.
 - A statement of the mapping from HTTP status to outcome anywhere but where `send` performs it —
   including a transport decorator's status buckets presented as a substitute for `PushOutcome`.
 - An accessor on `EndpointPolicy`, or any other way to ask a policy which endpoints it admits, added
   so that a tag can be bounded by it.
-- A promise about the thread a caller's instrumentation observes on the asynchronous path: `send`
-  runs on the supplied executor or on this library's virtual-thread default, and no thread-bound
-  context is propagated into it.
+- A promise about the thread a caller's instrumentation observes on the asynchronous path, in
+  either direction: `send` runs on the supplied executor or on this library's virtual-thread
+  default, this library propagates no context of its own, and it equally does not promise that
+  none crosses — what a worker sees is decided by the executor, by how the context is implemented
+  and by the JDK.

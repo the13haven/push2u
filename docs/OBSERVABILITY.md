@@ -12,9 +12,9 @@ same library do not end up with two vocabularies.
 
 The examples use Micrometer because it is the facade a Spring Boot application already has. Nothing
 here depends on it: the same recipes fit OpenTelemetry, Dropwizard Metrics or a counter you increment
-yourself. push2u has no telemetry dependency and never will —
-[ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md) is the record of that decision, and of
-what would reopen it.
+yourself. push2u has no telemetry dependency under the current decision —
+[ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md) is that record, including the one
+question it deliberately leaves open and the evidence that would reopen it.
 
 ## Where each question is answered
 
@@ -36,7 +36,8 @@ One `Timer` carries both the rate and the latency, so no separate counter is nee
 ```java
 public PushOutcome deliver(Subscription subscription, PushMessage message) {
     Timer.Sample sample = Timer.start(registry);
-    String outcomeTag = "error";              // stands unless a path below replaces it
+    String service = serviceOf(subscription);  // outside the try: a throw in here must not
+    String outcomeTag = "error";               // replace the exception the send is about
     try {
         PushOutcome outcome = sender.send(subscription, message);
         outcomeTag = tagFor(outcome);
@@ -47,7 +48,7 @@ public PushOutcome deliver(Subscription subscription, PushMessage message) {
     } finally {
         sample.stop(Timer.builder("push2u.send")
                 .tag("outcome", outcomeTag)
-                .tag("service", serviceOf(subscription))   // a closed set — see below
+                .tag("service", service)                   // a closed set — see below
                 .register(registry));
     }
 }
@@ -57,12 +58,17 @@ The initial value and the one `catch` are not decoration. `send` answers every *
 with a value, but it still throws on a defect or an unusable substrate — `PushCryptoException`,
 `IllegalArgumentException`, `NullPointerException` — and `PushInterruptedException` when the sending
 thread was interrupted. A meter that only switches over `PushOutcome` records nothing at all for
-those, which is precisely the case an operator most wants to see rise.
+those, which is precisely the case an operator most wants to see rise. The tag is computed *before*
+the `try` for the same reason: anything thrown while building a tag inside `finally` replaces the
+exception the send was about and loses the measurement with it.
 
 **Asynchronously**, instrument the future rather than the call: `sendAsync` runs `send` on the
-executor you supplied, or on this library's own virtual-thread executor. push2u propagates nothing
-thread-bound into it — an MDC, an open observation scope — so whatever the executor you supplied
-carries across is all there is, and the default carries nothing.
+executor you supplied, or on this library's own virtual-thread executor. **push2u performs no
+context propagation of its own and promises none** — what a worker sees depends on the executor,
+on how the context is implemented and on the JDK. An ordinary `ThreadLocal` does not cross;
+an `InheritableThreadLocal` may, since a thread created per task inherits from its creator; an MDC
+or an open observation scope crosses only if the executor you supplied carries it. Do not reason
+from the default: instrument the future, where the answer does not depend on any of that.
 
 ```java
 Timer.Sample sample = Timer.start(registry);
@@ -74,7 +80,11 @@ return sender.sendAsync(subscription, message).whenComplete((outcome, failure) -
 ```
 
 `CompletableFuture` wraps a thrown failure in a `CompletionException`, so unwrap the cause before
-classifying it. Note that this sample starts before the task is submitted, so time spent queued on
+classifying it. One path this sample does not cover: an executor you supplied can reject the task
+*synchronously* with a `RejectedExecutionException`, in which case no future is returned, the
+`whenComplete` is never attached and the sample is never stopped. Wrap the submission in its own
+`try`/`catch` if a saturated pool is a state you need on the meter rather than only in the
+exception. Note also that this sample starts before the task is submitted, so time spent queued on
 the executor lands in the same timer as the send — which is usually what you want from an
 application's point of view, but it is not the same measurement the synchronous recipe makes. Give
 it its own meter name if you run both.
@@ -109,8 +119,8 @@ The ten values, with the two thrown ones, are the vocabulary this document propo
 |---|---|
 | `accepted` | the push service took the message (`2xx`) |
 | `subscription_expired` | `404`/`410` — delete the row; a repeat cannot succeed |
-| `retryable_failure` | worth repeating on the caller's schedule; carries `retryAfter()` when the service sent one |
-| `non_retryable_failure` | answered and permanent |
+| `retryable_failure` | a repeat *may* be useful — the caller still decides whether it is safe and when; carries `retryAfter()` when the service sent one |
+| `non_retryable_failure` | this identical request already has its answer, so repeating it buys nothing — not a forecast about the endpoint |
 | `signer_unavailable` | the custodian could not sign *now*; nothing was sent |
 | `payload_rejected` | too large for the configured body limit; nothing was sent |
 | `endpoint_rejected` | the endpoint policy refused; nothing was sent, nothing left the process |
@@ -118,22 +128,30 @@ The ten values, with the two thrown ones, are the vocabulary this document propo
 | `interrupted` | `PushInterruptedException` — the sending thread was interrupted |
 | `error` | anything else thrown: a defect, an unusable substrate, a recurring misconfiguration |
 
-A `status` tag, if you want one, comes off the outcome — `Accepted.statusCode()`,
+A status tag, if you want one, comes off the outcome — `Accepted.statusCode()`,
 `SubscriptionExpired.statusCode()`, `RetryableFailure.statusCode()`,
-`NonRetryableFailure.statusCode()`, `SignerUnavailable.status()` — normalised to a small set
-(`2xx`, `404`, `410`, `429`, `5xx`, `other`). Take it from the outcome rather than from a transport
-decorator: the outcome already carries the status *and* what this library concluded from it, and a
-second bucketing derived from the raw response is a second answer to a question that has one.
+`NonRetryableFailure.statusCode()` — normalised to a small set (`2xx`, `404`, `410`, `429`, `5xx`,
+`other`). Take it from the outcome rather than from a transport decorator: the outcome already
+carries the status *and* what this library concluded from it, and a second bucketing derived from
+the raw response is a second answer to a question that has one.
+
+**`SignerUnavailable.status()` does not belong in that tag.** It is the custodian's status, and the
+two are different events wearing the same integer: a `503` from a push service means the POST was
+made and refused, a `503` from a custodian means nothing was sent at all. Give it its own tag —
+`custodian_status` beside `push_status` — or leave it off the main meter entirely and let `outcome`
+carry it, which is what `signer_unavailable` is for.
 
 ## Tag safety
 
 These are not style preferences. Each one is a way a metrics backend becomes either a disclosure or
 a resource the remote side controls.
 
-- **Never the endpoint**, nor any part of it — host, path segment, query value, fragment, raw or
-  percent-decoded. It is a capability URL (RFC 8030 §8.3): possession of it is authority to push to
-  that browser. This library redacts it everywhere it renders one, and a tag is the least reviewed
-  string in a deployment.
+- **Never the capability-bearing part of the endpoint — anywhere, at any cardinality.** The whole
+  URI, its path, one path segment, its query, one query value, its fragment; raw or percent-decoded;
+  a meter tag, a span attribute, a log field. It is a capability URL (RFC 8030 §8.3): possession of
+  it is authority to push to that browser. This library redacts it everywhere it renders one, and a
+  tag is the least reviewed string in a deployment. The origin is the exception and gets its own
+  rule two bullets down — it is the part this library itself prints.
 - **Never a policy's refusal reason.** `EndpointAssessment.Refused` carries free prose written by
   whoever wrote the policy, for a human reading a log line. Nothing bounds its length, its
   cardinality or what it happens to quote.
@@ -145,31 +163,35 @@ a resource the remote side controls.
   `toString()` implementations are safe by construction: neither prints a message, `Indeterminate`
   renders the cause's *class* and `SignerUnavailable` the custodian's status and retry hint. Log the
   outcome itself, or the cause's class — never its message, unless you redact it yourself first.
-- **Never a raw origin or host as a low-cardinality tag.** An allowlist does not bound the value: a
-  domain rule matches the apex *and every subdomain*, which is exactly how Apple's and Microsoft's
-  zones are written, and `EndpointPolicies.unrestricted()` bounds nothing at all. Stripping the
-  scheme and the port does not help and loses a distinction this library makes:
-  `https://push.example` and `https://push.example:8443` are different origins here.
+- **Never a raw origin or host as a *meter tag*.** Not for disclosure — the origin carries no
+  credential — but for cardinality: an allowlist does not bound the value, since a domain rule
+  matches the apex *and every subdomain*, which is exactly how Apple's and Microsoft's zones are
+  written, and `EndpointPolicies.unrestricted()` bounds nothing at all. Stripping the scheme and the
+  port does not help and loses a distinction this library makes: `https://push.example` and
+  `https://push.example:8443` are different origins here.
 - **Never an implementation's class name.** `VaultTransitVapidSigner` in a tag says something about
   your deployment's internals to everyone who can read the metric, and it changes under you when the
   bean is decorated.
 
-A raw origin is a perfectly good *high-cardinality* field: put it on a trace attribute or a log line
-if you have decided you want one there. A meter tag is a closed set.
+So three rules, and they are different rules: the capability-bearing parts go nowhere; the raw
+origin stays off meter tags but is a perfectly good high-cardinality field on a trace attribute or a
+log line, where cardinality is expected and the field is not an aggregation key — that one is your
+call; and a meter tag is always a closed set you named.
 
 **The service tag is yours to define.** Map the endpoint's host to a fixed vocabulary and default
 everything else to `other`:
 
 ```java
 private static String serviceOf(Subscription subscription) {
-    String host = URI.create(subscription.endpoint()).getHost();
-    if (host == null) {
+    String raw = URI.create(subscription.endpoint()).getHost();
+    if (raw == null) {
         return "other";
     }
-    if (under(host, "googleapis.com")) return "fcm";
-    if (under(host, "mozilla.com")) return "mozilla";
-    if (under(host, "push.apple.com")) return "apple";
-    if (under(host, "notify.windows.com")) return "wns";
+    String host = raw.toLowerCase(Locale.ROOT);          // URI.getHost() preserves the case it parsed
+    if (host.equals("fcm.googleapis.com")) return "fcm";                     // one exact host
+    if (host.equals("updates.push.services.mozilla.com")) return "mozilla";  // one exact host
+    if (under(host, "push.apple.com")) return "apple";                       // a zone, per the vendor
+    if (under(host, "notify.windows.com")) return "wns";                     // a zone, per the vendor
     return "other";
 }
 
@@ -178,9 +200,20 @@ private static boolean under(String host, String zone) {
 }
 ```
 
-The label boundary is the whole of `under`, and it is not pedantry: a bare `endsWith` files
-`evilnotify.windows.com` under `wns`, which is the same mistake the allowlist's domain rule exists
-to avoid — and a mislabelled tag is a dashboard that says one vendor is failing when another is.
+Three things in those eight lines are load-bearing, and each of them is a mislabelled tag if
+dropped — a dashboard saying one vendor is failing when another is.
+
+- **Match the two origins exactly.** Google and Mozilla publish one host each, and a zone match
+  would file every other `googleapis.com` or `mozilla.com` service under a push service that never
+  saw the request.
+- **Match the two zones at a label boundary.** Apple and Microsoft publish wildcards, so a zone
+  match is right there — but a bare `endsWith` files `evilnotify.windows.com` under `wns`, which is
+  the mistake the allowlist's own domain rule exists to avoid.
+- **Lower-case the host.** `URI.getHost()` returns it as parsed, so `FCM.GOOGLEAPIS.COM` falls into
+  `other` without this.
+
+The four names come from [`PUSH-SERVICES.md`](PUSH-SERVICES.md), which carries the vendor citation
+for each and says plainly that it is a snapshot rather than something this repository verifies.
 
 push2u ships no such mapping and will not: those are the push services' own zones, they change
 without telling us, and this library shipping them as a default is ruled out for the same reason it
@@ -261,8 +294,9 @@ Not sends — not, at least, with the defaults. push2u reuses the VAPID token un
 keyed by the push service's origin, so `sign` runs on a **token-cache miss**: roughly once per
 distinct origin per token lifetime, plus whatever a cache eviction adds. That is what makes the
 counter valuable: for a custodian like Vault Transit or an HSM it is a close estimate of the
-operations actually being billed, audited and rate-limited, which is a number nothing else in a
-deployment reports.
+operations actually being billed, audited and rate-limited. The custodian counts them too — Vault's
+audit log records every request — but only this meter has them beside the sends that caused them,
+on the application's own clock and with the application's own tags.
 
 Four things to know before alerting on it:
 
@@ -296,9 +330,15 @@ Four things to know before alerting on it:
 push2u performs exactly one POST per `send` and does not retry. Everything about repeating — the
 attempt count, the delay, the budget, the dead-letter, and whether a `Retry-After` was honoured —
 happens in your scheduler or queue, and is measured there. What this library contributes to those
-meters is the classification: `RetryableFailure` says repeating is worthwhile and carries the
-service's own `retryAfter()` when it sent one, uncapped; `SubscriptionExpired` says stop and delete
-the row; `Indeterminate` says the POST left the process and nothing came back, so a repeat may
+meters is the classification, and it is narrower than the two names suggest. `RetryableFailure`
+says a repeat *may* be useful — never that one is safe: a `502` or a `504` is an intermediary
+reporting nothing valid from upstream, which may have applied the POST already, and a `507` whose
+request came from a user action must not be repeated until a separate user action asks for it.
+It carries the service's own `retryAfter()` when it sent one, uncapped, so the ceiling on the wait
+is yours. `NonRetryableFailure` is a verdict about *this* response and not a forecast about the
+endpoint: an identical request has its answer, so sending it again buys nothing — it does not
+promise a later, different send fails. `SubscriptionExpired` is the one that says stop and delete
+the row. `Indeterminate` says the POST left the process and nothing came back, so a repeat may
 duplicate a delivery that already happened.
 
 ## Spring Boot
