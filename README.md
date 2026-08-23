@@ -378,8 +378,10 @@ transport's per-request timeout, 30 seconds on the default `JdkPushHttpClient` �
 that signs, whatever an external `VapidSigner` spends reaching its custodian. The library schedules
 nothing on top of that.
 
-This library emits no meters, no spans and no log lines of its own: what it publishes is the
-classification above, and the deployment decides what to record from it.
+This library emits no meters, no spans and — on the send path — no log lines of its own: what it
+publishes is the classification above, and the deployment decides what to record from it. (The
+Spring starter's health indicator is the one thing here that logs, and it reports readiness rather
+than delivery.)
 [`OBSERVABILITY.md`](docs/OBSERVABILITY.md) is the reference — the outcome vocabulary to tag by,
 recipes for the call site and for each of the three seams, why the endpoint and a policy's refusal
 reason may never become a tag, and what a counter on `VapidSigner.sign` actually counts now that the

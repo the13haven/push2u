@@ -1,8 +1,10 @@
 # Observability
 
-push2u emits nothing: no meters, no spans, no log lines. What it publishes instead is the *meaning*
-of a send — a sealed `PushOutcome` naming exactly what happened, two seams whose calls are worth
-counting, and a redaction that decides which parts of an endpoint may be rendered at all. The
+push2u emits nothing on the send path: no meters, no spans, no log lines. (One thing in the tree
+logs — the Spring starter's health indicator warns when its probe starts failing, which is a
+readiness signal and not a view of delivery.) What it publishes instead is the *meaning* of a send —
+a sealed `PushOutcome` naming exactly what happened, three seams whose calls are worth counting, and
+a redaction that decides which parts of an endpoint may be rendered at all. The
 telemetry framework, the meter names, the tag vocabulary, the sampling and the export are the
 deployment's, and this document is the convention worth sharing so that two teams instrumenting the
 same library do not end up with two vocabularies.
@@ -33,7 +35,7 @@ One `Timer` carries both the rate and the latency, so no separate counter is nee
 ```java
 public PushOutcome deliver(Subscription subscription, PushMessage message) {
     Timer.Sample sample = Timer.start(registry);
-    String outcomeTag = "error";                       // stands unless one of the two paths below replaces it
+    String outcomeTag = "error";              // stands unless a path below replaces it
     try {
         PushOutcome outcome = sender.send(subscription, message);
         outcomeTag = tagFor(outcome);
@@ -50,15 +52,17 @@ public PushOutcome deliver(Subscription subscription, PushMessage message) {
 }
 ```
 
-The initial value and the one `catch` are not decoration. `send` answers every *operational* result with a value, but
-it still throws on a defect or an unusable substrate — `PushCryptoException`, `IllegalArgumentException`,
-`NullPointerException` — and `PushInterruptedException` when the sending thread was interrupted. A
-meter that only switches over `PushOutcome` records nothing at all for those, which is precisely the
+The initial value and the one `catch` are not decoration. `send` answers every *operational* result
+with a value, but it still throws on a defect or an unusable substrate — `PushCryptoException`,
+`IllegalArgumentException`, `NullPointerException` — and `PushInterruptedException` when the sending
+thread was interrupted. A meter that only switches over `PushOutcome` records nothing at all for
+those, which is precisely the
 case an operator most wants to see rise.
 
 **Asynchronously**, instrument the future rather than the call: `sendAsync` runs `send` on the
-executor you supplied, or on this library's own virtual-thread executor, so nothing thread-bound at
-the call site — an MDC, an open observation scope — is in force inside it.
+executor you supplied, or on this library's own virtual-thread executor. push2u propagates nothing
+thread-bound into it — an MDC, an open observation scope — so whatever the executor you supplied
+carries across is all there is, and the default carries nothing.
 
 ```java
 Timer.Sample sample = Timer.start(registry);
@@ -70,7 +74,10 @@ return sender.sendAsync(subscription, message).whenComplete((outcome, failure) -
 ```
 
 `CompletableFuture` wraps a thrown failure in a `CompletionException`, so unwrap the cause before
-classifying it.
+classifying it. Note that this sample starts before the task is submitted, so time spent queued on
+the executor lands in the same timer as the send — which is usually what you want from an
+application's point of view, but it is not the same measurement the synchronous recipe makes. Give
+it its own meter name if you run both.
 
 ## The outcome vocabulary
 
@@ -130,15 +137,18 @@ a resource the remote side controls.
 - **Never a policy's refusal reason.** `EndpointAssessment.Refused` carries free prose written by
   whoever wrote the policy, for a human reading a log line. Nothing bounds its length, its
   cardinality or what it happens to quote.
-- **Never `Indeterminate.cause().getMessage()`.** The cause is the transport's exception and its
-  message can embed the URL it was posting to; that is why `Indeterminate.toString()` prints the
-  cause's *class* and nothing else. Log `outcome` itself, or the cause's class — not its message,
-  unless you redact it yourself first.
+- **Never the message of a cause, from either outcome that carries one.**
+  `Indeterminate.cause()` is the transport's exception and its message can embed the URL it was
+  posting to; `SignerUnavailable.cause()` comes from whatever custodian failed, and this library
+  does not vouch for what is beneath it — the shipped Vault transport puts the (redacted) Vault
+  address and the method in its own message, and the exception under that one is the JDK's. Both
+  `toString()` implementations are safe by construction and print the cause's *class*. Log the
+  outcome itself, or the cause's class — not its message, unless you redact it yourself first.
 - **Never a raw origin or host as a low-cardinality tag.** An allowlist does not bound the value: a
   domain rule matches the apex *and every subdomain*, which is exactly how Apple's and Microsoft's
   zones are written, and `EndpointPolicies.unrestricted()` bounds nothing at all. Stripping the
-  scheme and the port does not help and loses a distinction this library makes — `https://push.example`
-  and `https://push.example:8443` are different origins here.
+  scheme and the port does not help and loses a distinction this library makes:
+  `https://push.example` and `https://push.example:8443` are different origins here.
 - **Never an implementation's class name.** `VaultTransitVapidSigner` in a tag says something about
   your deployment's internals to everyone who can read the metric, and it changes under you when the
   bean is decorated.
@@ -155,13 +165,21 @@ private static String serviceOf(Subscription subscription) {
     if (host == null) {
         return "other";
     }
-    if (host.endsWith("googleapis.com")) return "fcm";
-    if (host.endsWith("mozilla.com")) return "mozilla";
-    if (host.endsWith("push.apple.com")) return "apple";
-    if (host.endsWith("notify.windows.com")) return "wns";
+    if (under(host, "googleapis.com")) return "fcm";
+    if (under(host, "mozilla.com")) return "mozilla";
+    if (under(host, "push.apple.com")) return "apple";
+    if (under(host, "notify.windows.com")) return "wns";
     return "other";
 }
+
+private static boolean under(String host, String zone) {
+    return host.equals(zone) || host.endsWith("." + zone);   // a label boundary, not a suffix
+}
 ```
+
+The label boundary is the whole of `under`, and it is not pedantry: a bare `endsWith` files
+`evilnotify.windows.com` under `wns`, which is the same mistake the allowlist's domain rule exists
+to avoid — and a mislabelled tag is a dashboard that says one vendor is failing when another is.
 
 push2u ships no such mapping and will not: those are the push services' own zones, they change
 without telling us, and this library shipping them as a default is ruled out for the same reason it
@@ -188,7 +206,8 @@ public PushResponse post(URI endpoint, Map<String, String> headers, byte[] body)
         result = "no_response";
         throw e;
     } finally {
-        sample.stop(registry.timer("push2u.http.post", "result", result, "service", serviceOf(endpoint)));
+        sample.stop(registry.timer(
+                "push2u.http.post", "result", result, "service", serviceOf(endpoint)));
     }
 }
 ```
@@ -204,9 +223,11 @@ no counter is one nobody notices firing.
 ```java
 public EndpointAssessment assess(URI endpoint) {
     EndpointAssessment assessment = delegate.assess(endpoint);
-    registry.counter("push2u.endpoint.assessed",
-                    "result", assessment instanceof EndpointAssessment.Refused ? "refused" : "allowed")
-            .increment();
+    String result = switch (assessment) {              // a null assessment is a defect, and this
+        case EndpointAssessment.Allowed ignored -> "allowed";   // switch raises it rather than
+        case EndpointAssessment.Refused ignored -> "refused";   // filing it as an admission
+    };
+    registry.counter("push2u.endpoint.assessed", "result", result).increment();
     return assessment;
 }
 ```
@@ -235,24 +256,35 @@ public byte[] sign(byte[] signingInput) {
 
 ## What a signer counter actually counts
 
-Not sends. push2u reuses the VAPID token until it nears expiry, keyed by the push service's origin,
-so `sign` runs on a **token-cache miss** — roughly once per distinct origin per token lifetime,
-plus whatever a cache eviction adds. That is what makes the counter valuable: for a custodian like
-Vault Transit or an HSM it is a close estimate of the operations actually being billed, audited and
-rate-limited, which is a number nothing else in a deployment reports.
+Not sends — not, at least, with the defaults. push2u reuses the VAPID token until it nears expiry,
+keyed by the push service's origin, so `sign` runs on a **token-cache miss**: roughly once per
+distinct origin per token lifetime, plus whatever a cache eviction adds. That is what makes the
+counter valuable: for a custodian like Vault Transit or an HSM it is a close estimate of the
+operations actually being billed, audited and rate-limited, which is a number nothing else in a
+deployment reports.
 
-Three things to know before alerting on it:
+Four things to know before alerting on it:
+
+- **`jwtReuse(false)` changes what it measures entirely.** The builder step, and `push2u.jwt-reuse`
+  under Spring, switch the cache off, and then every send signs — so the counter tracks sends one
+  for one and the paragraph above does not apply to that deployment. Know which of the two you are
+  looking at before you set a threshold; the difference is orders of magnitude, not a correction.
 
 - **The health indicator signs too.** The Spring starter's probe exercises the configured signer end
   to end — a `sign` and a `publicKey` on every evaluation the probe's own cache does not serve, with
-  a default `management.health.push2u.cache-ttl` of 30 s. So a bean-level decorator has a floor of
-  about two operations a minute per instance with no traffic at all. Subtract it, or raise the TTL,
-  or accept it as a heartbeat — but do not read it as delivery. Under Spring the health indicator
+  a default `management.health.push2u.cache-ttl` of 30 s, which caps its contribution at about two
+  operations a minute per instance and reaches that cap only where something polls the probe at
+  least that often. Subtract it, or raise the TTL, or accept it as a heartbeat — but do not read it
+  as delivery. Under Spring the health indicator
   and the sender share one signer bean, so the two cannot be separated without building the sender
   yourself.
-- **`publicKey()` is on the send path, and is not a round trip** for the signers shipped here: the
-  local signer holds the key and the Vault signer advertises one that never moves. Counting it is
-  fine; reading it as custodian load is not.
+- **`publicKey()` is on the send path**, read once per token-cache lookup, and for the signers
+  shipped here it is not a round trip — the local signer holds the key, and the Vault signer
+  advertises one that never moves. One exception, and it is worth knowing because it is read
+  *before* the cache is consulted: a Vault signer built in the deferred mode has not contacted Vault
+  yet, so its first `publicKey()` performs the key-metadata read. That single call is paid by
+  `publicKey()` and not by `sign()`. Counting either is fine; reading `publicKey()` as custodian
+  load is not.
 - **`sends / signs`** is a useful derived number — how well the token cache is working — but it is a
   ratio you compute in your dashboard from two meters, not a property this library promises.
 
@@ -269,8 +301,8 @@ duplicate a delivery that already happened.
 ## Spring Boot
 
 **The recommended shape needs no push2u bean changed at all**: instrument `send` inside your own
-service, exactly as shown at the top. Everything below is for the two seams whose bean the starter
-creates.
+service, exactly as shown at the top. Everything below is for the seams whose bean the starter
+creates — all three of them.
 
 An ordinary `@Bean` returning a wrapper does **not** work, and its failure is quiet in one case and
 loud in the other:
@@ -326,9 +358,10 @@ Individual stage durations — the ECDH, the HKDF, the AES-GCM record, the token
 status classification — are not observable without a new seam inside the sender, and there is not
 going to be one. Publishing each stage would turn the current pipeline into a lifecycle contract
 this library then owes forever, in exchange for numbers that answer no operational question: an
-end-to-end timer plus the transport timer already brackets everything, and what is left between
-them is CPU work with no external dependency. [`PERFORMANCE.md`](PERFORMANCE.md) is where the
-per-stage cost is measured, once, against a machine that is named.
+end-to-end timer, the transport timer and the signer timer already bracket everything with an
+external dependency in it, and what those three leave between them is CPU work.
+[`PERFORMANCE.md`](PERFORMANCE.md) is where the per-stage cost is measured, once, against a machine
+that is named.
 
 Whether a particular send reused a cached VAPID token is likewise not reported per send — the
 `sends / signs` ratio above answers it in aggregate, which is the form the question is actually

@@ -369,7 +369,10 @@ Also update, when your change touches them:
   the transport fake a sending application tests with, so a change to what `ScriptedPushHttpClient`
   answers or what `SubscriptionFixture` publishes lands there — `docs/VAPID.md` for key generation,
   `docs/VAPID-KEY-ROTATION.md` for replacing a live VAPID identity, `docs/PUSH-SERVICES.md` for a
-  browser push service's allowlist entry, and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a
+  browser push service's allowlist entry, `docs/OBSERVABILITY.md` for anything a deployment's
+  instrumentation reads — an outcome variant added or renamed, a seam's signature, what a signer
+  call costs, or a Spring bean condition that decides whether a wrapper can be installed at all —
+  and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a
   reader arriving from `nl.martijndwars:web-push` compares against — that document states the other
   library's API and dependency set as verified facts, so an addition there is checked against the
   published artifact.

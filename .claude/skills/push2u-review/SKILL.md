@@ -303,7 +303,9 @@ workflow derives `enhancement`/`bug`/`documentation` from the title, but `securi
 without `!`, `breaking-change` stay manual); `docs/DESIGN.md` is updated if architecture moved, and
 a new file in `docs/adr/` (never an edit to an existing one) if a decision did; `README.md` — or
 `docs/SPRING.md` / `docs/VAULT.md` / `docs/HEALTH.md` / `docs/SIGNER.md` / `docs/TESTKIT.md` /
-`docs/VAPID.md` — is updated if consumer-facing API, properties or limits changed, `docs/SIGNER.md`
+`docs/OBSERVABILITY.md` / `docs/VAPID.md` — is updated if consumer-facing API, properties or limits
+changed, `docs/OBSERVABILITY.md` in particular where an outcome variant, a seam signature or a
+starter bean condition moved, since a deployment's meters are written against all three, `docs/SIGNER.md`
 in particular if the `VapidSigner` contract moved, since it and not README is where the shape checks,
 the split between
 `VapidSignerUnavailableException` and `PushCryptoException` and the conformance kit's assertions

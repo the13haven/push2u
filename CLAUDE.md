@@ -31,10 +31,12 @@ container health check. Its two parts are shaped by the asymmetry that made the 
 the indicator is this library's, while nearly all of the group material is Spring Boot's own
 behaviour and would read the same for any contributor at all. `docs/SPRING.md` keeps a short
 introduction and a link to it, in the shape README uses for `docs/SPRING.md` itself.
-`docs/OBSERVABILITY.md` is the operator-facing reference for a deployment that wants meters, spans or
-log lines out of a library that emits none of the three — ADR-031's implementation, and the reason no
-`push2u-micrometer` exists. It carries the recipes (the call site first, because `send` returns the
-classification and needs no Spring wiring at all; then one decorator per seam), the outcome
+`docs/OBSERVABILITY.md` is the operator-facing reference for a deployment that wants meters, spans
+or log lines out of a library that emits none of the three on the send path — the health indicator's
+failure warning is the tree's one exception, and the document says so — ADR-031's implementation and
+the reason no `push2u-micrometer` exists. It carries the recipes (the call site first, because
+`send` returns the classification and needs no Spring wiring at all; then one decorator per seam),
+the outcome
 vocabulary derived from a `switch` over the sealed hierarchy rather than written out as a list that
 rots, the tag rules with the reason attached to each — the endpoint and a policy's refusal reason
 never, a raw origin or host never as a *low-cardinality* tag since a domain rule admits every

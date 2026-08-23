@@ -7,11 +7,14 @@ Filed as https://github.com/the13haven/push2u/issues/90, which proposed an optio
 starter that wraps whichever beans are present, and a suggested set of meters with `origin`,
 `status` and `outcome` tags.
 
-The gap the issue names is real and this record does not argue with it. This library emits nothing:
-no meters, and no log lines either — [ADR-027](0027-the-endpoint-policy-answers-with-a-value.md)
-says so where it explains why a refusal carries an operator's sentence rather than a code, since
-there is no logger here to write it. A deployment's only view of delivery today is whatever its own
-call site chose to record, and the questions an operator actually has — is one push service refusing
+The gap the issue names is real and this record does not argue with it. Nothing on the send path
+emits anything: no meters, and no log lines either —
+[ADR-027](0027-the-endpoint-policy-answers-with-a-value.md) says so where it explains why a refusal
+carries an operator's sentence rather than a code, since the core that would write it can hold no
+logging dependency. The one thing in this repository that logs at all is the Spring starter's health
+indicator, which warns on the transition into a failing probe and is a readiness signal rather than
+a view of delivery. A deployment's only view of delivery today is whatever its own call site chose
+to record, and the questions an operator actually has — is one push service refusing
 everything since 14:00, how long a POST takes, how often the egress allowlist fires, how many
 signing operations the custodian is really being asked for — have no answer that comes for free.
 
@@ -40,10 +43,11 @@ the API as it stands rather than on the one it described:
 **The library publishes the semantics; the deployment emits the telemetry.**
 
 What this library owns, and already publishes as types: the classification of a send
-(`PushOutcome`, its eight variants and the components each carries), the two exceptions `send`
-raises, the assessment an `EndpointPolicy` answers with, and the redaction that decides which parts
-of an endpoint may be rendered at all. What a deployment owns: the telemetry framework, the meter
-and span names, the tag vocabulary and its cardinality, sampling, aggregation and export.
+(`PushOutcome`, its eight variants and the components each carries), the four exceptions `send`
+raises — the two this library owns among them — the assessment an `EndpointPolicy` answers with, and
+the redaction that decides which parts of an endpoint may be rendered at all. What a deployment
+owns: the telemetry framework, the meter and span names, the tag vocabulary and its cardinality,
+sampling, aggregation and export.
 
 So the deliverable is a document, `docs/OBSERVABILITY.md` — the recipes for instrumenting the call
 site and each of the three seams, the tag rules with the reason for each, what a signer counter
@@ -96,13 +100,17 @@ access than the log, and a tag is the least reviewed string in a deployment.
 **Cardinality.** An unbounded tag value is a resource the remote side chooses. The issue notices
 this for `origin` under `EndpointPolicies.unrestricted()` and proposes to bound it by "limiting the
 tag to origins the policy admits" — and that mitigation cannot be built on the seam the proposal
-rests on. `EndpointPolicy` has one method answering one assessment;
-[ADR-024](0024-one-endpoint-policy-reachable-at-registration.md) rules out an accessor for the rule
-set, `EndpointRule` is sealed with its match package-private, and there is no supported way to ask a
-policy what it admits. Nor does an allowlist bound the value even in principle: a domain rule covers
-the apex and every subdomain at a label boundary (ADR-017), which is exactly how Apple's and
-Microsoft's zones are written, so the set of admitted hosts is unbounded under a correctly
-configured allowlist and not only under the unrestricted mode. Stripping the scheme and port to tag
+rests on. `EndpointPolicy` has one method answering one assessment, and
+[ADR-024](0024-one-endpoint-policy-reachable-at-registration.md) rules out a second one — a
+predicate, an overload, "any other second way to ask the one question the seam exists to answer" —
+along with an accessor for the policy on `PushSender`; `EndpointRule` is sealed with its match
+package-private. There is no supported way to ask a policy what it admits, and adding one so a tag
+could be bounded by it is what the entry below rules out.
+
+Nor does an allowlist bound the value even in principle: a domain rule covers the apex and every
+subdomain at a label boundary (ADR-017), which is exactly how Apple's and Microsoft's zones are
+written, so the set of admitted hosts is unbounded under a correctly configured allowlist and not
+only under the unrestricted mode. Stripping the scheme and port to tag
 by host does not fix it and loses a distinction this library makes.
 
 The rule the document therefore states is not "prefer origin to endpoint" but: **a metric tag is a
