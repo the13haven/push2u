@@ -36,8 +36,8 @@ One `Timer` carries both the rate and the latency, so no separate counter is nee
 ```java
 public PushOutcome deliver(Subscription subscription, PushMessage message) {
     Timer.Sample sample = Timer.start(registry);
-    String service = serviceOf(subscription);  // outside the try: a throw in here must not
-    String outcomeTag = "error";               // replace the exception the send is about
+    String service = serviceOf(subscription);  // total by construction — see the rule below
+    String outcomeTag = "error";
     try {
         PushOutcome outcome = sender.send(subscription, message);
         outcomeTag = tagFor(outcome);
@@ -58,9 +58,17 @@ The initial value and the one `catch` are not decoration. `send` answers every *
 with a value, but it still throws on a defect or an unusable substrate — `PushCryptoException`,
 `IllegalArgumentException`, `NullPointerException` — and `PushInterruptedException` when the sending
 thread was interrupted. A meter that only switches over `PushOutcome` records nothing at all for
-those, which is precisely the case an operator most wants to see rise. The tag is computed *before*
-the `try` for the same reason: anything thrown while building a tag inside `finally` replaces the
-exception the send was about and loses the measurement with it.
+those, which is precisely the case an operator most wants to see rise.
+
+**The rule the tag computation follows: it must not throw, and it must not change what the send
+does.** Both failures are easy to write and neither shows up in a test that passes a good
+subscription. Building a tag inside `finally` lets a throw there replace the exception the send was
+about, and the measurement goes with it. Building it before the `try` moves the throw earlier, where
+it pre-empts `send` entirely — a `null` subscription would then be reported as an instrumentation
+error and never as the `NullPointerException` this library documents, and the timer would never be
+stopped at all. So `serviceOf` is *total*: it answers `other` for a `null` subscription rather than
+refusing, and the rest of it cannot throw because `Subscription` validated its endpoint at
+construction. The meter observes the send; it does not get a vote in it.
 
 **Asynchronously**, instrument the future rather than the call: `sendAsync` runs `send` on the
 executor you supplied, or on this library's own virtual-thread executor. **push2u performs no
@@ -183,6 +191,9 @@ everything else to `other`:
 
 ```java
 private static String serviceOf(Subscription subscription) {
+    if (subscription == null) {
+        return "other";            // a tag computation never decides whether a send happens
+    }
     String raw = URI.create(subscription.endpoint()).getHost();
     if (raw == null) {
         return "other";
@@ -277,16 +288,24 @@ boundaries; tag by call site at each of them if you need to tell them apart.
 ```java
 public byte[] sign(byte[] signingInput) {
     Timer.Sample sample = Timer.start(registry);
-    boolean ok = false;
+    boolean returned = false;
     try {
         byte[] signature = delegate.sign(signingInput);
-        ok = true;
+        returned = true;
         return signature;
     } finally {
-        sample.stop(registry.timer("push2u.signer.sign", "result", ok ? "ok" : "failed"));
+        sample.stop(registry.timer(
+                "push2u.signer.sign", "result", returned ? "returned" : "threw"));
     }
 }
 ```
+
+`returned` and not `ok`: a custodian that answers is not yet a custodian that answered *correctly*.
+A `null` or a wrong-length signature is refused downstream — `sign` owes a raw 64-byte `r||s`, and
+anything else becomes a `PushCryptoException` while the token is minted — so a decorator labelling
+every return a success reports one where the send is about to fail. Do not re-check the length here:
+that duplicates a rule the library already owns, in a second place that can drift from it. Name what
+the decorator actually sees, and let `outcome=error` on the send meter carry the rest.
 
 ## What a signer counter actually counts
 
