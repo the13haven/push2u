@@ -102,6 +102,13 @@ final class TransportContractHttp {
         } catch (NumberFormatException notANumber) {
             throw new IOException("unreadable Content-Length", notANumber);
         }
+        if (declared < 0) {
+            // A negative count is the same defect on the wire as an unreadable one and leaves by the
+            // same door: reading that many bytes is refused with an IllegalArgumentException, which
+            // the listener's handler does not catch, so it would surface as an uncaught exception on
+            // the exchange's own thread instead of as a connection that carried no request.
+            throw new IOException("unreadable Content-Length");
+        }
         byte[] body = in.readNBytes(declared);
         if (body.length != declared) {
             throw new EOFException("connection ended inside the request body");
@@ -136,11 +143,19 @@ final class TransportContractHttp {
         String line = readLine(in);
         int extension = line.indexOf(';');
         String hex = (extension < 0 ? line : line.substring(0, extension)).strip();
+        int size;
         try {
-            return Integer.parseInt(hex, 16);
+            size = Integer.parseInt(hex, 16);
         } catch (NumberFormatException notANumber) {
             throw new IOException("unreadable chunk size", notANumber);
         }
+        if (size < 0) {
+            // A size line is hexadecimal and has no sign, so a negative one is not a short body but
+            // an unreadable line: ending the body on it would answer the caller with a recording of
+            // fewer bytes than arrived, which is the one thing this reader must never do.
+            throw new IOException("unreadable chunk size");
+        }
+        return size;
     }
 
     /** One CRLF-terminated line, without its terminator. Bounded, and EOF inside a line fails the read. */
