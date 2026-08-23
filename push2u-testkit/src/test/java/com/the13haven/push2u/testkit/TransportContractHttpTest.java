@@ -18,7 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 /**
  * The harness's wire reader, pinned on the bytes it is given rather than on the one client that reaches it through a
@@ -97,16 +96,23 @@ final class TransportContractHttpTest {
     }
 
     /**
-     * The framing is decided by the coding a transport named, not by the header having been sent. A transport that
-     * applies a coding to a body it still frames by length would otherwise have its {@code Content-Length} ignored and
-     * its first byte read as a chunk size — a body mismatch reported against a request that was well formed.
+     * Chunked as the last of several codings, which is the only place HTTP lets it appear and the shape a transport
+     * that compresses a streamed body actually sends. The reader decides the framing by looking for the coding anywhere
+     * in the field, so this spelling is dechunked today — but only because a substring match happens to accept it, and
+     * nothing else in the tree holds that in place. A reader comparing the field to {@code chunked} whole would read
+     * the first chunk-size line as payload and report a body mismatch against a request that was well formed.
+     *
+     * <p>What is not checked is a transfer coding without chunked at all, which reaches the reader's other branch: a
+     * request naming a coding and framing its body by length is what the specification forbids in as many words, and
+     * the tolerant reading of it is the request-smuggling one. Pinning it would promise leniency toward exactly the
+     * input a reader should be free to start refusing, which is the reason the bare-LF line ending goes unchecked too.
      */
     @Test
-    void aTransferCodingThatIsNotChunkedLeavesTheBodyFramedByItsLength() throws IOException {
+    void chunkedAsTheLastOfSeveralCodingsIsStillDechunked() throws IOException {
         byte[] body = new Wire()
                 .text("POST /push HTTP/1.1\r\nHost: harness\r\n")
-                .text("Transfer-Encoding: gzip\r\nContent-Length: 11\r\n\r\n")
-                .text("Hello, wire")
+                .text("Transfer-Encoding: gzip, chunked\r\n\r\n")
+                .text("B\r\nHello, wire\r\n0\r\n\r\n")
                 .parse()
                 .body();
 
@@ -163,13 +169,14 @@ final class TransportContractHttpTest {
 
     /**
      * A request that frames no body at all — which a transport is free to send for an empty payload — is read as an
-     * empty body and nothing else. A reader waiting for a body it was never promised would hold the connection until
-     * the contract's budget expired, and the check would abort with no verdict at all; so what is asserted here is not
-     * only the empty recording but that the reader stopped exactly at the blank line and consumed none of what
-     * followed.
+     * empty body and nothing else. The recording being empty is the smaller half: what is asserted beside it is that
+     * the reader stopped exactly at the blank line and consumed none of the bytes after it. On a socket those bytes are
+     * whatever the peer sends next or nothing at all, so a reader reaching past the headers for a body it was never
+     * promised blocks until the listener's read timeout while the check that was running waits out its budget and
+     * aborts with no verdict — a shape a stream that ends politely at its last byte cannot reproduce, which is why the
+     * leftovers are put there and counted.
      */
     @Test
-    @Timeout(10)
     void aRequestFramingNoBodyIsReadAsAnEmptyOneAndNothingAfterItIsConsumed() throws IOException {
         ByteArrayInputStream wire =
                 new Wire().text("POST /push HTTP/1.1\r\nHost: harness\r\n\r\nnot part of this request").stream();
@@ -306,7 +313,6 @@ final class TransportContractHttpTest {
      * A peer that goes away mid-line — a handshake probe, a client that changed its mind — ends the read, not a wait.
      */
     @Test
-    @Timeout(10)
     void aConnectionEndingInsideALineFailsTheRead() {
         assertThatThrownBy(() ->
                         new Wire().text("POST /push HTTP/1.1\r\nHost: har").parse())
@@ -318,9 +324,13 @@ final class TransportContractHttpTest {
      * size — a fixture proves only that the reader rejects that size, and would pass just as well against a reader
      * bounded ten times higher or bounded by the heap. The stream stops far past the reader's own bound so that a
      * regression fails this check with its own message instead of taking the test JVM down with it.
+     *
+     * <p>The claim is about one line and reaches no further: the number of header fields, the length of a chunked body
+     * and the number of trailers are all accumulated with no ceiling. Nothing here needs one — the peer is the
+     * transport its own author is testing, over loopback, under a listener that times its reads out — but a later
+     * reader should not take this check for a statement that the whole read is bounded.
      */
     @Test
-    @Timeout(30)
     void aLineThatNeverEndsFailsTheReadRatherThanGrowingWithoutBound() {
         assertThatThrownBy(() -> TransportContractHttp.parse(new EndlessLine()))
                 .isInstanceOf(IOException.class)
@@ -336,6 +346,10 @@ final class TransportContractHttpTest {
      * own statement; the two framing headers are the harness's, and they are what keeps connection reuse and response
      * bodies from becoming part of what any check asserts. Composed as one string here because that is how a regression
      * would present itself — a missing blank line, a header run together with the next.
+     *
+     * <p>Two parts of that string are pinned without being owed to anyone: the reason phrase, which HTTP leaves to the
+     * sender, and the order the given headers come out in. Both may be changed freely by changing this one expectation
+     * with them; it is the framing around them that the checks depend on.
      */
     @Test
     void aResponseCarriesItsStatusLineTheGivenHeadersAndTheFramingTheHarnessAlwaysAdds() {
