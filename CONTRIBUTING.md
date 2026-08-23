@@ -372,8 +372,8 @@ Also update, when your change touches them:
   browser push service's allowlist entry, `docs/OBSERVABILITY.md` for anything a deployment's
   instrumentation reads — an outcome variant added or renamed, a seam's signature, what a signer
   call costs, or a Spring bean condition that decides whether a wrapper can be installed at all —
-  and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a
-  reader arriving from `nl.martijndwars:web-push` compares against — that document states the other
+  and `docs/MIGRATION-FROM-WEB-PUSH.md` for anything a reader arriving from
+  `nl.martijndwars:web-push` compares against — that document states the other
   library's API and dependency set as verified facts, so an addition there is checked against the
   published artifact.
 - `docs/MIGRATION.md` — whenever the change breaks a consumer upgrading from the previous release,

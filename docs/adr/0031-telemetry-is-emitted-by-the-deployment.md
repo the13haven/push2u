@@ -12,8 +12,9 @@ emits anything: no meters, and no log lines either —
 [ADR-027](0027-the-endpoint-policy-answers-with-a-value.md) says so where it explains why a refusal
 carries an operator's sentence rather than a code, since the core that would write it can hold no
 logging dependency. The one thing in this repository that logs at all is the Spring starter's health
-indicator, which warns on the transition into a failing probe and is a readiness signal rather than
-a view of delivery. A deployment's only view of delivery today is whatever its own call site chose
+indicator — a warning on the transition into a failing probe, a debug line while it persists, and
+one warning where the JVM's providers cannot verify ES256 — all of it readiness rather than a view
+of delivery. A deployment's only view of delivery today is whatever its own call site chose
 to record, and the questions an operator actually has — is one push service refusing
 everything since 14:00, how long a POST takes, how often the egress allowlist fires, how many
 signing operations the custodian is really being asked for — have no answer that comes for free.
@@ -110,8 +111,8 @@ could be bounded by it is what the entry below rules out.
 Nor does an allowlist bound the value even in principle: a domain rule covers the apex and every
 subdomain at a label boundary (ADR-017), which is exactly how Apple's and Microsoft's zones are
 written, so the set of admitted hosts is unbounded under a correctly configured allowlist and not
-only under the unrestricted mode. Stripping the scheme and port to tag
-by host does not fix it and loses a distinction this library makes.
+only under the unrestricted mode. Stripping the scheme and port to tag by host does not fix it and
+loses a distinction this library makes.
 
 The rule the document therefore states is not "prefer origin to endpoint" but: **a metric tag is a
 closed set the deployment names.** A push-service bucket with a fixed set of values and an `other`

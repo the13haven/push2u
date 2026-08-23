@@ -669,8 +669,10 @@ at the one point where nothing re-checks. The seam still has exactly one method,
 exactly one way to ask it.
 
 **`Refused` carries prose, and deliberately not the endpoint.** The reason exists for observability:
-this library writes no log lines and holds no logger — the zero-dependency core could not take one —
-so every diagnostic it produces is a value handed to a caller who renders it, and only the policy can
+this library writes no log lines on the send path and the core holds no logger — being
+zero-dependency, it could not take one; the starter's health indicator is the one component in the
+tree that logs, and it reports readiness — so every diagnostic the send path produces is a value
+handed to a caller who renders it, and only the policy can
 say what it knew at the moment it refused. That is a sentence an operator reads, not a code a
 program branches on; a consumer that genuinely has to branch on the *kind* of refusal is looking at a
 missing type rather than at a component this one should have grown. No endpoint component is carried

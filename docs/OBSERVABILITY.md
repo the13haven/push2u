@@ -1,8 +1,9 @@
 # Observability
 
 push2u emits nothing on the send path: no meters, no spans, no log lines. (One thing in the tree
-logs — the Spring starter's health indicator warns when its probe starts failing, which is a
-readiness signal and not a view of delivery.) What it publishes instead is the *meaning* of a send —
+logs — the Spring starter's health indicator, which warns when its probe starts failing, debugs
+while the failure persists, and warns once where the JVM's providers cannot verify ES256. All of it
+is readiness, not a view of delivery.) What it publishes instead is the *meaning* of a send —
 a sealed `PushOutcome` naming exactly what happened, three seams whose calls are worth counting, and
 a redaction that decides which parts of an endpoint may be rendered at all. The
 telemetry framework, the meter names, the tag vocabulary, the sampling and the export are the
@@ -56,8 +57,7 @@ The initial value and the one `catch` are not decoration. `send` answers every *
 with a value, but it still throws on a defect or an unusable substrate — `PushCryptoException`,
 `IllegalArgumentException`, `NullPointerException` — and `PushInterruptedException` when the sending
 thread was interrupted. A meter that only switches over `PushOutcome` records nothing at all for
-those, which is precisely the
-case an operator most wants to see rise.
+those, which is precisely the case an operator most wants to see rise.
 
 **Asynchronously**, instrument the future rather than the call: `sendAsync` runs `send` on the
 executor you supplied, or on this library's own virtual-thread executor. push2u propagates nothing
@@ -142,8 +142,9 @@ a resource the remote side controls.
   posting to; `SignerUnavailable.cause()` comes from whatever custodian failed, and this library
   does not vouch for what is beneath it — the shipped Vault transport puts the (redacted) Vault
   address and the method in its own message, and the exception under that one is the JDK's. Both
-  `toString()` implementations are safe by construction and print the cause's *class*. Log the
-  outcome itself, or the cause's class — not its message, unless you redact it yourself first.
+  `toString()` implementations are safe by construction: neither prints a message, `Indeterminate`
+  renders the cause's *class* and `SignerUnavailable` the custodian's status and retry hint. Log the
+  outcome itself, or the cause's class — never its message, unless you redact it yourself first.
 - **Never a raw origin or host as a low-cardinality tag.** An allowlist does not bound the value: a
   domain rule matches the apex *and every subdomain*, which is exactly how Apple's and Microsoft's
   zones are written, and `EndpointPolicies.unrestricted()` bounds nothing at all. Stripping the
@@ -274,17 +275,19 @@ Four things to know before alerting on it:
   to end — a `sign` and a `publicKey` on every evaluation the probe's own cache does not serve, with
   a default `management.health.push2u.cache-ttl` of 30 s, which caps its contribution at about two
   operations a minute per instance and reaches that cap only where something polls the probe at
-  least that often. Subtract it, or raise the TTL, or accept it as a heartbeat — but do not read it
-  as delivery. Under Spring the health indicator
-  and the sender share one signer bean, so the two cannot be separated without building the sender
-  yourself.
-- **`publicKey()` is on the send path**, read once per token-cache lookup, and for the signers
-  shipped here it is not a round trip — the local signer holds the key, and the Vault signer
-  advertises one that never moves. One exception, and it is worth knowing because it is read
-  *before* the cache is consulted: a Vault signer built in the deferred mode has not contacted Vault
-  yet, so its first `publicKey()` performs the key-metadata read. That single call is paid by
-  `publicKey()` and not by `sign()`. Counting either is fine; reading `publicKey()` as custodian
-  load is not.
+  least that often. A *failing* probe is cached for at most 5 s, so the same instance can reach
+  twelve a minute while the custodian is down — which is the moment you are most likely to be
+  reading the meter. Subtract it, or raise the TTL, or accept it as a heartbeat — but do not read
+  it as delivery. Under Spring the health indicator and the sender share one signer bean, so the two
+  cannot be separated without building the sender yourself.
+- **`publicKey()` is on the send path**, and for the signers shipped here it is not a round trip —
+  the local signer holds the key, and the Vault signer advertises one that never moves. Two details
+  if you meter it. It is read once to build the cache key and once more while the header is minted,
+  so a cache *miss* reads it twice and a hit once. And a Vault signer built in the deferred mode has
+  not contacted Vault yet, so exactly one of those first calls performs the key-metadata read: with
+  reuse on it is `publicKey()`, which runs before the cache is consulted, and with `jwtReuse(false)`
+  it is `sign()`, which the header path calls first. Counting either is fine; reading `publicKey()`
+  as custodian load is not.
 - **`sends / signs`** is a useful derived number — how well the token cache is working — but it is a
   ratio you compute in your dashboard from two meters, not a property this library promises.
 
