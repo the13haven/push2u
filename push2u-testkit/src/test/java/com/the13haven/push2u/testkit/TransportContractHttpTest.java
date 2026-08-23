@@ -99,13 +99,16 @@ final class TransportContractHttpTest {
      * Chunked as the last of several codings, which is the only place HTTP lets it appear and the shape a transport
      * that compresses a streamed body actually sends. The reader decides the framing by looking for the coding anywhere
      * in the field, so this spelling is dechunked today — but only because a substring match happens to accept it, and
-     * nothing else in the tree holds that in place. A reader comparing the field to {@code chunked} whole would read
-     * the first chunk-size line as payload and report a body mismatch against a request that was well formed.
+     * nothing else in the tree holds that in place. A reader comparing the field to {@code chunked} whole would find no
+     * framing it recognised and none declared by length, record an empty body and leave the chunks unread on the wire:
+     * a body mismatch reported against a request that was well formed.
      *
      * <p>What is not checked is a transfer coding without chunked at all, which reaches the reader's other branch: a
      * request naming a coding and framing its body by length is what the specification forbids in as many words, and
      * the tolerant reading of it is the request-smuggling one. Pinning it would promise leniency toward exactly the
-     * input a reader should be free to start refusing, which is the reason the bare-LF line ending goes unchecked too.
+     * input a reader should be free to start refusing — the same reason nothing here checks a line closed by a bare
+     * {@code \n}, which the reader accepts because it returns on the newline and strips a carriage return only if one
+     * is there.
      */
     @Test
     void chunkedAsTheLastOfSeveralCodingsIsStillDechunked() throws IOException {
@@ -325,10 +328,11 @@ final class TransportContractHttpTest {
      * bounded ten times higher or bounded by the heap. The stream stops far past the reader's own bound so that a
      * regression fails this check with its own message instead of taking the test JVM down with it.
      *
-     * <p>The claim is about one line and reaches no further: the number of header fields, the length of a chunked body
-     * and the number of trailers are all accumulated with no ceiling. Nothing here needs one — the peer is the
-     * transport its own author is testing, over loopback, under a listener that times its reads out — but a later
-     * reader should not take this check for a statement that the whole read is bounded.
+     * <p>The claim is about one line and reaches no further. The number of header fields and the length of a chunked
+     * body are accumulated with no ceiling, and a trailer section is read line by line and discarded with no count —
+     * unbounded in time rather than in memory. Nothing here needs a ceiling: the peer is the transport its own author
+     * is testing, over loopback, under a listener that times its reads out. But a later reader should not take this
+     * check for a statement that the whole read is bounded.
      */
     @Test
     void aLineThatNeverEndsFailsTheReadRatherThanGrowingWithoutBound() {
