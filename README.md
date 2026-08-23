@@ -70,6 +70,7 @@ comes up; this is the whole list.
 | [`adr/README.md`](docs/adr/README.md) | Index of the architecture decision records, one file per decision. |
 | [`SPRING.md`](docs/SPRING.md) | Every `push2u.*` property the core starter binds, and what a rejected value does to startup. |
 | [`HEALTH.md`](docs/HEALTH.md) | The starter's health indicator — what its probe asserts, its two keys, and the health-group routes. |
+| [`OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Metrics, traces and logs for a sending deployment — what to instrument, what a tag may never carry, and what a signer counter counts. |
 | [`VAULT.md`](docs/VAULT.md) | The Vault Transit signer — the three key modes, the `push2u.signer.vault.*` properties, namespaces, and its transport seam. |
 | [`SIGNER.md`](docs/SIGNER.md) | Writing a `VapidSigner` over an HSM, a KMS or a remote custodian, and the conformance kit that checks one. |
 | [`TESTKIT.md`](docs/TESTKIT.md) | The rest of the test kit — fixtures and a scripted transport for a sending application's own tests, and the `EndpointPolicy` and `PushHttpClient` conformance contracts. |
@@ -376,6 +377,15 @@ Because one send is one POST, a blocking `send` costs at most one push exchange 
 transport's per-request timeout, 30 seconds on the default `JdkPushHttpClient` — plus, on a send
 that signs, whatever an external `VapidSigner` spends reaching its custodian. The library schedules
 nothing on top of that.
+
+This library emits no meters, no spans and — on the send path — no log lines of its own: what it
+publishes is the classification above, and the deployment decides what to record from it. (The
+Spring starter's health indicator is the one thing here that logs, and it reports readiness rather
+than delivery.)
+[`OBSERVABILITY.md`](docs/OBSERVABILITY.md) is the reference — the outcome vocabulary to tag by,
+recipes for the call site and for each of the three seams, why the endpoint and a policy's refusal
+reason may never become a tag, and what a counter on `VapidSigner.sign` actually counts now that the
+VAPID token is reused.
 
 ### VAPID token reuse
 

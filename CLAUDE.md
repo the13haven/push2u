@@ -31,6 +31,23 @@ container health check. Its two parts are shaped by the asymmetry that made the 
 the indicator is this library's, while nearly all of the group material is Spring Boot's own
 behaviour and would read the same for any contributor at all. `docs/SPRING.md` keeps a short
 introduction and a link to it, in the shape README uses for `docs/SPRING.md` itself.
+`docs/OBSERVABILITY.md` is the operator-facing reference for a deployment that wants meters, spans
+or log lines out of a library that emits none of the three on the send path — the health indicator's
+failure warning is the tree's one exception, and the document says so — ADR-031's implementation and
+the reason no `push2u-micrometer` exists. It carries the recipes (the call site first, because
+`send` returns the classification and needs no Spring wiring at all; then one decorator per seam),
+the outcome vocabulary derived from a `switch` over the sealed hierarchy rather than written out as
+a list that rots, the tag rules with the reason attached to each — the endpoint and a policy's refusal reason
+never, a raw origin or host never as a *low-cardinality* tag since a domain rule admits every
+subdomain — the push-service bucket the deployment defines because ADR-017 keeps the vendors' zones
+out of our code, and what a counter on `VapidSigner.sign` counts now that the VAPID token is reused:
+cache misses, plus the health probe's own signing, which a bean-level decorator cannot separate from
+sends and whose rate the probe's cache caps rather than floors. Its
+Spring section is the longest because the seams' beans are `@ConditionalOnMissingBean` and an
+ordinary wrapper `@Bean` replaces the delegate rather than wrapping it — loudly for the endpoint
+policy, silently and expensively for the Vault signer — so the `BeanPostProcessor` recipe is there
+with its edges named rather than recommended flatly. ADR-031 keeps the module question open in
+exactly one place and on stated evidence; the document is where a reader is told how to supply it.
 `docs/VAPID-KEY-ROTATION.md` is the operator runbook for replacing that pair on a running
 deployment, and it is a runbook rather than a design record throughout: what a Vault Transit
 `rotate` does and does not do across the three construction modes — five states once the deferred
