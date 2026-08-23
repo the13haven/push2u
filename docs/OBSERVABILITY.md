@@ -1,0 +1,343 @@
+# Observability
+
+push2u emits nothing: no meters, no spans, no log lines. What it publishes instead is the *meaning*
+of a send — a sealed `PushOutcome` naming exactly what happened, two seams whose calls are worth
+counting, and a redaction that decides which parts of an endpoint may be rendered at all. The
+telemetry framework, the meter names, the tag vocabulary, the sampling and the export are the
+deployment's, and this document is the convention worth sharing so that two teams instrumenting the
+same library do not end up with two vocabularies.
+
+The examples use Micrometer because it is the facade a Spring Boot application already has. Nothing
+here depends on it: the same recipes fit OpenTelemetry, Dropwizard Metrics or a counter you increment
+yourself. push2u has no telemetry dependency and never will —
+[ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md) is the record of that decision, and of
+what would reopen it.
+
+## Where each question is answered
+
+| Question | Where it is answered | What it costs |
+|---|---|---|
+| How many sends, of what outcome, how long | the call site — `send` returns the answer | a `try`/`finally` and a `switch` |
+| How many POSTs, how long, how many unanswered | a `PushHttpClient` decorator | one class |
+| How often the egress allowlist refused | an `EndpointPolicy` decorator | one class |
+| How many real signing operations the custodian served | a `VapidSigner` decorator | one class, and the section below on what it counts |
+| Attempts, retry delay, dead-lettering | the caller's scheduler | push2u does not retry |
+
+Start with the first row. It is the only one that sees the library's own classification, it needs no
+Spring wiring at all, and for most deployments it is the whole of what is wanted.
+
+## Instrumenting `send`
+
+One `Timer` carries both the rate and the latency, so no separate counter is needed beside it.
+
+```java
+public PushOutcome deliver(Subscription subscription, PushMessage message) {
+    Timer.Sample sample = Timer.start(registry);
+    String outcomeTag = "error";                       // stands unless one of the two paths below replaces it
+    try {
+        PushOutcome outcome = sender.send(subscription, message);
+        outcomeTag = tagFor(outcome);
+        return outcome;
+    } catch (PushInterruptedException e) {
+        outcomeTag = "interrupted";
+        throw e;
+    } finally {
+        sample.stop(Timer.builder("push2u.send")
+                .tag("outcome", outcomeTag)
+                .tag("service", serviceOf(subscription))   // a closed set — see below
+                .register(registry));
+    }
+}
+```
+
+The initial value and the one `catch` are not decoration. `send` answers every *operational* result with a value, but
+it still throws on a defect or an unusable substrate — `PushCryptoException`, `IllegalArgumentException`,
+`NullPointerException` — and `PushInterruptedException` when the sending thread was interrupted. A
+meter that only switches over `PushOutcome` records nothing at all for those, which is precisely the
+case an operator most wants to see rise.
+
+**Asynchronously**, instrument the future rather than the call: `sendAsync` runs `send` on the
+executor you supplied, or on this library's own virtual-thread executor, so nothing thread-bound at
+the call site — an MDC, an open observation scope — is in force inside it.
+
+```java
+Timer.Sample sample = Timer.start(registry);
+return sender.sendAsync(subscription, message).whenComplete((outcome, failure) -> sample.stop(
+        Timer.builder("push2u.send")
+                .tag("outcome", failure == null ? tagFor(outcome) : tagForFailure(failure))
+                .tag("service", service)
+                .register(registry)));
+```
+
+`CompletableFuture` wraps a thrown failure in a `CompletionException`, so unwrap the cause before
+classifying it.
+
+## The outcome vocabulary
+
+Derive the tag from the sealed hierarchy, not from a list you maintain:
+
+```java
+static String tagFor(PushOutcome outcome) {
+    return switch (outcome) {
+        case PushOutcome.Accepted ignored -> "accepted";
+        case PushOutcome.SubscriptionExpired ignored -> "subscription_expired";
+        case PushOutcome.RetryableFailure ignored -> "retryable_failure";
+        case PushOutcome.NonRetryableFailure ignored -> "non_retryable_failure";
+        case PushOutcome.SignerUnavailable ignored -> "signer_unavailable";
+        case PushOutcome.PayloadRejected ignored -> "payload_rejected";
+        case PushOutcome.EndpointRejected ignored -> "endpoint_rejected";
+        case PushOutcome.Indeterminate ignored -> "indeterminate";
+    };
+}
+```
+
+`PushOutcome` is sealed, so this `switch` is exhaustive without a `default` — and if a future
+version adds a variant, *your* build fails on it rather than your dashboard quietly filing it as
+something else. That is the reason to write the `switch` rather than a `Map` or a `getSimpleName()`
+call.
+
+The ten values, with the two thrown ones, are the vocabulary this document proposes:
+
+| Tag value | Means |
+|---|---|
+| `accepted` | the push service took the message (`2xx`) |
+| `subscription_expired` | `404`/`410` — delete the row; a repeat cannot succeed |
+| `retryable_failure` | worth repeating on the caller's schedule; carries `retryAfter()` when the service sent one |
+| `non_retryable_failure` | answered and permanent |
+| `signer_unavailable` | the custodian could not sign *now*; nothing was sent |
+| `payload_rejected` | too large for the configured body limit; nothing was sent |
+| `endpoint_rejected` | the endpoint policy refused; nothing was sent, nothing left the process |
+| `indeterminate` | the POST went out and nothing came back — **do not** count this as a failure to deliver |
+| `interrupted` | `PushInterruptedException` — the sending thread was interrupted |
+| `error` | anything else thrown: a defect, an unusable substrate, a recurring misconfiguration |
+
+A `status` tag, if you want one, comes off the outcome — `Accepted.statusCode()`,
+`SubscriptionExpired.statusCode()`, `RetryableFailure.statusCode()`,
+`NonRetryableFailure.statusCode()`, `SignerUnavailable.status()` — normalised to a small set
+(`2xx`, `404`, `410`, `429`, `5xx`, `other`). Take it from the outcome rather than from a transport
+decorator: the outcome already carries the status *and* what this library concluded from it, and a
+second bucketing derived from the raw response is a second answer to a question that has one.
+
+## Tag safety
+
+These are not style preferences. Each one is a way a metrics backend becomes either a disclosure or
+a resource the remote side controls.
+
+- **Never the endpoint**, nor any part of it — host, path segment, query value, fragment, raw or
+  percent-decoded. It is a capability URL (RFC 8030 §8.3): possession of it is authority to push to
+  that browser. This library redacts it everywhere it renders one, and a tag is the least reviewed
+  string in a deployment.
+- **Never a policy's refusal reason.** `EndpointAssessment.Refused` carries free prose written by
+  whoever wrote the policy, for a human reading a log line. Nothing bounds its length, its
+  cardinality or what it happens to quote.
+- **Never `Indeterminate.cause().getMessage()`.** The cause is the transport's exception and its
+  message can embed the URL it was posting to; that is why `Indeterminate.toString()` prints the
+  cause's *class* and nothing else. Log `outcome` itself, or the cause's class — not its message,
+  unless you redact it yourself first.
+- **Never a raw origin or host as a low-cardinality tag.** An allowlist does not bound the value: a
+  domain rule matches the apex *and every subdomain*, which is exactly how Apple's and Microsoft's
+  zones are written, and `EndpointPolicies.unrestricted()` bounds nothing at all. Stripping the
+  scheme and the port does not help and loses a distinction this library makes — `https://push.example`
+  and `https://push.example:8443` are different origins here.
+- **Never an implementation's class name.** `VaultTransitVapidSigner` in a tag says something about
+  your deployment's internals to everyone who can read the metric, and it changes under you when the
+  bean is decorated.
+
+A raw origin is a perfectly good *high-cardinality* field: put it on a trace attribute or a log line
+if you have decided you want one there. A meter tag is a closed set.
+
+**The service tag is yours to define.** Map the endpoint's host to a fixed vocabulary and default
+everything else to `other`:
+
+```java
+private static String serviceOf(Subscription subscription) {
+    String host = URI.create(subscription.endpoint()).getHost();
+    if (host == null) {
+        return "other";
+    }
+    if (host.endsWith("googleapis.com")) return "fcm";
+    if (host.endsWith("mozilla.com")) return "mozilla";
+    if (host.endsWith("push.apple.com")) return "apple";
+    if (host.endsWith("notify.windows.com")) return "wns";
+    return "other";
+}
+```
+
+push2u ships no such mapping and will not: those are the push services' own zones, they change
+without telling us, and this library shipping them as a default is ruled out for the same reason it
+ships no allowlist. [`PUSH-SERVICES.md`](PUSH-SERVICES.md) is the snapshot to copy out of, with the
+vendor citations and the warning that it is a snapshot.
+
+## Decorating the three seams
+
+Each seam is an interface you already supply, so a decorator is an ordinary delegating class. What
+matters is what each one can and cannot see.
+
+**`PushHttpClient` — the POST.** Times the exchange and separates "answered" from "nothing came
+back".
+
+```java
+public PushResponse post(URI endpoint, Map<String, String> headers, byte[] body) {
+    Timer.Sample sample = Timer.start(registry);
+    String result = "error";
+    try {
+        PushResponse response = delegate.post(endpoint, headers, body);
+        result = statusClass(response.statusCode());
+        return response;
+    } catch (PushDeliveryException e) {
+        result = "no_response";
+        throw e;
+    } finally {
+        sample.stop(registry.timer("push2u.http.post", "result", result, "service", serviceOf(endpoint)));
+    }
+}
+```
+
+An HTTP timer is not a send timer: it excludes encryption, the VAPID token and everything the
+sender does before and after, and it never fires at all for a `NotAttempted` outcome — a refused
+endpoint, an oversized payload or an unavailable custodian never reaches the transport. Keep both
+meters if you want the difference; keep only `push2u.send` if you want one.
+
+**`EndpointPolicy` — the egress control.** The allowlist is a security control, and a control with
+no counter is one nobody notices firing.
+
+```java
+public EndpointAssessment assess(URI endpoint) {
+    EndpointAssessment assessment = delegate.assess(endpoint);
+    registry.counter("push2u.endpoint.assessed",
+                    "result", assessment instanceof EndpointAssessment.Refused ? "refused" : "allowed")
+            .increment();
+    return assessment;
+}
+```
+
+No tag beyond that: not the endpoint, not the reason. A rise in `refused` is either an allowlist
+that no longer matches the services in use or someone feeding hand-crafted subscriptions into the
+registration boundary, and both are worth an alert. If the same policy instance is also applied
+where subscriptions are registered — which is what it is published for — this counter sums both
+boundaries; tag by call site at each of them if you need to tell them apart.
+
+**`VapidSigner` — the custodian.** Read the next section before drawing conclusions from it.
+
+```java
+public byte[] sign(byte[] signingInput) {
+    Timer.Sample sample = Timer.start(registry);
+    boolean ok = false;
+    try {
+        byte[] signature = delegate.sign(signingInput);
+        ok = true;
+        return signature;
+    } finally {
+        sample.stop(registry.timer("push2u.signer.sign", "result", ok ? "ok" : "failed"));
+    }
+}
+```
+
+## What a signer counter actually counts
+
+Not sends. push2u reuses the VAPID token until it nears expiry, keyed by the push service's origin,
+so `sign` runs on a **token-cache miss** — roughly once per distinct origin per token lifetime,
+plus whatever a cache eviction adds. That is what makes the counter valuable: for a custodian like
+Vault Transit or an HSM it is a close estimate of the operations actually being billed, audited and
+rate-limited, which is a number nothing else in a deployment reports.
+
+Three things to know before alerting on it:
+
+- **The health indicator signs too.** The Spring starter's probe exercises the configured signer end
+  to end — a `sign` and a `publicKey` on every evaluation the probe's own cache does not serve, with
+  a default `management.health.push2u.cache-ttl` of 30 s. So a bean-level decorator has a floor of
+  about two operations a minute per instance with no traffic at all. Subtract it, or raise the TTL,
+  or accept it as a heartbeat — but do not read it as delivery. Under Spring the health indicator
+  and the sender share one signer bean, so the two cannot be separated without building the sender
+  yourself.
+- **`publicKey()` is on the send path, and is not a round trip** for the signers shipped here: the
+  local signer holds the key and the Vault signer advertises one that never moves. Counting it is
+  fine; reading it as custodian load is not.
+- **`sends / signs`** is a useful derived number — how well the token cache is working — but it is a
+  ratio you compute in your dashboard from two meters, not a property this library promises.
+
+## Retry
+
+push2u performs exactly one POST per `send` and does not retry. Everything about repeating — the
+attempt count, the delay, the budget, the dead-letter, and whether a `Retry-After` was honoured —
+happens in your scheduler or queue, and is measured there. What this library contributes to those
+meters is the classification: `RetryableFailure` says repeating is worthwhile and carries the
+service's own `retryAfter()` when it sent one, uncapped; `SubscriptionExpired` says stop and delete
+the row; `Indeterminate` says the POST left the process and nothing came back, so a repeat may
+duplicate a delivery that already happened.
+
+## Spring Boot
+
+**The recommended shape needs no push2u bean changed at all**: instrument `send` inside your own
+service, exactly as shown at the top. Everything below is for the two seams whose bean the starter
+creates.
+
+An ordinary `@Bean` returning a wrapper does **not** work, and its failure is quiet in one case and
+loud in the other:
+
+- `PushHttpClient` and `VapidSigner` are published `@ConditionalOnMissingBean`. Your bean of the
+  same type does not wrap the default — it *replaces* it, and the default is never created, so
+  there is nothing to delegate to. With the Vault starter this is worse than inconvenient: your
+  wrapper suppresses `VaultTransitVapidSigner` itself, and the deployment silently loses its remote
+  custodian.
+- `EndpointPolicy` is stronger still: a policy bean beside a configured `push2u.allowed-origins` or
+  `push2u.allowed-domains` is a conflict the starter **refuses at startup** on purpose, because two
+  statements of one egress rule is exactly the state that ends with one of them being ignored.
+
+Build the delegate yourself where you can — `new JdkPushHttpClient()` is public, and a Vault signer
+you construct with its own builder is the same object the starter would have built. Where you
+cannot, or where you want the starter's own construction preserved, a `BeanPostProcessor` wraps the
+instance without adding a second definition:
+
+```java
+@Bean
+static BeanPostProcessor meteredPush2uSeams(ObjectProvider<MeterRegistry> registries) {
+    return new BeanPostProcessor() {
+        @Override
+        public Object postProcessAfterInitialization(Object bean, String name) {
+            MeterRegistry registry = registries.getIfAvailable();
+            return registry != null && bean instanceof VapidSigner signer
+                    ? new MeteredVapidSigner(signer, registry)
+                    : bean;
+        }
+    };
+}
+```
+
+This is an advanced, deliberately opt-in recipe, and it has sharp edges worth knowing before you
+reach for it:
+
+- the bean is no longer assignable to its concrete type, so anything injecting
+  `VaultTransitVapidSigner` rather than `VapidSigner` stops resolving;
+- the health indicator gets the wrapper too, so its probes land in your meters (see above);
+- ordering against other post-processors and any AOP proxying is now part of your configuration;
+- a type check that matches more than one bean wraps more than you meant, and a second processor
+  can wrap the wrapper;
+- bean identity no longer means the object the starter created, which matters for any code
+  comparing instances.
+
+push2u does none of this on your behalf, and will not: a wrapper installed by the starter would
+change what the health probe runs through in a deployment that asked for metrics and said nothing
+about health.
+
+## What cannot be measured from outside
+
+Individual stage durations — the ECDH, the HKDF, the AES-GCM record, the token-cache lookup, the
+status classification — are not observable without a new seam inside the sender, and there is not
+going to be one. Publishing each stage would turn the current pipeline into a lifecycle contract
+this library then owes forever, in exchange for numbers that answer no operational question: an
+end-to-end timer plus the transport timer already brackets everything, and what is left between
+them is CPU work with no external dependency. [`PERFORMANCE.md`](PERFORMANCE.md) is where the
+per-stage cost is measured, once, against a machine that is named.
+
+Whether a particular send reused a cached VAPID token is likewise not reported per send — the
+`sends / signs` ratio above answers it in aggregate, which is the form the question is actually
+asked in.
+
+## If these recipes are not enough
+
+Say so in an issue on the tracker, with what the recipes cost you — a divergence in names between
+teams that both read this document, the cost of the Spring recipe where you had to use it, or a
+measurement your call site could not produce. That is the evidence
+[ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md) names as what would oblige a fresh
+decision about shipping an observability module, rather than a link back to it.
