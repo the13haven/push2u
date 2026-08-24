@@ -1728,9 +1728,10 @@ The automated suite covers:
 - Vault Transit integration through Testcontainers;
 - the configuration metadata each starter publishes, read out of the jar's own classpath resource
   rather than out of a build path: every key no properties record binds — the activation switch and
-  the health indicator's own switch, both read by the framework — plus the Vault value hint, and
-  beside each one a key the annotation processor *does* discover, so a failure says which half
-  broke. The half that needs pinning is the hand-written one: the processor merges
+  the health indicator's own switch, both read by the framework — plus the Vault hint's *values*,
+  which is the only part of it the failure reaches, since the hint's name is the property's name
+  too and the processor emits an empty `hints` list of its own accord. Beside each, a key the
+  annotation processor *does* discover, so a failure says which half broke. The half that needs pinning is the hand-written one: the processor merges
   `META-INF/additional-spring-configuration-metadata.json` only where it finds that file on the
   classpath it runs with, and where it does not, it produces metadata without those entries, fails
   no task and says nothing (`ConfigurationMetadataTest` in both starters);

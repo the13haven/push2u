@@ -21,7 +21,9 @@ import org.junit.jupiter.api.Test;
  * that file on the classpath it runs with.
  *
  * <p>The merge failing is silent — no task fails and the hint simply is not in the jar — so it is pinned here rather
- * than left to be noticed by an operator who never sees a completion and does not know one was meant to appear.
+ * than left to be noticed by an operator who never sees a completion and does not know one was meant to appear. What is
+ * asserted is the hint's <em>values</em>: its name is the property's name too, and the processor emits an empty
+ * {@code hints} list of its own accord, so both of those survive the failure this test exists for.
  */
 class ConfigurationMetadataTest {
 
@@ -29,11 +31,20 @@ class ConfigurationMetadataTest {
     void theGeneratedMetadataCarriesTheHandWrittenValueHint() throws IOException {
         String metadata = generatedMetadata();
 
-        assertThat(metadata).contains("\"name\": \"push2u.signer.vault.public-key-fetch\"");
-        // The property is generated; the hint is not. A file holding the first and not the second
-        // is exactly what an unmerged additional-metadata file produces, so the hint's own values
-        // are what this asserts.
-        assertThat(metadata).contains("\"hints\"");
+        // The hint's VALUES, and nothing weaker. Its name is also the property's, which the
+        // processor generates from the properties record on its own, so a file that has lost the
+        // hint entirely still contains that string. So does the "hints" key: the processor emits it
+        // whether or not anything filled it, and an unmerged file carries a literal empty list.
+        // Either would be a green test over a jar offering an operator no completions at all.
+        assertThat(metadata).contains("\"value\": \"eager\"");
+        assertThat(metadata).contains("\"value\": \"deferred\"");
+    }
+
+    @Test
+    void theGeneratedMetadataAlsoCarriesWhatTheProcessorDiscovers() throws IOException {
+        // The other half, so a failure says which one broke: a properties record's own component,
+        // which needs no hand-written entry. Absent, the processor itself did not run.
+        assertThat(generatedMetadata()).contains("\"name\": \"push2u.signer.vault.address\"");
     }
 
     /** The metadata as it will sit in the jar — read from the classpath rather than from a build path. */
