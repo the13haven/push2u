@@ -188,7 +188,10 @@ instead. The exception is a document that is *about* one version and is never re
 correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
-approves a merge into `main` and how work that started from a tracker issue references it. It loads
+approves a merge into `main`, how work that started from a tracker issue references it, and the
+mirror of that — the work that has to *file* one, which is a change leaving a tombstone behind a
+removed property: the issue that retires it is opened by that change and not by the release that
+ships it, `docs/RELEASING.md`'s step 5 being the net under that rule rather than its home. It loads
 automatically alongside this file.
 
 Two skills hold the procedures that do not belong in this file:

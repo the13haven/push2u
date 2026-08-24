@@ -74,6 +74,33 @@ has to state the release in its own words, that is said after the tag, never bef
 None of this applies to a vulnerability: there is no public issue to reference, and
 `.claude/skills/push2u-advisory/SKILL.md` carries that path instead.
 
+## Work that has to file one
+
+The mirror of the section above. A change that leaves a debt behind opens the issue that collects
+it, and does so in its own pull request. The shape this repository has is a **tombstone**: the
+startup refusal a release leaves over a configuration property it removed, so that an operator
+upgrading with the dead key still in a YAML file is told where the setting went instead of having it
+ignored in silence — binding drops an unknown key without a word.
+
+A tombstone has an end. It is there to catch a configuration written against the *previous* release,
+and one carried indefinitely becomes code refusing keys nobody has written in years. The window is
+one minor release after the one that removed the property.
+
+**The change that writes the tombstone opens the issue that removes it**, in the same pull request,
+referenced with `Refs #N`. Not the release that ships it: filing there makes the obligation depend
+on whoever cuts a release recalling, months later and for an unrelated reason, what a change
+contained — which has already failed here once, and the tombstone was retired on time only because
+someone happened to be holding it in their head. Written at the change instead, the debt and its
+record are made by the same hand in the same hour.
+
+The issue states the window as that rule and never as a number: the version this work ships in does
+not exist yet, and the section above forbids guessing it. It does not need one — the issue links its
+pull request, and that pull request shows its release once there is one, which is the release the
+window runs from. One issue covers every key the same change removed.
+
+`docs/RELEASING.md` keeps a check after the tag rather than the obligation itself, so a tombstone
+that reached a release without an issue is still caught.
+
 ## Delegating
 
 A subagent starts with a fresh context. It inherits `CLAUDE.md` and these rules, but **not** the
