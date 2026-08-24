@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check. |
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
 ## From `0.2.0`
@@ -57,6 +57,8 @@ of its own below, and no bearing on an application that only sends.
 - [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
 - [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
+- [The starters stop exporting Spring Boot's BOM](#the-starters-stop-exporting-spring-boots-bom)
+  - [Which Spring Boot you end up with, before and after](#which-spring-boot-you-end-up-with-before-and-after)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
 - [Checklist for the `0.2.0` move](#checklist-for-the-020-move)
 
@@ -276,6 +278,111 @@ threads colliding inside it. A red run is a real defect every time; a green one 
 check did not catch you. The requirement is the sentence in `VapidSigner`'s own contract, as it has
 been all along.
 
+### The starters stop exporting Spring Boot's BOM
+
+A third reader, and the one least likely to be looking: an application that uses either Spring Boot
+starter and does not manage Spring Boot's version itself. Gradle or Maven — both are here, moving
+in opposite directions. Nothing in your source changes. What changes is what resolves.
+
+Until this release both starters declared Spring Boot's BOM on `api`, so it was published — as an
+imported BOM in the POM and as a dependency in the Gradle module metadata. For a Gradle consumer
+that made Spring Boot's entire version manifest a live input to their own resolution, and Gradle
+takes the higher of two requirements: a build that said Spring Boot 4.0.0 throughout resolved
+`spring-boot` 4.1.1, `spring-core` 7.0.9, `jackson-databind` 3.1.5 and `micrometer` 1.17.1 —
+because it had added a Web Push starter. Nothing warned about it.
+
+The starters now publish one Spring Boot dependency, `spring-boot-autoconfigure`, at the minimum
+version they support; the number is in
+[`README.md` → Requirements](../README.md#requirements) and what it does and does not enforce is in
+[`SPRING.md` → The minimum Spring Boot](SPRING.md#the-minimum-spring-boot). Everything the BOM used
+to manage that the starters do not themselves depend on — Jackson, Netty, Tomcat, the rest of the
+manifest — is no longer spoken about at all. What the starters still bring is that one dependency's
+own transitives: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
+`spring-expression`, `commons-logging` and Micrometer's `micrometer-observation` and
+`micrometer-commons`. A Gradle build below the minimum is raised on those and one at or above it
+keeps its own; a Maven build that manages no Spring Boot of its own simply receives them at the
+minimum, which is the paragraph after next.
+
+**Who sees nothing here.** An application that manages Spring Boot itself — a Maven build on
+`spring-boot-starter-parent` or importing Boot's BOM, or a Gradle build applying
+`io.spring.dependency-management` — was never on the receiving end of this. Its own management
+outranks a version reached through a dependency, in both the old shape and the new one. Read on
+only for the floor: you are asked for a minimum Spring Boot that your build does not enforce and
+this library cannot make it.
+
+**Maven builds that do *not* manage Spring Boot themselves were affected, and in the opposite
+direction.** A `dependencyManagement` section reached through a dependency supplies versions to
+*that dependency's* own dependencies — and the starters' own `spring-boot-autoconfigure` was
+declared with no version, resolved by the BOM they imported. So an application that simply added a
+starter got Boot at whatever version this project built against. Measured, resolving both published
+shapes with Maven: the old one handed such a consumer `spring-boot-autoconfigure` 4.1.1, the new one
+hands it 4.0.8. That is a **downgrade across a minor line** — the direction that surfaces at run
+time rather than at compile time. What it is *not* is push2u letting go of the decision: a POM
+carries no minimum, so the starter's declaration is simply the version, and taking that decision
+back means managing Spring Boot yourself. The next section says how, ecosystem by ecosystem.
+
+#### Which Spring Boot you end up with, before and after
+
+Here is the half no compiler reports on its own, and the two ecosystems do not move together. What
+changed for **everyone** is the version push2u names. What changed only for a **Gradle** build is
+whether your own declaration wins.
+
+**Gradle, declaring a Spring Boot of your own.** This is the case the change is for. Your
+declaration used to lose — the exported BOM entered a higher requirement and Gradle took it — and
+now it wins outright as long as it is at or above the minimum. push2u genuinely stops choosing your
+Spring Boot.
+
+**Gradle, declaring no Spring Boot of your own.** push2u still supplies one, as it did before: the
+starter's `spring-boot-autoconfigure` requirement is the only requirement in play. It is a lower
+number now, that is all.
+
+**Maven, without `spring-boot-starter-parent` and without Boot's BOM imported.** *push2u still
+decides your Spring Boot version, before and after.* The old shape decided it through the BOM the
+starters imported, which resolved their own versionless `spring-boot-autoconfigure`; the new shape
+decides it by declaring `spring-boot-autoconfigure:4.0.8` outright. Nothing about that is a floor —
+a POM cannot express one — so it is a version handed to you rather than a minimum you may exceed,
+and your Spring Boot moves from whatever this project last built against down to the published
+minimum unless you say otherwise.
+
+Saying otherwise is ordinary Maven, and there are two ways of different quality. A **direct**
+dependency on `spring-boot-autoconfigure` in your own POM sits nearer the root than the starter's
+transitive one and wins by nearest-definition — one coordinate, one version, and it does work. What
+it does not do is govern the rest: `spring-boot`, `spring-core`, `spring-context` and the others
+still arrive at whatever the winning `spring-boot-autoconfigure` drags, and you are pinning one
+artifact of a set that is meant to move together. **The way to own the decision rather than one
+coordinate of it is to manage Spring Boot yourself** — `spring-boot-starter-parent` as your parent,
+or Boot's BOM imported into your `dependencyManagement`. Then every Boot and Spring version in your
+graph is yours, push2u's number stops mattering, and this release is a good moment to do it.
+
+Two things follow from a version that moved, and only the first is loud:
+
+- **Your own code may have used an API from the version you were being given.** It is gone with
+  it. Where your module recompiles, this is a compile error and the cheap kind. Where it does not —
+  a module you did not rebuild, a jar you assemble separately — it is a `NoSuchMethodError` or a
+  `NoClassDefFoundError` the first time that line runs. This is the shape a *downgrade* takes, and
+  both the Maven cohort above and a Gradle build that was declaring less than it was being given
+  are in it.
+- **A Gradle build's graph also moves outside Spring's coordinates — a Maven build's does not.**
+  The BOM managed the whole Spring Boot manifest and only a Gradle consumer ever received it, so
+  Jackson, Netty, Tomcat and the rest were being raised there and now stop moving entirely. Values
+  can also *drop* with no Spring coordinate changing: `commons-logging` resolves 1.3.5 through the
+  floor's own graph where the exported BOM raised it to 1.3.6. A Maven consumer sees none of this;
+  what moves for them is `spring-boot-autoconfigure` and what it drags transitively —
+  `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`, `spring-expression`,
+  `commons-logging` and Micrometer's two — all together, to the minimum.
+
+So the check is a resolution diff rather than a rebuild: resolve once before the upgrade and once
+after — `./gradlew :your-app:dependencies --configuration runtimeClasspath`, or
+`mvn dependency:tree` — and read what moved. If a version dropped, decide where you want it and say
+so in your own build: a declaration in Gradle, your own Boot parent or imported BOM in Maven. That
+is the point of the exercise; there is nothing to do here beyond it.
+
+One direction can still raise you, in Gradle and under ordinary conflict resolution: a build asking
+for a Spring Boot **below** the declared minimum is raised to that minimum, the same way any
+dependency's requirement raises another. A build that *forces* versions is not raised — nor is
+Maven, where the number is a plain version and your own `dependencyManagement` settles it. Either
+way that bound is far lower than the version you were previously being pulled to.
+
 ### What the `0.2.0` move does not change
 
 Nothing about the decision moved — only the shape of its answer. Specifically:
@@ -317,6 +424,18 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
       contract signs from several threads now, and a failure there is a defect that was already
       corrupting signatures under load rather than a new rule to satisfy.
+- [ ] **Gradle**, if you use either Spring Boot starter and do not apply
+      `io.spring.dependency-management`: diff your resolved runtime classpath before and after.
+      Jackson, Netty, Tomcat and the rest of Boot's manifest stop being managed by the starters
+      altogether, and Spring's own coordinates now follow your declaration where you have one — so
+      a version you were relying on can drop. Declare it yourself if you want it back.
+- [ ] **Maven**, if you use either Spring Boot starter and are not on `spring-boot-starter-parent`
+      and do not import Boot's BOM: your Spring Boot moves *down* to the published minimum, and
+      push2u still decides it — a POM has no way to express a floor. `mvn dependency:tree` before
+      and after shows the move. To take the decision back for the whole Boot graph rather than one
+      coordinate of it, add the Boot parent or import its BOM; a direct dependency on
+      `spring-boot-autoconfigure` also outranks the starter's transitive one, and leaves the rest
+      of Spring following it.
 
 ## From `0.1.0`
 

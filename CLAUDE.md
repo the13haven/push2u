@@ -255,7 +255,10 @@ Notes that matter in practice:
   discipline above disables only what rides along with `check`; there is nothing about `javadoc` for
   it to disable. A doclint error has therefore always failed a plain `build`; `-Xwerror` only widens
   what a plain `build` catches from doclint errors to any javadoc warning, on the same always-on
-  task.
+  task. For the two Spring Boot starters `javadoc` now also sits in **`check`**'s graph, which is
+  the one place that paragraph's shape does not hold: `verifyPublishedSpringBootFloor` reads the
+  generated publication metadata, and the task producing it hashes every published file, the
+  `-javadoc` jar included.
 - Checkstyle/PMD/SpotBugs analyse `main` sources only. Error Prone also covers test compilations
   (defects, not style); NullAway covers `main` and `testFixtures`.
 - Aggregated JaCoCo threshold is 80 % of instructions, enforced by `testCodeCoverageVerification`,
@@ -438,9 +441,10 @@ cannot see each other.
   rewrites every one of them to the released version, matching any `X.Y.Z` — so a coordinate written
   to name a *historical* version (in a migration note, say) would be silently bumped; put such a
   version somewhere other than a `com.the13haven:<module>:` coordinate. Some versions cannot live in
-  the catalog and are not violations of this rule: the JDK toolchain (the root build plus each of
-  the five workflows that set up a JDK) and `--release 21` (the root build only); GitHub Action
-  versions, major-tag pinned and Dependabot-managed; the Testcontainers image tag in the Vault test;
+  the catalog and are not violations of this rule: the JDK toolchain (the root build plus every
+  `setup-java` step in the five workflows that set up a JDK — `ci.yml` carries two, one per job)
+  and `--release 21` (the root build only); GitHub Action versions, major-tag pinned and
+  Dependabot-managed; the Testcontainers image tag in the Vault test;
   and **Gradle's own version**, in `gradle/wrapper/gradle-wrapper.properties` beside a
   `distributionSha256Sum` — which makes bumping it a procedure, CONTRIBUTING.md, *Upgrading Gradle*.
   The `wrapper` task refuses to drop the checksum silently, so a wrong move there fails loudly

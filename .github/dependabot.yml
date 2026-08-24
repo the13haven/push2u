@@ -9,12 +9,40 @@ updates:
   # wrapper support it reads gradle/wrapper/gradle-wrapper.properties — in the ROOT directory
   # only, which is why `directory` has to stay "/" — and rewrites distributionUrl together with
   # distributionSha256Sum whenever the file already carries a sum. Ours does, deliberately: see
-  # CONTRIBUTING.md, "Upgrading Gradle". Do not add an `ignore` for patch updates here; that is
-  # where both the security fixes and the wrapper bumps arrive.
+  # CONTRIBUTING.md, "Upgrading Gradle". Do not add a blanket `ignore` for patch updates here; that
+  # is where both the security fixes and the wrapper bumps arrive. The one `ignore` below is the
+  # opposite of blanket — it names Spring Boot alone, and the comment there says why that
+  # dependency is not one this project keeps fresh.
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
       interval: "weekly"
+    # Spring Boot is the one exception, and it is not a dependency this project keeps fresh: the
+    # catalog's `springBoot` is the MINIMUM Spring Boot the two starters support and publish as a
+    # floor (ADR-032). A newer Spring Boot merely existing is not a reason to raise it — raising it
+    # narrows the set of deployments this library answers for, so it is a decision with a pull
+    # request that says what it narrows and a docs/MIGRATION.md note, not a version bump.
+    #
+    # Turning version updates off does NOT turn off the case that must move the floor. GitHub
+    # documents `update-types` as affecting version updates only: "Security updates will always be
+    # created regardless of the `update-types` setting"
+    # (https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/controlling-dependencies-updated).
+    # So a published vulnerability in a Spring Boot artifact this build declares still arrives as a
+    # pull request, which is exactly the one reason the floor moves on its own.
+    #
+    # What this cannot deliver is a vulnerability in anything the floor's graph resolves that this
+    # build does not itself declare — and that is most of it. Only spring-boot-dependencies and
+    # spring-boot-autoconfigure are declared here; org.springframework.boot:spring-boot arrives as
+    # a transitive, exactly like spring-core and spring-expression, and ADR-032's advisory table
+    # put two of its seven entries against it, including the only critical one. None of those has a
+    # manifest entry for Dependabot to rewrite. They surface as repository alerts instead, from the
+    # dependency graph the submission workflow uploads from main, and the floor is raised by hand.
+    ignore:
+      - dependency-name: "org.springframework.boot:*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

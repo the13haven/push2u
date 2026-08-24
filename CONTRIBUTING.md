@@ -68,7 +68,10 @@ Error Prone, NullAway and the coverage threshold.
 
 Javadoc is the exception, and worth knowing before it surprises you: `build` fails on any javadoc
 warning, because `assemble` builds the published `-javadoc` jar and that task runs with `-Xwerror`.
-See [What the build enforces](#what-the-build-enforces).
+See [What the build enforces](#what-the-build-enforces). For the two Spring Boot starters a bare
+`check` reaches it as well, and deliberately: `verifyPublishedSpringBootFloor` reads the generated
+publication metadata, whose task hashes every published file — the `-javadoc` jar with them. What
+that check is for is [Building against a newer Spring Boot](#building-against-a-newer-spring-boot).
 
 Useful narrower runs:
 
@@ -99,6 +102,43 @@ includeBuild("../push2u")
 The dependency declarations stay exactly as they are in
 [`README.md` → Installation](README.md#installation) — Gradle substitutes the included build for
 the published Maven Central artifact.
+
+### Building against a newer Spring Boot
+
+`gradle/libs.versions.toml`'s `springBoot` is not "the Spring Boot this build uses". It is the
+**minimum** Spring Boot the two starters support and publish as a floor, and by the same number the
+version everything above compiles against — one key, so a starter cannot use an API newer than the
+floor it advertises. Do not raise it to pick up a newer Spring Boot: it moves only when a starter
+needs an API the floor lacks, or when a published vulnerability sits in the graph the floor
+resolves and a patch of the same line fixes it. Either move narrows what the project supports and
+is written up in `docs/MIGRATION.md`.
+
+To build against a newer Spring Boot without touching that number:
+
+```bash
+./gradlew -Ppush2u.springBoot=4.1.1 \
+    :push2u-spring-boot-starter:build :push2u-signer-vault-spring-boot-starter:build
+```
+
+The property substitutes the catalog key for that invocation alone, and any publishing task in the
+run then refuses to execute — the check is on the task type rather than on what you typed, so an
+abbreviated task name and a publish reached as somebody else's dependency are both caught. CI
+proves that rather than assuming it: the merge-blocking `quality` job runs both of those
+invocations and fails if either one publishes. A
+substituted run therefore cannot leave an artifact behind declaring a minimum this project does not
+support. CI runs exactly this, once per released Spring Boot minor line at or above the floor's own
+— informative jobs, not required checks. Read a red one as a floor move that may be due; it does
+not block a merge.
+
+When the floor does move, `README.md` moves with it: it states the number in *Requirements* and in
+its *Spring Boot* section, and `docs/SPRING.md` deliberately defers to it rather than repeating it.
+The published metadata is checked against the catalog by `verifyPublishedSpringBootFloor`, which
+`check` runs for both starters — no BOM in the POM, an ordinary `require` at the catalog's version,
+and no `strictly`, `prefers` or `rejects` in the module metadata. Prose is the half nothing checks.
+
+Why the two meanings are one number, why nothing published names an upper bound, and where the
+floor is a constraint rather than a statement:
+[ADR-032](docs/adr/0032-starters-declare-a-minimum-spring-boot.md).
 
 ### Upgrading Gradle
 

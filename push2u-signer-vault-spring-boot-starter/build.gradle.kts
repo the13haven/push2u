@@ -8,7 +8,11 @@ description = "push2u-signer-vault-spring-boot-starter — Spring Boot auto-conf
 
 // Toolchain + `--release 21` + JUnit Platform come from the composite-build root build.gradle.kts.
 dependencies {
-    api(platform(libs.spring.boot.dependencies))
+    // Spring Boot's BOM aligns this build's own classpaths and is published nowhere, for the
+    // reason the core starter's build file states at the same line (ADR-032): on a published
+    // configuration it hands a Gradle consumer Spring Boot's entire version manifest. The only
+    // Spring Boot requirement that leaves this module is spring-boot-autoconfigure's own version.
+    compileOnly(platform(libs.spring.boot.dependencies))
     api(project(":push2u-signer-vault"))
     api(libs.jspecify)
     api(libs.spring.boot.autoconfigure)

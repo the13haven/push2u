@@ -9,7 +9,14 @@ description = "push2u-spring-boot-starter — Spring Boot auto-configuration for
 // Toolchain + `--release 21` + JUnit Platform come from the composite-build root build.gradle.kts.
 // This module pulls Spring Boot autoconfigure as a real dependency (the core stays Spring-free).
 dependencies {
-    api(platform(libs.spring.boot.dependencies))
+    // Spring Boot's BOM aligns THIS build and stops at its edge (ADR-032). On `api` it was
+    // published too — as an imported BOM in the POM and a dependency in the module metadata — and
+    // a Gradle consumer resolving it took Spring Boot's whole version manifest as a live input to
+    // their own resolution, silently raising their Spring, Jackson and Micrometer to whatever
+    // version this build happened to use. compileOnly reaches compileClasspath and travels
+    // nowhere; the published Spring Boot requirement is spring-boot-autoconfigure's own version,
+    // which the catalog now carries.
+    compileOnly(platform(libs.spring.boot.dependencies))
     api(project(":push2u-core"))
     api(libs.jspecify)
     api(libs.spring.boot.autoconfigure)

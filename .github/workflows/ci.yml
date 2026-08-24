@@ -108,6 +108,42 @@ jobs:
       - name: Quality check
         run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
 
+      # The one rule in this build that `qualityCheckCi` cannot reach, because proving it means
+      # failing: -Ppush2u.springBoot substitutes the catalog key, and no publishing task may run
+      # while it is set. That key is BOTH the version the starters compile against and the floor
+      # they publish, so a substituted release is internally consistent — compiled against the
+      # substituted version and declaring it — and wrong for the reason that consistency hides:
+      # the number it declares is not the minimum this project supports, and nothing about the
+      # artifacts says so.
+      #
+      # It lives in `quality` rather than in the informative matrix below, and that placement is
+      # the point: `quality` blocks a merge, so deleting the guard turns this red instead of
+      # leaving every required check green. The two invocations are the two ways the previous
+      # implementation was measured to be bypassed — Gradle's own camelCase abbreviation, and the
+      # Central bundle, which reaches every module's publication through a task whose name says
+      # nothing about publishing.
+      #
+      # The substituted value is the catalog's own, read out of the catalog. Nothing here needs a
+      # different Spring Boot, and using one would put a version literal in this file: what is
+      # being tested is that the property's PRESENCE is refused.
+      - name: A substituted build refuses to publish
+        run: |
+          set -euo pipefail
+          floor=$(sed -n 's/^springBoot = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          test -n "$floor"
+          for task in pTML nmcpZipAggregation; do
+            if output=$(./gradlew -Ppush2u.springBoot="$floor" "$task" --no-daemon 2>&1); then
+              echo "::error::$task published while -Ppush2u.springBoot was set; the guard is gone."
+              exit 1
+            fi
+            if ! grep -q "substitutes the Spring Boot version" <<<"$output"; then
+              echo "::error::$task failed, but not on the substitution guard. Output follows."
+              echo "$output"
+              exit 1
+            fi
+            echo "$task refused, as it must be."
+          done
+
       # Every module's JUnit XML (including fipsTest) under one directory — Codecov's test-results
       # upload takes a single path. Runs even when the build failed: a failed suite is exactly what
       # test analytics is for.
@@ -150,3 +186,117 @@ jobs:
           path: |
             **/build/reports/
             build/test-results-aggregated/
+
+  # Which Spring Boot versions above the declared floor are there to try?
+  #
+  # gradle/libs.versions.toml's `springBoot` is the MINIMUM Spring Boot the starters support, and by
+  # the same number the version the default build — and therefore `quality` above — compiles
+  # against (ADR-032). That is the run that decides whether a change merges. It is also, by
+  # construction, blind to a newer Spring Boot: the starters cannot see an API the floor lacks. The
+  # matrix below is how that half is looked at, and it decides nothing.
+  #
+  # The versions are computed rather than listed, because a list in this file would name versions
+  # nowhere else in the tree does and would go stale the week Spring publishes. The rule is one run
+  # per released minor line at or above the floor's own, each at its newest GA patch, minus the
+  # floor itself — GA only, so a milestone never becomes something this repository reacts to.
+  spring-boot-above-floor:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.pick.outputs.versions }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Pick the released lines above the floor
+        id: pick
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 \
+            https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-dependencies/maven-metadata.xml \
+            -o /tmp/spring-boot-metadata.xml
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re, sys, xml.etree.ElementTree as ET
+
+          floor = re.search(
+              r'^springBoot = "([^"]+)"', open("gradle/libs.versions.toml").read(), re.M
+          ).group(1)
+          floor_line = tuple(int(part) for part in floor.split(".")[:2])
+
+          newest = {}
+          for element in ET.parse("/tmp/spring-boot-metadata.xml").iter("version"):
+              version = (element.text or "").strip()
+              if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                  continue          # a milestone or release candidate is not something to react to
+              major, minor, patch = (int(part) for part in version.split("."))
+              if (major, minor) < floor_line:
+                  continue
+              newest[(major, minor)] = max(newest.get((major, minor), (-1, "")), (patch, version))
+
+          versions = sorted(
+              (version for _, version in newest.values() if version != floor),
+              key=lambda v: [int(part) for part in v.split(".")],
+          )
+          print("floor " + floor + ", trying " + (", ".join(versions) or "nothing newer"),
+                file=sys.stderr)
+          print("versions=" + json.dumps(versions))
+          PY
+
+  # One build per line above the floor, and it is INFORMATIVE: not a required check, and nothing it
+  # produces is published. A red run here says the next floor move may be due — a starter meeting a
+  # removed API, a behaviour Spring changed under it — and is read, not obeyed. fail-fast is off so
+  # one bad line does not hide the others.
+  #
+  # `build` rather than `qualityCheckCi`: what this run asks is whether the starters still compile
+  # and their tests still pass on a newer Spring Boot. Formatting, the analysers and the coverage
+  # threshold do not vary with the framework's version and are `quality`'s to answer, once.
+  spring-boot-compatibility:
+    needs: spring-boot-above-floor
+    if: ${{ !cancelled() && needs.spring-boot-above-floor.outputs.versions != '' && needs.spring-boot-above-floor.outputs.versions != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        spring-boot: ${{ fromJSON(needs.spring-boot-above-floor.outputs.versions) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'liberica'
+          java-version: 26
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: wrapper
+
+      # Only the two starter modules: they are the whole of what Spring Boot's version reaches.
+      # -Ppush2u.springBoot substitutes the catalog key for this invocation alone, and every
+      # publishing task in the build refuses to execute while it is set — a check on the task type,
+      # so no spelling of a task name gets past it — which is why a run here cannot leave an
+      # artifact behind declaring a minimum this project does not support.
+      - name: Build the starters against Spring Boot ${{ matrix.spring-boot }}
+        run: |
+          ./gradlew -Ppush2u.springBoot=${{ matrix.spring-boot }} \
+            :push2u-spring-boot-starter:build \
+            :push2u-signer-vault-spring-boot-starter:build \
+            --no-daemon --no-build-cache --stacktrace
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: spring-boot-${{ matrix.spring-boot }}-test-results
+          path: |
+            push2u-spring-boot-starter/build/reports/tests/
+            push2u-signer-vault-spring-boot-starter/build/reports/tests/

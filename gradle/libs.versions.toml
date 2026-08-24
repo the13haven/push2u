@@ -5,12 +5,33 @@
 junit = "6.1.3"
 assertj = "3.27.7"
 testcontainers = "2.0.5"
-# Spring Boot — only for the push2u-spring-boot-starter module's auto-configuration (the core
-# stays Spring-free, with no runtime implementation dependencies). Targets 4.x: push2u is a new
-# library, so its
-# adopters build on the current Spring Boot (legacy 3.x projects are unlikely to swap a working
-# web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
-springBoot = "4.1.1"
+# Spring Boot — for the two starter modules only (the core stays Spring-free, with no runtime
+# implementation dependencies). This key carries ONE number with two meanings that must not be
+# split (ADR-032): the MINIMUM Spring Boot the starters support and publish as a floor, and — by
+# the same number — the Spring Boot the default build compiles against, so that a starter cannot
+# use an API newer than the floor it advertises. Two keys would make the floor a promise the
+# compiler never checks.
+#
+# It moves for two reasons and no others: a starter needs an API the floor lacks (a line move,
+# owed a record of its own), or a published vulnerability sits anywhere in the graph this floor
+# resolves — Spring Boot's own artifacts or anything its BOM manages into it — and a patch of the
+# same line fixes it (obligatory, since the floor is a version consumers may be raised TO). A
+# newer Spring Boot merely existing is not a reason, which is why Dependabot's version updates are
+# switched off for these coordinates while its security updates are not. Either move narrows what
+# this project answers for and is noted in docs/MIGRATION.md.
+#
+# Two LIVING documents carry this number and only two. This one, and README.md — which states it
+# under Requirements and in its Spring Boot section, and which docs/SPRING.md defers to rather
+# than repeating, so one stale README falsifies both at once. CI reads the value from here by
+# regex and follows on its own; README does not. Move the number in both, in the same change.
+# docs/MIGRATION.md names it too and is not a third place to edit: a migration section describes
+# what one release did and its numbers are frozen on purpose.
+#
+# To run a build against a NEWER Spring Boot — which is how the next floor move is found — pass
+# -Ppush2u.springBoot=<version> (see settings.gradle.kts). Such a run publishes nothing.
+#
+# Java 17+ baseline in the 4.0 line, so the modules' --release 21 is fine.
+springBoot = "4.0.8"
 
 # BouncyCastle — the stock provider push2u-core's `test` source set declares for the raw r||s ES256
 # path, and nothing else. It used to serve a second, unrelated purpose: build.gradle.kts read this
@@ -18,7 +39,8 @@ springBoot = "4.1.1"
 # manages them at a clean version itself), and with it the reason this key had to name a version
 # that exists for all four — which is what broke the build when a provider-only patch release came
 # through. No module-level constraint applies it either; a constraint on a published module travels
-# into its metadata. Jackson is not pinned — Spring Boot's managed jackson-2-bom governs it (2.21.4).
+# into its metadata. Jackson is not pinned — Spring Boot's own BOM governs it on the starter
+# classpaths, at whatever version the declared floor manages.
 bouncycastle = "1.85.2"
 # BC-FIPS — test-only provider for the ES256 provider matrix (registers only DER-format ECDSA,
 # exercising the DER fallback). Isolated in push2u-core's fipsTest source set: bc-fips and stock
@@ -65,10 +87,18 @@ assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 # Vault (dev mode) container for the push2u-signer-vault integration test.
 testcontainers-vault = { module = "org.testcontainers:testcontainers-vault", version.ref = "testcontainers" }
 
-# Spring Boot — for the push2u-spring-boot-starter module. The BOM (spring-boot-dependencies)
-# manages every Spring/Spring-Boot version; the individual modules below omit versions.
+# Spring Boot — for the two starter modules. The BOM (spring-boot-dependencies) aligns this
+# build's own compile, annotation-processing and test classpaths, and never leaves the project:
+# it is not on any published configuration, so a consumer's Spring/Jackson/Micrometer versions
+# stay theirs (ADR-032).
+#
+# spring-boot-autoconfigure is the one Spring Boot artifact the starters publish, so it carries a
+# version of its own rather than taking one from the BOM: an ordinary `require`, which Gradle
+# reads as a minimum another requirement may raise. Without it the published dependency would
+# have no version at all. The rest below stay versionless — they are compileOnly, annotation
+# processing or test-only, where the BOM is present and nothing is published.
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
-spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "springBoot" }
 spring-boot-health = { module = "org.springframework.boot:spring-boot-health" }
 # Actuator endpoint infrastructure — test-only, for the starter's proof that the health endpoint's
 # liveness group never includes the push2u indicator (spring-boot-health's endpoint/groups classes
