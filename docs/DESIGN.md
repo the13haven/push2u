@@ -167,8 +167,8 @@ exception.
 
 **The `[exports]` warnings that lint reports on the core are accepted, not overlooked.** Every one
 of them is `class Nullable in module org.jspecify is not indirectly exported`, and the change lint
-asks for, `requires static transitive org.jspecify`, silences them and
-breaks every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
+asks for, `requires static transitive org.jspecify`, silences them and breaks every module-path
+consumer that does not itself ship JSpecify: `transitive` makes the module
 mandatory at the consumer's compile time, and such a consumer fails with `module not found:
 org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
 are metadata for analysers, not types a caller must name, so the warning describes a problem this
@@ -867,14 +867,15 @@ signers manage their own providers.
 ### Nullness
 
 Every package carries JSpecify's `@NullMarked`, so a reference type in the public API is non-null
-unless it is annotated `@Nullable`, and **`@Nullable` is confined to values a caller may
-legitimately omit** — an unset message header, an unset builder value, a refusal reason the policy
-did not give, an unavailability the custodian declared no cause or retry moment for, an unset
-Spring property. Nothing else in the API is nullable; the exception is the `equals(Object)`
-overrides, where the annotation is the language's contract rather than this API's. What that buys a
-caller is that a `@Nullable` in a signature always means "you may leave this out", never "this may
-fail to arrive". The annotations are part of the published surface — NullAway, IntelliJ and the
-Kotlin compiler read the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
+unless it is annotated `@Nullable`, and **`@Nullable` marks a value that may legitimately be
+absent** — an unset message header, an unset builder value, a refusal reason the policy did not
+give, an unavailability the custodian declared no cause or retry moment for, an unset Spring
+property, the endpoint handed to a redaction that has to run on a logging path where there may not
+be one. What it never marks is a value that failed to arrive: nothing here returns `null` to report
+that something went wrong, which is what leaves the outcome types and the two seam exceptions as
+the only places a failure is expressed. The one `@Nullable` that is not this API's own statement is
+on the `equals(Object)` overrides, where it is the language's. The annotations are part of the
+published surface — NullAway, IntelliJ and the Kotlin compiler read the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
 ## 6. Cryptography
 
