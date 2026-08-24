@@ -43,9 +43,13 @@ package com.the13haven.push2u;
  * unchanged.
  *
  * <p><b>Implementations must be thread-safe.</b> One {@link PushSender} is shared across threads and
- * {@link PushSender#sendAsync} makes concurrent calls the normal case. This is not checkable by the conformance kit,
- * and the natural mistake is silent: {@code java.security.Signature} is not thread-safe, so one held in a field
- * corrupts signatures under concurrency instead of failing. Obtain per-call instances, or confine them to a thread.
+ * {@link PushSender#sendAsync} makes concurrent calls the normal case. The natural mistake is silent:
+ * {@code java.security.Signature} is not thread-safe, so one held in a field corrupts signatures under concurrency
+ * instead of failing. Obtain per-call instances, or confine them to a thread. The conformance kit puts several threads
+ * inside {@link #sign} at once, each over an input of its own, and requires every signature to verify against the input
+ * its own call handed in — which catches a shared signing object whenever the threads collide inside it, and
+ * establishes nothing when they do not, since no schedule is forced. It is a smoke check under the requirement, not a
+ * proof of it: a green run says an implementation was not caught, never that it is safe.
  *
  * <p><b>The advertised public key is stable for a signer's lifetime.</b> VAPID's public key is the application server's
  * published identity: a browser subscription is bound to the {@code applicationServerKey} it was created with, and RFC
@@ -53,10 +57,11 @@ package com.the13haven.push2u;
  * signer that swaps its advertised key under a live sender has therefore already broken every restricted subscription
  * taken out before the swap — whatever the library does with the values {@link #sign} and {@link #publicKey} return.
  * Rotation is a re-subscription event that produces a <em>new</em> signer, never a new answer from an existing one; the
- * shipped Vault signer says the same of itself. Like thread-safety, this cannot be checked from outside — the library
- * sees only what each call returns, and two equal answers say nothing about the next one — so it is stated as contract,
- * and the conformance kit pins only its two checkable moments: consecutive calls answering the same key, and one
- * signature verifying against the key advertised beside it.
+ * shipped Vault signer says the same of itself. Unlike thread-safety, this admits no check at all, not even a run that
+ * might catch it: a lifetime leaves nothing to observe from outside — the library sees only what each call returns, and
+ * two equal answers say nothing about the next one — so it is stated as contract, and the conformance kit pins only its
+ * two checkable moments: consecutive calls answering the same key, and one signature verifying against the key
+ * advertised beside it.
  */
 public interface VapidSigner {
 

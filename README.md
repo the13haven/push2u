@@ -963,7 +963,7 @@ dependencies {
 [`SIGNER.md`](docs/SIGNER.md) is the reference — the two shape checks every signature and key
 passes on its way into a send, the split between `VapidSignerUnavailableException` and
 `PushCryptoException` an implementation is most likely to get wrong, why the key a signer
-advertises may never change, and the six checks the kit runs.
+advertises may never change, and the seven checks the kit runs.
 
 ## Testing an application that sends
 

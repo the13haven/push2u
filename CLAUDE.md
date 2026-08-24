@@ -80,7 +80,7 @@ clauses are load-bearing rather than caveats, and a citation swapped for a weake
 writing a `VapidSigner` over an HSM, a KMS or a remote custodian: the two shape checks every
 signature and key passes on its way into a send, the `VapidSignerUnavailableException` /
 `PushCryptoException` split an implementation is most likely to get wrong, why the key a signer
-advertises may never change for that signer's lifetime, and the six checks `push2u-testkit` runs.
+advertises may never change for that signer's lifetime, and the seven checks `push2u-testkit` runs.
 It took that material out of the tail of README's *JCE provider selection* and out of the whole of
 its conformance-kit section, which leaves the first about choosing a provider and turns the second
 into the short *Writing a VapidSigner* introduction README gives `docs/SPRING.md` and

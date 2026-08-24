@@ -562,7 +562,8 @@ missing mount, a token without the capability.
 
 [`SIGNER.md`](SIGNER.md) is the reference for the whole contract — the two shape checks every
 signature and key pass, the split above stated in full, why the advertised key may never change for
-a signer's lifetime, and the six checks the kit runs. Do not re-derive it from this page.
+a signer's lifetime, and what the conformance kit holds an implementation to. Do not re-derive it
+from this page.
 
 Three smaller things, and the first two are worth keeping apart, because only one of them is
 something an implementation *does*.

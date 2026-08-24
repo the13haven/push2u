@@ -19,10 +19,16 @@ import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.Test;
+import org.opentest4j.TestAbortedException;
 
 import com.the13haven.push2u.VapidSigner;
+import com.the13haven.push2u.VapidSignerUnavailableException;
 
 /**
  * The kit checking itself. {@link VapidSignerContractTest} is published so that a signer implementation finds out it
@@ -67,6 +73,71 @@ final class VapidSignerContractSelfTest {
         assertThatCode(contract::signHandsOutAFreshArrayOnEveryCall).doesNotThrowAnyException();
         assertThatCode(contract::signatureIsRawRsThatVerifiesAgainstTheAdvertisedPublicKey)
                 .doesNotThrowAnyException();
+        assertThatCode(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * The positive control for the concurrency check, run repeatedly. The check's own worth is asymmetric — a passing
+     * run proves nothing about a signer — but a check that goes red now and then on a <em>conforming</em> signer is
+     * worse than no check at all, since the build it was added to learns to ignore it. So the one direction that must
+     * hold on every run is this one: a signer taking a fresh {@code Signature} per call never fails it.
+     */
+    @Test
+    void aThreadSafeSignerPassesTheConcurrencyCheckOnEveryRun() throws Exception {
+        for (int run = 0; run < 10; run++) {
+            Contract contract = new Contract(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE));
+
+            assertThatCode(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                    .as("run " + run + " of a signer that shares nothing between calls")
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    /**
+     * The defect the check exists for: one {@code java.security.Signature} held in a field, which is what
+     * {@code VapidSigner} names as the natural mistake. In the wild it corrupts signatures only when two threads happen
+     * to collide inside that object, so a self-test built on the real race would be red most runs and green some —
+     * worse than absent. This subject makes the collision certain instead: callers pair up at a rendezvous placed
+     * between {@code update} and {@code sign}, so the first of each pair signs both probes concatenated and the second
+     * signs the empty message the shared object was reset to. Neither verifies against the input its own call handed
+     * in, which is exactly the contract's assertion.
+     *
+     * <p>The shared object is guarded by a lock all the same. Letting two threads into a {@code Signature} at once
+     * would leave the subject able to fail by throwing out of the JCA, and then this self-test would be pinning the
+     * contract's exception path rather than the one it means to pin.
+     */
+    @Test
+    void aSharedSignatureObjectFailsTheConcurrencyCheck() throws Exception {
+        Contract contract = new Contract(new SharedSignatureObjectSigner(keyPair()));
+
+        assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .as("signatures woven out of several callers' inputs verify against none of them")
+                .isInstanceOf(AssertionError.class)
+                // Failed by verification rather than by throwing, and with nothing counted as
+                // unavailable — that wording belongs to the check's own assertion and to no other
+                // path out of it, so this self-test cannot pass on a subject that merely blew up
+                // inside the JCA. How many of the calls failed is deliberately not pinned: the
+                // rendezvous guarantees that the first signer of the first pair covers two probes
+                // and so verifies against neither, while a caller whose update happens to be the
+                // only one the shared object holds can still come back with a signature of its
+                // own. One is what the check needs to go red, and one is what this asserts.
+                .hasMessageContaining("reported the custodian unable to sign now");
+    }
+
+    /**
+     * A custodian that cannot sign now is not a verdict, and every call answering that way is not a pass. The check
+     * aborts instead, because a green result would report that this signer had been held to something no call
+     * exercised.
+     */
+    @Test
+    void aSignerThatIsUnavailableThroughoutAbortsTheConcurrencyCheck() throws Exception {
+        Contract contract =
+                new Contract(new UnavailableSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)));
+
+        assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .as("no signature was observed, so the check reached no verdict")
+                .isInstanceOf(TestAbortedException.class);
     }
 
     @Test
@@ -385,6 +456,87 @@ final class VapidSignerContractSelfTest {
         @Override
         public String publicKeyBase64Url() {
             return Base64.getEncoder().encodeToString(delegate.publicKey());
+        }
+    }
+
+    /**
+     * One {@code Signature} in a field, shared by every caller — the mistake {@code VapidSigner} names — with the
+     * collision forced rather than waited for. Each caller feeds the shared object and then pairs off with another
+     * caller before signing, so one of the pair signs both probes and the other signs the empty message left behind by
+     * the first one's {@code sign}, which resets the object.
+     */
+    private static final class SharedSignatureObjectSigner implements VapidSigner {
+
+        /**
+         * Long enough that a pair always meets, short enough that a caller left over never holds the check's budget.
+         */
+        private static final int RENDEZVOUS_SECONDS = 5;
+
+        private final VapidSigner delegate;
+        private final Signature shared;
+        private final CyclicBarrier paired = new CyclicBarrier(2);
+        private final Object lock = new Object();
+
+        SharedSignatureObjectSigner(KeyPair keyPair) throws GeneralSecurityException {
+            this.delegate = new JdkP256Signer(keyPair, Encoding.RAW, PointDamage.NONE);
+            this.shared = Signature.getInstance("SHA256withECDSAinP1363Format");
+            this.shared.initSign(keyPair.getPrivate());
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            try {
+                // Locked, so that two threads are never inside the JCA object at once: an
+                // exception out of the provider would have this self-test pinning the contract's
+                // exception path instead of the interleaving it is here for.
+                synchronized (lock) {
+                    shared.update(signingInput);
+                }
+                pair();
+                synchronized (lock) {
+                    return shared.sign();
+                }
+            } catch (GeneralSecurityException e) {
+                throw new IllegalStateException("signing the conformance probe failed", e);
+            }
+        }
+
+        /** Waits for one other caller to have fed the shared object, and gives up rather than blocking for ever. */
+        private void pair() {
+            try {
+                paired.await(RENDEZVOUS_SECONDS, TimeUnit.SECONDS);
+            } catch (BrokenBarrierException | TimeoutException noPartner) {
+                // A caller left over signs alone; with an even number of concurrent calls there is
+                // none, and even one such caller only removes itself from the count that matters.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while pairing", interrupted);
+            }
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+    }
+
+    /** A custodian answering every {@code sign} with "not now" — the answer the check reads as no evidence at all. */
+    private static final class UnavailableSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+
+        UnavailableSigner(VapidSigner delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            throw new VapidSignerUnavailableException("the custodian is rate-limiting this burst");
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
         }
     }
 

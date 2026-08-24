@@ -45,10 +45,15 @@ every `throw` in it is worth a look.
 ## The signer must be thread-safe
 
 **Implementations must be thread-safe.** One `PushSender` is shared across threads and
-`sendAsync` makes concurrent calls the normal case. This is not checkable by the conformance kit,
-and the natural mistake is silent: `java.security.Signature` is not thread-safe, so one held in a
-field corrupts signatures under concurrency instead of failing. Obtain per-call instances, or
-confine them to a thread.
+`sendAsync` makes concurrent calls the normal case. The natural mistake is silent:
+`java.security.Signature` is not thread-safe, so one held in a field corrupts signatures under
+concurrency instead of failing. Obtain per-call instances, or confine them to a thread.
+
+The conformance kit puts several threads inside `sign` at once and requires each signature to verify
+against the input its own call handed in. That is a smoke check and the kit calls it one: it catches
+a shared signing object when the threads happen to collide inside it, and establishes nothing when
+they do not, because no schedule is forced. A green run says your signer was not caught — never that
+it is safe. The requirement is the sentence above; the check is what a suite can do under it.
 
 ## The advertised key never changes
 
@@ -78,12 +83,27 @@ class MySignerContractTest extends VapidSignerContractTest {
 }
 ```
 
-Six checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
+Seven checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
 coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
 by the JCA without complaint), `publicKeyBase64Url()` is exactly the unpadded URL-safe base64 of
 those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than
-one the signer keeps — two successive calls must not return the same object — and a signature is
-the raw 64-byte `r || s` that verifies against that key. Verification uses the JDK alone and runs
+one the signer keeps — two successive calls must not return the same object — a signature is
+the raw 64-byte `r || s` that verifies against that key, and several threads signing at once each
+come back with a signature that verifies against the input that call handed in.
+
+That last one is the concurrency smoke check described above, and three of its choices are worth
+knowing before you read a failure. Every caller signs a *different* input, which is what makes the
+defect catchable at all: under one shared input, two interleaved `update` calls feed the same bytes
+twice and the signature can still verify. The signatures are never compared with one another — ES256
+is randomized. And the key is read once, on one thread, before the threads start, so a failure is
+about signing and not about a race on the key. A call answering `VapidSignerUnavailableException`
+is counted as neither pass nor failure — a custodian rate-limiting a burst is exactly what that type
+is for, and a concurrent burst is what provokes it — and if every call answers that way, the check
+aborts rather than reporting a green it did not earn. It also stops waiting after a budget and
+aborts then too: the seam promises nothing about how fast a custodian signs, so a slow call is not
+a verdict.
+
+Verification uses the JDK alone and runs
 on a FIPS-only JVM: the kit prefers
 `SHA256withECDSAinP1363Format` and, where a provider registers only DER-form `SHA256withECDSA`
 (BC-FIPS), re-encodes the raw signature to minimal DER and verifies through that name — [the same
