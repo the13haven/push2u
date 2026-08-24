@@ -10,7 +10,7 @@ testcontainers = "2.0.5"
 # library, so its
 # adopters build on the current Spring Boot (legacy 3.x projects are unlikely to swap a working
 # web-push library for a new one). Java 17+ baseline, so the module's --release 21 is fine.
-springBoot = "4.1.0"
+springBoot = "4.1.1"
 
 # BouncyCastle — the stock provider push2u-core's `test` source set declares for the raw r||s ES256
 # path, and nothing else. It used to serve a second, unrelated purpose: build.gradle.kts read this
