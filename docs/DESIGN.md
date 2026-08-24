@@ -1440,9 +1440,13 @@ would be unreachable — a deployment sending through the local signer with a fo
 `push2u.signer.vault.address` would be refused by a check that could not yet see the signer it was
 about to be told to stand down for.
 
-**The case the refusal cannot reach is answered by a failure analyzer.** An application that
-requires a `PushSender` from a context where the check never ran gets `MissingPushSenderFailureAnalyzer`,
-which distinguishes three causes and gives three answers: the deployment stated `false` and
+**The cases a refusal cannot reach are answered by failure analyzers.** A refusal raised from inside
+a factory method runs only where that method runs, so a context that builds no sender reaches
+neither the sender's own refusal nor the two the endpoint policy keeps there. Both gaps open in the
+same deployment and each is answered by its own analyzer; this is the first, and the one about the
+policy belongs with the policy, below. An application that requires a `PushSender` from a context
+where the check never ran gets `MissingPushSenderFailureAnalyzer`, which distinguishes three causes
+and gives three answers: the deployment stated `false` and
 something still required a sender, which is a contradiction in the application rather than a missing
 signer; the check is absent because its auto-configuration was excluded; and everything else, which
 is the same enumeration the refusal gives — with a context that already holds a `VapidSigner` led
@@ -1452,10 +1456,13 @@ for the same reason no answer may state something false about the context it des
 signer-present branch names both shapes that reach it — `Push2uAutoConfiguration` inactive, and
 `Push2uAutoConfiguration` active but unable to see a signer an auto-configuration ordered after it
 registered — rather than claiming either. The
-framework ships an analyzer for the same failure, so this one declares `@Order(HIGHEST_PRECEDENCE)`
-rather than taking the position its `spring.factories` entry happens to give it, and a test pins that
-its text is the one that arrives — losing that race would leave no mark, since the output would be
-correct, generic and exactly what it was before.
+framework ships an analyzer for a missing bean of its own, and it recognises the same failure both of
+these do, so each of them declares `@Order(HIGHEST_PRECEDENCE)` rather than taking the position its
+`spring.factories` entry happens to give it, and a test pins for each that its text is the one that
+arrives — losing that race would leave no mark, since the output would be correct, generic and
+exactly what it was before either analyzer existed. The factories file is where they are registered
+and deliberately not where their precedence is decided: a position on the classpath is not a
+statement anyone made.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
@@ -1504,13 +1511,52 @@ wearing the property name and the index.
 obligation and the obligation is the sender's: both properties unset with no bean fails naming the
 three ways to decide, and every set property empty with no bean fails naming both keys — the
 emptiness is a statement about the pair, and no single core factory can speak for both. A
-registration-only context that expresses nothing simply holds no policy bean and starts. The escape
-hatch is per property — an explicitly *empty* value says the property is deliberately unused here,
-so a service can empty whichever key it inherited from shared configuration it cannot unset, ceding
-to a bean or to the sibling property. `pushSender` never builds the policy from the properties
-itself; the one reachable state with a non-empty property and no bean — the policy
+registration-only context that expresses nothing simply holds no policy bean and starts — and goes
+on starting until something in it asks for the policy, which is where the second analyzer takes
+over. The escape hatch is per property — an explicitly *empty* value says the property is
+deliberately unused here, so a service can empty whichever key it inherited from shared
+configuration it cannot unset, ceding to a bean or to the sibling property. `pushSender` never
+builds the policy from the properties itself; the one reachable state with a non-empty property and
+no bean — the policy
 auto-configuration excluded by hand — is refused naming that auto-configuration rather than
 silently rebuilt.
+
+**So the same three states are reached twice, and they are written once.** A sending deployment meets
+them as a refusal, inside the factory method whose obligation they are. A registration-only one meets
+them as an unsatisfied dependency, because it injects the policy at the boundary where subscriptions
+arrive and holds no sender for that refusal to run inside — which is the one deployment shape whose
+whole reason for wanting the policy is that a registration endpoint must not store whatever a browser
+offers it, and the one that would otherwise read the framework's "required a bean that could not be
+found" naming a push2u type and nothing else. `MissingEndpointPolicyFailureAnalyzer` answers it, and
+`MissingEndpointPolicy` carries both the wording and the reading of the two properties for both
+askers, so neither restates the other. The two shapes differ in assembly and not in content: a
+refusal folds situation and ways out into the one string an exception carries, an injection-failure
+analysis wants them apart, because there the situation follows the framework's account of what went
+unsatisfied and has to read as the next sentence rather than as the continuation of a clause. Written
+apart and joined, rather than written joined and split, so that neither shape can be edited without
+the other following. The analyzer reads the properties from the environment rather than from the
+bound record — a context that failed to start may hold neither the record nor the class that enables
+it — but through the same two names and the same unset-against-emptied distinction that decide
+whether the bean exists at all, so the state it reports and the state that produced the absence
+cannot come apart.
+
+Two things are true of that analysis and of no refusal. **`push2u.enabled` is never the cause, and
+where a deployment has stated it off, one clause says so** — the switch withdraws the delivery path
+and deliberately not the policy, which is precisely what such a deployment keeps by making the
+statement. The clause earns its space from its neighbour: the analysis of a missing sender *does*
+answer in terms of that switch, so an operator who has just read that one will reach for it here, and
+the plausible next move without the clause is to turn delivery back on in a deployment that
+deliberately does not send — which fixes nothing and undoes a statement someone made on purpose. And
+**an injection point can be withdrawn where a factory method has none to offer**, so the analysis
+names that way out too — conditioned on a deployment that neither sends *nor accepts* subscriptions,
+never on one that merely does not send. A service that takes subscriptions from clients and does not
+check their endpoints is the one context this may not invite to remove the injection point: it is the
+one that should start checking them, and the invitation would hand it the shape that lets
+registration go on storing whatever a browser offers. As with the sender's analyzer, nothing said may
+be false about the context being described, so the analysis is declined outright wherever the
+enumeration would be an account of some other context — a missing bean of another type, a bean found
+more than once rather than not at all, a failure early enough that neither the bean factory nor the
+environment is there to read, and a context that does hold an `EndpointPolicy` definition after all.
 
 Both properties' components are nullable and neither carries a `@DefaultValue`, so an unset key
 stays distinguishable from an explicitly empty one; every rule above rests on that difference, and
