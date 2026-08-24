@@ -25,8 +25,9 @@ matches the path, so moving or renaming the file silently switches that off unle
 with it. `docs/HEALTH.md` is the Spring Boot health indicator's own reference, split out of
 `docs/SPRING.md` once it had outgrown a section of a document whose subject is the starter's
 properties: what the probe asserts about the signer and what it deliberately does not, its two
-`management.health.push2u.*` keys with the cache and the startup refusals that replaced their
-`push2u.health.*` predecessors, and the health-group routes that keep a signer's backend out of a
+`management.health.push2u.*` keys with the cache, what became of their `push2u.health.*`
+predecessors now that the startup refusal over them has been retired and a leftover key is ignored
+in silence, and the health-group routes that keep a signer's backend out of a
 container health check. Its two parts are shaped by the asymmetry that made the split worth making —
 the indicator is this library's, while nearly all of the group material is Spring Boot's own
 behaviour and would read the same for any contributor at all. `docs/SPRING.md` keeps a short

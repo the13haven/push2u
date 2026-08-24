@@ -62,10 +62,9 @@ class Push2uAutoConfigurationTest {
     /** The public half of an unrelated pair, for the mismatch case. */
     private static String otherPublicKeyB64;
 
-    // The full starter composition, exactly as the imports file ships it. The removed-properties
-    // tombstone rides along so every scenario here also proves that a context without the removed
-    // key starts exactly as before its check existed; the endpoint-policy autoconfiguration rides
-    // along so every sender wired here takes its policy from the bean, the way a real context does
+    // The full starter composition, exactly as the imports file ships it. The endpoint-policy
+    // autoconfiguration rides along so every sender wired here takes its policy from the bean, the way a real context
+    // does
     // — and so the refusals that stayed with pushSender demonstrably fire with the policy
     // autoconfiguration PRESENT, rather than being satisfied by the starter's own bean.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()

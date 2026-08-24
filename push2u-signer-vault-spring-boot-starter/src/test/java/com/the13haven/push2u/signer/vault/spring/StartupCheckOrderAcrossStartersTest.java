@@ -40,7 +40,6 @@ import com.the13haven.push2u.testkit.VapidKeyPairFixture;
  *
  * <ol>
  *   <li>the value of {@code push2u.enabled};
- *   <li>a tombstone over a removed property;
  *   <li>a malformed allowlist entry;
  *   <li>an allowlist stated beside an application policy bean;
  *   <li>a signer starter's partial-configuration diagnostic;
@@ -73,36 +72,13 @@ class StartupCheckOrderAcrossStartersTest {
     void theActivationSwitchsOwnValueIsReadFirst() {
         // Every fault at once. A deployment that mistyped the one key deciding whether any of this
         // applies is owed that sentence, and not a consequence of it — which is what the position
-        // above the tombstones buys.
-        contextWith(
-                        "push2u.enabled=yes",
-                        "push2u.record-size=8192",
-                        "push2u.allowed-origins=http://push.example",
-                        PARTIAL_VAULT_BLOCK)
+        // at the head of the list buys.
+        contextWith("push2u.enabled=yes", "push2u.allowed-origins=http://push.example", PARTIAL_VAULT_BLOCK)
                 .withUserConfiguration(ApplicationPolicyConfiguration.class)
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .hasMessageContaining("push2u.enabled")
-                            .hasMessageNotContaining("push2u.record-size")
-                            .hasMessageNotContaining("push2u.allowed-origins[")
-                            .hasMessageNotContaining("Configure exactly one")
-                            .hasMessageNotContaining("configured by halves")
-                            .hasMessageNotContaining("VapidSigner bean");
-                });
-    }
-
-    @Test
-    void aTombstoneIsReadNext() {
-        // The switch corrected, the rest untouched. A key that no longer exists makes every reading
-        // of the configuration under it a reading of something the operator did not mean to write,
-        // so it precedes the value refusals below.
-        contextWith("push2u.record-size=8192", "push2u.allowed-origins=http://push.example", PARTIAL_VAULT_BLOCK)
-                .withUserConfiguration(ApplicationPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure())
-                            .hasMessageContaining("push2u.record-size")
                             .hasMessageNotContaining("push2u.allowed-origins[")
                             .hasMessageNotContaining("Configure exactly one")
                             .hasMessageNotContaining("configured by halves")

@@ -353,10 +353,6 @@ class Push2uDeliverySwitchTest {
                         assertThat(context).hasFailed();
                         assertThat(context.getStartupFailure()).as(side).hasMessageContaining("Configure exactly one");
                     });
-            runner.withPropertyValues(side, "push2u.record-size=8192").run(context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure()).as(side).hasMessageContaining("push2u.record-size");
-            });
         }
     }
 

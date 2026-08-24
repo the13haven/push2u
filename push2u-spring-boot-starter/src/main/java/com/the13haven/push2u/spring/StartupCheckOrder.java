@@ -14,15 +14,14 @@ import org.springframework.core.Ordered;
  * than taken from the registration sequence the framework promises only as far as it can.
  *
  * <p>The order is one list spanning the whole starter family, most specific first: the value of the activation switch,
- * then the tombstones over removed properties, then the allowlist refusals, then a signer starter's own diagnostic,
- * then the general refusal over a missing signer. A check declares only the position it implements — a number reserved
- * for a check that does not exist yet would be a claim nothing keeps true — and each position leaves a gap of 100 so
- * the checks around it can take theirs when they are built. Positions of checks in other modules cannot live here,
- * because a signer starter deliberately does not depend on this one; each module keeps its own constants and reads them
- * against the same list. What pins the list is therefore not any constant's value — a test asserting that a number here
- * equals a number written in the decision proves only that someone typed it twice, and stays green while the module
- * next door moves its own — but the message that arrives in a context holding every starter and earning several
- * refusals at once.
+ * then the allowlist refusals, then a signer starter's own diagnostic, then the general refusal over a missing signer.
+ * A check declares only the position it implements — a number reserved for a check that does not exist yet would be a
+ * claim nothing keeps true — and each position leaves a gap of 100 so the checks around it can take theirs when they
+ * are built. Positions of checks in other modules cannot live here, because a signer starter deliberately does not
+ * depend on this one; each module keeps its own constants and reads them against the same list. What pins the list is
+ * therefore not any constant's value — a test asserting that a number here equals a number written in the decision
+ * proves only that someone typed it twice, and stays green while the module next door moves its own — but the message
+ * that arrives in a context holding every starter and earning several refusals at once.
  *
  * <p>The framework sorts post-processors into buckets by the kind of precedence their <em>class</em> declares and
  * compares numbers only within a bucket, so every check taking a position from this class implements {@link Ordered} on
@@ -40,19 +39,6 @@ final class StartupCheckOrder {
      * would otherwise surface as a refusal about a signer nobody was asked for.
      */
     static final int ACTIVATION_SWITCH_VALUE = Ordered.HIGHEST_PRECEDENCE + 100;
-
-    /**
-     * The tombstones over properties a release removed: they precede every value and wiring refusal below them, because
-     * a key that no longer exists makes any reading of the configuration under it a reading of something the operator
-     * did not mean to write. Only the activation switch's own value outranks them.
-     *
-     * <p>However many keys have been removed, this position holds <em>one</em> check that names all of them it finds. A
-     * check per key would have to share this number, since no tombstone is more specific than another, and then the
-     * only order between them would be the sequence the framework happened to register them in — leaving an operator
-     * holding several dead keys to meet one per failed startup. There is deliberately no order among tombstones to
-     * declare, because they arrive together.
-     */
-    static final int REMOVED_PROPERTY_TOMBSTONE = Ordered.HIGHEST_PRECEDENCE + 200;
 
     /**
      * A malformed allowlist entry — one that is not a well-formed origin or domain, named by property and index. The

@@ -250,8 +250,8 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     @Test
     void theConditionReadsEverySpellingRelaxedBindingAccepts() {
         // The environment-variable spelling arrives through a SystemEnvironmentPropertySource,
-        // whose mapping a literal property lookup would not apply — the same reason the tombstone
-        // reads through Binder. The bean's condition, reading the same way, must see it too.
+        // whose mapping a literal property lookup would not apply, which is why every check in this
+        // family reads through Binder. The bean's condition, reading the same way, must see it too.
         runner.withInitializer(environmentVariable("PUSH2U_ALLOWED_ORIGINS", "https://push.example.test"))
                 .run(context -> {
                     assertThat(context).hasNotFailed();
@@ -562,24 +562,6 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     assertThat(context.getStartupFailure())
                             .isInstanceOf(IllegalArgumentException.class)
                             .hasMessageContaining("push2u.allowed-origins[0]:")
-                            .hasMessageNotContaining("Configure exactly one");
-                });
-    }
-
-    @Test
-    void theTombstoneOutranksBothAllowlistChecks() {
-        // A context earning three declared checks at once: a removed key, a malformed entry, and
-        // an allowlist beside a bean. The tombstone's position is ahead of both allowlist checks —
-        // a key that no longer exists makes every reading of the configuration under it suspect —
-        // so its message is the one that arrives. Pinned by the message, not by constants.
-        runner.withPropertyValues("push2u.record-size=8192", "push2u.allowed-origins=http://push.example")
-                .withUserConfiguration(RejectingPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure())
-                            .isInstanceOf(IllegalStateException.class)
-                            .hasMessageContaining("push2u.record-size")
-                            .hasMessageNotContaining("push2u.allowed-origins[")
                             .hasMessageNotContaining("Configure exactly one");
                 });
     }

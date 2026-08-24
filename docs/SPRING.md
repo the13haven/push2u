@@ -235,12 +235,11 @@ the sender translates from a property, and every per-property translation in a s
 | An allowlist stated beside an application policy bean | runs | runs |
 | A signer starter's partial-configuration diagnostic | skipped | runs |
 | The general refusal over a missing signer | skipped | runs |
-| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
 
-The first three and the last are about a *value*: an entry that is not an origin is not an origin
-in a context that sends nothing either, and a key a release removed configures nothing on either
-side. The middle two are about the *delivery path* — each asks, in its own words, whether this
-deployment can sign, and a deployment that has said it does not send has answered that already.
+The first three are about a *value*: an entry that is not an origin is not an origin in a context
+that sends nothing either. The last two are about the *delivery path* — each asks, in its own
+words, whether this deployment can sign, and a deployment that has said it does not send has
+answered that already.
 
 **The switch does not reach the endpoint policy**, and that is the point of the row above. A
 service that accepts subscriptions and leaves the sending to another one has no signer and wants
@@ -281,23 +280,22 @@ One context can earn several refusals at once, and what arrives is whichever is 
 The order, most specific first, is:
 
 1. the value of `push2u.enabled`;
-2. a tombstone over a removed property;
-3. a malformed allowlist entry;
-4. an allowlist stated beside an application policy bean;
-5. a signer starter's partial-configuration diagnostic;
-6. the general refusal over a missing signer;
-7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+2. a malformed allowlist entry;
+3. an allowlist stated beside an application policy bean;
+4. a signer starter's partial-configuration diagnostic;
+5. the general refusal over a missing signer;
+6. everything else, which is ordinary bean creation — every refusal raised while a bean is being
    built, including what the autoconfigured sender refuses on its own.
 
-Steps 3 to 6 are specific before general, a value before the path. Steps 1 and 2 sit ahead of all
-of it because they decide whether the configuration underneath them can be read at face value at
-all. It is about which message arrives first and nothing more: no later step's *condition* depends
-on an earlier step's outcome.
+Steps 2 to 5 are specific before general, a value before the path. Step 1 sits ahead of all of it
+because it decides whether the configuration underneath it can be read at face value at all. It is
+about which message arrives first and nothing more: no later step's *condition* depends on an
+earlier step's outcome.
 
 ### A bean condition on these beans answers "absent" in every deployment
 
-Every refusal above needs something in the context for a check to read — a value, a key a release
-removed, a bean, two statements contradicting each other. This is the one route into "boots green,
+Every refusal above needs something in the context for a check to read — a value, a bean, two
+statements contradicting each other. This is the one route into "boots green,
 sends nothing" that leaves the context indistinguishable from a working deployment's, so no startup
 check can see it:
 
@@ -624,8 +622,7 @@ opposite of what was meant by typing it. Wherever the blank lands, it is refused
 entry it is, by property and index — `push2u.allowed-origins[0]`, an entry that shows nothing of
 itself but still has a position — and that refusal outranks the property-beside-a-bean
 contradiction and every bean-creation failure, so the message points at the blank rather than at a
-bean that was configured on purpose. Only a removed `push2u.*` key outranks the blank: a context
-carrying one of those too reads the tombstone first.
+bean that was configured on purpose. Only the activation switch's own value outranks it.
 
 ### No property turns the restriction off
 

@@ -460,7 +460,7 @@ and that has a chapter of its own.
   - [`Subscription` now bounds the endpoint's length](#subscription-now-bounds-the-endpoints-length)
   - [VAPID tokens are reused by default](#vapid-tokens-are-reused-by-default)
 - [Spring Boot, coming from `0.1.0`](#spring-boot-coming-from-010)
-  - [The `push2u.*` keys that `0.1.0` had and this release refuses](#the-push2u-keys-that-010-had-and-this-release-refuses)
+  - [The `push2u.*` keys that `0.1.0` had and no later version reads](#the-push2u-keys-that-010-had-and-no-later-version-reads)
   - [`push2u.enabled`: a context that boots without web push now fails](#push2uenabled-a-context-that-boots-without-web-push-now-fails)
   - [The health probe moved under `management.health.push2u`](#the-health-probe-moved-under-managementhealthpush2u)
   - [The endpoint policy is a bean, and its refusals moved](#the-endpoint-policy-is-a-bean-and-its-refusals-moved)
@@ -861,12 +861,17 @@ Everything above applies to a Spring deployment too; this section is what the st
 it. [`SPRING.md`](SPRING.md) is the reference for every property as it stands now, and
 [`HEALTH.md`](HEALTH.md) for the probe.
 
-#### The `push2u.*` keys that `0.1.0` had and this release refuses
+#### The `push2u.*` keys that `0.1.0` had and no later version reads
 
-Six keys are gone, and none of them is ignored. Each fails the context at startup with a message
-naming the key, saying it configures nothing now, and saying what to write instead — because a
-removed key left in a YAML file is a setting the operator believes is in force, and every one of
-these costs in the same direction if it is merely dropped.
+Six keys are gone. **Delete them from your configuration by hand: nothing checks that you have.**
+
+`0.2.0` shipped a startup refusal over each — a tombstone, naming the key and where its effect had
+gone — and that refusal was carried for one release and has since been retired, because a check
+that outlives the upgrade it was written for becomes code refusing keys nobody has written in
+years. An application coming from `0.1.0` **through** `0.2.0` met it. One coming here **directly**
+from `0.1.0` does not, and a leftover key is ignored in silence, which is what binding does with
+any key nothing reads. That makes the table below the only thing standing between you and a setting
+you believe is in force.
 
 | The key | What it did | What to write instead |
 |---|---|---|
@@ -877,16 +882,11 @@ these costs in the same direction if it is merely dropped.
 | `push2u.health.enabled` | whether the health indicator is registered | `management.health.push2u.enabled` |
 | `push2u.health.cache-ttl` | how long a probe result is cached | `management.health.push2u.cache-ttl`, same value, same meaning |
 
-The three retry keys are the ones whose silent removal would have changed *delivery* rather than a
-diagnostic: a deployment that configured three attempts would have started clean and then sent once
-per message, with nothing at startup or at run time saying so, and the messages a push service
-dropped under load simply gone. That is why they refuse the context rather than being ignored.
-
-These refusals are **tombstones**, not permanent validation: each is carried for one minor release
-after the release that removed its key, and then deleted. They exist to catch configuration written
-against the previous release, not to accumulate for the life of the library — which is another way
-of saying that skipping this step now and returning to it two releases later is a state nothing will
-warn you about.
+**The three retry keys are the ones to check first**, because they are the ones whose silent
+absence changes *delivery* rather than a diagnostic: a deployment that configured three attempts
+starts clean and then sends once per message, with nothing at startup or at run time saying so, and
+the messages a push service dropped under load simply gone. Grep your configuration — every
+spelling, including the `PUSH2U_RETRY_MAX_ATTEMPTS` environment-variable form — before you deploy.
 
 #### `push2u.enabled`: a context that boots without web push now fails
 

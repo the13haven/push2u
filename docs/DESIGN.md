@@ -1303,44 +1303,38 @@ no second helper any more: the one property group whose values reached a constru
 several at once was `push2u.retry.*`, and it is gone with the retry loop, so no property needs a
 probe to be attributed.
 
-**A property a release removed is refused, not ignored.** `push2u.record-size` went with
+**A property a release removed is refused for one release, then ignored like any other unknown
+key.** `push2u.record-size` went with
 [ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md); `push2u.health.enabled` and
 `push2u.health.cache-ttl` went to `management.health.push2u.*` when the health indicator took Spring
 Boot's own switch for a contributor; and `push2u.retry.max-attempts`, `push2u.retry.initial-backoff`
 and `push2u.retry.max-backoff` went nowhere at all — they were handed to the caller with the retry
 loop ([ADR-021](adr/0021-retry-belongs-to-the-caller.md)), since a send now performs exactly one
 POST and publishes what a repeat decision needs on the outcome, `RetryableFailure` carrying the
-status the push service answered with and the `Retry-After` it asked for, uncapped. Those three are
-also the entries whose silent ignoring would change delivery rather than a diagnostic: a deployment
-that configured three attempts would start clean and then send once per message, with nothing at
-startup or at run time saying so. Binding would skip any leftover key silently — leaving the
-operator believing a setting is in force that nothing reads. So the starter carries a tombstone per
-removed key: entries in one `BeanFactoryPostProcessor` in `Push2uStartupChecksAutoConfiguration`,
-which reads the bound environment at context refresh
-through `Binder` — catching every spelling relaxed binding accepts — and fails the context naming
-every dead key it finds and where each one's effect went. It retains no properties component,
-publishes no type and no constant. Running as a post-processor puts it ahead of every bean-creation
-failure; its position among the starter family's declared startup checks is step 2 of the list
-above, a package-private constant in `StartupCheckOrder`. A tombstone is
-carried for one minor release after the release that removed its property, and the release adding
-one opens the work item that removes it — the end belongs to the entry, not to the check raising it
-or the class hosting it, so retiring one is deleting one entry.
+status the push service answered with and the `Retry-After` it asked for, uncapped.
 
-**One check for all of them, because the alternative charges the operator per key.** The keys a
-release removes are held together, having been copied together out of the guide that release
-replaced. A check per key could not be ordered against its siblings — no tombstone is more specific
-than another, so they would share a position and the one heard would be whichever the framework
-registered first — and a deployment holding several dead keys would meet them one failed startup at
-a time. So the position holds one check and the entries are per key: one refusal names all of them,
-one edit answers it.
+For the release that removed them and no longer, one `BeanFactoryPostProcessor` in
+`Push2uStartupChecksAutoConfiguration` failed the context naming every dead key it found and where
+each one's effect had gone. **That check no longer exists**, its window having closed with the
+release after the one that removed the keys, and the tree carries no successor: an operator who
+still holds one of those keys now has it ignored in silence, which is what binding does with any
+key nothing reads. The mechanism is described here rather than only in the history because it is
+the shape the *next* removal takes — a check whose whole design is that it is temporary, entered
+with the removal and deleted on a schedule set when the removal shipped, so that nothing accumulates
+into code refusing keys nobody has written in years.
 
-**A tombstone is hosted apart from the feature whose key it names**, and the health pair is the
-worked instance of the general rule below. Its natural home would be the auto-configuration that
-registers the health indicator, which carries `@ConditionalOnClass(HealthIndicator.class)` — and a
-deployment that dropped Actuator while keeping `push2u.health.*` holds exactly the same dead
-configuration, so that condition would let through precisely the case the tombstone exists for. What
-generalises is not "beware Actuator" but that a check inherits every condition standing between it
-and the context, including ones that have nothing to do with what it checks.
+Two of its properties are worth keeping in view for that next time. **One check carried every key**,
+because the keys a release removes are held together, having been copied together out of the guide
+that release replaced: a check per key could not be ordered against its siblings — none is more
+specific than another, so they would share a position and the one heard would be whichever the
+framework registered first — and a deployment holding several dead keys would meet them one failed
+startup at a time. And **it was hosted apart from the features whose keys it named**: the health
+pair's natural home would have been the auto-configuration registering the health indicator, which
+carries `@ConditionalOnClass(HealthIndicator.class)`, and a deployment that dropped Actuator while
+keeping `push2u.health.*` holds exactly the same dead configuration — so that condition would have
+let through precisely the case the check existed for. What generalises is not "beware Actuator" but
+that a check inherits every condition standing between it and the context, including ones that have
+nothing to do with what it checks.
 
 **Every startup check of the core starter lives in `Push2uStartupChecksAutoConfiguration`, and that
 class contributes nothing else.** Two rules meet there. An auto-configuration that contributes a
@@ -1367,11 +1361,9 @@ left is the six that take a declared position, and they are the whole of this ta
 | An allowlist stated beside an application policy bean | runs | runs |
 | A signer starter's partial-configuration diagnostic | skipped | runs |
 | The general refusal over a missing signer | skipped | runs |
-| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
 
 The rows that run on both sides are about a *value*: an entry that is not an origin is not an origin
-in a context that sends nothing either, and a key a release removed configures nothing on either
-side. The two that are skipped are about the *delivery path* — each asks, in its own words, whether
+in a context that sends nothing either. The two that are skipped are about the *delivery path* — each asks, in its own words, whether
 this deployment can sign, and a deployment that has said it does not send has answered that.
 
 A signer starter's diagnostic is gated by the switch although it is not a contribution, and the
@@ -1386,20 +1378,21 @@ in it:
 
 1. **the value of `push2u.enabled`** — a deployment that mistyped the one key deciding whether any
    of this applies is owed that sentence and not a consequence of it;
-2. **a tombstone over a removed property** — a key that no longer exists makes every reading under
-   it a reading of something the operator did not mean to write;
-3. **a malformed allowlist entry**;
-4. **an allowlist stated beside an application policy bean**;
-5. **a signer starter's partial-configuration diagnostic**;
-6. **the general refusal over a missing signer**;
-7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
-   built. Those are reachable there because steps 5 and 6, the two about whether a signer exists,
-   stand down once its definition does. Steps 1 to 4 have no such stand-down and must not grow one:
+2. **a malformed allowlist entry**;
+3. **an allowlist stated beside an application policy bean**;
+4. **a signer starter's partial-configuration diagnostic**;
+5. **the general refusal over a missing signer**;
+6. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+   built. Those are reachable there because steps 4 and 5, the two about whether a signer exists,
+   stand down once its definition does. Steps 1 to 3 have no such stand-down and must not grow one:
    none of them is about a signer.
 
-Steps 3 through 6 are specific before general, a value before the path; steps 1 and 2 sit ahead of
-all of it because they decide whether the configuration underneath them can be read at face value at
-all. The order is about which message an operator holding several faults reads first, and nothing
+A position is a claim only about a check that exists: the list has a gap where the removed-property
+check sat, and the numbers around it did not move, because a number reserved for a check nobody has
+written would be a claim nothing keeps true.
+
+Steps 2 through 5 are specific before general, a value before the path; step 1 sits ahead of all of
+it because it decides whether the configuration underneath it can be read at face value at all. The order is about which message an operator holding several faults reads first, and nothing
 more: no later step's *condition* is decided by an earlier step's outcome, and none could be — a
 condition on an auto-configuration is evaluated while the configuration classes are parsed, long
 before any of these checks runs.
@@ -1409,7 +1402,8 @@ sorts post-processors of the bean factory into buckets by the *kind* of preceden
 orders only within each bucket, so two checks in different buckets run in bucket order whatever
 integers they carry. A post-processor of the bean definition *registry* is a different phase and
 completes before any plain bucket; a check over the environment as it is being prepared precedes the
-context itself (which is why the tombstone reads the environment at refresh); and the bucket is
+context itself, which is why every check of this family reads the environment at refresh; and the
+bucket is
 chosen from the **declared return type of the `@Bean` method**, not from the object it returns, so a
 factory method declaring `BeanFactoryPostProcessor` lands the check in the bucket that is never
 sorted, carrying an order nothing reads. So every check of this family implements `Ordered` **on its
@@ -1418,8 +1412,8 @@ is `static` — which the framework instructs for a method producing a post-proc
 enforcing, and which keeps the auto-configuration itself uninstantiated in that early phase.
 
 **The numbers cannot live in one place.** A signer starter deliberately does not depend on the core
-starter, so no constant is visible to both: steps 1, 2, 3, 4 and 6 are `StartupCheckOrder` in
-`push2u-spring-boot-starter`, step 5 is `VaultStartupCheckOrder` in the Vault starter, and each
+starter, so no constant is visible to both: steps 1, 2, 3 and 5 are `StartupCheckOrder` in
+`push2u-spring-boot-starter`, step 4 is `VaultStartupCheckOrder` in the Vault starter, and each
 module reads its own against the list above. What pins the order is therefore not a constant's value
 — a test asserting that a number here equals a number written in a document proves someone typed it
 twice, and stays green while the module next door moves its own — but the message that arrives in a
@@ -1514,16 +1508,16 @@ loud conflict rather than a silently dropped allowlist.
 
 **Two allowlist refusals are startup checks of the context, not of the sender**, hosted in
 `Push2uStartupChecksAutoConfiguration` — apart from the bean they guard, for the reason the
-tombstone section gives — and raised from bean-factory post-processors at declared positions in
-`StartupCheckOrder` (steps 3 and 4 of the
+removed-property section gives — and raised from bean-factory post-processors at declared positions
+in `StartupCheckOrder` (steps 2 and 3 of the
 one list [ADR-025](adr/0025-delivery-is-off-by-statement.md) carries), because both are about
 values and a value is wrong whether or not this context sends. A malformed entry — attributed
 exactly, by property name and index (`push2u.allowed-origins[2]`), since the starter builds each
-rule itself from one entry of one named property — is refused at step 3 by a check that performs
+rule itself from one entry of one named property — is refused at step 2 by a check that performs
 the same rule construction the bean's factory method performs and discards it; the factory method
 still builds through the one implementation of each rule kind, and constructing a handful of rules
 twice at startup is the deliberate price of the message arriving ahead of every bean-creation
-failure. A non-empty property beside an application bean is refused at step 4, reading bean
+failure. A non-empty property beside an application bean is refused at step 3, reading bean
 definitions rather than instances so nothing is forced into existence — left inside `pushSender`,
 that check was unreachable in precisely the registration-only context where the contradiction
 silently drops a stated allowlist. The Spring path still does not run through

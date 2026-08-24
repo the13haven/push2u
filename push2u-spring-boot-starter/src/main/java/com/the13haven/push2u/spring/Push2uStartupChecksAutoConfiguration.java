@@ -30,9 +30,9 @@ import com.the13haven.push2u.VapidSigner;
 /**
  * This starter's startup checks — the refusals raised from post-processors of the bean factory, ahead of every
  * application singleton and every bean-creation failure, at the positions {@link StartupCheckOrder} declares — and
- * nothing else. Today that is the value of {@code push2u.enabled} itself, one refusal over every property a release
- * removed, a malformed allowlist entry, an allowlist stated beside an application-supplied {@link EndpointPolicy} bean,
- * and the general refusal over a deployment that is on and holds no signer.
+ * nothing else. Today that is the value of {@code push2u.enabled} itself, a malformed allowlist entry, an allowlist
+ * stated beside an application-supplied {@link EndpointPolicy} bean, and the general refusal over a deployment that is
+ * on and holds no signer.
  *
  * <p><b>An auto-configuration that contributes a bean an operator might want to remove may not also host a check.</b>
  * Excluding an auto-configuration is the framework's ordinary tool for removing what it contributes, and a check riding
@@ -45,11 +45,11 @@ import com.the13haven.push2u.VapidSigner;
  * <p><b>The class carries no condition, and a check carries one only where what it is about says so.</b> Anything
  * standing between a check and the context narrows the set of deployments it protects, and the deployment most in need
  * of one is often the one where nothing else reads the configuration at all — so {@code push2u.enabled} does not
- * condition this class, and the three refusals about a <em>value</em> (the switch's own spelling, a dead key, a
- * malformed allowlist entry, an allowlist contradicting a bean) run on both sides of the switch. An entry that is not
- * an origin is not an origin in a context that sends nothing either. The one check that answers the switch is the
- * general refusal below, and it answers it because of what it asks: whether this deployment can sign is a question a
- * deployment that has said it does not send has already answered.
+ * condition this class, and the refusals about a <em>value</em> (the switch's own spelling, a malformed allowlist
+ * entry, an allowlist contradicting a bean) run on both sides of the switch. An entry that is not an origin is not an
+ * origin in a context that sends nothing either. The one check that answers the switch is the general refusal below,
+ * and it answers it because of what it asks: whether this deployment can sign is a question a deployment that has said
+ * it does not send has already answered.
  *
  * <p>Ordered after {@link Push2uAutoConfiguration} so that the local signer's bean definition is registered before this
  * class is processed — the general refusal's stand-down is a condition decided while the auto-configurations are being
@@ -89,26 +89,9 @@ public final class Push2uStartupChecksAutoConfiguration {
     }
 
     /**
-     * The one check carrying every tombstone: a refusal over each property a release removed, raised together so an
-     * operator holding several dead keys reads all of them, edits once and starts once.
-     *
-     * <p>{@code static}, and declaring the concrete class as its return type, both deliberately: the framework fetches
-     * a post-processor bean before the configuration class is instantiated, and it chooses the sorting bucket from the
-     * method's <em>declared</em> type — a method returning the post-processor interface would land the check in the
-     * bucket that is never sorted, carrying an order nothing reads.
-     *
-     * @param environment the environment whose bound {@code push2u.*} keys the tombstones inspect
-     * @return the check
-     */
-    @Bean
-    static RemovedPropertyTombstones push2uRemovedPropertyTombstones(Environment environment) {
-        return new RemovedPropertyTombstones(environment);
-    }
-
-    /**
      * The check refusing a malformed allowlist entry, ahead of every broader refusal.
      *
-     * <p>{@code static} and declaring the concrete return type for the same reason as the tombstone's method: the
+     * <p>{@code static} and declaring the concrete return type for the same reason as the switch's method above: the
      * sorting bucket is chosen from the method's declared type, before the configuration class is instantiated.
      *
      * @param environment the environment whose bound allowlist properties the check reads
@@ -280,162 +263,6 @@ public final class Push2uStartupChecksAutoConfiguration {
         public int getOrder() {
             return StartupCheckOrder.MISSING_SIGNER;
         }
-    }
-
-    /**
-     * Fails the context at startup while any {@code push2u.*} key a release removed is still present, naming every one
-     * it finds and where each key's effect went. Binding ignores an unknown key silently, so without this refusal an
-     * operator upgrading past a removal would keep a setting in their YAML that configures nothing and reads as though
-     * it were in force. The check reads the <em>bound environment</em> at context refresh, so it catches each key
-     * however it is spelled — the kebab-case name a guide prints, the camelCase form, and the upper-case
-     * environment-variable form — and it publishes nothing: no property component retained to be rejected, no public
-     * type, no public constant.
-     *
-     * <p><b>Every dead key present is named in one refusal, from one check.</b> The keys a release removes are commonly
-     * held together, because they were copied together out of the guide that release replaced — so refusing them one
-     * startup at a time would cost that operator a failed start per key, each one hiding the next. A check per key
-     * could not fix that either: tombstones are neither more nor less specific than each other, so they would share a
-     * position, and the one heard would be whichever the framework happened to register first. The entries below are
-     * therefore per key while the raising is shared.
-     *
-     * <p><b>A tombstone has an end, and the end belongs to the entry</b> rather than to this check or to the class
-     * hosting it: each key is carried for one minor release after the release that removed it, and the release adding
-     * an entry opens the work item that removes it. Entries added by different releases therefore end at different
-     * times. Each entry says what removed its key, which is what a reader needs in order to recognise it; <em>when</em>
-     * that happened is deliberately not written here, because the release a window is counted from has no number until
-     * its tag exists. Once it does, the number is in the work item that release opened. Retiring a key is deleting its
-     * entry, keys removed by one change go together, and the check goes when the last entry does. They exist to catch a
-     * configuration written against the previous release, not to accumulate for the life of the library.
-     *
-     * <p><b>Every entry is declared here rather than beside the feature whose key it names</b>, and the difference is
-     * not organisational. The health keys are the worked case: the autoconfiguration that owns that feature exists only
-     * where Spring Boot's health classes are on the classpath, while a deployment that dropped them and kept the keys
-     * holds exactly the same dead configuration — so a check standing behind that condition would let through the case
-     * it was written for. Nothing else may stand between a tombstone and the context either: whether a key still in the
-     * YAML configures anything is not a question about what this deployment sends, probes or wires.
-     *
-     * <p>{@link Ordered} is implemented on the class — not declared on the factory method — because the framework
-     * buckets a post-processor by what its class implements and would not read an annotation on the method.
-     */
-    static final class RemovedPropertyTombstones implements BeanFactoryPostProcessor, Ordered {
-
-        /**
-         * One entry per removed key, each carrying the whole of its own refusal: the key, that it configures nothing
-         * now, and what to write instead. Adding a tombstone is adding an entry here; retiring one when its window
-         * closes is deleting that entry, and nothing around it moves.
-         */
-        static final List<RemovedProperty> REMOVED_PROPERTIES = List.of(
-                // Removed when the aes128gcm record size became a value derived from the body
-                // ceiling, so that one property answers the size question.
-                new RemovedProperty(
-                        "push2u.record-size",
-                        "push2u.record-size was removed and no longer configures anything — delete the key. The"
-                                + " aes128gcm record size (RFC 8188 rs) is now derived from the one size property,"
-                                + " push2u.max-encrypted-body-bytes: that ceiling less 85, which declares exactly the"
-                                + " plaintext capacity the ceiling admits. If record-size was raised to carry larger"
-                                + " payloads, raise push2u.max-encrypted-body-bytes instead; the derived record size"
-                                + " follows it."),
-                // Removed when the health indicator took Spring Boot's own switch for a contributor
-                // and both of its keys moved to the prefix the framework gives one. Losing either
-                // silently costs in the same direction: a probe switched off starts probing again,
-                // and a lengthened cache reverts to the default — with a remote signer, more real
-                // signing operations against whatever holds the key, written to an audit device,
-                // counted against a quota, billed where the key is HSM-backed, and found by reading
-                // that log rather than by anything failing.
-                new RemovedProperty(
-                        "push2u.health.enabled",
-                        "push2u.health.enabled was removed and no longer configures anything — delete the key. The"
-                                + " push2u health indicator now takes the switch every Spring Boot health contributor"
-                                + " takes, so set management.health.push2u.enabled instead. That is also the key"
-                                + " management.health.defaults.enabled reaches when it turns contributors off"
-                                + " wholesale, which the removed one never did."),
-                // Removed by that same change: the two health keys moved together, and this entry
-                // carries its own note so that an entry inserted above it cannot leave it explained
-                // by a comment that is no longer next to it.
-                new RemovedProperty(
-                        "push2u.health.cache-ttl",
-                        "push2u.health.cache-ttl was removed and no longer configures anything — delete the key. The"
-                                + " probe's result cache is configured beside that switch now: set"
-                                + " management.health.push2u.cache-ttl instead, with the same value and the same"
-                                + " meaning."),
-                // Removed when the repeat decision became the caller's: the retry loop went, and
-                // send now performs exactly one POST and publishes what a repeat decision needs on
-                // the outcome. These three are the removal whose silent ignoring changes delivery
-                // rather than a diagnostic — a deployment that configured three attempts starts
-                // clean and then sends once per message, with nothing at startup or at run time
-                // saying so, and the messages a push service dropped under load are simply gone.
-                // Each of the three carries its own note for the same reason the health pair does:
-                // an entry inserted between them must not leave one explained by a comment that is
-                // no longer next to it.
-                new RemovedProperty(
-                        "push2u.retry.max-attempts",
-                        "push2u.retry.max-attempts was removed and no longer configures anything — delete the key."
-                                + " Nothing here counts attempts any more: a send performs exactly one POST and"
-                                + " reports what became of it, and deciding whether to repeat it is the caller's."
-                                + " The outcome carries what that decision needs — a RetryableFailure names the"
-                                + " status code the push service answered with and the Retry-After it asked for —"
-                                + " so schedule the repeat where your application already schedules work, and mind"
-                                + " that a repeat is not free of duplicates: a 502 or a 504 may cover a POST that"
-                                + " was applied."),
-                // The two backoff keys configured a wait between attempts; with no second attempt
-                // there is no wait to configure, and what a repeat should wait for now comes from
-                // the push service's own answer rather than from a curve set in advance.
-                new RemovedProperty(
-                        "push2u.retry.initial-backoff",
-                        "push2u.retry.initial-backoff was removed and no longer configures anything — delete the"
-                                + " key. Nothing here waits between attempts any more, because nothing here makes a"
-                                + " second one: a send performs exactly one POST and the repeat is the caller's."
-                                + " What a repeat should wait for comes from the push service itself — a"
-                                + " RetryableFailure outcome carries the Retry-After it answered with, exactly as it"
-                                + " arrived — and the waiting belongs to whatever schedules the repeat in your"
-                                + " application."),
-                // The ceiling is the one of the three whose loss is not only a lost repeat: an
-                // application that adopts the reported Retry-After without a bound of its own has
-                // taken a delay named by the push service, which is a value this library never
-                // caps. Worth saying in the refusal, since the operator holding this key is by
-                // definition someone who had decided a bound was needed.
-                new RemovedProperty(
-                        "push2u.retry.max-backoff",
-                        "push2u.retry.max-backoff was removed and no longer configures anything — delete the key. It"
-                                + " bounded a wait nothing here performs any more: a send makes one POST, and the"
-                                + " repeat, with its schedule, is the caller's. The Retry-After a RetryableFailure"
-                                + " outcome carries is reported exactly as the push service sent it, with no ceiling"
-                                + " applied — so if a delay needs bounding, and a value named by a remote service"
-                                + " usually does, apply the bound where the repeat is scheduled, which is the only"
-                                + " place that knows what the delay is competing with."));
-
-        private final Environment environment;
-
-        RemovedPropertyTombstones(Environment environment) {
-            this.environment = environment;
-        }
-
-        @Override
-        public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
-            // Binder.get(environment) applies relaxed matching against the canonical kebab-case
-            // name; Environment.getProperty would see only the literal spelling.
-            Binder binder = Binder.get(environment);
-            List<String> refusals = new ArrayList<>();
-            for (RemovedProperty removed : REMOVED_PROPERTIES) {
-                if (binder.bind(removed.key(), String.class).isBound()) {
-                    refusals.add(removed.refusal());
-                }
-            }
-            if (!refusals.isEmpty()) {
-                throw new IllegalStateException(String.join(" ", refusals));
-            }
-        }
-
-        @Override
-        public int getOrder() {
-            return StartupCheckOrder.REMOVED_PROPERTY_TOMBSTONE;
-        }
-
-        /** A key a release removed, with the whole of what an operator still holding it is told. */
-        // Package-private rather than private so the suite can drive its completeness case off the
-        // entries themselves: a list of today's keys written into a test would leave the next entry
-        // uncovered while the test went on passing.
-        record RemovedProperty(String key, String refusal) {}
     }
 
     /**
