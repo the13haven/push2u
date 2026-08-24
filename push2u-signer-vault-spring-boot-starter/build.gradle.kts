@@ -51,6 +51,15 @@ dependencies {
 // An automatic module, for the reason ADR-014 gives for the core starter: Boot's own artifacts are
 // automatic modules and its auto-configuration is reflective. The name is fixed here so it does not
 // follow the jar file name.
+// The configuration-metadata processor merges META-INF/additional-spring-configuration-metadata.json
+// — the hand-written half, for keys no properties record binds — only if it can find that file on
+// the classpath it runs with. Gradle gives it no reason to: compileJava and processResources are
+// independent, so the annotation processor runs against a resources directory that may not exist
+// yet, silently produces metadata without the hand-written entries, and every one of them
+// disappears from the published jar with no error anywhere. Declaring the resources as an input
+// both orders the two tasks and puts the file where the processor looks.
+tasks.named<JavaCompile>("compileJava") { inputs.files(tasks.named("processResources")) }
+
 tasks.named<Jar>("jar") {
     manifest { attributes("Automatic-Module-Name" to "com.the13haven.push2u.signer.vault.spring") }
 }

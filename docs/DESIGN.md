@@ -1726,6 +1726,14 @@ The automated suite covers:
   list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
   modules that cannot see each other;
 - Vault Transit integration through Testcontainers;
+- the configuration metadata each starter publishes, read out of the jar's own classpath resource
+  rather than out of a build path: every key no properties record binds — the activation switch and
+  the health indicator's own switch, both read by the framework — plus the Vault value hint, and
+  beside each one a key the annotation processor *does* discover, so a failure says which half
+  broke. The half that needs pinning is the hand-written one: the processor merges
+  `META-INF/additional-spring-configuration-metadata.json` only where it finds that file on the
+  classpath it runs with, and where it does not, it produces metadata without those entries, fails
+  no task and says nothing (`ConfigurationMetadataTest` in both starters);
 - what the two starters *publish* about Spring Boot's version, read out of the generated POM and
   module metadata rather than out of the build script: no `dependencyManagement` element at all,
   every Spring Boot dependency carrying the catalog's floor literally, and no `strictly`, `prefers`
