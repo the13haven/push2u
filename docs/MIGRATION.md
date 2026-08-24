@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. |
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
 ## From `0.2.0`
@@ -45,12 +45,18 @@ an ordinary client rather than an error — the boundary working, not failing.
 Everything that moves breaks your compilation, which is the cheap kind, and this section's second
 half is about the reader for whom nothing broke.
 
+One further change travels with this release and has nothing to do with the policy: the published
+conformance contract for `VapidSigner` runs an extra check, so a project maintaining a signer of its
+own can find its test suite red on an upgrade that changed nothing it wrote. That has a subsection
+of its own below, and no bearing on an application that only sends.
+
 - [What stops compiling on the way from `0.2.0`](#what-stops-compiling-on-the-way-from-020)
   - [`EndpointPolicy.validate` is now `EndpointPolicy.assess`](#endpointpolicyvalidate-is-now-endpointpolicyassess)
   - [`EndpointRejectedException` is gone, subtypes included](#endpointrejectedexception-is-gone-subtypes-included)
   - [At a registration boundary, `EndpointAssessment` replaces the `catch`](#at-a-registration-boundary-endpointassessment-replaces-the-catch)
 - [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
+- [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
 - [Checklist for the `0.2.0` move](#checklist-for-the-020-move)
 
@@ -228,6 +234,43 @@ So the last step of this migration is a grep rather than a build: search your so
 and check that every hit either feeds a `switch` or an `instanceof`, or lands in a variable
 something reads. It costs one command and it is the only check there is.
 
+### `VapidSignerContractTest` now signs from several threads at once
+
+A different reader again: not an application that sends, but a project holding a `VapidSigner` of
+its own — over an HSM, a KMS or a remote custodian — whose test suite extends the published
+conformance contract. Nothing you wrote stops compiling and nothing you configure changes. What
+changes is that the contract runs one more check than it did in `0.2.0`, and your build inherits it
+the moment the test-scoped kit is upgraded.
+
+**The check.** Several threads are inside `sign` at the same moment, each signing a *different*
+input, and every signature that comes back must verify against the input its own call handed in,
+under a key read once, on one thread, before any of them start. The signatures are never compared
+with one another — ES256 is randomized. A call answering `VapidSignerUnavailableException` counts as
+neither a pass nor a failure, a custodian rate-limiting a burst being exactly what that type is for;
+if every call answers that way, or the check runs out of its budget, it is reported as skipped
+rather than passed.
+
+**If your build goes red on it, the finding is real and it is not new.** `VapidSigner` has always
+required implementations to be thread-safe, and has always named the mistake this catches: a
+`java.security.Signature` held in a field. One `PushSender` is shared across threads and `sendAsync`
+makes concurrent signing ordinary, so a signer weaving one signing object through several callers
+has been corrupting signatures under load all along — silently, because a bad signature is not an
+error anywhere in this library. It leaves as an opaque `401` or `403` from the push service,
+attributed to nothing. What changed is that your own suite can now see it; what it reports was
+already true of the version you are upgrading from.
+
+**The fix is at the seam, not in the kit.** Obtain a per-call `Signature` — `getInstance` costs
+little beside the ECDSA itself, let alone a network round trip — or confine one to a thread with a
+`ThreadLocal`. The same goes for any other per-call state kept in a field: a reused output buffer, a
+digest, a cached signing context. A signer that merely borrows a shared, already thread-safe client
+per call has nothing to do.
+
+**Passing it does not establish that your signer is thread-safe**, and the kit says as much of
+itself. No schedule is forced, so a signer that shares state can go a great many runs without two
+threads colliding inside it. A red run is a real defect every time; a green one means only that the
+check did not catch you. The requirement is the sentence in `VapidSigner`'s own contract, as it has
+been all along.
+
 ### What the `0.2.0` move does not change
 
 Nothing about the decision moved — only the shape of its answer. Specifically:
@@ -266,6 +309,9 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
       in your own code beside the assessment.
 - [ ] Grep for `assess(` and confirm no hit is a bare statement, at a registration boundary above
       all.
+- [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
+      contract signs from several threads now, and a failure there is a defect that was already
+      corrupting signatures under load rather than a new rule to satisfy.
 
 ## From `0.1.0`
 
