@@ -110,17 +110,14 @@ and `CONTRIBUTING.md` rather than here.
 
 This is the part most easily misread, so it is measured rather than asserted.
 
-**Spring Boot 3 is not ruled out by the code these starters compile.** Both starters' `main` sources
-carry 103 Spring import declarations naming 36 distinct types; each of those 36 was checked against
-the unpacked `spring-boot-3.5.9.jar`,
+**Spring Boot 3 is not ruled out by the code these starters compile.** Every distinct Spring type
+imported by either starter's `main` sources was checked against the unpacked `spring-boot-3.5.9.jar`,
 `spring-boot-autoconfigure-3.5.9.jar` and Spring Framework 6.2.15 (`spring-core`, `spring-beans`,
-`spring-context`). Exactly four are missing, all from `org.springframework.boot.health.*`:
-`HealthIndicator`, `Health`, `Status` and `ConditionalOnEnabledHealthIndicator`. The other 32 —
-`AutoConfiguration`, the whole `ConditionalOn*` family, `ConditionMessage`, `ConditionOutcome`,
-`SpringBootCondition`, `Binder`/`Bindable`/`BindResult`, `DefaultValue`, `ConfigurationProperties`,
-`EnableConfigurationProperties`, `AbstractInjectionFailureAnalyzer`, `FailureAnalysis`,
-`ObjectProvider`, `BeanFactoryPostProcessor`, `Ordered`, `MethodMetadata` and the rest — are present
-in 3.5.9. Nothing from 4.1 is used anywhere.
+`spring-context`). All of them are present in 3.5.9 except four, and all four are from
+`org.springframework.boot.health.*`: `HealthIndicator`, `Health`, `Status` and
+`ConditionalOnEnabledHealthIndicator`. What is present covers the whole of what these starters are
+built on — the auto-configuration entry point, the condition family, the property binding, the
+diagnostics API — and nothing from 4.1 is used anywhere.
 
 `spring-boot-health` is a `compileOnly` dependency here, and every use of it sits behind
 `@ConditionalOnClass`. That was checked by running it rather than by reading it: a starter built
@@ -156,7 +153,7 @@ was found either way.
 The graph a floor of 4.0.0 actually produces was resolved rather than assumed —
 `spring-boot-autoconfigure` 4.0.0, `spring-boot` 4.0.0, and `spring-core`, `spring-context`,
 `spring-beans`, `spring-aop` and `spring-expression` all at 7.0.1 — and checked against the GitHub
-Advisory Database. It carries **seven** published advisories:
+Advisory Database, which held **seven** published advisories against it when this record was written:
 
 | Artifact at a 4.0.0 floor | Advisory | Severity |
 |---|---|---|
