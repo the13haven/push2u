@@ -143,6 +143,14 @@ final class SignAttempt {
         try {
             return call.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (ExecutionException thrown) {
+            // An Error is not a verdict about the signer and is rethrown as itself, exactly as the
+            // transport contract's own machinery does with one. A heap exhausted, a stack overrun
+            // or an assertion tripped inside a test double says nothing about whether calls guard
+            // their shared state, and dressing it as a thread-safety failure would send the
+            // implementor to the one place the fault is not.
+            if (thrown.getCause() instanceof Error error) {
+                throw error;
+            }
             throw new AssertionError(
                     "concurrent sign calls failed where the contract's one-call-at-a-time checks pass. Signing from "
                             + "several threads at once is the ordinary case — one sender is shared, and async sends "

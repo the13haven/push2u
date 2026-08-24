@@ -23,6 +23,7 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.opentest4j.TestAbortedException;
@@ -138,6 +139,35 @@ final class VapidSignerContractSelfTest {
         assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
                 .as("no signature was observed, so the check reached no verdict")
                 .isInstanceOf(TestAbortedException.class);
+    }
+
+    /**
+     * A quota that admits exactly one of the burst. One signature overlaps nothing, so the check has observed no more
+     * concurrency than it did with none at all, and passing green would report a signer held to something no pair of
+     * calls exercised. This is the shape of the remote custodian the contract is written for — a Transit backend or a
+     * KMS with a burst limit — and it is the case that separates a threshold of two from a threshold of one.
+     */
+    @Test
+    void aCustodianAdmittingOnlyOneOfTheBurstAbortsTheConcurrencyCheckToo() throws Exception {
+        Contract contract =
+                new Contract(new QuotaSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE), 1));
+
+        assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .as("one signature observes no overlap, so the check reached no verdict")
+                .isInstanceOf(TestAbortedException.class);
+    }
+
+    /**
+     * And two admitted is where it stops aborting: the delegate is thread-safe, so the pair that got through verifies
+     * and the check reports a pass rather than an abort. Without this beside the one above, a threshold that refused
+     * every burst-limited custodian outright would look equally correct.
+     */
+    @Test
+    void aCustodianAdmittingTwoOfTheBurstReachesAVerdict() throws Exception {
+        Contract contract =
+                new Contract(new QuotaSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE), 2));
+
+        contract.concurrentSignaturesEachVerifyAgainstTheirOwnInput();
     }
 
     @Test
@@ -532,6 +562,37 @@ final class VapidSignerContractSelfTest {
         @Override
         public byte[] sign(byte[] signingInput) {
             throw new VapidSignerUnavailableException("the custodian is rate-limiting this burst");
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return delegate.publicKey();
+        }
+    }
+
+    /**
+     * A custodian admitting a fixed number of the burst and refusing the rest with "not now" — the quota an HSM or a
+     * remote Transit backend imposes, and the only way to put a chosen number of signatures in front of the check.
+     */
+    private static final class QuotaSigner implements VapidSigner {
+
+        private final VapidSigner delegate;
+        private final AtomicInteger remaining;
+
+        QuotaSigner(VapidSigner delegate, int quota) {
+            this.delegate = delegate;
+            this.remaining = new AtomicInteger(quota);
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            // getAndUpdate rather than getAndDecrement: the calls arrive concurrently and a bare
+            // decrement would run the counter below zero, admitting no one after the quota while
+            // reading as though it had.
+            if (remaining.getAndUpdate(left -> left > 0 ? left - 1 : 0) <= 0) {
+                throw new VapidSignerUnavailableException("the custodian is rate-limiting this burst");
+            }
+            return delegate.sign(signingInput);
         }
 
         @Override

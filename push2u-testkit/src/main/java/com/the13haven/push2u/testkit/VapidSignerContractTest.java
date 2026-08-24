@@ -267,11 +267,14 @@ public abstract class VapidSignerContractTest {
      * <p>A call answering {@link com.the13haven.push2u.VapidSignerUnavailableException} is counted as neither a pass
      * nor a failure. A custodian rate-limiting a burst is that type's own example of a signer that cannot sign
      * <em>now</em>, and a burst of concurrent calls is exactly what provokes it, so such a call carries no evidence
-     * about interleaving. When every call answers that way the check aborts rather than passing green, since a result
-     * nothing exercised would misreport what this signer has been held to. No other kind of failure is read that way:
-     * the contract's other checks sign one call at a time and require that to succeed, so anything else thrown out of a
-     * concurrent call is reported as a failure. Which type it was is not part of the report — this contract asserts no
-     * exception types anywhere.
+     * about interleaving. When fewer than two calls come back with a signature the check aborts rather than passing
+     * green, since a result nothing exercised would misreport what this signer has been held to — and the threshold is
+     * two rather than one because what this check reads is what overlapping calls do to each other, so a single
+     * signature is as empty as none. A custodian with a quota answering seven refusals out of eight is the case that
+     * makes the difference, and it is the ordinary shape of the remote custodian this contract is written for. No other
+     * kind of failure is read that way: the contract's other checks sign one call at a time and require that to
+     * succeed, so anything else thrown out of a concurrent call is reported as a failure. Which type it was is not part
+     * of the report — this contract asserts no exception types anywhere.
      *
      * <p>The check stops waiting after a fixed budget, and what it does then is <em>abort</em> rather than fail. A
      * signer that never answers would otherwise hang the suite it was added to, which is how a contract gets deleted
@@ -308,12 +311,16 @@ public abstract class VapidSignerContractTest {
                 unavailable++;
             }
         }
-        if (unavailable == CONCURRENT_SIGNATURES) {
-            Assumptions.abort("every one of the " + CONCURRENT_SIGNATURES + " concurrent calls reported that the key "
-                    + "custodian cannot sign now, so this check observed no signature at all and reached no verdict. "
-                    + "That answer is legitimate — a custodian rate-limiting a burst is what it is for — but a green "
-                    + "result here would say this signer had been held to something it never was. If the burst is "
-                    + "what provoked it, the contract's one-call-at-a-time checks still stand on their own.");
+        if (unavailable > CONCURRENT_SIGNATURES - 2) {
+            Assumptions.abort(
+                    "of the " + CONCURRENT_SIGNATURES + " concurrent calls, " + unavailable + " reported that "
+                            + "the key custodian cannot sign now, which leaves fewer than two signatures that were produced "
+                            + "while another was being produced — so this check observed no concurrency at all and reached no "
+                            + "verdict. That answer is legitimate — a custodian rate-limiting a burst is what it is for — but "
+                            + "a green result here would say this signer had been held to something it never was. One "
+                            + "signature is no less empty than none: what this check reads is what two overlapping calls do "
+                            + "to each other, and a lone call overlaps nothing. If the burst is what provoked the refusals, "
+                            + "the contract's one-call-at-a-time checks still stand on their own.");
         }
 
         assertThat(unverifiable)
