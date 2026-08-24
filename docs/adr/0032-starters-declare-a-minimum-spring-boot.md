@@ -187,11 +187,16 @@ reasons and no others.
    repository, advisory named and all, and not the private one that belongs to a defect in this
    library's own code.
 
-   **The graph and not the artifact is the trigger, and the seven advisories are why.** Four of the
-   seven that ruled 4.0.0 out are against `spring-core` and `spring-expression`, which this library
-   declares nowhere: they arrive because Boot's BOM manages them, and a patch of Boot's line is what
-   moves them. A rule reading "the floor's own artifact" would have left the
-   floor at 4.0.0 in the very case that produced this record.
+   **The graph and not the artifact is the trigger.** Four of the seven advisories that ruled 4.0.0
+   out are against `spring-core` and `spring-expression`, which this library declares nowhere: they
+   arrive because Boot's BOM manages them, and a patch of Boot's line is what moves them. A rule
+   reading "the floor's own artifact" would have reached the same answer here — the third row of
+   that table is against `spring-boot-autoconfigure`, so it would have fired, and the 4.0.7 it
+   pointed at carries a Spring Framework above every fixed version in the table. That is the shape
+   of the case, not a property of the rule: a narrow rule would have been right by arithmetic it
+   never performed, having looked at three of the seven and been blind to the four the decision
+   actually rests on. A line whose only published defects sit in what its BOM manages needs no
+   inventing, and the rule has to see it.
 
 **A new Spring Boot existing is not a reason.** Neither is a wish to use a newer API that nothing
 needs.
@@ -312,7 +317,7 @@ constraint. README names Spring Boot 4 in its feature list, in *Requirements*, a
 Boot* section where both starters are said to require 4.x and Boot 3.x is ruled out by name; its
 module table carries no version and needs none. `docs/DESIGN.md` describes the module layout and is
 where the verification matrix's changeable half belongs, with `CONTRIBUTING.md` for what a
-contributor runs; `gradle/libs.versions.toml` carries the comment that fixes what `springBoot` now
+contributor runs; `gradle/libs.versions.toml` gains the comment that fixes what `springBoot` now
 means. All of that belongs with the implementation, together with this record's move to `Accepted`;
 while it is `Proposed` those documents are accurate, because the tree still publishes the platform.
 
