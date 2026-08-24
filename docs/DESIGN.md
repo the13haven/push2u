@@ -100,7 +100,11 @@ application's runtime one.
 The kit has two sides, serving the two audiences this library has
 ([ADR-028](adr/0028-the-test-kit-publishes-contracts-not-conveniences.md)). The contracts are the
 executable statement of what an extension point owes, and serve whoever writes one — every one of
-the three SPIs has one. `VapidSignerContractTest` covers the signer. `EndpointPolicyContractTest`
+the three SPIs has one. `VapidSignerContractTest` covers the signer — the shape and ownership of
+what it returns, the agreement between the key it advertises and the key it signs with, and a
+concurrency smoke check in which several threads sign at once over inputs that differ and each
+signature must verify against its own, run by `SignAttempt`, package-private machinery of that class
+in the shape `PostAttempt` has for the transport. `EndpointPolicyContractTest`
 ([ADR-029](adr/0029-the-kit-states-what-an-endpoint-policy-owes.md)) covers a deployment's own
 endpoint policy — that it answers with a value rather than an exception, that concurrent calls all
 come back, and that a refusal's reason keeps the capability part of the endpoint out of the logs the
@@ -557,10 +561,13 @@ under a live sender has therefore already broken every restricted subscription t
 swap, whatever the library does with the two return values — rotation is a re-subscription event
 producing a *new* signer, which is what the Vault signer already documents of itself. The clause is
 a statement of what the protocol requires rather than a new demand, and it is unfalsifiable from
-outside for the same reason thread-safety is: two equal answers say nothing about the next one. The
+outside: two equal answers say nothing about the next one. The
 conformance kit pins the two checkable moments — consecutive calls answering the same key, and one
 signature verifying against the key advertised beside it — and neither reaches the lifetime the
-clause is about. The token cache is what made the silence worth ending: it keys entries on the
+clause is about. Thread-safety at least admits a run that might catch it — the kit has several
+threads sign at once over inputs that differ, and a signature verifying against none of them is a
+defect every time — while a key that moves an hour later leaves nothing behind for any check to
+see. The token cache is what made the silence worth ending: it keys entries on the
 advertised key, so a key that has moved builds a different cache key and the lookup simply misses,
 which is why the next send signs under the identity the signer now publishes rather than serving
 the old header. Nothing detects the move and nothing evicts on it — the entry filed under the
@@ -1621,13 +1628,28 @@ The automated suite covers:
 - RFC 8292 VAPID structure and signature verification;
 - the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
   non-default ports, address literals, userinfo (`OriginTest`);
-- signer contract tests, and the kit checking itself — each of its six checks run once against a
+- signer contract tests, and the kit checking itself — each of its seven checks run once against a
   conforming signer and once against one that breaks exactly what that check is about: a DER
   signature, a compressed or off-curve point, a shared internal key array, a shared buffer
   refilled per call, a reused signature buffer, an override encoding the advertised key some other
   way, or one publishing a different key altogether — plus the kit's DER-fallback verification and
   its minimal-DER re-encoding, exercised directly because no CI platform lacks the P1363 signature
-  name (`VapidSignerContractSelfTest`);
+  name (`VapidSignerContractSelfTest`). The concurrency check's subjects are shaped by what a smoke
+  check can be self-tested against. Its negative subject holds one `Signature` in a field — the
+  mistake the interface names — with the collision *forced* rather than waited for, callers pairing
+  at a rendezvous placed between `update` and `sign`, since a self-test resting on the real race
+  would be red some runs and green others, which is worse than absent; its positive subject is run
+  ten times over, because a check that goes red now and then on a conforming signer is one a build
+  learns to ignore. Four more subjects pin the abort and both of its edges, by admitting a chosen
+  number of the burst and refusing the rest with `VapidSignerUnavailableException`: none admitted
+  and one admitted both abort, two admitted reaches a verdict, and one admitted that signs under an
+  unadvertised key goes red rather than aborting. The pairs either side are the point — a green on
+  one observed signature would report a signer as held to something no *pair* of calls exercised,
+  while a threshold refusing every burst-limited custodian outright would look equally correct with
+  only the aborting half checked, and an abort placed ahead of the assertion instead of behind it
+  would turn the check's strongest finding into a skip for every custodian that happened to be
+  metering. Each of the four is red under a different way of moving that threshold, which is what
+  makes them four and not one;
 - the kit's fixtures held to the same standard, since a published value that is quietly wrong is a
   defect in every consumer's suite at once. **`VapidKeyPairFixtureTest` verifies that the scalar the
   fixture publishes really is the one belonging to the point it publishes**, by signing with it and

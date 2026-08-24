@@ -22,8 +22,12 @@ import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
 import java.security.spec.EllipticCurve;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import com.the13haven.push2u.VapidKeys;
@@ -35,6 +39,11 @@ import com.the13haven.push2u.VapidSigner;
  * the encoding of those same bytes, and signing produces a raw {@code r || s} ES256 signature (64 bytes) that verifies
  * against it. Each implementation extends this and supplies a configured signer via {@link #signer()} — the local
  * signer's unit test and every remote signer's integration test.
+ *
+ * <p>A last check has several threads signing at once, each over an input of its own, and requires every signature to
+ * verify against the input its own call handed in. That one is a smoke check and is named one: it can catch a signer
+ * sharing one signing object between callers, and a green run establishes nothing, since no schedule is forced.
+ * Thread-safety remains a requirement {@link VapidSigner} states and this kit cannot prove.
  *
  * <p>Verification uses the JDK and the public {@link VapidSigner} surface, and beyond them one published call —
  * {@link VapidKeys#encodePublicKey} — which the encoding check below compares against because "must agree with the
@@ -58,6 +67,16 @@ import com.the13haven.push2u.VapidSigner;
  * }</pre>
  */
 public abstract class VapidSignerContractTest {
+
+    /** How many threads the concurrency check has inside {@code sign} at the same moment. */
+    private static final int CONCURRENT_SIGNATURES = 8;
+
+    /**
+     * How long the concurrency check as a whole may wait for its signatures. One budget for the check rather than one
+     * timeout per call: the calls are collected in a loop, so a per-call timeout would multiply by the number of
+     * threads and a signer that never answers would hold the suite for that product instead of for this.
+     */
+    private static final int SIGNATURE_BUDGET_SECONDS = 30;
 
     /** For subclasses: the kit is extended, never instantiated on its own. */
     protected VapidSignerContractTest() {}
@@ -216,6 +235,107 @@ public abstract class VapidSignerContractTest {
         assertThat(second)
                 .as("sign() must hand out a fresh array, not a buffer the signer keeps reusing")
                 .isNotSameAs(first);
+    }
+
+    /**
+     * A smoke check, and named one. Several threads are inside {@code sign} at the same moment, each signing an input
+     * of its own, and every signature that comes back must be the raw 64-byte {@code r || s} that verifies against that
+     * call's own input, under the key read before any of them started. One {@link com.the13haven.push2u.PushSender} is
+     * shared across threads and {@code sendAsync} makes concurrent signing ordinary, so a signer weaving one
+     * {@code java.security.Signature} through several callers fails here rather than in production, where the same
+     * defect arrives as an opaque 401 from a push service.
+     *
+     * <p><b>The inputs differ from one another, and that is the whole of what makes the defect catchable.</b> Under one
+     * shared input, two interleaved {@code update} calls feed the same bytes twice and the signature that comes out can
+     * still verify, so the check would pass over the very signer it is for. Under inputs that differ, an interleaving
+     * signs something no caller asked for, and the result verifies against none of them. The signatures are never
+     * compared with each other: ES256 is randomized, two signatures over one input differ by design, and
+     * {@link #signHandsOutAFreshArrayOnEveryCall} says so already.
+     *
+     * <p>The key is read once, before the threads start, and read on one thread. This check is about signing; a
+     * concurrent read of the key folded into it would leave a failure unable to say which of the two it was about, and
+     * what the key owes is pinned by the checks above.
+     *
+     * <p><b>What it is worth is asymmetric, and saying so is part of the check.</b> Passing establishes nothing: no
+     * schedule is forced, and a signer sharing one signing object can go a thousand runs without two threads colliding
+     * inside it, so a green run is not a statement that this signer is thread-safe. Failing what it asserts is a real
+     * defect every time — a thread-safe signer cannot hand back bytes that verify against nothing it was asked to sign,
+     * however the threads interleave. Having no false positives is what earns the check its place; being no proof is
+     * why it is not called one, and why the thread-safety requirement in {@link VapidSigner} stays a contract sentence
+     * rather than something a suite can hold an implementation to.
+     *
+     * <p>A call answering {@link com.the13haven.push2u.VapidSignerUnavailableException} is counted as neither a pass
+     * nor a failure. A custodian rate-limiting a burst is that type's own example of a signer that cannot sign
+     * <em>now</em>, and a burst of concurrent calls is exactly what provokes it, so such a call carries no evidence
+     * about interleaving. When fewer than two calls come back with a signature the check aborts rather than passing
+     * green, since a result nothing exercised would misreport what this signer has been held to — and the threshold is
+     * two rather than one because what this check reads is what overlapping calls do to each other, so a single
+     * signature is as empty as none. A custodian with a quota admitting one call of the burst is what makes the
+     * difference, and it is the ordinary shape of the remote custodian this contract is written for. The abort stands
+     * down for a signature that came back and did not verify: bytes verifying against nothing the signer was asked to
+     * sign are a verdict however few signatures there were — no quota explains them — and a check aborting over that
+     * would turn its own strongest finding into a skip. No other kind of failure is read that way: the contract's other
+     * checks sign one call at a time and require that to succeed, so anything else thrown out of a concurrent call is
+     * reported as a failure. Which type it was is not part of the report — this contract asserts no exception types
+     * anywhere.
+     *
+     * <p>The check stops waiting after a fixed budget, and what it does then is <em>abort</em> rather than fail. A
+     * signer that never answers would otherwise hang the suite it was added to, which is how a contract gets deleted
+     * from a build; but this seam promises nothing about how fast a custodian signs, so a call still running when the
+     * budget runs out may equally be a correct signer being slow. Nothing here can tell those apart, and a failure
+     * would be a verdict this check has not reached.
+     */
+    // UnitTestContainsTooManyAsserts: PMD counts the assumption beside the assertion, and the two
+    // are not two claims but one claim and the case where the check has no claim to make — the
+    // abort fires instead of the assertion rather than beside it, and only where the assertion had
+    // nothing to say: a signature that came back and did not verify is a verdict however few of
+    // them there were, so it is read first and the abort stands down for it.
+    @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
+    @Test
+    void concurrentSignaturesEachVerifyAgainstTheirOwnInput() throws GeneralSecurityException, InterruptedException {
+        VapidSigner signer = signer();
+        byte[] advertisedKey = signer.publicKey();
+        List<byte[]> inputs = new ArrayList<>(CONCURRENT_SIGNATURES);
+        for (int call = 0; call < CONCURRENT_SIGNATURES; call++) {
+            inputs.add(("push2u VapidSigner concurrent conformance " + call).getBytes(StandardCharsets.US_ASCII));
+        }
+
+        List<SignAttempt> attempts = SignAttempt.concurrently(signer, inputs, SIGNATURE_BUDGET_SECONDS);
+
+        int unavailable = 0;
+        int unverifiable = 0;
+        for (int call = 0; call < CONCURRENT_SIGNATURES; call++) {
+            Optional<byte[]> signature = attempts.get(call).signature();
+            if (signature.isPresent()) {
+                byte[] bytes = signature.get();
+                if (bytes.length != 64 || !verifyEs256(advertisedKey, inputs.get(call), bytes)) {
+                    unverifiable++;
+                }
+            } else {
+                unavailable++;
+            }
+        }
+        if (unverifiable == 0 && CONCURRENT_SIGNATURES - unavailable < 2) {
+            Assumptions.abort(
+                    "of the " + CONCURRENT_SIGNATURES + " concurrent calls, " + unavailable + " reported that "
+                            + "the key custodian cannot sign now, which leaves fewer than two signatures for this check "
+                            + "to have read anything from — so it reached no verdict. That answer is legitimate — a "
+                            + "custodian rate-limiting a burst is what it is for — but a green result here would say "
+                            + "this signer had been held to something it never was. One signature is no less empty "
+                            + "than none: what this check reads is what callers overlapping each other do, and a lone "
+                            + "call overlaps nothing. If the burst is what provoked the refusals, the contract's "
+                            + "one-call-at-a-time checks still stand on their own.");
+        }
+
+        assertThat(unverifiable)
+                .as("every concurrent signature must be the raw 64-byte r||s that verifies against the input its own "
+                        + "call handed in, under the key read before the threads started. The signatures are not "
+                        + "compared with one another — ES256 is randomized — so each is checked against its own input "
+                        + "alone, and a signer weaving one signing object through several callers produces bytes that "
+                        + "verify against none of them. Of " + CONCURRENT_SIGNATURES + " calls, " + unverifiable
+                        + " came back with such bytes and " + unavailable + " reported the custodian unable to sign "
+                        + "now, which is counted as no evidence either way.")
+                .isZero();
     }
 
     /**
