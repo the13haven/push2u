@@ -101,11 +101,13 @@ is counted as neither pass nor failure — a custodian rate-limiting a burst is 
 is for, and a concurrent burst is what provokes it — and if fewer than two calls come back with a
 signature, the check aborts rather than reporting a green it did not earn. Two rather than one,
 because what the check reads is what overlapping calls do to each other and a lone signature
-overlaps nothing: a quota admitting one of the eight would otherwise pass having observed no
-concurrency at all, which is the shape a remote custodian takes and not a corner case. It also
-stops waiting after a budget and
-aborts then too: the seam promises nothing about how fast a custodian signs, so a slow call is not
-a verdict.
+overlaps nothing: a quota admitting a single call of the burst would otherwise pass having observed
+no concurrency at all, which is the shape a remote custodian takes and not a corner case. One thing
+outranks that abort — a signature that came back and does not verify, which is a verdict however few
+of them there were, since no quota explains bytes that verify against nothing the signer was asked
+to sign. So a metered custodian may report this check as skipped, and that is the honest answer
+rather than a green one. It also stops waiting after a budget and aborts then too: the seam promises
+nothing about how fast a custodian signs, so a slow call is not a verdict.
 
 Verification uses the JDK alone and runs
 on a FIPS-only JVM: the kit prefers

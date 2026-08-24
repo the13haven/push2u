@@ -134,7 +134,7 @@ final class VapidSignerContractSelfTest {
     @Test
     void aSignerThatIsUnavailableThroughoutAbortsTheConcurrencyCheck() throws Exception {
         Contract contract =
-                new Contract(new UnavailableSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)));
+                new Contract(new QuotaSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE), 0));
 
         assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
                 .as("no signature was observed, so the check reached no verdict")
@@ -167,7 +167,32 @@ final class VapidSignerContractSelfTest {
         Contract contract =
                 new Contract(new QuotaSigner(new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE), 2));
 
-        contract.concurrentSignaturesEachVerifyAgainstTheirOwnInput();
+        // Asserted rather than merely called: an abort leaves as a TestAbortedException, which a
+        // bare call would let propagate and the runner would record as a skip inside a green build.
+        // A threshold moved the strict way would then pass unnoticed here, and this is the half of
+        // the boundary that only this test holds.
+        assertThatCode(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * A signature that came back and does not verify is a verdict however few of them there were. The quota admits one
+     * call and that call signs under a key nobody advertised, so the abort has to stand down and the check go red.
+     * Without this, the threshold beside it would turn the check's strongest finding into a skip for every custodian
+     * that happened to be metering — a check weaker than the one that had no threshold at all.
+     */
+    @Test
+    void theOneAdmittedSignatureStillFailsTheCheckWhenItDoesNotVerify() throws Exception {
+        Contract contract = new Contract(new QuotaSigner(
+                new SignsUnderAnUnadvertisedKeySigner(
+                        new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE),
+                        new JdkP256Signer(keyPair(), Encoding.RAW, PointDamage.NONE)),
+                1));
+
+        assertThatThrownBy(contract::concurrentSignaturesEachVerifyAgainstTheirOwnInput)
+                .as("an unverifiable signature outranks the too-few-signatures abort")
+                .isInstanceOf(AssertionError.class)
+                .isNotInstanceOf(TestAbortedException.class);
     }
 
     @Test
@@ -550,26 +575,6 @@ final class VapidSignerContractSelfTest {
         }
     }
 
-    /** A custodian answering every {@code sign} with "not now" — the answer the check reads as no evidence at all. */
-    private static final class UnavailableSigner implements VapidSigner {
-
-        private final VapidSigner delegate;
-
-        UnavailableSigner(VapidSigner delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public byte[] sign(byte[] signingInput) {
-            throw new VapidSignerUnavailableException("the custodian is rate-limiting this burst");
-        }
-
-        @Override
-        public byte[] publicKey() {
-            return delegate.publicKey();
-        }
-    }
-
     /**
      * A custodian admitting a fixed number of the burst and refusing the rest with "not now" — the quota an HSM or a
      * remote Transit backend imposes, and the only way to put a chosen number of signatures in front of the check.
@@ -598,6 +603,32 @@ final class VapidSignerContractSelfTest {
         @Override
         public byte[] publicKey() {
             return delegate.publicKey();
+        }
+    }
+
+    /**
+     * Signs under one key pair and advertises the point of another — so every signature it produces is well formed and
+     * verifies against nothing the contract was given. The failure a signer weaving one signing object through several
+     * callers produces looks the same from outside, which is what makes this a stand-in for it under a quota.
+     */
+    private static final class SignsUnderAnUnadvertisedKeySigner implements VapidSigner {
+
+        private final VapidSigner signing;
+        private final VapidSigner advertising;
+
+        SignsUnderAnUnadvertisedKeySigner(VapidSigner signing, VapidSigner advertising) {
+            this.signing = signing;
+            this.advertising = advertising;
+        }
+
+        @Override
+        public byte[] sign(byte[] signingInput) {
+            return signing.sign(signingInput);
+        }
+
+        @Override
+        public byte[] publicKey() {
+            return advertising.publicKey();
         }
     }
 

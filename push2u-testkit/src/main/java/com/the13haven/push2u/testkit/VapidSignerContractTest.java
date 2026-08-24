@@ -270,11 +270,14 @@ public abstract class VapidSignerContractTest {
      * about interleaving. When fewer than two calls come back with a signature the check aborts rather than passing
      * green, since a result nothing exercised would misreport what this signer has been held to — and the threshold is
      * two rather than one because what this check reads is what overlapping calls do to each other, so a single
-     * signature is as empty as none. A custodian with a quota answering seven refusals out of eight is the case that
-     * makes the difference, and it is the ordinary shape of the remote custodian this contract is written for. No other
-     * kind of failure is read that way: the contract's other checks sign one call at a time and require that to
-     * succeed, so anything else thrown out of a concurrent call is reported as a failure. Which type it was is not part
-     * of the report — this contract asserts no exception types anywhere.
+     * signature is as empty as none. A custodian with a quota admitting one call of the burst is what makes the
+     * difference, and it is the ordinary shape of the remote custodian this contract is written for. The abort stands
+     * down for a signature that came back and did not verify: bytes verifying against nothing the signer was asked to
+     * sign are a verdict however few signatures there were — no quota explains them — and a check aborting over that
+     * would turn its own strongest finding into a skip. No other kind of failure is read that way: the contract's other
+     * checks sign one call at a time and require that to succeed, so anything else thrown out of a concurrent call is
+     * reported as a failure. Which type it was is not part of the report — this contract asserts no exception types
+     * anywhere.
      *
      * <p>The check stops waiting after a fixed budget, and what it does then is <em>abort</em> rather than fail. A
      * signer that never answers would otherwise hang the suite it was added to, which is how a contract gets deleted
@@ -284,8 +287,9 @@ public abstract class VapidSignerContractTest {
      */
     // UnitTestContainsTooManyAsserts: PMD counts the assumption beside the assertion, and the two
     // are not two claims but one claim and the case where the check has no claim to make — the
-    // abort fires only when nothing was observed, and it fires instead of the assertion rather
-    // than beside it.
+    // abort fires instead of the assertion rather than beside it, and only where the assertion had
+    // nothing to say: a signature that came back and did not verify is a verdict however few of
+    // them there were, so it is read first and the abort stands down for it.
     @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
     @Test
     void concurrentSignaturesEachVerifyAgainstTheirOwnInput() throws GeneralSecurityException, InterruptedException {
@@ -311,16 +315,16 @@ public abstract class VapidSignerContractTest {
                 unavailable++;
             }
         }
-        if (unavailable > CONCURRENT_SIGNATURES - 2) {
+        if (unverifiable == 0 && CONCURRENT_SIGNATURES - unavailable < 2) {
             Assumptions.abort(
                     "of the " + CONCURRENT_SIGNATURES + " concurrent calls, " + unavailable + " reported that "
-                            + "the key custodian cannot sign now, which leaves fewer than two signatures that were produced "
-                            + "while another was being produced — so this check observed no concurrency at all and reached no "
-                            + "verdict. That answer is legitimate — a custodian rate-limiting a burst is what it is for — but "
-                            + "a green result here would say this signer had been held to something it never was. One "
-                            + "signature is no less empty than none: what this check reads is what two overlapping calls do "
-                            + "to each other, and a lone call overlaps nothing. If the burst is what provoked the refusals, "
-                            + "the contract's one-call-at-a-time checks still stand on their own.");
+                            + "the key custodian cannot sign now, which leaves fewer than two signatures for this check "
+                            + "to have read anything from — so it reached no verdict. That answer is legitimate — a "
+                            + "custodian rate-limiting a burst is what it is for — but a green result here would say "
+                            + "this signer had been held to something it never was. One signature is no less empty "
+                            + "than none: what this check reads is what callers overlapping each other do, and a lone "
+                            + "call overlaps nothing. If the burst is what provoked the refusals, the contract's "
+                            + "one-call-at-a-time checks still stand on their own.");
         }
 
         assertThat(unverifiable)

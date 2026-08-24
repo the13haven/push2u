@@ -1640,12 +1640,16 @@ The automated suite covers:
   at a rendezvous placed between `update` and `sign`, since a self-test resting on the real race
   would be red some runs and green others, which is worse than absent; its positive subject is run
   ten times over, because a check that goes red now and then on a conforming signer is one a build
-  learns to ignore. Three more subjects pin the abort and where it stops, by admitting a chosen
+  learns to ignore. Four more subjects pin the abort and both of its edges, by admitting a chosen
   number of the burst and refusing the rest with `VapidSignerUnavailableException`: none admitted
-  and one admitted both abort, two admitted reaches a verdict. The pair either side of the
-  threshold is the point — a green on one observed signature would report a signer as held to
-  something no *pair* of calls exercised, while a threshold refusing every burst-limited custodian
-  outright would look equally correct with only the aborting half checked;
+  and one admitted both abort, two admitted reaches a verdict, and one admitted that signs under an
+  unadvertised key goes red rather than aborting. The pairs either side are the point — a green on
+  one observed signature would report a signer as held to something no *pair* of calls exercised,
+  while a threshold refusing every burst-limited custodian outright would look equally correct with
+  only the aborting half checked, and an abort placed ahead of the assertion instead of behind it
+  would turn the check's strongest finding into a skip for every custodian that happened to be
+  metering. Each of the four is red under a different way of moving that threshold, which is what
+  makes them four and not one;
 - the kit's fixtures held to the same standard, since a published value that is quietly wrong is a
   defect in every consumer's suite at once. **`VapidKeyPairFixtureTest` verifies that the scalar the
   fixture publishes really is the one belonging to the point it publishes**, by signing with it and
