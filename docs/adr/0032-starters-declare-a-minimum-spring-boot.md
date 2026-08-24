@@ -44,7 +44,8 @@ neighbour cannot reproduce it.
 
 Maven is untouched in every variant measured, and for a structural reason rather than by luck: a
 consumer's own `dependencyManagement` always wins over `dependencyManagement` reached through a
-transitive dependency. That fact is load-bearing twice below.
+transitive dependency. That fact returns wherever this record measures what a Maven consumer
+actually gets.
 
 **Publishing that manifest was never a decision.** `api(platform(...))` is the idiom for getting
 version alignment inside a build, and it works; the part nobody weighed is that on `api` it is also a
@@ -62,14 +63,16 @@ which version the consumer runs.** Concretely:
 - `spring-boot-autoconfigure` is published **with an ordinary `require` version**, which is a floor
   and not a pin: inside Gradle's own conflict resolution it is raised by anything asking for more and
   is never lowered. That is a claim about resolution, not about the world — a build that *forces*
-  versions overrules it in either direction, and the measured table further down has
-  `io.spring.dependency-management` resolving a starter's 4.1.1 requirement **down** to 4.0.0.
+  versions overrules it in either direction, and the third row of the table above is that case
+  measured: `io.spring.dependency-management` holds a consumer at 4.0.0 while this library's own
+  published metadata asks for 4.1.1.
 - The catalog key `springBoot` **changes meaning**. It stops being "the Spring Boot this build
   happens to use" and becomes "the minimum Spring Boot these starters support" — and, by the same
   number, the version the **default build** compiles against and therefore the version the published
   artifacts are built from.
 - **The oldest supported minor is 4.0**, and the declared value is a released patch of that line —
-  **4.0.8** when this record was written, moved inside the line by the rule two sections down.
+  **4.0.8** when this record was written, moved inside the line by the rule under *When the floor
+  moves*.
 
 The starters keep saying what a starter must say — that they need Spring Boot, and how old a Spring
 Boot is too old. They stop saying which one the consumer should be running.
@@ -85,9 +88,10 @@ while telling consumers the floor is enough, and the first use of anything 4.1 a
 
 So there is **one number in one place**, and in the default build the promise is checked by the
 compiler: a starter cannot use an API newer than the floor it advertises, because the floor is the
-classpath it sees. Runs against a newer Spring Boot are a good thing and they exist — the next
-section says what they are worth — but they are named runs that report, and nothing is published out
-of them. That property is the reason this is a decision and not a build tweak.
+classpath it sees. Runs against a newer Spring Boot are worth having, and the next section says both
+what they are worth and what they may not do — but the tree has none of them today, and this record's
+implementation is where they would arrive: named runs that report and publish nothing. That property
+is the reason this is a decision and not a build tweak.
 
 ## A floor nothing checks is not a promise
 
@@ -98,10 +102,11 @@ parts that must not. Only the second kind is decided here.
 - **The floor is the classpath of the default build.** A bare `./gradlew build` resolves Spring Boot
   at the declared minimum, and the artifacts that are published are built from that same resolution.
   Nothing has to be remembered for the check to happen: the ordinary path is the checked path.
-- **Exactly one check blocks a merge, and it is the one that already does.** Because the floor is the
-  default, the existing required `quality` check is already compiling and testing both starters
-  against it. No new required check is introduced for this. A floor guarded by a job somebody has to
-  remember to read is not guarded.
+- **Exactly one merge-blocking check covers the floor, and it is one that exists already.** `main`
+  requires three, and the other two analyse the sources without building them, so `quality` is the
+  only one that can witness anything about a classpath. Once the catalog key means the floor,
+  `quality` compiles and tests both starters against it — no fourth required check, and nothing new
+  for anyone to remember. A floor guarded by a job somebody has to remember to read is not guarded.
 - **Any run above the floor is informative and publishes nothing.** Building and testing against a
   newer Spring Boot is worth doing — it is how the next floor move is discovered before a consumer
   discovers it — but such a run reports rather than decides, and no artifact leaves it.
@@ -132,17 +137,32 @@ built against the 4.0 line run on 4.0, on 4.1.1 and on 4.2.0-M1; starters built 
 4.0. In the surface these modules actually touch there is no binary incompatibility in either
 direction — which is what makes the floor honest rather than defensive.
 
-**The patch inside that line is chosen by the security rule below, and 4.0.0 fails it.** Measured
-against the GitHub Advisory Database, a consumer resolving a floor of 4.0.0 gets four published
-advisories in the runtime graph these starters produce: `spring-boot` 4.0.0 carries a **critical**
-one, [GHSA-8v8j-3hxp-93wr](https://github.com/advisories/GHSA-8v8j-3hxp-93wr) (CVE-2026-40976,
-affecting `>=4.0.0, <4.0.6`), and a **high** one,
-[GHSA-wwpq-f5c3-7hvx](https://github.com/advisories/GHSA-wwpq-f5c3-7hvx); `spring-core` 7.0.0–7.0.7
-carries a low one. The fourth is the one that matters most here, because it is **the coordinate this
-record decides to publish**: `spring-boot-autoconfigure` is affected by CVE-2026-41001 (moderate,
-`>=4.0.0, <=4.0.6`, fixed in 4.0.7). A floor of 4.0.8 resolves zero advisories, as 4.1.1 does. The
-4.0 line's BOM at 4.0.8 manages `spring-framework` 7.0.9, `micrometer` 1.16.7 and `jackson-bom`
-3.1.5.
+**The patch inside that line is chosen by the rule under *When the floor moves*, and 4.0.0 fails
+it.** The graph a floor of 4.0.0 actually produces was resolved rather than assumed —
+`spring-boot-autoconfigure` 4.0.0, `spring-boot` 4.0.0, and `spring-core`, `spring-context`,
+`spring-beans`, `spring-aop` and `spring-expression` all at 7.0.1 — and checked against the GitHub
+Advisory Database. It carries **seven** published advisories:
+
+| Artifact at a 4.0.0 floor | Advisory | Severity |
+|---|---|---|
+| `spring-boot` 4.0.0 | [GHSA-8v8j-3hxp-93wr](https://github.com/advisories/GHSA-8v8j-3hxp-93wr) — CVE-2026-40976, `>=4.0.0, <4.0.6`, fixed 4.0.6 | **critical** |
+| `spring-boot` 4.0.0 | [GHSA-wwpq-f5c3-7hvx](https://github.com/advisories/GHSA-wwpq-f5c3-7hvx) — CVE-2026-40973, `>=4.0.0, <4.0.6`, fixed 4.0.6 | **high** |
+| `spring-boot-autoconfigure` 4.0.0 | [GHSA-ggg2-9786-hwc8](https://github.com/advisories/GHSA-ggg2-9786-hwc8) — CVE-2026-41001, `>=4.0.0, <=4.0.6`, fixed 4.0.7 | moderate |
+| `spring-expression` 7.0.1 | [GHSA-r5w3-xv2f-j59q](https://github.com/advisories/GHSA-r5w3-xv2f-j59q) — CVE-2026-41850, `>=7.0.0, <=7.0.7`, fixed 7.0.8 | **high** |
+| `spring-expression` 7.0.1 | [GHSA-wxpp-56q6-5pcg](https://github.com/advisories/GHSA-wxpp-56q6-5pcg) — CVE-2026-41851, same range, fixed 7.0.8 | moderate |
+| `spring-expression` 7.0.1 | [GHSA-9f52-rjqv-25qv](https://github.com/advisories/GHSA-9f52-rjqv-25qv) — CVE-2026-41852, same range, fixed 7.0.8 | low |
+| `spring-core` 7.0.1 | [GHSA-659m-px2c-25wj](https://github.com/advisories/GHSA-659m-px2c-25wj) — CVE-2026-41848, `>=7.0.0, <=7.0.7`, fixed 7.0.8 | low |
+
+One critical, two high, two moderate, two low. **Only three of the seven are Spring Boot's own
+coordinates**, and one of those three is `spring-boot-autoconfigure` — the artifact this record
+decides to publish a version of. The other four arrive through what Boot's BOM manages, which is
+precisely why the rule under *When the floor moves* is written over the graph the floor produces
+rather than over the floor's own artifact.
+
+The same graph at 4.0.8 resolves `spring-boot` and `spring-boot-autoconfigure` 4.0.8 with the whole
+framework at 7.0.9 — above every fixed version in the table — so it carries none of the seven, as
+4.1.1 carries none. The 4.0 line's BOM at 4.0.8 manages `spring-framework` 7.0.9, `micrometer`
+1.16.7 and `jackson-bom` 3.1.5.
 
 Declaring the *minor* as the decision and the *patch* as a value moved by rule is what keeps this
 record from needing a successor every time Spring publishes a security patch. Where this leaves 3.x
@@ -159,12 +179,19 @@ reasons and no others.
 1. **A starter needs an API the floor does not have.** Then raising the floor is part of that work
    and is argued with it — the feature and the narrowing arrive together, and the compiler is what
    forced the question.
-2. **The version at the floor carries a published vulnerability fixed by a patch of the same line.**
-   Then raising to that patch is **obligatory, not discretionary**: the floor is what a consumer's
-   resolution may be raised *to*, so leaving it on a known-vulnerable patch hands that version to
-   every consumer whose build honours it. This is the ordinary public path a vulnerable dependency
-   takes in this repository, advisory named and all, and not the private one that belongs to a defect
-   in this library's own code.
+2. **A published vulnerability sits in the graph the floor produces — in Spring Boot itself or in
+   anything its BOM manages into that graph — and a patch of the same line fixes it.** Then raising
+   to that patch is **obligatory, not discretionary**: the floor is what a consumer's resolution may
+   be raised *to*, so leaving it on a known-vulnerable patch hands that version to every consumer
+   whose build honours it. This is the ordinary public path a vulnerable dependency takes in this
+   repository, advisory named and all, and not the private one that belongs to a defect in this
+   library's own code.
+
+   **The graph and not the artifact is the trigger, and the seven advisories are why.** Four of the
+   seven that ruled 4.0.0 out are against `spring-core` and `spring-expression`, which this library
+   declares nowhere: they arrive because Boot's BOM manages them, and a patch of Boot's line is what
+   moves them. A rule reading "the floor's own artifact" would have left the
+   floor at 4.0.0 in the very case that produced this record.
 
 **A new Spring Boot existing is not a reason.** Neither is a wish to use a newer API that nothing
 needs.
@@ -190,14 +217,14 @@ the alternative a reader will ask about. The serialisations were read out of pub
 | `require` | `{"requires":"4.0.8"}` | `<version>4.0.8</version>` |
 | `prefer` | `{"prefers":"4.0.8"}` | `<version>4.0.8</version>` — indistinguishable from `require` |
 | `strictly` | `{"strictly":"4.0.8","requires":"4.0.8"}` | `<version>4.0.8</version>` — the strictness is lost entirely |
-| `reject` | `{"requires":"4.0.8","rejects":["[,4.0.0)"]}` | `<version>4.0.8</version>` — the dependency is there, the *rejection* is absent |
+| `reject` | `{"requires":"4.0.8","rejects":["[,4.0.8)"]}` | `<version>4.0.8</version>` — the dependency is there, the *rejection* is absent |
 | `constraints {}` | a constraint node | `<dependencyManagement>` without `scope=import`, plus a versionless dependency |
 
-A Gradle consumer reads the module metadata and sees whichever of these was declared; a Maven
-consumer reads the POM, where three of the spellings collapse into `require` and the fourth's
-restriction disappears while its dependency stays. Any decision that leans on a mechanism the POM
-cannot carry is a decision that behaves differently for half the ecosystem while looking uniform in
-the source.
+A Gradle consumer reads the module metadata and sees whichever of these was declared. A Maven
+consumer reads the POM, where `prefer` and `strictly` become indistinguishable from `require`, and
+`reject` keeps its dependency while losing the restriction that was its entire point. Any decision
+that leans on a mechanism the POM cannot carry is a decision that behaves differently for half the
+ecosystem while looking uniform in the source.
 
 ## The alternatives, and what each one cost when it was measured
 
@@ -208,19 +235,22 @@ strictness. That is imposition in its purest form, and asymmetric imposition at 
 would be dictating a version to Gradle users and merely suggesting one to Maven users, from a single
 line of build script. Refused.
 
-**A Maven range, `[4.0.0,)`.** It is the only spelling of "not below X" that a POM has, and its price
+**A Maven range, `[4.0.8,)`.** It is the only spelling of "not below X" that a POM has, and its price
 is measured: a consumer with no BOM of their own resolved `spring-boot-autoconfigure:4.2.0-M1` and
-`spring-core:7.1.0-M1`. The library would be pulling *pre-release milestones* into applications, and
-what an application resolves would change with every Spring publication while not a line of anyone's
-code changed. A floor that drags a consumer forward is not a floor. Refused.
+`spring-core:7.1.0-M1`. What selects the milestone is the open right end, so the result is the same
+whatever the floor on the left is; the measurement was taken with the floor of the day on it. The
+library would be pulling *pre-release milestones* into applications, and what an application resolves
+would change with every Spring publication while not a line of anyone's code changed. A floor that
+drags a consumer forward is not a floor. Refused.
 
 **`compileOnly` for `spring-boot-autoconfigure`.** It publishes nothing at all — no version, and no
 record that Spring Boot is required. A consumer who does not also depend on a `spring-boot-starter`
 fails to compile, and a consumer on Boot 3.x learns about the mismatch as a `NoClassDefFoundError` at
 runtime. A floor that says nothing cannot be violated, and cannot be relied on either. Refused.
 
-**`reject("[,4.0.0)")`.** Its appeal is that it expresses the actual intent — not below the floor, no
-opinion above. It is absent from the POM, so Maven never sees it; and under
+**`reject("[,4.0.8)")`.** Its appeal is that it expresses the actual intent — not below the floor, no
+opinion above, the bound moving with the floor so that it never admits a patch the floor exists to
+exclude. It is absent from the POM, so Maven never sees it; and under
 `io.spring.dependency-management` it was measured to be **silently ignored**, a consumer on Boot 3.5.9
 resolving 3.5.9 with no complaint. A guard that is invisible to some consumers and inert for others
 is worse than no guard, because it reads in our source like protection. Refused.
@@ -289,7 +319,7 @@ while it is `Proposed` those documents are accurate, because the tree still publ
 Sources for the mechanism claims, where a wrong one would cost a consumer a build:
 [Gradle rich versions](https://docs.gradle.org/current/userguide/dependency_versions.html#sec:rich-version-constraints),
 [Gradle's mapping of dependency metadata into a POM](https://docs.gradle.org/current/userguide/publishing_maven.html),
-[Maven dependency management](https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html#dependency-management)
+[Maven dependency management](https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html#Dependency_Management)
 and the
 [`io.spring.dependency-management` plugin](https://docs.spring.io/dependency-management-plugin/docs/current/reference/html/).
 The measured behaviours above are this repository's own observations and are not claims any of those
@@ -309,8 +339,10 @@ documents makes.
   ordinary requirement cannot express and a strict one can only express by breaking.
 - A `springBoot` catalog value raised because a newer Spring Boot exists, or because this build would
   like to test against one. The two reasons that do move it are a starter needing an API the floor
-  lacks, and a published vulnerability at the floor fixed within the same line — the second
-  obligatory rather than discretionary, since the floor is a version consumers may be raised to.
+  lacks, and a published vulnerability anywhere in the graph the floor produces — Spring Boot's own
+  artifacts or anything its BOM manages into that graph — fixed by a patch of the same line; the
+  second obligatory rather than discretionary, since the floor is a version consumers may be raised
+  to.
 - A move to a newer *minor* made by editing the catalog number: that narrows the deployments this
   library supports, and is owed a record of its own and a note in `docs/MIGRATION.md`.
 - The two meanings split apart: a second catalog key so that the starters compile against one Spring
@@ -327,8 +359,8 @@ documents makes.
 - A runtime or startup check of the framework's version, and a member of the startup-refusal list
   whose subject is which Spring Boot is present.
 - A claim, in this repository or its published metadata, that the minimum version is enforced for
-  every consumer — it is enforced where the consumer's resolution lets it be, and the three cells
-  above are the whole of what was measured.
+  every consumer — it is enforced where the consumer's resolution lets it be, and the three consumers
+  named under *The floor is not enforceable everywhere* are the whole of what was measured.
 - Spring Boot's version manifest reaching a consumer as a live input to their resolution by any other
   route: a BOM published from this project, a `pom` variant, or a starter re-exporting managed
   versions under another name.
