@@ -38,12 +38,12 @@ import com.the13haven.push2u.PushResponse;
  *
  * <p>The budget arrives as an argument, in seconds, and this class holds none of its own. Two things follow from that,
  * and both are deliberate. It is the contract instance that owns the number, so nothing one check does to its budget
- * can reach a check running beside it — a budget shared across a JVM would be shortened by whichever check was
- * shortening it and would expire under every other check running at that moment, and since an expired budget aborts
- * rather than fails, that arrives as a green run with the conformance checks silently skipped. And it is
- * <em>seconds</em> rather than a computed deadline, because the deadline is this class's own business in both entry
- * points: the batched one derives a single deadline for the whole batch, which is the property a caller handing one in
- * could quietly break, and the seconds are also what the abort message has to report.
+ * can reach a check running beside it — a budget shared across a JVM takes the value the one check that needs a short
+ * one gives it, and expires under every other check running at that moment, and since an expired budget aborts rather
+ * than fails, that arrives as a green run with the conformance checks silently skipped. And it is <em>seconds</em>
+ * rather than a computed deadline, because the deadline is this class's own business in both entry points: the batched
+ * one derives a single deadline for the whole batch, which is the property a caller handing one in could quietly break,
+ * and the seconds are also what the abort message has to report.
  */
 final class PostAttempt {
 
