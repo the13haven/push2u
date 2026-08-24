@@ -1,6 +1,12 @@
 {
   "properties": [
     {
+      "name": "management.health.push2u.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether the push2u health indicator is registered. Registered by default wherever Spring Boot health support and a VapidSigner bean are both present. This is Spring Boot's own switch for a health contributor rather than one of push2u's: unset, the indicator follows management.health.defaults.enabled, so a deployment that turned every contributor off wholesale has turned this one off too. Nothing binds this key in push2u — the framework reads it, which is why it is declared here rather than generated from a properties record. Note that push2u.enabled sits upstream of it: with delivery off there is no probe left to opt out of.",
+      "defaultValue": true
+    },
+    {
       "name": "push2u.enabled",
       "type": "java.lang.Boolean",
       "description": "Whether this deployment sends web push messages. Defaults to true. Set it to false to state that this deployment deliberately does not send: the signer, the transport, the sender and the health indicator are then not contributed at all, while the endpoint policy the allowlist properties express, and every startup refusal guarding them, stay in force. Only true and false are accepted; any other value fails the context naming the property, because this is the one key where a typo would otherwise mean the opposite of what was typed.",
