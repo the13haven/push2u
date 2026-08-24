@@ -15,6 +15,7 @@ import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -180,6 +181,25 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     assertThat(context.getBean(EndpointPolicy.class)
                                     .assess(URI.create("https://other.example/send/abc")))
                             .isInstanceOf(EndpointAssessment.Refused.class);
+                });
+    }
+
+    @Test
+    void theChecksSurviveAClasspathWithoutSpringBootHealth() {
+        // A deployment with no Spring Boot health support on the classpath at all. The health
+        // autoconfiguration in the composition above carries a condition on those classes and backs
+        // off here — and the allowlist checks, which have nothing to do with health, must not go
+        // with it. This is the general rule in its cheapest form: a check inherits every condition
+        // standing between it and the context, including ones about something else entirely, so
+        // hosting the checks apart from the features whose configuration they read is what keeps
+        // them running for the deployment that dropped one of those features.
+        runner.withClassLoader(new FilteredClassLoader("org.springframework.boot.health"))
+                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("push2u.allowed-origins[0]:");
                 });
     }
 

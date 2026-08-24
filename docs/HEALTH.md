@@ -50,9 +50,9 @@ framework's rather than one of ours: `enabled: false` removes the indicator enti
 never touches the signer, and `management.health.defaults.enabled: false` — the setting that turns
 every contributor off wholesale — reaches this one too. Both are answers to the coupling described
 below, at the cost of having no probe at all. Earlier versions spelled these two keys
-`push2u.health.enabled` and `push2u.health.cache-ttl`. For one release after the one that removed
-them, **both failed the context at startup** with a message naming the replacement — a transition
-aid rather than validation, and it has since been retired along with the rest of that set. **A
+`push2u.health.enabled` and `push2u.health.cache-ttl`. The release that removed them **failed the
+context at startup** over either, with a message naming the replacement — a transition aid rather
+than validation, carried for that one release and retired with the rest of that set. **A
 deployment that still holds either key now has it ignored in silence**, which is what binding does
 with any key nothing reads: an `enabled: false` left behind stops switching the probe off, and a
 lengthened `cache-ttl` reverts to the default. If you are upgrading from a version that had them,

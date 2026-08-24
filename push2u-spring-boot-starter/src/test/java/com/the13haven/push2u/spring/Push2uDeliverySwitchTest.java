@@ -329,8 +329,8 @@ class Push2uDeliverySwitchTest {
     @Test
     void everyValueRefusalRunsOnBothSidesOfTheSwitch() {
         // The rows of the table that are about a *value*: an entry that is not an origin is not an
-        // origin in a context that sends nothing either, a contradiction does not become acceptable
-        // there, and a key a release removed configures nothing on either side. Each is asserted
+        // origin in a context that sends nothing either, and a contradiction does not become
+        // acceptable there. Each is asserted
         // twice, once per side, because "runs / runs" is the claim and half of it is not the claim:
         // off is the side where a check placed by where it happened to be implemented would have
         // gone missing, and on is the side where a check gated by mistake would still have looked

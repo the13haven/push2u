@@ -16,12 +16,14 @@ import org.springframework.core.Ordered;
  * <p>The order is one list spanning the whole starter family, most specific first: the value of the activation switch,
  * then the allowlist refusals, then a signer starter's own diagnostic, then the general refusal over a missing signer.
  * A check declares only the position it implements — a number reserved for a check that does not exist yet would be a
- * claim nothing keeps true — and each position leaves a gap of 100 so the checks around it can take theirs when they
- * are built. Positions of checks in other modules cannot live here, because a signer starter deliberately does not
- * depend on this one; each module keeps its own constants and reads them against the same list. What pins the list is
- * therefore not any constant's value — a test asserting that a number here equals a number written in the decision
- * proves only that someone typed it twice, and stays green while the module next door moves its own — but the message
- * that arrives in a context holding every starter and earning several refusals at once.
+ * claim nothing keeps true — and consecutive positions are at least 100 apart so the checks between them can take
+ * theirs when they are built. A wider interval means a check once declared there has been retired: its number is
+ * vacated rather than held, and the next check needing that place is free to take it. Positions of checks in other
+ * modules cannot live here, because a signer starter deliberately does not depend on this one; each module keeps its
+ * own constants and reads them against the same list. What pins the list is therefore not any constant's value — a test
+ * asserting that a number here equals a number written in the decision proves only that someone typed it twice, and
+ * stays green while the module next door moves its own — but the message that arrives in a context holding every
+ * starter and earning several refusals at once.
  *
  * <p>The framework sorts post-processors into buckets by the kind of precedence their <em>class</em> declares and
  * compares numbers only within a bucket, so every check taking a position from this class implements {@link Ordered} on

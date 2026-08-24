@@ -592,8 +592,8 @@ property, because this is the one key where a typo would otherwise mean the oppo
 typed.
 
 An application arriving from an earlier push2u meets that refusal along with several other changes
-— removed properties that now fail the context rather than being ignored, a `catch` clause that
-quietly stops catching, an endpoint length a `Subscription` no longer accepts.
+— configuration properties that were removed and are now bound away in silence, a `catch` clause
+that quietly stops catching, an endpoint length a `Subscription` no longer accepts.
 [`MIGRATION.md`](docs/MIGRATION.md) is the reference for the whole move, version to version; this
 README describes the API as it stands and nothing about where it came from.
 

@@ -148,8 +148,8 @@ class StartupCheckOrderAcrossStartersTest {
     @Test
     void theOneRemainingEditStartsTheContext() {
         // The end of the walk, and the half that makes the cascade above about an operator's cost
-        // rather than about six strings: the same deployment, having answered the last finding,
-        // starts.
+        // rather than about a handful of strings: the same deployment, having answered the last
+        // finding, starts.
         contextWith("push2u.allowed-origins=https://fcm.googleapis.com", "push2u.enabled=false")
                 .run(context -> assertThat(context).hasNotFailed());
     }

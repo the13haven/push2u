@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM. |
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM, and the refusal over the keys `0.2.0` removed is retired. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
 ## From `0.2.0`
@@ -57,6 +57,7 @@ of its own below, and no bearing on an application that only sends.
 - [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
 - [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
+- [A `push2u.*` key `0.2.0` removed is no longer refused](#a-push2u-key-020-removed-is-no-longer-refused)
 - [The starters stop exporting Spring Boot's BOM](#the-starters-stop-exporting-spring-boots-bom)
   - [Which Spring Boot you end up with, before and after](#which-spring-boot-you-end-up-with-before-and-after)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
@@ -278,6 +279,28 @@ threads colliding inside it. A red run is a real defect every time; a green one 
 check did not catch you. The requirement is the sentence in `VapidSigner`'s own contract, as it has
 been all along.
 
+### A `push2u.*` key `0.2.0` removed is no longer refused
+
+`0.2.0` removed six `push2u.*` keys — `record-size`, the `health.*` pair and the three `retry.*` —
+and shipped one startup refusal naming every one it found. **That refusal is gone in this release.**
+A leftover key is now bound away in silence, which is what happens to any key nothing reads.
+
+For most deployments this changes nothing, and that is the point: on `0.2.0` a context holding one
+of those keys could not start, so anyone running `0.2.0` today has already deleted them. **The
+exception is a key the refusal never saw.** The check read the *bound* environment at context
+refresh, so a key that lives in a profile which was not active — `application-staging.yml`, a
+per-environment document in a config server, a `@TestPropertySource` in a suite that does not run —
+passed `0.2.0` untouched. That configuration is still there, and the day the profile is activated it
+now boots green and ignores the key instead of failing and naming it.
+
+Three of the six are the ones where that matters: `push2u.retry.max-attempts`,
+`push2u.retry.initial-backoff` and `push2u.retry.max-backoff`. A deployment that configured several
+attempts starts clean and sends one POST per message, with nothing at startup or at run time saying
+so. **Grep every configuration source, not only the active profile** — every spelling, the
+`PUSH2U_RETRY_MAX_ATTEMPTS` environment-variable form included. The
+[`0.1.0` section's table](#the-push2u-keys-that-010-had-and-no-later-version-reads) lists all six
+with what each one did and what to write instead.
+
 ### The starters stop exporting Spring Boot's BOM
 
 A third reader, and the one least likely to be looking: an application that uses either Spring Boot
@@ -424,6 +447,9 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
       contract signs from several threads now, and a failure there is a defect that was already
       corrupting signatures under load rather than a new rule to satisfy.
+- [ ] Grep every configuration source — inactive profiles included — for the six `push2u.*` keys
+      `0.2.0` removed. The startup refusal that named them is gone, and the three `push2u.retry.*`
+      ones change delivery rather than a diagnostic when they are ignored.
 - [ ] **Gradle**, if you use either Spring Boot starter and do not apply
       `io.spring.dependency-management`: diff your resolved runtime classpath before and after.
       Jackson, Netty, Tomcat and the rest of Boot's manifest stop being managed by the starters
@@ -488,9 +514,9 @@ Five steps, in this order, before you read the rest:
    at startup stops catching one:
    [an eager Vault `build()`](#an-eager-vault-build-raises-a-different-type-when-vault-is-down).
 5. **If you run the Spring starters, do not upgrade the jar without recompiling and re-reading your
-   YAML.** Six `push2u.*` keys now fail the context at startup rather than being ignored, the health
-   probe answers to different keys, and a deployment that quietly holds no signer now refuses to
-   start. All of it is in [Spring Boot](#spring-boot-coming-from-010).
+   YAML.** Six `push2u.*` keys are gone and **nothing warns you about a leftover one** — the
+   refusal that named them lived for one release and has been retired — the health probe answers to
+   different keys, and a deployment that quietly holds no signer now refuses to start. All of it is in [Spring Boot](#spring-boot-coming-from-010).
 
 ### What stops compiling on the way from `0.1.0`
 
@@ -1054,4 +1080,7 @@ covers the deferred mode itself.
 - [ ] State `push2u.enabled` where this deployment does not send — and edit any health group naming
       `push2u` in the same change.
 - [ ] Recompile every artifact that binds the starters' properties records.
-- [ ] Start the application and read the startup refusals; they are the last mile of this list.
+- [ ] Start the application and read the startup refusals. They are the last mile for the signer,
+      the allowlist and the activation switch — and **not** for the six removed keys, whose refusal
+      no longer exists. Those are the items above that only a grep of your own configuration
+      finishes.

@@ -116,7 +116,7 @@ Vault](VAULT.md#when-boot-must-not-depend-on-vault)). It takes nothing else: an 
 fails the context naming the key, and any written value beside a supplied
 `push2u.signer.vault.public-key` fails it naming both keys, because the supplied mode performs no
 metadata read whose moment the property could choose. Those refusals are raised while the signer
-bean is built — step 7 of [the order below](#which-refusal-an-operator-reads-first), on the
+bean is built — step 6 of [the order below](#which-refusal-an-operator-reads-first), on the
 delivery-path side of `push2u.enabled` by construction — so they hold no position of their own in
 that list. **There is no `push2u.retry.*` block**: the library performs one POST per
 send and schedules no repeat, so there is nothing under this prefix to configure — see
@@ -222,8 +222,8 @@ whole point of the key is that neither guess is acceptable.
 | An application's own `PushSender` bean | untouched | untouched |
 | The `EndpointPolicy` bean the allowlist properties express | **contributed** | contributed |
 
-Startup checks sort by what each one is *about*, never by where it happens to be implemented. Six of
-them need a row, and they are the whole of this table — every other refusal the starters raise
+Startup checks sort by what each one is *about*, never by where it happens to be implemented. Five
+of them need a row, and they are the whole of this table — every other refusal the starters raise
 happens *while a bean the switch withdraws is being constructed*, so it is on the delivery-path side
 by construction and could not be anywhere else: the signer's own key material, every builder value
 the sender translates from a property, and every per-property translation in a signer starter.
@@ -680,8 +680,9 @@ membership and refuses a context naming a contributor that does not exist, in a 
 neither the switch nor anything else done to push2u.
 
 [`HEALTH.md`](HEALTH.md) is the reference — what the probe asserts about the signer and what it
-deliberately does not, the two keys with their cache and their startup refusals, when the indicator
-is registered and when it is not, and the health-group routes that keep a signer's backend out of a
+deliberately does not, the two keys with their cache, what became of the `push2u.health.*` keys
+they replaced now that the refusal over those has been retired, when the indicator is registered and
+when it is not, and the health-group routes that keep a signer's backend out of a
 container health check.
 
 ## Two identities during a key rotation

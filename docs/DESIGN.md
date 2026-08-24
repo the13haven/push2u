@@ -1303,8 +1303,8 @@ no second helper any more: the one property group whose values reached a constru
 several at once was `push2u.retry.*`, and it is gone with the retry loop, so no property needs a
 probe to be attributed.
 
-**A property a release removed is refused for one release, then ignored like any other unknown
-key.** `push2u.record-size` went with
+**A property a release removed is refused while its tombstone lives, and ignored like any other
+unknown key once that window closes.** `push2u.record-size` went with
 [ADR-023](adr/0023-one-size-limit-answerable-before-a-send.md); `push2u.health.enabled` and
 `push2u.health.cache-ttl` went to `management.health.push2u.*` when the health indicator took Spring
 Boot's own switch for a contributor; and `push2u.retry.max-attempts`, `push2u.retry.initial-backoff`
@@ -1313,10 +1313,11 @@ loop ([ADR-021](adr/0021-retry-belongs-to-the-caller.md)), since a send now perf
 POST and publishes what a repeat decision needs on the outcome, `RetryableFailure` carrying the
 status the push service answered with and the `Retry-After` it asked for, uncapped.
 
-For the release that removed them and no longer, one `BeanFactoryPostProcessor` in
+In the release that removed them, one `BeanFactoryPostProcessor` in
 `Push2uStartupChecksAutoConfiguration` failed the context naming every dead key it found and where
-each one's effect had gone. **That check no longer exists**, its window having closed with the
-release after the one that removed the keys, and the tree carries no successor: an operator who
+each one's effect had gone. **That check no longer exists**, its window having closed on the
+schedule `RELEASING.md` sets and [ADR-033](adr/0033-a-tombstone-is-retired-by-the-next-release.md)
+decides, and the tree carries no successor: an operator who
 still holds one of those keys now has it ignored in silence, which is what binding does with any
 key nothing reads. The mechanism is described here rather than only in the history because it is
 the shape the *next* removal takes — a check whose whole design is that it is temporary, entered
@@ -1352,7 +1353,7 @@ implemented.** Most of this starter family's refusals need no decision at all: o
 bean the switch withdraws is being constructed* is on the delivery-path side by construction and
 could not be anywhere else. That covers the signer's own key material, every builder value the
 sender translates from a property, and every per-property translation in a signer starter. What is
-left is the six that take a declared position, and they are the whole of this table:
+left is the five that take a declared position, and they are the whole of this table:
 
 | Startup check | `push2u.enabled: false` | `true`, or unset |
 |---|---|---|
@@ -1624,7 +1625,7 @@ never constructs the signer and never performs the eager fetched mode's startup 
 `push2u.signer.vault.public-key-fetch` selects between that startup read (`eager`, the default and
 what an unset or blank key means) and the deferred read at first use; its refusals — a value that
 is neither mode, and any written value beside a supplied `public-key`, whose mode performs no
-metadata read at all — are decided while the signer bean is built, which places them at step 7 of
+metadata read at all — are decided while the signer bean is built, which places them at step 6 of
 the startup-check order and on the delivery-path side of `push2u.enabled` by construction, so they
 deliberately hold no position in the ordered list of checks.
 

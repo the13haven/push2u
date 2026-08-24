@@ -280,8 +280,16 @@ without a word, which is why the refusal exists at all.
 
 A tombstone is not permanent. It is there to catch a configuration written against the *previous*
 release, and one carried indefinitely becomes code that refuses keys nobody has written in years.
-The window is **one minor release after the one that removed the property**, and closing it is a
-piece of work somebody has to be holding.
+**The window is one release: the tombstone ships with the removal and the next release retires it**,
+whatever that release's size — a patch retires one as readily as a minor, since nothing about the
+retirement is a change a version number is protecting. Closing it is a piece of work somebody has to
+be holding.
+
+An upgrade that skips the release carrying the tombstone never meets it, and no window fixes that —
+two releases would simply mean skipping two. That reader is served by `docs/MIGRATION.md`, which is
+written per source version and can say "delete these by hand, nothing checks that you have" where a
+check that is not running cannot. **A removal whose migration section does not name every key it
+removed is not finished**, and that is the half of this step that outlives the tombstone.
 
 **So the release that ships a tombstone opens the issue that removes it, and this is the step where
 that happens** — after the tag, not before. Until the tag exists there is no number to count the
