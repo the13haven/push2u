@@ -1442,14 +1442,14 @@ about to be told to stand down for.
 
 **The cases a refusal cannot reach are answered by failure analyzers.** A refusal raised from inside
 a factory method runs only where that method runs, so a context that builds no sender reaches
-neither the sender's own refusal nor the two the endpoint policy keeps there. Both gaps open in the
-same deployment and each is answered by its own analyzer; this is the first, and the one about the
-policy belongs with the policy, below. An application that requires a `PushSender` from a context
-where the check never ran gets `MissingPushSenderFailureAnalyzer`, which distinguishes three causes
-and gives three answers: the deployment stated `false` and
-something still required a sender, which is a contradiction in the application rather than a missing
-signer; the check is absent because its auto-configuration was excluded; and everything else, which
-is the same enumeration the refusal gives — with a context that already holds a `VapidSigner` led
+neither the sender's own refusal nor the refusals the endpoint policy keeps there. Both gaps open in
+the same deployment and each is answered by its own analyzer; this is the first, and the one about
+the policy belongs with the policy, below. An application that requires a `PushSender` from a
+context where the check never ran gets `MissingPushSenderFailureAnalyzer`, which distinguishes three
+causes and gives three answers: the deployment stated `false` and something still required a sender,
+which is a contradiction in the application rather than a missing signer; the check is absent
+because its auto-configuration was excluded; and everything else, which is the same enumeration the
+refusal gives — with a context that already holds a `VapidSigner` led
 with the piece that is actually missing. Answering "configure a signer" to all three would
 reintroduce the record's own subject one layer down, a deliberate "off" reported as a defect; and
 for the same reason no answer may state something false about the context it describes, so the
@@ -1517,9 +1517,8 @@ over. The escape hatch is per property — an explicitly *empty* value says the 
 deliberately unused here, so a service can empty whichever key it inherited from shared
 configuration it cannot unset, ceding to a bean or to the sibling property. `pushSender` never
 builds the policy from the properties itself; the one reachable state with a non-empty property and
-no bean — the policy
-auto-configuration excluded by hand — is refused naming that auto-configuration rather than
-silently rebuilt.
+no bean — the policy auto-configuration excluded by hand — is refused naming that
+auto-configuration rather than silently rebuilt.
 
 **So the same three states are reached twice, and they are written once.** A sending deployment meets
 them as a refusal, inside the factory method whose obligation they are. A registration-only one meets
@@ -1528,13 +1527,12 @@ arrive and holds no sender for that refusal to run inside — which is the one d
 whole reason for wanting the policy is that a registration endpoint must not store whatever a browser
 offers it, and the one that would otherwise read the framework's "required a bean that could not be
 found" naming a push2u type and nothing else. `MissingEndpointPolicyFailureAnalyzer` answers it, and
-`MissingEndpointPolicy` carries both the wording and the reading of the two properties for both
-askers, so neither restates the other. The two shapes differ in assembly and not in content: a
-refusal folds situation and ways out into the one string an exception carries, an injection-failure
-analysis wants them apart, because there the situation follows the framework's account of what went
-unsatisfied and has to read as the next sentence rather than as the continuation of a clause. Written
-apart and joined, rather than written joined and split, so that neither shape can be edited without
-the other following. The analyzer reads the properties from the environment rather than from the
+`MissingEndpointPolicy` carries both the wording and the rule that turns the two properties into one
+of the three states, so neither asker restates the other. The two shapes differ in assembly and not
+in content: a refusal folds situation and ways out into the one string an exception carries, an
+injection-failure analysis wants them apart, because there the situation follows the framework's
+account of what went unsatisfied and has to read as the next sentence rather than as the
+continuation of a clause. The analyzer reads the properties from the environment rather than from the
 bound record — a context that failed to start may hold neither the record nor the class that enables
 it — but through the same two names and the same unset-against-emptied distinction that decide
 whether the bean exists at all, so the state it reports and the state that produced the absence
@@ -1555,8 +1553,9 @@ one that should start checking them, and the invitation would hand it the shape 
 registration go on storing whatever a browser offers. As with the sender's analyzer, nothing said may
 be false about the context being described, so the analysis is declined outright wherever the
 enumeration would be an account of some other context — a missing bean of another type, a bean found
-more than once rather than not at all, a failure early enough that neither the bean factory nor the
-environment is there to read, and a context that does hold an `EndpointPolicy` definition after all.
+more than once rather than not at all, a failure early enough that the bean factory or the
+environment is not there to be read — either one absent is enough — and a context that does hold an
+`EndpointPolicy` definition after all.
 
 Both properties' components are nullable and neither carries a `@DefaultValue`, so an unset key
 stays distinguishable from an explicitly empty one; every rule above rests on that difference, and
@@ -1683,6 +1682,11 @@ The automated suite covers:
   activating property read as unset, and each stand-down of the general refusal
   (`Push2uDeliverySwitchTest`); the missing-sender analyzer's three answers and that its text is the
   one the framework's sorted list produces (`MissingPushSenderFailureAnalyzerTest`);
+- the missing-policy analyzer's three answers, the clause a context that stated the switch off gets
+  and no other does, each shape the analysis is declined for, and that what it says and what the
+  sender's refusal says are one text rather than two that agree today — plus the same sorted-list
+  check its sibling carries, since both analyzers race the framework's own
+  (`MissingEndpointPolicyFailureAnalyzerTest`);
 - the one running order over every declared startup check, pinned by the message that arrives in a
   context holding both starters and earning every refusal at once, then one fault at a time down the
   list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
