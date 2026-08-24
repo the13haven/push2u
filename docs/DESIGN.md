@@ -1443,27 +1443,27 @@ about to be told to stand down for.
 **The cases a refusal cannot reach are answered by failure analyzers.** A refusal speaks only where
 it runs, and these two run in different places, so each goes out of reach for a reason of its own:
 the general one about a signer is a post-processor a context stops contributing once delivery is
-stated off or its auto-configuration is excluded, while the refusals the endpoint policy keeps are
-inside `pushSender`'s own factory method, which a context that builds no sender never enters. Two
-analyzers close the two gaps; this is the first, and the one about the policy belongs with the
-policy, below. An application that requires a `PushSender` from a context where the check never ran
-gets `MissingPushSenderFailureAnalyzer`, which distinguishes three causes and gives three answers:
-the deployment stated `false` and something still required a sender, which is a contradiction in the
-application rather than a missing signer; the check is absent because its auto-configuration was
-excluded; and everything else, which is the same enumeration the refusal gives — with a context that
-already holds a `VapidSigner` led with the piece that is actually missing. Answering "configure a
-signer" to all three would reintroduce the record's own subject one layer down, a deliberate "off"
-reported as a defect; and for the same reason no answer may state something false about the context
-it describes, so the signer-present branch names both shapes that reach it —
-`Push2uAutoConfiguration` inactive, and `Push2uAutoConfiguration` active but unable to see a signer
-an auto-configuration ordered after it registered — rather than claiming either. The framework ships
-an analyzer for a missing bean of its own, and it recognises the same failure both of these do, so
-each of them declares `@Order(HIGHEST_PRECEDENCE)` rather than taking the position its
-`spring.factories` entry happens to give it, and a test pins for each that its text is the one that
-arrives — losing that race would leave no mark, since the output would be correct, generic and
-exactly what it was before either analyzer existed. The factories file is where they are registered
-and deliberately not where their precedence is decided: a position on the classpath is not a
-statement anyone made.
+stated off, once a signer or a sender bean stands it down, or once its auto-configuration is
+excluded, while the refusals the endpoint policy keeps are inside `pushSender`'s own factory method,
+which a context that builds no sender never enters. Two analyzers close the two gaps; this is the
+first, and the one about the policy belongs with the policy, below. An application that requires a
+`PushSender` from a context where the check never ran gets `MissingPushSenderFailureAnalyzer`, which
+distinguishes three causes and gives three answers: the deployment stated `false` and something
+still required a sender, which is a contradiction in the application rather than a missing signer;
+the check is absent because its auto-configuration was excluded; and everything else, which is the
+same enumeration the refusal gives — with a context that already holds a `VapidSigner` led with the
+piece that is actually missing. Answering "configure a signer" to all three would reintroduce the
+record's own subject one layer down, a deliberate "off" reported as a defect; and for the same
+reason no answer may state something false about the context it describes, so the signer-present
+branch names both shapes that reach it — `Push2uAutoConfiguration` inactive, and
+`Push2uAutoConfiguration` active but unable to see a signer an auto-configuration ordered after it
+registered — rather than claiming either. The framework ships an analyzer for a missing bean of its
+own, and it recognises the same failure both of these do, so each of them declares
+`@Order(HIGHEST_PRECEDENCE)` rather than taking the position its `spring.factories` entry happens to
+give it, and a test pins for each that its text is the one that arrives — losing that race would
+leave no mark, since the output would be correct, generic and exactly what it was before either
+analyzer existed. The factories file is where they are registered and deliberately not where their
+precedence is decided: a position on the classpath is not a statement anyone made.
 
 The endpoint policy has two *sources*: the allowlist properties and an application `EndpointPolicy`
 bean. `push2u.allowed-origins` and `push2u.allowed-domains` are not two of them — they are two
@@ -1555,9 +1555,9 @@ registration go on storing whatever a browser offers. As with the sender's analy
 may be false about the context being described, so the analysis is declined outright wherever the
 enumeration would be an account of some other context — a missing bean of another type, a bean found
 more than once rather than not at all, a bean factory or an environment that is not there to be read
-— either because the failure came before there was one, or because what is there cannot be asked for
-definitions, and either one missing is enough — and a context that does hold an `EndpointPolicy`
-definition after all.
+— either because the failure came before there was one, or, for the factory, because the one that is
+there cannot be asked for definitions, and either of the two missing is enough — and a context that
+does hold an `EndpointPolicy` definition after all.
 
 Both properties' components are nullable and neither carries a `@DefaultValue`, so an unset key
 stays distinguishable from an explicitly empty one; every rule above rests on that difference, and
