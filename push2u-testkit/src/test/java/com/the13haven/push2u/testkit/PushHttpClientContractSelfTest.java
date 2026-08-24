@@ -70,8 +70,23 @@ final class PushHttpClientContractSelfTest {
             this.factory = factory;
         }
 
+        Contract(BiFunction<SSLContext, X509TrustManager, PushHttpClient> factory, int answerBudgetSeconds) {
+            super(answerBudgetSeconds);
+            this.factory = factory;
+        }
+
         static Contract over(BiFunction<SSLContext, X509TrustManager, PushHttpClient> factory) {
             return new Contract(factory);
+        }
+
+        /**
+         * The same subject under a budget of this suite's choosing — the one instance in this file that does not run
+         * under the published thirty seconds, and the reason the budget belongs to the instance: shortening it here
+         * reaches this contract and no other, whatever else is running beside it.
+         */
+        static Contract overWithAnswerBudget(
+                BiFunction<SSLContext, X509TrustManager, PushHttpClient> factory, int answerBudgetSeconds) {
+            return new Contract(factory, answerBudgetSeconds);
         }
 
         @Override
@@ -467,31 +482,29 @@ final class PushHttpClientContractSelfTest {
      * The budget's semantics, pinned because the record deciding this contract was corrected on exactly this point: a
      * subject that never answers ends the check as an <em>abort</em>, never as a failure — the seam sets no latency
      * requirement, so an expired budget is not a verdict — and never as a hang, which is how a contract gets deleted
-     * from the build it was added to. The budget is shortened through the package-private hook for this test alone and
-     * restored in the {@code finally}: what is being proved is the abort semantics, not the length of the published
-     * budget, and waiting out the real thirty seconds would tax every build of this repository forever.
+     * from the build it was added to. The budget is shortened on this contract instance alone — the published
+     * constructor takes no budget and this one is package-private to the kit — so nothing here can shorten a check
+     * running beside it: what is being proved is the abort semantics, not the length of the published budget, and
+     * waiting out the real thirty seconds would tax every build of this repository forever.
      */
     @Test
     @Timeout(30)
     void aTransportThatNeverAnswersAbortsTheCheckInsteadOfFailingOrHangingIt() {
-        Contract contract = Contract.over((ssl, trust) -> (endpoint, headers, body) -> {
-            try {
-                new CountDownLatch(1).await();
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new PushDeliveryException("interrupted", interrupted);
-            }
-            throw new AssertionError("unreachable");
-        });
+        Contract contract = Contract.overWithAnswerBudget(
+                (ssl, trust) -> (endpoint, headers, body) -> {
+                    try {
+                        new CountDownLatch(1).await();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new PushDeliveryException("interrupted", interrupted);
+                    }
+                    throw new AssertionError("unreachable");
+                },
+                1);
 
-        PostAttempt.shortenAnswerBudgetForSelfTest(1);
-        try {
-            assertThatThrownBy(contract::anErrorStatusIsAnAnswerNotATransportFailure)
-                    .isInstanceOf(TestAbortedException.class)
-                    .hasMessageContaining("without reaching a verdict");
-        } finally {
-            PostAttempt.restorePublishedAnswerBudget();
-        }
+        assertThatThrownBy(contract::anErrorStatusIsAnAnswerNotATransportFailure)
+                .isInstanceOf(TestAbortedException.class)
+                .hasMessageContaining("without reaching a verdict");
     }
 
     /** The URI with its query stripped: the rewriting subject's one alteration. */

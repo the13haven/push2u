@@ -72,8 +72,42 @@ import com.the13haven.push2u.PushResponse;
  */
 public abstract class PushHttpClientContractTest {
 
-    /** For subclasses: the kit is extended, never instantiated on its own. */
-    protected PushHttpClientContractTest() {}
+    /**
+     * How long one check may wait for the transport to answer before it stops waiting and aborts. The budget is the
+     * check's own limit, never a rule about the transport: the seam promises nothing about latency.
+     */
+    private static final int PUBLISHED_ANSWER_BUDGET_SECONDS = 30;
+
+    /**
+     * This instance's budget, in seconds. Held per instance rather than per JVM so that nothing one check does to its
+     * own budget can reach a check running beside it: an expired budget aborts rather than fails, so a budget shared
+     * across a JVM and shortened by one check would end its neighbours as silent skips inside a run that stayed green.
+     */
+    private final int answerBudgetSeconds;
+
+    /**
+     * For subclasses: the kit is extended, never instantiated on its own. Every check runs under the contract's own
+     * answer budget, which is thirty seconds and is deliberately not a parameter here. It is not a knob an
+     * implementation is meant to turn: set low it would abort every check in this class, and a run whose conformance
+     * checks all aborted still reports green — the kit publishes contracts rather than conveniences, and a knob whose
+     * only effect is to stop this contract from concluding is not one it will publish. The number is the check's budget
+     * and never a latency requirement on the transport, so it is not a value an implementation has any reason to tune.
+     */
+    protected PushHttpClientContractTest() {
+        this(PUBLISHED_ANSWER_BUDGET_SECONDS);
+    }
+
+    /**
+     * The same contract under a shortened budget, for the kit's own suite alone — package-private, so nothing outside
+     * this package reaches it. It exists because the kit has to prove that a transport which never answers aborts the
+     * check instead of failing or hanging it, and proving that under the published thirty seconds would tax every build
+     * of this repository forever.
+     *
+     * @param answerBudgetSeconds how long each check waits for an answer before aborting
+     */
+    PushHttpClientContractTest(int answerBudgetSeconds) {
+        this.answerBudgetSeconds = answerBudgetSeconds;
+    }
 
     /**
      * The transport under test, configured to trust the contract's server certificate. Called once per test method; the
@@ -116,7 +150,8 @@ public abstract class PushHttpClientContractTest {
                             subject,
                             server.endpoint("/wpush/contract/status"),
                             TransportContractTraffic.givenHeaders(),
-                            TransportContractTraffic.syntheticBody())
+                            TransportContractTraffic.syntheticBody(),
+                            answerBudgetSeconds)
                     .response("the 410 the push service answered");
 
             if (response.statusCode() != 410) {
@@ -148,7 +183,8 @@ public abstract class PushHttpClientContractTest {
                             subject,
                             server.endpoint("/wpush/contract/headers"),
                             TransportContractTraffic.givenHeaders(),
-                            TransportContractTraffic.syntheticBody())
+                            TransportContractTraffic.syntheticBody(),
+                            answerBudgetSeconds)
                     .response("the 429 with its headers");
 
             requireEchoedHeader(response, "Retry-After", "30");
@@ -184,7 +220,7 @@ public abstract class PushHttpClientContractTest {
             URI endpoint = server.endpoint("/wpush/contract/one-request?probe=echo");
             byte[] body = TransportContractTraffic.syntheticBody();
 
-            PostAttempt.one(subject, endpoint, TransportContractTraffic.givenHeaders(), body)
+            PostAttempt.one(subject, endpoint, TransportContractTraffic.givenHeaders(), body, answerBudgetSeconds)
                     .response("the 201 the push service answered");
 
             TransportContractServer.ReceivedRequest request = requireOneRequest(server, "a 201");
@@ -227,7 +263,8 @@ public abstract class PushHttpClientContractTest {
                                 subject,
                                 server.endpoint("/wpush/contract/redirect"),
                                 TransportContractTraffic.givenHeaders(),
-                                TransportContractTraffic.syntheticBody())
+                                TransportContractTraffic.syntheticBody(),
+                                answerBudgetSeconds)
                         .response("the 307 itself");
 
                 if (response.statusCode() != 307) {
@@ -267,7 +304,8 @@ public abstract class PushHttpClientContractTest {
                         subject,
                         unreachable,
                         TransportContractTraffic.givenHeaders(),
-                        TransportContractTraffic.syntheticBody())
+                        TransportContractTraffic.syntheticBody(),
+                        answerBudgetSeconds)
                 .deliveryFailure("a connection nothing accepted");
     }
 
@@ -289,7 +327,8 @@ public abstract class PushHttpClientContractTest {
                             subject,
                             server.endpoint("/wpush/contract/unanswered"),
                             TransportContractTraffic.givenHeaders(),
-                            TransportContractTraffic.syntheticBody())
+                            TransportContractTraffic.syntheticBody(),
+                            answerBudgetSeconds)
                     .deliveryFailure("a request that was read in full and never answered");
 
             // The other scenario a repeat is conditioned on, and the more dangerous of the two: a
@@ -333,7 +372,8 @@ public abstract class PushHttpClientContractTest {
                 bodies.add(TransportContractTraffic.concurrentBody(call));
             }
 
-            List<PostAttempt> attempts = PostAttempt.concurrently(subject, endpoint, headers, bodies);
+            List<PostAttempt> attempts =
+                    PostAttempt.concurrently(subject, endpoint, headers, bodies, answerBudgetSeconds);
 
             for (int call = 0; call < calls; call++) {
                 PushResponse answer = attempts.get(call).response("the response to its own request, under concurrency");
