@@ -47,7 +47,7 @@ palantir = "2.96.0"
 # modules themselves.
 spotbugsPlugin = "6.5.11"
 errorpronePlugin = "5.1.0"
-spotlessPlugin = "8.9.0"
+spotlessPlugin = "8.10.0"
 
 # Release & publishing plugins — build-time only, like the quality stack above: they run in the
 # build's own classpath and never reach a consumer's, so the zero-runtime-dependency constraint of
