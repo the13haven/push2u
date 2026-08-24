@@ -281,25 +281,17 @@ been all along.
 
 ### A `push2u.*` key `0.2.0` removed is no longer refused
 
-`0.2.0` removed six `push2u.*` keys — `record-size`, the `health.*` pair and the three `retry.*` —
-and shipped one startup refusal naming every one it found. **That refusal is gone in this release.**
-A leftover key is now bound away in silence, which is what happens to any key nothing reads.
+`0.2.0` removed six `push2u.*` keys and refused a context still holding one. **That refusal is gone
+in this release** — a leftover key is bound away in silence now, like any key nothing reads.
 
-For most deployments this changes nothing, and that is the point: on `0.2.0` a context holding one
-of those keys could not start, so anyone running `0.2.0` today has already deleted them. **The
-exception is a key the refusal never saw.** The check read the *bound* environment at context
-refresh, so a key that lives in a profile which was not active — `application-staging.yml`, a
-per-environment document in a config server, a `@TestPropertySource` in a suite that does not run —
-passed `0.2.0` untouched. That configuration is still there, and the day the profile is activated it
-now boots green and ignores the key instead of failing and naming it.
-
-Three of the six are the ones where that matters: `push2u.retry.max-attempts`,
-`push2u.retry.initial-backoff` and `push2u.retry.max-backoff`. A deployment that configured several
-attempts starts clean and sends one POST per message, with nothing at startup or at run time saying
-so. **Grep every configuration source, not only the active profile** — every spelling, the
-`PUSH2U_RETRY_MAX_ATTEMPTS` environment-variable form included. The
-[`0.1.0` section's table](#the-push2u-keys-that-010-had-and-no-later-version-reads) lists all six
-with what each one did and what to write instead.
+For nearly everyone this changes nothing: on `0.2.0` such a context could not start, so the keys are
+long deleted. The exception is a key the refusal never saw, because it read the *bound* environment
+— one sitting in a profile that was not active passed `0.2.0` untouched, and the day that profile is
+activated the context boots green and ignores it. Three of the six matter there:
+`push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and `push2u.retry.max-backoff`, whose
+absence changes delivery rather than a diagnostic. Grep every configuration source, not only the
+active profile. The [`0.1.0` table](#the-push2u-keys-that-010-had-and-no-later-version-reads) lists
+all six.
 
 ### The starters stop exporting Spring Boot's BOM
 

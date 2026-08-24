@@ -1315,9 +1315,8 @@ status the push service answered with and the `Retry-After` it asked for, uncapp
 
 In the release that removed them, one `BeanFactoryPostProcessor` in
 `Push2uStartupChecksAutoConfiguration` failed the context naming every dead key it found and where
-each one's effect had gone. **That check no longer exists**, its window having closed on the
-schedule `RELEASING.md` sets and [ADR-033](adr/0033-a-tombstone-is-retired-by-the-next-release.md)
-decides, and the tree carries no successor: an operator who
+each one's effect had gone. **That check no longer exists**, its window having closed, and the tree
+carries no successor: an operator who
 still holds one of those keys now has it ignored in silence, which is what binding does with any
 key nothing reads. The mechanism is described here rather than only in the history because it is
 the shape the *next* removal takes — a check whose whole design is that it is temporary, entered
