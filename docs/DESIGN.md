@@ -30,8 +30,8 @@ the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integra
 generating the key pair and [`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) for replacing it on a
 running deployment, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the browser push services an
 endpoint allowlist names, [`OBSERVABILITY.md`](OBSERVABILITY.md) for the meters, spans and log
-lines a deployment adds around a library that emits none of them itself, and the Javadoc for
-individual contracts.
+lines a deployment adds around a library that emits none of the three on the send path, and the
+Javadoc for individual contracts.
 
 ## 2. Goals and non-goals
 
@@ -93,7 +93,8 @@ push2u-spring-boot-starter
 └── optional signer health indicator
 
 push2u-signer-vault-spring-boot-starter
-└── Vault signer properties and auto-configuration
+├── Vault signer properties and auto-configuration
+└── the partial-configuration diagnostic, ordered after it
 ```
 
 The dependency direction is one-way: the optional modules depend on the core, and no Spring or
@@ -167,7 +168,8 @@ exception.
 **The `[exports]` warnings that lint reports on the core are accepted, not overlooked.** Every one
 of them is `class Nullable in module org.jspecify is not indirectly exported` — one per `@Nullable`
 in an exported signature, so their number moves with the API and is deliberately not written down
-here — and the change lint asks for, `requires static transitive org.jspecify`, silences them and breaks
+here — and the change lint asks for, `requires static transitive org.jspecify`, silences them and
+breaks
 every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
 mandatory at the consumer's compile time, and such a consumer fails with `module not found:
 org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
@@ -478,19 +480,13 @@ Three seams in the core are public, and only three
 Two public utility classes let an application enforce the `Subscription` contract at its own
 registration boundary — rejecting a bad registration before persisting it — instead of storing
 data every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030
-contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. A third public
-type sits beside them without being one of them: `Es256Verifier`, which answers whether a raw
-`r || s` signature verifies against the 65-byte point a signer advertises. It is public because
-that is the only check available to a caller holding the `VapidSigner` SPI and nothing else, and it
-lives in the core rather than in the starter that drives it — the health indicator — because it has
-to mirror the core's own ES256 provider resolution, DER fallback included, or it would condemn a
-healthy signer on a FIPS platform. One check of the
+contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. One check of the
 `Subscription` contract deliberately does not live in `requireSecure`: the 2048-character endpoint
 length bound ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)) is a resource control
 with no RFC 8030 clause behind it, and `requireSecure` stays the protocol check ADR-005 named it —
 the bound sits in `Subscription`'s canonical constructor, which every construction path runs.
-`P256PublicKeys`
-carries two checks of deliberately different strength: `requireUncompressedPoint` is structural
+`P256PublicKeys` carries two checks of deliberately different strength: `requireUncompressedPoint`
+is structural
 (65 bytes, the `0x04` X9.62 tag) and `requireOnCurve` is the full check — coordinates inside the
 P-256 prime field and the curve equation satisfied. The full check runs on hard-coded FIPS 186-4
 domain parameters and touches no JCA provider, so it works wherever a `Subscription` is created,
@@ -853,6 +849,14 @@ behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redir
 just ran. Strict guarantees require
 resolution/egress pinning inside a `PushHttpClient` implementation.
 
+**A third public utility is not one of these**, and belongs here only because a reader touring the
+published surface would otherwise not meet it. `Es256Verifier` answers whether a raw `r || s`
+signature verifies against the 65-byte point a signer advertises. It is public because that is the
+only check available to a caller holding the `VapidSigner` SPI and nothing else, and it lives in
+the core rather than in the starter that drives it — the health indicator — because it has to
+mirror the core's own ES256 provider resolution, DER fallback included, or it would condemn a
+healthy signer on a FIPS platform.
+
 ### Deliberately concrete components
 
 The RFC 8291 encryptor, the HKDF implementation and the origin serialization are not public SPIs
@@ -869,11 +873,15 @@ signers manage their own providers.
 ### Nullness
 
 Every package carries JSpecify's `@NullMarked`, so a reference type in the public API is non-null
-unless it is annotated `@Nullable`. The exceptions are the values a caller may legitimately omit:
-the optional message headers (`PushMessage.ttl`, `urgency`, `topic`), the unset builder fields and
-the `cryptoProvider` a caller passes to leave the provider unchosen, `EndpointAssessment.Refused`'s
-reason, `Endpoints.redact`'s argument, the optional cause and retry hint of
-`VapidSignerUnavailableException`, and the Spring properties. The
+unless it is annotated `@Nullable`. Most of the exceptions are values a caller may legitimately
+omit: the optional message headers (`PushMessage.ttl`, `urgency`, `topic`), the unset builder
+fields and the `cryptoProvider` a caller passes to leave the provider unchosen,
+`EndpointAssessment.Refused`'s reason, `Endpoints.redact`'s argument, the optional cause and retry
+hint of `VapidSignerUnavailableException`, and the Spring properties. The rest are the two
+`equals(@Nullable Object)` overrides the language's own contract requires, on `PushMessage` and
+`Subscription`. That is the whole list, and the part of it that lives in `push2u-core` is what the
+`[exports]` warnings above enumerate — one warning per annotated position, so the two are checkable
+against each other. The Spring properties are in another module and raise none. The
 annotations are part of the published surface — NullAway, IntelliJ and the Kotlin compiler read
 the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
@@ -1320,9 +1328,10 @@ The annotation processor generates `spring-configuration-metadata.json` from the
 "unknown property" warnings — so a key the framework reads on our behalf appears nowhere.
 `push2u.enabled` is one: a condition's argument, bound by no record. So is
 `management.health.push2u.enabled`, which Spring Boot's own condition reads and for which Boot ships
-metadata only for its own contributors, listed one by one. Both are declared in each starter's
-`META-INF/additional-spring-configuration-metadata.json`, together with the Vault starter's value
-hint for `public-key-fetch`, whose accepted spellings no record can express. That file is merged
+metadata only for its own contributors, listed one by one. Both are declared in the core starter's
+`META-INF/additional-spring-configuration-metadata.json`; the Vault starter has a file of its own
+holding one thing, the value hint for `public-key-fetch`, whose accepted spellings no record can
+express. That file is merged
 into the generated one only where the processor finds it on the classpath it runs with, which is
 something the build has to arrange and whose absence is silent — hence the check in the suite rather
 than trust.
@@ -1371,11 +1380,13 @@ class contributes nothing else.** Two rules meet there. An auto-configuration th
 bean an operator might want to remove may not also host a check: excluding an auto-configuration is
 the framework's ordinary tool for removing its contribution, and a check riding beside the bean
 would vanish with it — the refusal would disappear in exactly the deployment whose operator reached
-for the standard tool. And a check runs when its row in the table below says it runs
-— so the hosting class carries no condition of any kind, and the only check carrying any is the
-general refusal over a missing signer, whose two are described below: the switch its row names, and
-the stand-down over a signer or sender bean, which is a suppression no row could state because it
-is about what the context holds rather than about what it says. Excluding the checks' own class is the
+for the standard tool. And the hosting class carries no condition of any kind, so
+whether a check runs is decided by that check alone. Most carry none: their row in the table below
+says "runs" on both sides of the switch because nothing suppresses them. The two that do carry
+conditions are the ones about whether a signer exists — the general refusal here, and the signer
+starter's own diagnostic — and each carries the same pair: the switch its row names, and a
+stand-down over a `VapidSigner` or `PushSender` bean, which is a suppression no row could state,
+being about what the context holds rather than about what it says. Excluding the checks' own class is the
 deliberate way to switch them off, visible in the exclusion line that names it, and it is the single
 route by which a stated allowlist can boot beside an application policy bean.
 
@@ -1546,7 +1557,8 @@ loud conflict rather than a silently dropped allowlist.
 removed-property section gives — and raised from bean-factory post-processors at declared positions
 in `StartupCheckOrder` (steps 2 and 3 of the one declared order above, the list
 [ADR-025](adr/0025-delivery-is-off-by-statement.md) introduced — that record numbers them 3 and 4,
-around a tombstone check since retired, and being immutable it keeps its own count), because both are about
+behind a tombstone check since retired — deleting that one shifted the pair down by a
+place, and the record being immutable it keeps its own count), because both are about
 values and a value is wrong whether or not this context sends. A malformed entry — attributed
 exactly, by property name and index (`push2u.allowed-origins[2]`), since the starter builds each
 rule itself from one entry of one named property — is refused at step 2 by a check that performs
@@ -1714,7 +1726,8 @@ The automated suite covers:
   what an absent algorithm does, and the DER fallback both when the provider registers only
   `SHA256withECDSA` and when a malformed encoding arrives (`JcaEs256SelectionTest`,
   `JcaProviderBindingTest`, `JcaUnavailableAlgorithmTest`, `EcdsaDerTest`, `EcdsaDerMalformedTest`,
-  `Es256VerifierTest`, and their BC-FIPS counterparts in the `fipsTest` source set);
+  `Es256VerifierTest`, plus `BcFipsEs256VerifierTest` and `BcFipsJcaEs256SelectionTest` in the
+  `fipsTest` source set, which is where the DER-only provider actually lives);
 - the kit's fixtures held to the same standard, since a published value that is quietly wrong is a
   defect in every consumer's suite at once. **`VapidKeyPairFixtureTest` verifies that the scalar the
   fixture publishes really is the one belonging to the point it publishes**, by signing with it and
@@ -1788,8 +1801,10 @@ The automated suite covers:
   (`VaultTransitVapidSignerDeferredFetchTest`, `VaultTransitVapidSignerDeferredSendPathTest`,
   `VaultTransitVapidSignerDeferredContractTest`);
 - the health indicator end to end — the probe signing and verifying against the signer's own
-  advertised key, the two cache lifetimes with a failure held for the shorter of them, and the
-  `management.health.push2u.*` switch (`Push2uHealthIndicatorTest`);
+  advertised key, and the two cache lifetimes with a failure held for the shorter of them
+  (`Push2uHealthIndicatorTest`); its registration switch is exercised where the context is, both
+  the key itself and the framework-wide default it follows when the key is unset
+  (`Push2uAutoConfigurationTest`, `Push2uDeliverySwitchTest`);
 - the `jshell` recipe in `docs/VAPID.md`, executed out of the document itself so that a guide which
   has stopped working fails the build rather than a reader (`VapidGuideKeyGenerationTest`); the
   workflow that decides whether the gate runs treats an edit to that file as a build change for the
