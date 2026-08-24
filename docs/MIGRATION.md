@@ -233,9 +233,15 @@ with an earlier one. **The registration boundary is the point where nothing re-c
 why the policy is reachable there at all — and it is the one place a discarded answer stores a row
 the policy refused.
 
-So the last step of this migration is a grep rather than a build: search your sources for `assess(`
-and check that every hit either feeds a `switch` or an `instanceof`, or lands in a variable
-something reads. It costs one command and it is the only check there is.
+So the first step here is a grep rather than a build: search your sources for `assess(` and check
+that every hit either feeds a `switch` or an `instanceof`, or lands in a variable something reads.
+It costs one command, and no compiler runs it for you.
+
+The second is executable, and it is new in this release: `push2u-testkit` publishes
+`EndpointPolicyContractTest`, the contract a policy of your own extends. Its refusal check runs
+against an endpoint you name as one the policy should reject, so a rewrite that quietly stopped
+refusing fails a test rather than storing a row. [`TESTKIT.md`](TESTKIT.md) describes it, and what
+else the kit gained beside it.
 
 ### `VapidSignerContractTest` now signs from several threads at once
 
