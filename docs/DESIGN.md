@@ -166,9 +166,8 @@ with the jar absent, reflecting over every annotated member: empty annotation ar
 exception.
 
 **The `[exports]` warnings that lint reports on the core are accepted, not overlooked.** Every one
-of them is `class Nullable in module org.jspecify is not indirectly exported` — one per `@Nullable`
-in an exported signature, so their number moves with the API and is deliberately not written down
-here — and the change lint asks for, `requires static transitive org.jspecify`, silences them and
+of them is `class Nullable in module org.jspecify is not indirectly exported`, and the change lint
+asks for, `requires static transitive org.jspecify`, silences them and
 breaks every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
 mandatory at the consumer's compile time, and such a consumer fails with `module not found:
 org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
@@ -868,17 +867,13 @@ signers manage their own providers.
 ### Nullness
 
 Every package carries JSpecify's `@NullMarked`, so a reference type in the public API is non-null
-unless it is annotated `@Nullable`. Most of the exceptions are values a caller may legitimately
-omit, and the annotation sits where the caller writes: the optional message header components
-(`PushMessage.ttl`, `urgency`, `topic`) and the builder methods that set them, the `cryptoProvider`
-parameter that leaves the provider unchosen, `EndpointAssessment.Refused`'s constructor parameter —
-the component itself is non-null, a `null` arriving as `""` — the argument of `Endpoints.redact`,
-the optional cause and retry-hint parameters of `VapidSignerUnavailableException`, and the Spring
-properties. The rest are the two `equals(@Nullable Object)` overrides the language's own contract
-requires, on `PushMessage` and `Subscription`. That is the whole list, and the part of it that lives
-in `push2u-core` is what the `[exports]` warnings above enumerate — one warning per annotated
-position, so the two are checkable against each other. The Spring properties are in another module
-and raise none. The annotations are part of the published surface — NullAway, IntelliJ and the
+unless it is annotated `@Nullable`, and **`@Nullable` is confined to values a caller may
+legitimately omit** — an unset message header, an unset builder value, a refusal reason the policy
+did not give, an unavailability the custodian declared no cause or retry moment for, an unset
+Spring property. Nothing else in the API is nullable; the exception is the `equals(Object)`
+overrides, where the annotation is the language's contract rather than this API's. What that buys a
+caller is that a `@Nullable` in a signature always means "you may leave this out", never "this may
+fail to arrive". The annotations are part of the published surface — NullAway, IntelliJ and the
 Kotlin compiler read the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
 ## 6. Cryptography
