@@ -133,8 +133,10 @@ of a runtime incompatibility, and no measurement taken here supports the stronge
 **So the floor is a support policy, and this record does make it.** Spring Boot 3.x is **declined**:
 4.0 is the line this project builds against, tests and answers for, and 3.x is outside what these
 starters are published to support — not because it cannot work, but because supporting a line costs
-building against it, testing against it and answering for it, and this project's adopters build on
-the current Boot. The catalog's own comment already says as much.
+building against it, testing against it and answering for it, and no demand for 3.x has been shown
+that would earn that cost. Nothing here claims to know what deployments run: this library has no
+released consumer base to survey, which is a reason to decline the cost rather than evidence about
+anybody's Spring Boot.
 
 **Declined at this stage, and reviewable by a record of its own.** What is open is whether to revisit
 the decision, not whether it has been taken. A later record arguing for 3.x inherits a cleared field:
@@ -321,9 +323,15 @@ Boot* section; its module table carries no version and needs none. Wherever 3.x 
 document it is as a version this project does not support, never as one these modules are unable to
 run on. `docs/DESIGN.md` is where the changeable half of the verification belongs, with
 `CONTRIBUTING.md` for what a contributor runs; `gradle/libs.versions.toml` gains the comment that
-fixes what `springBoot` now means. All of that belongs with the implementation, together with this
-record's move to `Accepted`; while it is `Proposed` those documents are accurate, because the tree
-still publishes the platform.
+fixes what `springBoot` now means, in place of the one there now, which reasons from what this
+library's adopters are supposed to be doing. All of that belongs with the implementation, together
+with this record's move to `Accepted`.
+
+Two of those edits are owed whatever becomes of this record, because they are wrong today rather
+than merely due for revision. README says the starters "do not work on Boot 3.x" and gives the
+health module as the reason; the measurement above splits those — the build is what the health
+module stops, and a context does start. The catalog comment reasons from adopters this library does
+not yet have.
 
 Sources for the mechanism claims, where a wrong one would cost a consumer a build:
 [Gradle rich versions](https://docs.gradle.org/current/userguide/dependency_versions.html#sec:rich-version-constraints),
