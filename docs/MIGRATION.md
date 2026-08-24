@@ -115,6 +115,14 @@ Three rules of the new contract are worth reading once rather than meeting:
   That rule has not moved; what moved is the list of seam signals `send` converts, which was three
   and is two — `VapidSignerUnavailableException` and `PushDeliveryException`.
 
+Those rules have an executable form in this release. `push2u-testkit` publishes
+`EndpointPolicyContractTest`, the contract a policy of your own extends: it asserts that an endpoint
+you name as permitted comes back `Allowed`, that one you name as refused comes back `Refused` with
+the capability URL kept out of the reason, and that neither answer arrives as a throw.
+[`TESTKIT.md`](TESTKIT.md) has the setup. What it judges is the policy you wrote — not the call
+sites that read its answer, which are the subject of
+[the silent half below](#policyassessuri-as-a-bare-statement-admits-every-endpoint).
+
 #### `EndpointRejectedException` is gone, subtypes included
 
 The type is removed, so `catch (EndpointRejectedException e)` no longer compiles anywhere: around a
@@ -233,15 +241,9 @@ with an earlier one. **The registration boundary is the point where nothing re-c
 why the policy is reachable there at all — and it is the one place a discarded answer stores a row
 the policy refused.
 
-So the first step here is a grep rather than a build: search your sources for `assess(` and check
-that every hit either feeds a `switch` or an `instanceof`, or lands in a variable something reads.
-It costs one command, and no compiler runs it for you.
-
-The second is executable, and it is new in this release: `push2u-testkit` publishes
-`EndpointPolicyContractTest`, the contract a policy of your own extends. Its refusal check runs
-against an endpoint you name as one the policy should reject, so a rewrite that quietly stopped
-refusing fails a test rather than storing a row. [`TESTKIT.md`](TESTKIT.md) describes it, and what
-else the kit gained beside it.
+So the last step of this migration is a grep rather than a build: search your sources for `assess(`
+and check that every hit either feeds a `switch` or an `instanceof`, or lands in a variable
+something reads. It costs one command and it is the only check there is.
 
 ### `VapidSignerContractTest` now signs from several threads at once
 
