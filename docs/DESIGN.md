@@ -1730,7 +1730,14 @@ The automated suite covers:
   context holding both starters and earning every refusal at once, then one fault at a time down the
   list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
   modules that cannot see each other;
-- Vault Transit integration through Testcontainers.
+- Vault Transit integration through Testcontainers;
+- what the two starters *publish* about Spring Boot's version, read out of the generated POM and
+  module metadata rather than out of the build script: no `dependencyManagement` element at all,
+  every Spring Boot dependency carrying the catalog's floor literally, and no `strictly`, `prefers`
+  or `rejects` in the Gradle metadata — the three spellings a POM discards while Gradle enforces
+  them. `check` runs it for both starters. Everything else about the floor is enforced by
+  construction, being the compile classpath; these three are properties of the published files
+  alone, and undoing one of them compiles and tests green.
 
 The published vectors are the specification, not a snapshot of current behaviour: when a change
 alters what the library produces, the vectors decide which of the two is wrong.
@@ -1747,7 +1754,9 @@ for both meanings. That makes the merge-blocking run blind by construction to an
 Spring Boot changes, so CI adds runs above it: one build of the two starter modules per released
 Spring Boot minor line at or above the floor's own, each at its newest GA patch, with
 `-Ppush2u.springBoot` substituting the catalog key for that invocation alone. Those runs are read,
-not obeyed — none is a required check, and the root build refuses the property outright if a
-publishing task is named alongside it, so nothing they build can be published. Which versions there
+not obeyed — none is a required check, and every publishing task in the build refuses to execute
+while that property is set, so nothing such a run builds can be published. The check is on the task
+type: a name filter would be spelled around by Gradle's own camelCase abbreviation and would miss
+the Central bundle, which reaches each module's publication through tasks nobody names. Which versions there
 are is computed from Spring Boot's own released list rather than written down, since a list here
 would go stale the week Spring publishes.

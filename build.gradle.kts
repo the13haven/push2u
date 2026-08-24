@@ -302,27 +302,133 @@ tasks.register("qualityCheckCi") {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The Spring Boot floor is the classpath of the build that publishes.
+// A substituted Spring Boot version never reaches a published artifact.
 //
 // settings.gradle.kts lets -Ppush2u.springBoot=<version> substitute the catalog's `springBoot` key
 // so that a named run can compile the starters against a NEWER Spring Boot than the floor they
-// advertise. That run has to publish nothing: an artifact built with a substituted value would
-// carry a floor its own bytes never satisfied, and nothing about the jar would say so. The
-// criterion ADR-032 states is checkable, so it is checked here rather than left to the release
-// workflow's habit of not passing the property.
+// advertise. What that run must not do is publish. The catalog key is BOTH the version compiled
+// against and the version published as the floor, so a substituted publish is internally
+// consistent — it compiles against 4.1.1 and declares 4.1.1 — and wrong for the reason that
+// consistency hides: the number it declares is not the minimum this project supports, tests and
+// answers for. Nothing about the jar would say so.
 //
-// The invoked task names are what this reads, which catches the invocation and not a publishing
-// task some other task depends on. That is the whole exposure: publishing is entered by naming one
-// of these tasks, and Gradle's own task graph is not available this early without giving up
-// configuration-cache compatibility for a narrower failure mode.
+// The check is on the task TYPE and runs when the task runs, which is what makes it hold. A name
+// filter over the invoked tasks does not: Gradle accepts camelCase abbreviations, so `pTML` enters
+// publishToMavenLocal without the word appearing anywhere, and the Central bundle reaches every
+// module's publication through nmcpZipAggregation depending on tasks nobody named. Every path into
+// publishing — local, Central, the aggregation, and any of them reached as a dependency — runs an
+// AbstractPublishToMaven, and each one asks here first.
 // ---------------------------------------------------------------------------------------------
-providers.gradleProperty("push2u.springBoot").orNull?.let { substitute ->
-    val publishing = gradle.startParameter.taskNames.filter { it.contains("publish", ignoreCase = true) }
-    require(publishing.isEmpty()) {
-        "-Ppush2u.springBoot=$substitute substitutes the Spring Boot version this build compiles " +
-            "against, and $publishing would publish artifacts built with it. The published " +
-            "starters must be compiled against the minimum Spring Boot they declare, which is the " +
-            "catalog value. Drop the property, or drop the publishing task."
+val springBootSubstitute = providers.gradleProperty("push2u.springBoot")
+
+allprojects {
+    tasks.withType<AbstractPublishToMaven>().configureEach {
+        val substitute = springBootSubstitute
+        doFirst {
+            require(!substitute.isPresent) {
+                "-Ppush2u.springBoot=${substitute.get()} substitutes the Spring Boot version " +
+                    "this build compiles against AND the floor the starters publish, and $path is " +
+                    "a publishing task. A release built this way would declare a minimum this " +
+                    "project does not support, with nothing about the artifacts to say so. The " +
+                    "property is for a run above the floor, and such a run publishes nothing. " +
+                    "Drop the property, or drop the publishing task."
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the starters publish about Spring Boot's version, asserted against the generated metadata.
+//
+// ADR-032 decided four things, and the build enforces one of them by construction: the floor is
+// the compile classpath, so a starter cannot use an API newer than it advertises. The other three
+// are properties of the published files and nothing else — no BOM leaves the project, the one
+// Spring Boot dependency that does carries an ordinary `require` version, and no upper bound is
+// published in any spelling. Undoing any of them compiles, tests green and is discovered by a
+// consumer after a release that cannot be withdrawn, which is the failure shape the SPI contract
+// tests exist for. So the same treatment: read the POM and the module metadata the publication
+// tasks generate, and fail `check` on what they say.
+// ---------------------------------------------------------------------------------------------
+val springBootFloor = libs.versions.springBoot.get()
+
+listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter").forEach { path ->
+    project(path) {
+        val module = path
+        val verifyPublishedSpringBoot = tasks.register("verifyPublishedSpringBootFloor") {
+            group = "verification"
+            description = "Fails if the published metadata says anything about Spring Boot's version " +
+                "beyond the declared minimum."
+
+            val pom = layout.buildDirectory.file("publications/maven/pom-default.xml")
+            val moduleMetadata = layout.buildDirectory.file("publications/maven/module.json")
+            dependsOn("generatePomFileForMavenPublication", "generateMetadataFileForMavenPublication")
+            inputs.file(pom)
+            inputs.file(moduleMetadata)
+            inputs.property("floor", springBootFloor)
+            val marker = layout.buildDirectory.file("reports/published-spring-boot-floor.txt")
+            outputs.file(marker)
+
+            val floor = springBootFloor
+            doLast {
+                val pomText = pom.get().asFile.readText()
+
+                // Decision 1. An imported BOM is a <dependency> with <scope>import</scope> inside
+                // <dependencyManagement>, and the element is absent from these POMs entirely — the
+                // starters declare no constraints of any other kind either, so the stricter check
+                // is also the simpler one.
+                require(!pomText.contains("<dependencyManagement>")) {
+                    "$module publishes a <dependencyManagement> section. Spring Boot's BOM on a " +
+                        "published configuration hands a Gradle consumer Spring Boot's whole " +
+                        "version manifest as an input to their own resolution; it belongs on " +
+                        "compileOnly, annotationProcessor and test configurations."
+                }
+
+                // Decisions 2 and 4, in the POM: every Spring Boot dependency carries the floor
+                // literally. A missing version and a range both fail here, the second being the
+                // only spelling of an upper bound a POM can carry.
+                val pomVersions = Regex(
+                        "<dependency>(?:(?!</dependency>).)*?org\\.springframework\\.boot" +
+                            "(?:(?!</dependency>).)*?</dependency>",
+                        RegexOption.DOT_MATCHES_ALL)
+                    .findAll(pomText)
+                    .map { Regex("<version>([^<]*)</version>").find(it.value)?.groupValues?.get(1) }
+                    .toList()
+                require(pomVersions.isNotEmpty() && pomVersions.all { it == floor }) {
+                    "$module publishes Spring Boot versions $pomVersions in its POM; the floor is " +
+                        "$floor. A versionless dependency leaves a Maven consumer with nothing to " +
+                        "resolve, and a range admits milestones."
+                }
+
+                // Decisions 2 and 4, in the Gradle metadata, where the spellings a POM cannot carry
+                // are visible: `strictly` fails a consumer's build outright, `rejects` is an upper
+                // bound wherever it names one, and both are invisible to the POM check above.
+                val gradleRequirements = Regex(
+                        "\"group\": ?\"org\\.springframework\\.boot\"(?:(?!\\}).)*?" +
+                            "\"version\": ?\\{([^}]*)\\}",
+                        RegexOption.DOT_MATCHES_ALL)
+                    .findAll(moduleMetadata.get().asFile.readText())
+                    .map { it.groupValues[1] }
+                    .toList()
+                require(gradleRequirements.isNotEmpty() &&
+                    gradleRequirements.all { it.contains("\"requires\": \"$floor\"") }) {
+                    "$module publishes Spring Boot requirements $gradleRequirements in its module " +
+                        "metadata; each must be an ordinary requires of $floor."
+                }
+                require(gradleRequirements.none {
+                    it.contains("strictly") || it.contains("rejects") || it.contains("prefers")
+                }) {
+                    "$module publishes a strict, rejecting or preferred Spring Boot version " +
+                        "$gradleRequirements. The POM carries none of the three, so a Gradle " +
+                        "consumer would meet a constraint a Maven consumer never sees."
+                }
+
+                marker.get().asFile.writeText("published Spring Boot floor: $floor\n")
+            }
+        }
+        // Reactively, for the reason the publishing convention plugin is applied reactively: the
+        // module declares `java-library` itself, so `check` does not exist while the root is being
+        // configured.
+        plugins.withId("java") { tasks.named("check") { dependsOn(verifyPublishedSpringBoot) } }
     }
 }
 

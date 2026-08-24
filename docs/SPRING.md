@@ -14,8 +14,10 @@ What travels in the published metadata is one ordinary dependency: `spring-boot-
 that version. In Gradle's vocabulary that is a `require` — a floor another requirement may raise
 and none may lower — so a build already on a newer Spring Boot resolves its own, and a build below
 the minimum is raised to it, along with what that version of `spring-boot-autoconfigure` brings
-with it (`spring-boot`, `spring-core`, Micrometer's observation artifacts). Measured: a Gradle
-build declaring Spring Boot 4.0.0 resolves 4.0.8; one declaring 4.1.1 resolves 4.1.1, untouched.
+with it: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
+`spring-expression`, `commons-logging`, `micrometer-observation` and `micrometer-commons`.
+Measured: a Gradle build declaring Spring Boot 4.0.0 resolves 4.0.8; one declaring 4.1.1 resolves
+4.1.1, untouched.
 
 No Spring Boot BOM is published from either starter, and that is the wider half. **Everything the
 BOM used to manage that these starters do not themselves depend on — Jackson, Netty, Tomcat,
@@ -35,12 +37,15 @@ before you rely on it:
 |---|---|
 | Gradle, with `platform("org.springframework.boot:spring-boot-dependencies:…")` | **Yes** — resolution takes the higher of the two requirements, which is this one |
 | Gradle, with the `io.spring.dependency-management` plugin | **No** — the plugin *forces* its managed versions, in either direction |
-| Maven | **No** — a `dependencyManagement` section reached through a dependency governs that dependency's own dependencies, not your application's graph |
+| Maven | **No** — a POM has no way to say "not below"; the number is a plain version, your own `dependencyManagement` overrules it outright, and without one it is subject to nearest-definition-wins like any other |
 
 There is no spelling of "not below X" that a POM carries, so for the last two rows the minimum is
-documentation and a version resolution is free to overrule. **Nothing in the library reads Spring
-Boot's version at runtime either**, deliberately: a starter below the minimum is not refused at
-startup, and what happens instead is whatever the missing API does at the point it is reached.
+documentation and a version resolution is free to overrule. A Maven build that manages no Spring
+Boot of its own will in practice resolve the minimum, because nothing competes with it — but that
+is an outcome, not a floor: another dependency declaring Boot nearer in the graph takes it, at any
+version. **Nothing in the library reads Spring Boot's version at runtime either**, deliberately: a
+starter below the minimum is not refused at startup, and what happens instead is whatever the
+missing API does at the point it is reached.
 
 **Spring Boot 3.x is not supported.** That is a statement about what this project builds against,
 tests and answers for — not a claim that these modules cannot run on it.

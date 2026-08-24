@@ -296,15 +296,25 @@ version they support; the number is in
 [`SPRING.md` → The minimum Spring Boot](SPRING.md#the-minimum-spring-boot). Everything the BOM used
 to manage that the starters do not themselves depend on — Jackson, Netty, Tomcat, the rest of the
 manifest — is no longer spoken about at all. What the starters still bring is that one dependency's
-own transitives, `spring-boot`, `spring-core` and Micrometer's observation artifacts, and only a
-build below the minimum is raised on those.
+own transitives: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
+`spring-expression`, `commons-logging` and Micrometer's `micrometer-observation` and
+`micrometer-commons`. Only a build below the minimum is raised on those.
 
-**Two kinds of build see nothing at all here.** Maven was never affected: a `dependencyManagement`
-section reached through a dependency supplies versions to *that dependency's* own dependencies, not
-to your application's graph, so the manifest never arrived. Neither was a Gradle build applying
-`io.spring.dependency-management`, whose forced versions an imported BOM cannot outrank. If you are
-either, read on only for the floor: you are asked for a minimum Spring Boot that neither of you
-enforces.
+**Who sees nothing here.** An application that manages Spring Boot itself — a Maven build on
+`spring-boot-starter-parent` or importing Boot's BOM, or a Gradle build applying
+`io.spring.dependency-management` — was never on the receiving end of this. Its own management
+outranks a version reached through a dependency, in both the old shape and the new one. Read on
+only for the floor: you are asked for a minimum Spring Boot that your build does not enforce and
+this library cannot make it.
+
+**Maven builds that do *not* manage Spring Boot themselves were affected, and in the opposite
+direction.** A `dependencyManagement` section reached through a dependency supplies versions to
+*that dependency's* own dependencies — and the starters' own `spring-boot-autoconfigure` was
+declared with no version, resolved by the BOM they imported. So an application that simply added a
+starter got Boot at whatever version this project built against. Measured, resolving both published
+shapes with Maven: the old one handed such a consumer `spring-boot-autoconfigure` 4.1.1, the new one
+hands it 4.0.8. That is a **downgrade across a minor line**, which is the direction the next section
+is about — read it whichever build tool you use.
 
 #### Your Spring Boot version stops being raised by push2u
 
@@ -319,8 +329,10 @@ loud:
   `NoSuchMethodError` or a `NoClassDefFoundError` the first time that line runs.
 - **Your resolved graph moves, and not only in Spring's coordinates.** The BOM managed the whole
   Spring Boot manifest, so Jackson, Netty, Tomcat and the rest were being raised too — and those
-  are the ones that now stop moving entirely rather than merely stopping at a lower number. A build
-  with a lockfile will report the change; a build without one will not.
+  are the ones that now stop moving entirely rather than merely stopping at a lower number.
+  Versions can also *drop* below what the BOM used to hand you without any Spring coordinate
+  changing: `commons-logging` resolves 1.3.5 through the floor's own graph where the exported BOM
+  raised it to 1.3.6. A build with a lockfile will report all of this; a build without one will not.
 
 So the check is a resolution diff rather than a rebuild: resolve once before the upgrade and once
 after — `./gradlew :your-app:dependencies --configuration runtimeClasspath` is enough — and read
@@ -373,9 +385,11 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
       contract signs from several threads now, and a failure there is a defect that was already
       corrupting signatures under load rather than a new rule to satisfy.
-- [ ] If you build with Gradle and use either Spring Boot starter, diff your resolved runtime
-      classpath before and after. Spring, Jackson, Micrometer and Netty versions the starters used
-      to raise now come from your own build alone.
+- [ ] If you use either Spring Boot starter and your build does not manage Spring Boot itself —
+      any Gradle build without `io.spring.dependency-management`, and any Maven build not on
+      `spring-boot-starter-parent` or Boot's BOM — diff your resolved runtime classpath before and
+      after. Spring, Jackson, Micrometer and Netty versions the starters used to raise now come
+      from your own build alone, and your Spring Boot may move *down* to the declared minimum.
 
 ## From `0.1.0`
 

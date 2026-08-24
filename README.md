@@ -39,7 +39,7 @@ the decisions behind it.
 - The push service's status classified against its defining RFCs, with whatever its `Retry-After`
   said reported unmodified, so the deployment's own retrier decides whether and when to repeat.
 - Optional HashiCorp Vault Transit signer.
-- Optional Spring Boot 4 auto-configuration and health indicator.
+- Optional Spring Boot auto-configuration and health indicator.
 
 ## Requirements
 
