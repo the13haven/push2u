@@ -247,8 +247,10 @@ input, and every signature that comes back must verify against the input its own
 under a key read once, on one thread, before any of them start. The signatures are never compared
 with one another — ES256 is randomized. A call answering `VapidSignerUnavailableException` counts as
 neither a pass nor a failure, a custodian rate-limiting a burst being exactly what that type is for;
-if every call answers that way, or the check runs out of its budget, it is reported as skipped
-rather than passed.
+if fewer than two calls come back with a signature, or the check runs out of its budget, it is
+reported as skipped rather than passed. So a custodian that meters a burst hard enough will show
+this check as skipped in your report, and that is the honest answer rather than a green one: one
+signature overlaps nothing, and there is nothing for the check to have read.
 
 **If your build goes red on it, the finding is real and it is not new.** `VapidSigner` has always
 required implementations to be thread-safe, and has always named the mistake this catches: a

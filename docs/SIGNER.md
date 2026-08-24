@@ -98,8 +98,12 @@ twice and the signature can still verify. The signatures are never compared with
 is randomized. And the key is read once, on one thread, before the threads start, so a failure is
 about signing and not about a race on the key. A call answering `VapidSignerUnavailableException`
 is counted as neither pass nor failure — a custodian rate-limiting a burst is exactly what that type
-is for, and a concurrent burst is what provokes it — and if every call answers that way, the check
-aborts rather than reporting a green it did not earn. It also stops waiting after a budget and
+is for, and a concurrent burst is what provokes it — and if fewer than two calls come back with a
+signature, the check aborts rather than reporting a green it did not earn. Two rather than one,
+because what the check reads is what overlapping calls do to each other and a lone signature
+overlaps nothing: a quota admitting one of the eight would otherwise pass having observed no
+concurrency at all, which is the shape a remote custodian takes and not a corner case. It also
+stops waiting after a budget and
 aborts then too: the seam promises nothing about how fast a custodian signs, so a slow call is not
 a verdict.
 
