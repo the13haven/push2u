@@ -50,18 +50,17 @@ framework's rather than one of ours: `enabled: false` removes the indicator enti
 never touches the signer, and `management.health.defaults.enabled: false` — the setting that turns
 every contributor off wholesale — reaches this one too. Both are answers to the coupling described
 below, at the cost of having no probe at all. Earlier versions spelled these two keys
-`push2u.health.enabled` and `push2u.health.cache-ttl`; **both now fail the context at startup**, in
-any spelling relaxed binding accepts, with a message naming the replacement. They are refused rather
-than ignored for the reason the removed `push2u.record-size` is: an ignored `enabled: false` would
-have the deployment that switched the probe off quietly probing its signer again, and an ignored
-`cache-ttl` would restore the default TTL under a deployment that had lengthened it. Both refusals
-are transition aids, carried for one minor release after the release that removed the properties,
-and then removed themselves. A context holding several removed keys at once — the released guide
-printed `record-size` beside the `push2u.health` block — is refused once, naming every one of them,
-so the whole of the edit is visible on the first failed start.
+`push2u.health.enabled` and `push2u.health.cache-ttl`. The release that removed them **failed the
+context at startup** over either, with a message naming the replacement — a transition aid rather
+than validation, carried for that one release and retired with the rest of that set. **A
+deployment that still holds either key now has it ignored in silence**, which is what binding does
+with any key nothing reads: an `enabled: false` left behind stops switching the probe off, and a
+lengthened `cache-ttl` reverts to the default. If you are upgrading from a version that had them,
+delete them.
 
-**One change at the upgrade has no dead key to refuse, and it is the one to check by hand.** Earlier
-versions of this indicator ignored `management.health.defaults.enabled` entirely, so a deployment
+**A second change at the upgrade never had a key to leave behind at all, and it is the one most
+easily missed.** Earlier versions of this indicator ignored `management.health.defaults.enabled`
+entirely, so a deployment
 that turned every contributor off wholesale kept the push2u probe; it now honours that setting like
 any other contributor and the probe goes, silently, with nothing left in the configuration for a
 startup check to object to. If you were relying on it, name it back with

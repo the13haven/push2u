@@ -116,21 +116,20 @@ Vault](VAULT.md#when-boot-must-not-depend-on-vault)). It takes nothing else: an 
 fails the context naming the key, and any written value beside a supplied
 `push2u.signer.vault.public-key` fails it naming both keys, because the supplied mode performs no
 metadata read whose moment the property could choose. Those refusals are raised while the signer
-bean is built — step 7 of [the order below](#which-refusal-an-operator-reads-first), on the
+bean is built — step 6 of [the order below](#which-refusal-an-operator-reads-first), on the
 delivery-path side of `push2u.enabled` by construction — so they hold no position of their own in
 that list. **There is no `push2u.retry.*` block**: the library performs one POST per
 send and schedules no repeat, so there is nothing under this prefix to configure — see
 [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
-**If you are upgrading from a version that had one, delete it from your YAML — the context will not
-start until you do.** All three of `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and
-`push2u.retry.max-backoff` fail the context at startup, in any spelling relaxed binding accepts,
-with a message naming the key and where the decision it configured went. They are refused rather
-than ignored for the sharpest of the reasons any removed key is: ignored, a context still carrying
-the block would start cleanly and then send without a single repeat, so a deployment that had
-configured three attempts would quietly be making one, and nothing at startup or at run time would
-say that the block had stopped meaning anything. The refusals are transition aids, carried for one
-minor release after the release that removed the properties, and then removed themselves.
+**If you are upgrading from a version that had one, delete it from your YAML by hand — nothing
+warns you.** `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and
+`push2u.retry.max-backoff` are bound away in silence now, like any key nothing reads. The release
+that removed them refused a context still holding one, and that refusal was a transition aid and
+has been retired. This is the sharpest case of a leftover key there is: the block still reads as
+though it were in force, while a deployment that configured three attempts starts cleanly and makes
+one — nothing at startup and nothing at run time says otherwise. Grep every configuration source,
+inactive profiles included, in every spelling relaxed binding used to accept.
 
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
@@ -145,14 +144,12 @@ Setting any of them to a value the builder rejects (`jwt-expiry` not strictly po
 with the builder's own message, prefixed by the YAML property name — the builder names only its
 Java parameter, and the operator wrote the property.
 
-**`push2u.record-size` no longer exists, and leaving it in your YAML fails the context at
-startup** — in any spelling relaxed binding accepts (`push2u.record-size`, `push2u.recordSize`,
-`PUSH2U_RECORD_SIZE`), with a message naming the key and where its effect went. Like the retry
-block above, this key is refused rather than ignored: it named a limit, and a limit silently out of
-force is exactly what an operator must not go on believing in. Delete the key; if it was raised to
-carry larger payloads, raise `max-encrypted-body-bytes` instead, which the derived record size now
-follows. The refusal is a transition aid, carried for one minor release after the release that
-removed the property, and then removed itself.
+**`push2u.record-size` no longer exists, and a leftover one is ignored rather than reported** — in
+any spelling (`push2u.record-size`, `push2u.recordSize`, `PUSH2U_RECORD_SIZE`). The release that
+removed it refused such a context, and like the retry block's refusal above that was a transition
+aid and has been retired. It named a limit, and a limit silently out of force is exactly what an
+operator must not go on believing in, so delete the key; if it was raised to carry larger payloads,
+raise `max-encrypted-body-bytes` instead, which the derived record size now follows.
 
 **The three `jwt-*` reuse properties are the ones to know about before something surprises you.**
 With `jwt-reuse` at its default, an autoconfigured sender signs one VAPID token per push-service
@@ -222,8 +219,8 @@ whole point of the key is that neither guess is acceptable.
 | An application's own `PushSender` bean | untouched | untouched |
 | The `EndpointPolicy` bean the allowlist properties express | **contributed** | contributed |
 
-Startup checks sort by what each one is *about*, never by where it happens to be implemented. Six of
-them need a row, and they are the whole of this table — every other refusal the starters raise
+Startup checks sort by what each one is *about*, never by where it happens to be implemented. Five
+of them need a row, and they are the whole of this table — every other refusal the starters raise
 happens *while a bean the switch withdraws is being constructed*, so it is on the delivery-path side
 by construction and could not be anywhere else: the signer's own key material, every builder value
 the sender translates from a property, and every per-property translation in a signer starter.
@@ -235,12 +232,11 @@ the sender translates from a property, and every per-property translation in a s
 | An allowlist stated beside an application policy bean | runs | runs |
 | A signer starter's partial-configuration diagnostic | skipped | runs |
 | The general refusal over a missing signer | skipped | runs |
-| A tombstone over a property a release removed | runs, while the tombstone lives | the same |
 
-The first three and the last are about a *value*: an entry that is not an origin is not an origin
-in a context that sends nothing either, and a key a release removed configures nothing on either
-side. The middle two are about the *delivery path* — each asks, in its own words, whether this
-deployment can sign, and a deployment that has said it does not send has answered that already.
+The first three are about a *value*: an entry that is not an origin is not an origin in a context
+that sends nothing either. The last two are about the *delivery path* — each asks, in its own
+words, whether this deployment can sign, and a deployment that has said it does not send has
+answered that already.
 
 **The switch does not reach the endpoint policy**, and that is the point of the row above. A
 service that accepts subscriptions and leaves the sending to another one has no signer and wants
@@ -281,23 +277,22 @@ One context can earn several refusals at once, and what arrives is whichever is 
 The order, most specific first, is:
 
 1. the value of `push2u.enabled`;
-2. a tombstone over a removed property;
-3. a malformed allowlist entry;
-4. an allowlist stated beside an application policy bean;
-5. a signer starter's partial-configuration diagnostic;
-6. the general refusal over a missing signer;
-7. everything else, which is ordinary bean creation — every refusal raised while a bean is being
+2. a malformed allowlist entry;
+3. an allowlist stated beside an application policy bean;
+4. a signer starter's partial-configuration diagnostic;
+5. the general refusal over a missing signer;
+6. everything else, which is ordinary bean creation — every refusal raised while a bean is being
    built, including what the autoconfigured sender refuses on its own.
 
-Steps 3 to 6 are specific before general, a value before the path. Steps 1 and 2 sit ahead of all
-of it because they decide whether the configuration underneath them can be read at face value at
-all. It is about which message arrives first and nothing more: no later step's *condition* depends
-on an earlier step's outcome.
+Steps 2 to 5 are specific before general, a value before the path. Step 1 sits ahead of all of it
+because it decides whether the configuration underneath it can be read at face value at all. It is
+about which message arrives first and nothing more: no later step's *condition* depends on an
+earlier step's outcome.
 
 ### A bean condition on these beans answers "absent" in every deployment
 
-Every refusal above needs something in the context for a check to read — a value, a key a release
-removed, a bean, two statements contradicting each other. This is the one route into "boots green,
+Every refusal above needs something in the context for a check to read — a value, a bean, two
+statements contradicting each other. This is the one route into "boots green,
 sends nothing" that leaves the context indistinguishable from a working deployment's, so no startup
 check can see it:
 
@@ -624,8 +619,7 @@ opposite of what was meant by typing it. Wherever the blank lands, it is refused
 entry it is, by property and index — `push2u.allowed-origins[0]`, an entry that shows nothing of
 itself but still has a position — and that refusal outranks the property-beside-a-bean
 contradiction and every bean-creation failure, so the message points at the blank rather than at a
-bean that was configured on purpose. Only a removed `push2u.*` key outranks the blank: a context
-carrying one of those too reads the tombstone first.
+bean that was configured on purpose. Only the activation switch's own value outranks it.
 
 ### No property turns the restriction off
 
@@ -673,8 +667,8 @@ When Spring Boot health support is present, the starter also registers a health 
 contributor name `push2u`, that exercises the configured signer: it signs a probe input and verifies
 the result against that signer's own advertised public key. Its two keys are Spring Boot's own,
 `management.health.push2u.enabled` and `management.health.push2u.cache-ttl`, and not `push2u.*` —
-earlier versions spelled them `push2u.health.enabled` and `push2u.health.cache-ttl`, and both of
-those now fail the context at startup with a message naming the replacement.
+earlier versions spelled them `push2u.health.enabled` and `push2u.health.cache-ttl`, and a leftover
+one of those is now ignored in silence rather than reported, so delete it by hand.
 
 `push2u.enabled: false` removes the indicator too, and its own key cannot bring it back: the switch
 sits upstream of it, so a deployment that has turned delivery off has no probe left to opt out of.
@@ -683,8 +677,9 @@ membership and refuses a context naming a contributor that does not exist, in a 
 neither the switch nor anything else done to push2u.
 
 [`HEALTH.md`](HEALTH.md) is the reference — what the probe asserts about the signer and what it
-deliberately does not, the two keys with their cache and their startup refusals, when the indicator
-is registered and when it is not, and the health-group routes that keep a signer's backend out of a
+deliberately does not, the two keys with their cache, what became of the `push2u.health.*` keys
+they replaced now that the refusal over those has been retired, when the indicator is registered and
+when it is not, and the health-group routes that keep a signer's backend out of a
 container health check.
 
 ## Two identities during a key rotation

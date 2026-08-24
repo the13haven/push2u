@@ -15,11 +15,11 @@ import org.springframework.core.Ordered;
  * can.
  *
  * <p><b>The list this number belongs to spans two modules, and cannot live in either of them.</b> The order, most
- * specific first, is: the value of the activation switch, the tombstones over removed properties, a malformed allowlist
- * entry, an allowlist stated beside an application policy bean, <em>a signer starter's partial-configuration
- * diagnostic</em>, and last the general refusal over a missing signer. The first four and the last belong to the core
- * starter, which this module deliberately does not depend on — it orders itself against that starter by name and
- * nothing more — so no constant is visible to both. Each module keeps its own and reads it against the same list.
+ * specific first, is: the value of the activation switch, a malformed allowlist entry, an allowlist stated beside an
+ * application policy bean, <em>a signer starter's partial-configuration diagnostic</em>, and last the general refusal
+ * over a missing signer. The first three and the last belong to the core starter, which this module deliberately does
+ * not depend on — it orders itself against that starter by name and nothing more — so no constant is visible to both.
+ * Each module keeps its own and reads it against the same list.
  *
  * <p>What pins the list is therefore not the value written here. A test asserting that this constant equals a number
  * written in a document proves that someone typed it twice, and stays green while the module next door moves its own.

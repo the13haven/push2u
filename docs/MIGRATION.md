@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM. |
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM, and the refusal over the keys `0.2.0` removed is retired. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
 ## From `0.2.0`
@@ -57,6 +57,7 @@ of its own below, and no bearing on an application that only sends.
 - [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
 - [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
+- [A `push2u.*` key `0.2.0` removed is no longer refused](#a-push2u-key-020-removed-is-no-longer-refused)
 - [The starters stop exporting Spring Boot's BOM](#the-starters-stop-exporting-spring-boots-bom)
   - [Which Spring Boot you end up with, before and after](#which-spring-boot-you-end-up-with-before-and-after)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
@@ -278,6 +279,21 @@ threads colliding inside it. A red run is a real defect every time; a green one 
 check did not catch you. The requirement is the sentence in `VapidSigner`'s own contract, as it has
 been all along.
 
+### A `push2u.*` key `0.2.0` removed is no longer refused
+
+`0.2.0` removed six `push2u.*` keys and refused a context still holding one. **That refusal is gone
+in this release** — a leftover key is bound away in silence now, like any key nothing reads.
+
+For nearly everyone this changes nothing: on `0.2.0` such a context could not start, so the keys are
+long deleted. The exception is a key the refusal never *saw*: it read the environment
+the context was refreshed with, and an inactive profile's properties are not in it — a key sitting
+in one passed `0.2.0` untouched, and the day that profile is activated the context boots green and
+ignores it. Three of the six matter there:
+`push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and `push2u.retry.max-backoff`, whose
+absence changes delivery rather than a diagnostic. Grep every configuration source, not only the
+active profile. The [`0.1.0` table](#the-push2u-keys-that-010-had-and-no-later-version-reads) lists
+all six.
+
 ### The starters stop exporting Spring Boot's BOM
 
 A third reader, and the one least likely to be looking: an application that uses either Spring Boot
@@ -424,6 +440,9 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
       contract signs from several threads now, and a failure there is a defect that was already
       corrupting signatures under load rather than a new rule to satisfy.
+- [ ] Grep every configuration source — inactive profiles included — for the six `push2u.*` keys
+      `0.2.0` removed. The startup refusal that named them is gone, and the three `push2u.retry.*`
+      ones change delivery rather than a diagnostic when they are ignored.
 - [ ] **Gradle**, if you use either Spring Boot starter and do not apply
       `io.spring.dependency-management`: diff your resolved runtime classpath before and after.
       Jackson, Netty, Tomcat and the rest of Boot's manifest stop being managed by the starters
@@ -460,7 +479,7 @@ and that has a chapter of its own.
   - [`Subscription` now bounds the endpoint's length](#subscription-now-bounds-the-endpoints-length)
   - [VAPID tokens are reused by default](#vapid-tokens-are-reused-by-default)
 - [Spring Boot, coming from `0.1.0`](#spring-boot-coming-from-010)
-  - [The `push2u.*` keys that `0.1.0` had and this release refuses](#the-push2u-keys-that-010-had-and-this-release-refuses)
+  - [The `push2u.*` keys that `0.1.0` had and no later version reads](#the-push2u-keys-that-010-had-and-no-later-version-reads)
   - [`push2u.enabled`: a context that boots without web push now fails](#push2uenabled-a-context-that-boots-without-web-push-now-fails)
   - [The health probe moved under `management.health.push2u`](#the-health-probe-moved-under-managementhealthpush2u)
   - [The endpoint policy is a bean, and its refusals moved](#the-endpoint-policy-is-a-bean-and-its-refusals-moved)
@@ -488,9 +507,9 @@ Five steps, in this order, before you read the rest:
    at startup stops catching one:
    [an eager Vault `build()`](#an-eager-vault-build-raises-a-different-type-when-vault-is-down).
 5. **If you run the Spring starters, do not upgrade the jar without recompiling and re-reading your
-   YAML.** Six `push2u.*` keys now fail the context at startup rather than being ignored, the health
-   probe answers to different keys, and a deployment that quietly holds no signer now refuses to
-   start. All of it is in [Spring Boot](#spring-boot-coming-from-010).
+   YAML.** Six `push2u.*` keys are gone and **nothing warns you about a leftover one** — the
+   refusal that named them lived for one release and has been retired — the health probe answers to
+   different keys, and a deployment that quietly holds no signer now refuses to start. All of it is in [Spring Boot](#spring-boot-coming-from-010).
 
 ### What stops compiling on the way from `0.1.0`
 
@@ -861,12 +880,17 @@ Everything above applies to a Spring deployment too; this section is what the st
 it. [`SPRING.md`](SPRING.md) is the reference for every property as it stands now, and
 [`HEALTH.md`](HEALTH.md) for the probe.
 
-#### The `push2u.*` keys that `0.1.0` had and this release refuses
+#### The `push2u.*` keys that `0.1.0` had and no later version reads
 
-Six keys are gone, and none of them is ignored. Each fails the context at startup with a message
-naming the key, saying it configures nothing now, and saying what to write instead — because a
-removed key left in a YAML file is a setting the operator believes is in force, and every one of
-these costs in the same direction if it is merely dropped.
+Six keys are gone. **Delete them from your configuration by hand: nothing checks that you have.**
+
+`0.2.0` shipped a startup refusal over each — a tombstone, naming the key and where its effect had
+gone — and that refusal was carried for one release and has since been retired, because a check
+that outlives the upgrade it was written for becomes code refusing keys nobody has written in
+years. An application coming from `0.1.0` **through** `0.2.0` met it. One coming here **directly**
+from `0.1.0` does not, and a leftover key is ignored in silence, which is what binding does with
+any key nothing reads. That makes the table below the only thing standing between you and a setting
+you believe is in force.
 
 | The key | What it did | What to write instead |
 |---|---|---|
@@ -877,16 +901,11 @@ these costs in the same direction if it is merely dropped.
 | `push2u.health.enabled` | whether the health indicator is registered | `management.health.push2u.enabled` |
 | `push2u.health.cache-ttl` | how long a probe result is cached | `management.health.push2u.cache-ttl`, same value, same meaning |
 
-The three retry keys are the ones whose silent removal would have changed *delivery* rather than a
-diagnostic: a deployment that configured three attempts would have started clean and then sent once
-per message, with nothing at startup or at run time saying so, and the messages a push service
-dropped under load simply gone. That is why they refuse the context rather than being ignored.
-
-These refusals are **tombstones**, not permanent validation: each is carried for one minor release
-after the release that removed its key, and then deleted. They exist to catch configuration written
-against the previous release, not to accumulate for the life of the library — which is another way
-of saying that skipping this step now and returning to it two releases later is a state nothing will
-warn you about.
+**The three retry keys are the ones to check first**, because they are the ones whose silent
+absence changes *delivery* rather than a diagnostic: a deployment that configured three attempts
+starts clean and then sends once per message, with nothing at startup or at run time saying so, and
+the messages a push service dropped under load simply gone. Grep your configuration — every
+spelling, including the `PUSH2U_RETRY_MAX_ATTEMPTS` environment-variable form — before you deploy.
 
 #### `push2u.enabled`: a context that boots without web push now fails
 
@@ -1054,4 +1073,7 @@ covers the deferred mode itself.
 - [ ] State `push2u.enabled` where this deployment does not send — and edit any health group naming
       `push2u` in the same change.
 - [ ] Recompile every artifact that binds the starters' properties records.
-- [ ] Start the application and read the startup refusals; they are the last mile of this list.
+- [ ] Start the application and read the startup refusals. They are the last mile for the signer,
+      the allowlist and the activation switch — and **not** for the six removed keys, whose refusal
+      no longer exists. Those are the items above that only a grep of your own configuration
+      finishes.

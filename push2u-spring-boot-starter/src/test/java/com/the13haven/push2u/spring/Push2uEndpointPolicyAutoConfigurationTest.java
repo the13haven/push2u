@@ -15,6 +15,7 @@ import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -184,6 +185,25 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     }
 
     @Test
+    void theChecksSurviveAClasspathWithoutSpringBootHealth() {
+        // A deployment with no Spring Boot health support on the classpath at all. The health
+        // autoconfiguration in the composition above carries a condition on those classes and backs
+        // off here — and the allowlist checks, which have nothing to do with health, must not go
+        // with it. This is the general rule in its cheapest form: a check inherits every condition
+        // standing between it and the context, including ones about something else entirely, so
+        // hosting the checks apart from the features whose configuration they read is what keeps
+        // them running for the deployment that dropped one of those features.
+        runner.withClassLoader(new FilteredClassLoader("org.springframework.boot.health"))
+                .withPropertyValues("push2u.allowed-origins=http://push.example")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("push2u.allowed-origins[0]:");
+                });
+    }
+
+    @Test
     void theChecksDoNotDependOnAnyOtherConfiguration() {
         // The checks' own auto-configuration, alone in the context: both allowlist refusals still
         // fire, with nothing else from the starter anywhere in sight — nothing standing between a
@@ -250,8 +270,8 @@ class Push2uEndpointPolicyAutoConfigurationTest {
     @Test
     void theConditionReadsEverySpellingRelaxedBindingAccepts() {
         // The environment-variable spelling arrives through a SystemEnvironmentPropertySource,
-        // whose mapping a literal property lookup would not apply — the same reason the tombstone
-        // reads through Binder. The bean's condition, reading the same way, must see it too.
+        // whose mapping a literal property lookup would not apply, which is why every check in this
+        // family reads through Binder. The bean's condition, reading the same way, must see it too.
         runner.withInitializer(environmentVariable("PUSH2U_ALLOWED_ORIGINS", "https://push.example.test"))
                 .run(context -> {
                     assertThat(context).hasNotFailed();
@@ -562,24 +582,6 @@ class Push2uEndpointPolicyAutoConfigurationTest {
                     assertThat(context.getStartupFailure())
                             .isInstanceOf(IllegalArgumentException.class)
                             .hasMessageContaining("push2u.allowed-origins[0]:")
-                            .hasMessageNotContaining("Configure exactly one");
-                });
-    }
-
-    @Test
-    void theTombstoneOutranksBothAllowlistChecks() {
-        // A context earning three declared checks at once: a removed key, a malformed entry, and
-        // an allowlist beside a bean. The tombstone's position is ahead of both allowlist checks —
-        // a key that no longer exists makes every reading of the configuration under it suspect —
-        // so its message is the one that arrives. Pinned by the message, not by constants.
-        runner.withPropertyValues("push2u.record-size=8192", "push2u.allowed-origins=http://push.example")
-                .withUserConfiguration(RejectingPolicyConfiguration.class)
-                .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure())
-                            .isInstanceOf(IllegalStateException.class)
-                            .hasMessageContaining("push2u.record-size")
-                            .hasMessageNotContaining("push2u.allowed-origins[")
                             .hasMessageNotContaining("Configure exactly one");
                 });
     }
