@@ -29,7 +29,9 @@ the API, [`SPRING.md`](SPRING.md) and [`VAULT.md`](VAULT.md) for the two integra
 [`HEALTH.md`](HEALTH.md) for the health indicator one of them registers, [`VAPID.md`](VAPID.md) for
 generating the key pair and [`VAPID-KEY-ROTATION.md`](VAPID-KEY-ROTATION.md) for replacing it on a
 running deployment, [`PUSH-SERVICES.md`](PUSH-SERVICES.md) for the browser push services an
-endpoint allowlist names, and the Javadoc for individual contracts.
+endpoint allowlist names, [`OBSERVABILITY.md`](OBSERVABILITY.md) for the meters, spans and log
+lines a deployment adds around a library that emits none of them itself, and the Javadoc for
+individual contracts.
 
 ## 2. Goals and non-goals
 
@@ -86,6 +88,8 @@ push2u-signer-vault
 
 push2u-spring-boot-starter
 ├── PushSender auto-configuration
+├── EndpointPolicy auto-configuration (the allowlist the properties express)
+├── startup checks, in a class contributing nothing else
 └── optional signer health indicator
 
 push2u-signer-vault-spring-boot-starter
@@ -160,9 +164,10 @@ JVM ignores an annotation whose type it cannot resolve. Verified by running a mo
 with the jar absent, reflecting over every annotated member: empty annotation arrays, no
 exception.
 
-**The eleven `[exports]` warnings that lint reports on the core are accepted, not overlooked.**
-Every one of them is `class Nullable in module org.jspecify is not indirectly exported`, and the
-change lint asks for — `requires static transitive org.jspecify` — silences all eleven and breaks
+**The `[exports]` warnings that lint reports on the core are accepted, not overlooked.** Every one
+of them is `class Nullable in module org.jspecify is not indirectly exported` — one per `@Nullable`
+in an exported signature, so their number moves with the API and is deliberately not written down
+here — and the change lint asks for, `requires static transitive org.jspecify`, silences them and breaks
 every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
 mandatory at the consumer's compile time, and such a consumer fails with `module not found:
 org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
@@ -473,7 +478,13 @@ Three seams in the core are public, and only three
 Two public utility classes let an application enforce the `Subscription` contract at its own
 registration boundary — rejecting a bad registration before persisting it — instead of storing
 data every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030
-contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. One check of the
+contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. A third public
+type sits beside them without being one of them: `Es256Verifier`, which answers whether a raw
+`r || s` signature verifies against the 65-byte point a signer advertises. It is public because
+that is the only check available to a caller holding the `VapidSigner` SPI and nothing else, and it
+lives in the core rather than in the starter that drives it — the health indicator — because it has
+to mirror the core's own ES256 provider resolution, DER fallback included, or it would condemn a
+healthy signer on a FIPS platform. One check of the
 `Subscription` contract deliberately does not live in `requireSecure`: the 2048-character endpoint
 length bound ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)) is a resource control
 with no RFC 8030 clause behind it, and `requireSecure` stays the protocol check ADR-005 named it —
@@ -678,7 +689,9 @@ exactly one way to ask it.
 **`Refused` carries prose, and deliberately not the endpoint.** The reason exists for observability:
 this library writes no log lines on the send path and the core holds no logger — being
 zero-dependency, it could not take one; the starter's health indicator is the one component in the
-tree that logs, and it reports readiness — so every diagnostic the send path produces is a value
+tree that logs, and it reports readiness
+([ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md)) — so every diagnostic the send path
+produces is a value
 handed to a caller who renders it, and only the policy can
 say what it knew at the moment it refused. That is a sentence an operator reads, not a code a
 program branches on; a consumer that genuinely has to branch on the *kind* of refusal is looking at a
@@ -856,8 +869,11 @@ signers manage their own providers.
 ### Nullness
 
 Every package carries JSpecify's `@NullMarked`, so a reference type in the public API is non-null
-unless it is annotated `@Nullable`; the annotated exceptions are the optional message headers
-(`PushMessage.ttl`, `urgency`, `topic`), the unset builder fields, and the Spring properties. The
+unless it is annotated `@Nullable`. The exceptions are the values a caller may legitimately omit:
+the optional message headers (`PushMessage.ttl`, `urgency`, `topic`), the unset builder fields and
+the `cryptoProvider` a caller passes to leave the provider unchosen, `EndpointAssessment.Refused`'s
+reason, `Endpoints.redact`'s argument, the optional cause and retry hint of
+`VapidSignerUnavailableException`, and the Spring properties. The
 annotations are part of the published surface — NullAway, IntelliJ and the Kotlin compiler read
 the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
@@ -986,7 +1002,8 @@ and the relative form (`resolve("v1/…")`) merges by dropping everything after 
 `/`, so a prefix without a trailing slash would lose its final segment — quieter, not better.
 `https://gw.example/vault` and `https://gw.example/vault/` therefore address the same Vault, and a
 root address like `https://vault.example:8200` joins as it reads. The key name and the token
-travel as the value types `TransitKeyName` and `VaultToken` rather than bare strings: the types make the positional
+travel as the value types `TransitKeyName` and `VaultToken` rather than bare strings: the types make
+the positional
 arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
 enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
 Vault's `path_keys.go` — so no name Vault would accept is refused, while every URL-breaking
@@ -1297,6 +1314,19 @@ restating it in a second location.
 required", and it is required even when the `VapidSigner` bean comes from another starter: the
 Vault Transit signer starter supplies key custody, not a contact address.
 
+**Not every key a deployment writes is bound by a record, and those need metadata written by hand.**
+The annotation processor generates `spring-configuration-metadata.json` from the
+`@ConfigurationProperties` records, which is where an operator's editor gets its completions and its
+"unknown property" warnings — so a key the framework reads on our behalf appears nowhere.
+`push2u.enabled` is one: a condition's argument, bound by no record. So is
+`management.health.push2u.enabled`, which Spring Boot's own condition reads and for which Boot ships
+metadata only for its own contributors, listed one by one. Both are declared in each starter's
+`META-INF/additional-spring-configuration-metadata.json`, together with the Vault starter's value
+hint for `public-key-fetch`, whose accepted spellings no record can express. That file is merged
+into the generated one only where the processor finds it on the classpath it runs with, which is
+something the build has to arrange and whose absence is silent — hence the check in the suite rather
+than trust.
+
 Every optional property therefore travels through one translate-the-error helper, which skips an
 unset value and re-throws a rejection with the YAML key in front of the core's own message. There is
 no second helper any more: the one property group whose values reached a constructor validating
@@ -1341,9 +1371,11 @@ class contributes nothing else.** Two rules meet there. An auto-configuration th
 bean an operator might want to remove may not also host a check: excluding an auto-configuration is
 the framework's ordinary tool for removing its contribution, and a check riding beside the bean
 would vanish with it — the refusal would disappear in exactly the deployment whose operator reached
-for the standard tool. And a check runs when its row in the table below says it runs, suppressed by
-nothing the row does not mention — so the hosting class carries no condition of any kind, and the
-one check that carries one carries the switch alone. Excluding the checks' own class is the
+for the standard tool. And a check runs when its row in the table below says it runs
+— so the hosting class carries no condition of any kind, and the only check carrying any is the
+general refusal over a missing signer, whose two are described below: the switch its row names, and
+the stand-down over a signer or sender bean, which is a suppression no row could state because it
+is about what the context holds rather than about what it says. Excluding the checks' own class is the
 deliberate way to switch them off, visible in the exclusion line that names it, and it is the single
 route by which a stated allowlist can boot beside an application policy bean.
 
@@ -1363,7 +1395,8 @@ left is the five that take a declared position, and they are the whole of this t
 | The general refusal over a missing signer | skipped | runs |
 
 The rows that run on both sides are about a *value*: an entry that is not an origin is not an origin
-in a context that sends nothing either. The two that are skipped are about the *delivery path* — each asks, in its own words, whether
+in a context that sends nothing either. The two that are skipped are about the *delivery path* —
+each asks, in its own words, whether
 this deployment can sign, and a deployment that has said it does not send has answered that.
 
 A signer starter's diagnostic is gated by the switch although it is not a contribution, and the
@@ -1393,7 +1426,8 @@ where it sat and its neighbours stayed put. A number reserved for a check nobody
 be a claim nothing keeps true, and the next check needing that place is free to take it.
 
 Steps 2 through 5 are specific before general, a value before the path; step 1 sits ahead of all of
-it because it decides whether the configuration underneath it can be read at face value at all. The order is about which message an operator holding several faults reads first, and nothing
+it because it decides whether the configuration underneath it can be read at face value at all. The
+order is about which message an operator holding several faults reads first, and nothing
 more: no later step's *condition* is decided by an earlier step's outcome, and none could be — a
 condition on an auto-configuration is evaluated while the configuration classes are parsed, long
 before any of these checks runs.
@@ -1510,8 +1544,9 @@ loud conflict rather than a silently dropped allowlist.
 **Two allowlist refusals are startup checks of the context, not of the sender**, hosted in
 `Push2uStartupChecksAutoConfiguration` — apart from the bean they guard, for the reason the
 removed-property section gives — and raised from bean-factory post-processors at declared positions
-in `StartupCheckOrder` (steps 2 and 3 of the
-one list [ADR-025](adr/0025-delivery-is-off-by-statement.md) carries), because both are about
+in `StartupCheckOrder` (steps 2 and 3 of the one declared order above, the list
+[ADR-025](adr/0025-delivery-is-off-by-statement.md) introduced — that record numbers them 3 and 4,
+around a tombstone check since retired, and being immutable it keeps its own count), because both are about
 values and a value is wrong whether or not this context sends. A malformed entry — attributed
 exactly, by property name and index (`push2u.allowed-origins[2]`), since the starter builds each
 rule itself from one entry of one named property — is refused at step 2 by a check that performs
@@ -1633,9 +1668,9 @@ deliberately hold no position in the ordered list of checks.
 
 The automated suite covers:
 
-- RFC 5869 HKDF vectors;
-- the RFC 8291 end-to-end encryption example;
-- RFC 8292 VAPID structure and signature verification;
+- RFC 5869 HKDF vectors (`HkdfTest`);
+- the RFC 8291 end-to-end encryption example (`WebPushEncryptorTest`);
+- RFC 8292 VAPID structure and signature verification (`VapidTest`);
 - the RFC 6454 §6.1 Unicode serialization of the `aud` origin — case, IDNA labels, default and
   non-default ports, address literals, userinfo (`OriginTest`);
 - signer contract tests, and the kit checking itself — each of its seven checks run once against a
@@ -1660,6 +1695,26 @@ The automated suite covers:
   would turn the check's strongest finding into a skip for every custodian that happened to be
   metering. Each of the four is red under a different way of moving that threshold, which is what
   makes them four and not one;
+- the endpoint-policy contract and the transport contract, each with the kit checking itself, since
+  a contract that passes a subject it should refuse is worse than none: a policy that throws rather
+  than answering, one whose refusal quotes the endpoint at each granularity the check searches, and
+  a fixture offering no witness below the whole URI — reported as an unfit fixture rather than as a
+  failure of the policy (`EndpointPolicyContractSelfTest`); and a transport failing each of the
+  seven checks in turn, the redirect-following one above all, over the kit's own loopback TLS
+  harness, whose obligations are pinned separately (`PushHttpClientContractSelfTest`,
+  `TransportContractHttpTest`). Both contracts run against this tree's own implementations too —
+  every `EndpointPolicies` factory and `unrestricted()`, and `JdkPushHttpClient`
+  (`JdkPushHttpClientContractTest`);
+- the VAPID token cache: an entry served across sends and keyed on the advertised key, renewal at
+  whichever of the wall and monotonic bounds arrives first, a `401`/`403` leaving the entry in
+  place, LRU overflow degrading to a signature per send rather than to a wrong token, and
+  concurrent misses on one audience each coming back with a token that verifies
+  (`PushSenderJwtReuseTest`, `PushSenderJwtRenewalTest`, `PushSenderJwtConcurrencyTest`);
+- the JCE provider selection and the ES256 signature form: which provider each name binds to and
+  what an absent algorithm does, and the DER fallback both when the provider registers only
+  `SHA256withECDSA` and when a malformed encoding arrives (`JcaEs256SelectionTest`,
+  `JcaProviderBindingTest`, `JcaUnavailableAlgorithmTest`, `EcdsaDerTest`, `EcdsaDerMalformedTest`,
+  `Es256VerifierTest`, and their BC-FIPS counterparts in the `fipsTest` source set);
 - the kit's fixtures held to the same standard, since a published value that is quietly wrong is a
   defect in every consumer's suite at once. **`VapidKeyPairFixtureTest` verifies that the scalar the
   fixture publishes really is the one belonging to the point it publishes**, by signing with it and
@@ -1686,8 +1741,10 @@ The automated suite covers:
   pre-flight assessment agreeing with the refusal on the same two numbers, a send leaving the
   message's payload byte-for-byte unchanged, and the `Integer.MAX_VALUE` boundary
   (`PushSenderPayloadSizeTest`, `PayloadSizeAssessmentTest`);
-- HTTP delivery, the status matrix per status and per carve-out, and the conversion of each seam
-  signal into its outcome — the two converting exception types, and the policy's `Refused` value
+- HTTP delivery (`JdkPushHttpClientTest`), the status matrix per status and per carve-out with the
+  header it reads (`PushSenderStatusClassificationTest`, `RetryAfterTest`), and the conversion of
+  each seam signal into its outcome (`PushSenderSeamConversionTest`) — the two converting exception
+  types, and the policy's `Refused` value
   becoming `EndpointRejected` — including the interrupt disjunction on both the transport and the
   signer path;
 - the allowlist's matching and the entry-level refusals of both rule kinds: an origin compared on
@@ -1725,13 +1782,26 @@ The automated suite covers:
   context holding both starters and earning every refusal at once, then one fault at a time down the
   list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
   modules that cannot see each other;
+- the deferred Vault fetch: one flight per signer however many callers arrive, each of the four ways
+  a flight ends, a waiter and the fetching caller each taking their own interruption, and the flight
+  released on every exit including the ones no transport contract admits
+  (`VaultTransitVapidSignerDeferredFetchTest`, `VaultTransitVapidSignerDeferredSendPathTest`,
+  `VaultTransitVapidSignerDeferredContractTest`);
+- the health indicator end to end — the probe signing and verifying against the signer's own
+  advertised key, the two cache lifetimes with a failure held for the shorter of them, and the
+  `management.health.push2u.*` switch (`Push2uHealthIndicatorTest`);
+- the `jshell` recipe in `docs/VAPID.md`, executed out of the document itself so that a guide which
+  has stopped working fails the build rather than a reader (`VapidGuideKeyGenerationTest`); the
+  workflow that decides whether the gate runs treats an edit to that file as a build change for the
+  same reason;
 - Vault Transit integration through Testcontainers;
 - the configuration metadata each starter publishes, read out of the jar's own classpath resource
   rather than out of a build path: every key no properties record binds — the activation switch and
   the health indicator's own switch, both read by the framework — plus the Vault hint's *values*,
   which is the only part of it the failure reaches, since the hint's name is the property's name
   too and the processor emits an empty `hints` list of its own accord. Beside each, a key the
-  annotation processor *does* discover, so a failure says which half broke. The half that needs pinning is the hand-written one: the processor merges
+  annotation processor *does* discover, so a failure says which half broke. The half that needs
+  pinning is the hand-written one: the processor merges
   `META-INF/additional-spring-configuration-metadata.json` only where it finds that file on the
   classpath it runs with, and where it does not, it produces metadata without those entries, fails
   no task and says nothing (`ConfigurationMetadataTest` in both starters);
@@ -1749,18 +1819,24 @@ alters what the library produces, the vectors decide which of the two is wrong.
 The standard verification commands are:
 
 ```bash
-./gradlew clean build
+./gradlew qualityCheck
 ./gradlew javadoc
 ```
 
-Both resolve Spring Boot at the floor the starters declare, because the catalog holds one number
-for both meanings. That makes the merge-blocking run blind by construction to anything a newer
-Spring Boot changes, so CI adds runs above it: one build of the two starter modules per released
+`qualityCheck` is the gate: `build` on its own compiles and runs the suites — `push2u-core`'s
+separate `fipsTest` source set among them — and runs none of the analysers, which are off unless
+`qualityCheck` or `qualityCheckCi` is in the task graph. The merge-blocking CI run is the same gate
+without the auto-formatting, `./gradlew qualityCheckCi --no-build-cache`.
+
+Every one of them resolves Spring Boot at the floor the starters declare, because the catalog holds
+one number for both meanings. That makes the merge-blocking run blind by construction to anything a
+newer Spring Boot changes, so CI adds runs above it: one build of the two starter modules per released
 Spring Boot minor line at or above the floor's own, each at its newest GA patch, with
 `-Ppush2u.springBoot` substituting the catalog key for that invocation alone. Those runs are read,
 not obeyed — none is a required check, and every publishing task in the build refuses to execute
 while that property is set, so nothing such a run builds can be published. The check is on the task
 type: a name filter would be spelled around by Gradle's own camelCase abbreviation and would miss
-the Central bundle, which reaches each module's publication through tasks nobody names. Which versions there
-are is computed from Spring Boot's own released list rather than written down, since a list here
+the Central bundle, which reaches each module's publication through tasks nobody names. Which
+versions there are is computed from Spring Boot's own released list rather than written down, since
+a list here
 would go stale the week Spring publishes.
