@@ -35,22 +35,17 @@ import com.the13haven.push2u.PushResponse;
  * transport and a correct one that is slow on a loaded machine are the same observation, and a failure would be a
  * verdict the check has not reached; the budget exists so that a hung subject ends the check instead of hanging the
  * build it was added to, which is how a contract gets deleted from a build.
+ *
+ * <p>The budget arrives as an argument, in seconds, and this class holds none of its own. Two things follow from that,
+ * and both are deliberate. It is the contract instance that owns the number, so nothing one check does to its budget
+ * can reach a check running beside it — a budget shared across a JVM takes the value the one check that needs a short
+ * one gives it, and expires under every other check running at that moment, and since an expired budget aborts rather
+ * than fails, that arrives as a green run with the conformance checks silently skipped. And it is <em>seconds</em>
+ * rather than a computed deadline, because the deadline is this class's own business in both entry points: the batched
+ * one derives a single deadline for the whole batch, which is the property a caller handing one in could quietly break,
+ * and the seconds are also what the abort message has to report.
  */
 final class PostAttempt {
-
-    /**
-     * How long one check may wait for the transport to answer before it stops waiting and aborts. The budget is the
-     * check's own limit, never a rule about the transport: the seam promises nothing about latency.
-     */
-    private static final int PUBLISHED_ANSWER_BUDGET_SECONDS = 30;
-
-    /**
-     * The budget in force. Not a configuration surface: the published contract always runs under the constant above,
-     * and the one writer outside this class is the kit's own suite, which shortens the budget through the two
-     * package-private hooks below so the abort path is provable without every build of this repository waiting out the
-     * published thirty seconds — and restores it in a {@code finally}.
-     */
-    private static volatile int answerBudgetSeconds = PUBLISHED_ANSWER_BUDGET_SECONDS;
 
     private final @Nullable PushResponse response;
     private final @Nullable RuntimeException thrown;
@@ -60,18 +55,30 @@ final class PostAttempt {
         this.thrown = thrown;
     }
 
-    /** One {@code post} call under the budget. */
+    /**
+     * One {@code post} call under the calling check's budget, in seconds.
+     *
+     * @param subject the transport under test
+     * @param endpoint the URI to post to
+     * @param headers the headers to hand over
+     * @param body the body to hand over
+     * @param answerBudgetSeconds how long this call may go unanswered before the check aborts
+     * @return the attempt, answered or thrown
+     * @throws InterruptedException if the check's own thread is interrupted while waiting
+     */
     // CloseResource: the executor is shut down in the finally block with shutdownNow rather than
     // close — close waits for termination, so a transport that never answers would hang the suite
     // here after the check had already aborted, which is the one failure mode this machinery
     // exists to prevent. The worker is a daemon thread for the wait interruption cannot end.
     @SuppressWarnings("PMD.CloseResource")
-    static PostAttempt one(PushHttpClient subject, URI endpoint, Map<String, String> headers, byte[] body)
+    static PostAttempt one(
+            PushHttpClient subject, URI endpoint, Map<String, String> headers, byte[] body, int answerBudgetSeconds)
             throws InterruptedException {
         ExecutorService executor = Executors.newSingleThreadExecutor(PostAttempt::worker);
         try {
             Future<PushResponse> call = executor.submit(() -> subject.post(endpoint, headers, body));
-            return answerOf(call, System.nanoTime() + TimeUnit.SECONDS.toNanos(answerBudgetSeconds));
+            return answerOf(
+                    call, System.nanoTime() + TimeUnit.SECONDS.toNanos(answerBudgetSeconds), answerBudgetSeconds);
         } finally {
             executor.shutdownNow();
         }
@@ -83,12 +90,24 @@ final class PostAttempt {
      * a rendezvous among tasks deadlocks on a machine with few cores — all held at a start gate until the last one is
      * submitted. One budget for the whole batch, so a stuck transport costs one budget and not one per caller. The
      * attempts come back in submission order.
+     *
+     * @param subject the transport under test
+     * @param endpoint the URI every call posts to
+     * @param headers the headers of each call, one element per caller
+     * @param bodies the body of each call, in the same order
+     * @param answerBudgetSeconds how long the batch as a whole may go unanswered before the check aborts
+     * @return one attempt per caller, in submission order
+     * @throws InterruptedException if the check's own thread is interrupted while waiting
      */
     // CloseResource: see the single-call machinery above — shutdownNow in the finally block on
     // purpose, and daemon workers for the wait that interruption cannot end.
     @SuppressWarnings("PMD.CloseResource")
     static List<PostAttempt> concurrently(
-            PushHttpClient subject, URI endpoint, List<Map<String, String>> headers, List<byte[]> bodies)
+            PushHttpClient subject,
+            URI endpoint,
+            List<Map<String, String>> headers,
+            List<byte[]> bodies,
+            int answerBudgetSeconds)
             throws InterruptedException {
         int calls = headers.size();
         ExecutorService executor = Executors.newFixedThreadPool(calls, PostAttempt::worker);
@@ -108,22 +127,12 @@ final class PostAttempt {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(answerBudgetSeconds);
             List<PostAttempt> attempts = new ArrayList<>(pending.size());
             for (Future<PushResponse> call : pending) {
-                attempts.add(answerOf(call, deadline));
+                attempts.add(answerOf(call, deadline, answerBudgetSeconds));
             }
             return attempts;
         } finally {
             executor.shutdownNow();
         }
-    }
-
-    /** Shortens the budget for the kit's own abort-path test; every other caller leaves the published value alone. */
-    static void shortenAnswerBudgetForSelfTest(int seconds) {
-        answerBudgetSeconds = seconds;
-    }
-
-    /** Restores the published budget; called in the {@code finally} of the one test that shortens it. */
-    static void restorePublishedAnswerBudget() {
-        answerBudgetSeconds = PUBLISHED_ANSWER_BUDGET_SECONDS;
     }
 
     /** The response, or a failure saying the transport threw where the seam owes an answer. */
@@ -191,7 +200,8 @@ final class PostAttempt {
     // cause where one exists, is the exception the transport actually threw, which is the frame
     // the implementor has to look at.
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static PostAttempt answerOf(Future<PushResponse> call, long deadline) throws InterruptedException {
+    private static PostAttempt answerOf(Future<PushResponse> call, long deadline, int answerBudgetSeconds)
+            throws InterruptedException {
         try {
             return new PostAttempt(call.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS), null);
         } catch (ExecutionException thrown) {
