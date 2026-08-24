@@ -1683,10 +1683,10 @@ The automated suite covers:
   (`Push2uDeliverySwitchTest`); the missing-sender analyzer's three answers and that its text is the
   one the framework's sorted list produces (`MissingPushSenderFailureAnalyzerTest`);
 - the missing-policy analyzer's three answers, the clause a context that stated the switch off gets
-  and no other does, each shape the analysis is declined for, and that what it says and what the
-  sender's refusal says are one text rather than two that agree today — plus the same sorted-list
-  check its sibling carries, since both analyzers race the framework's own
-  (`MissingEndpointPolicyFailureAnalyzerTest`);
+  and the ways out staying the allowlist's rather than the switch's, each shape the analysis is
+  declined for, and that what it says and what the sender's refusal says are one text rather than
+  two that agree today — plus the same sorted-list check its sibling carries, since both analyzers
+  race the framework's own (`MissingEndpointPolicyFailureAnalyzerTest`);
 - the one running order over every declared startup check, pinned by the message that arrives in a
   context holding both starters and earning every refusal at once, then one fault at a time down the
   list (`StartupCheckOrderAcrossStartersTest`) — never by comparing constants, which live in two
