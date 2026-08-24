@@ -47,7 +47,8 @@ the decisions behind it.
 - A VAPID P-256 key pair ([how to get one](#vapid-keys)), or an implementation of `VapidSigner`.
 - An HTTPS Web Push subscription endpoint containing the browser-provided `p256dh` and `auth`
   values.
-- Spring Boot 4.x, for either of the two starters — see [Spring Boot](#spring-boot).
+- Spring Boot 4.0.8 or newer, for either of the two starters — a minimum, with no upper bound;
+  see [Spring Boot](#spring-boot).
 
 ## Installation
 
@@ -536,8 +537,12 @@ outcome.
 `push2u-spring-boot-starter` binds the `push2u.*` properties to an autoconfigured `PushSender`,
 adds a default `PushHttpClient`, and — when Spring Boot health support is present — a health
 indicator that probes the configured signer. Application beans of the same types take precedence.
-Both starters require **Spring Boot 4.x**. They do not work on Boot 3.x — among other things, the
-health indicator sits on `spring-boot-health`, a module that arrived in Boot 4.0.
+Both starters need **Spring Boot 4.0.8 or newer**, and that number is a minimum, not a pin. They
+publish no Spring Boot BOM, so a build already at or above it keeps its own Spring, Jackson,
+Micrometer and Netty versions, and nothing published says which Spring Boot is too new. Spring Boot
+3.x is outside what these starters are supported on. Where that minimum is a constraint your build
+resolution honours and where it is only a statement is in
+[`docs/SPRING.md`](docs/SPRING.md#the-minimum-spring-boot).
 
 Add the core starter:
 

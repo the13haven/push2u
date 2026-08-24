@@ -100,6 +100,33 @@ The dependency declarations stay exactly as they are in
 [`README.md` → Installation](README.md#installation) — Gradle substitutes the included build for
 the published Maven Central artifact.
 
+### Building against a newer Spring Boot
+
+`gradle/libs.versions.toml`'s `springBoot` is not "the Spring Boot this build uses". It is the
+**minimum** Spring Boot the two starters support and publish as a floor, and by the same number the
+version everything above compiles against — one key, so a starter cannot use an API newer than the
+floor it advertises. Do not raise it to pick up a newer Spring Boot: it moves only when a starter
+needs an API the floor lacks, or when a published vulnerability sits in the graph the floor
+resolves and a patch of the same line fixes it. Either move narrows what the project supports and
+is written up in `docs/MIGRATION.md`.
+
+To build against a newer Spring Boot without touching that number:
+
+```bash
+./gradlew -Ppush2u.springBoot=4.1.1 \
+    :push2u-spring-boot-starter:build :push2u-signer-vault-spring-boot-starter:build
+```
+
+The property substitutes the catalog key for that invocation alone. A publishing task named
+alongside it fails the build, so a substituted run cannot leave an artifact behind that was built
+against something other than the floor it declares. CI runs exactly this, once per released Spring
+Boot minor line at or above the floor's own — informative jobs, not required checks. Read a red one
+as a floor move that may be due; it does not block a merge.
+
+Why the two meanings are one number, why nothing published names an upper bound, and where the
+floor is a constraint rather than a statement:
+[ADR-032](docs/adr/0032-starters-declare-a-minimum-spring-boot.md).
+
 ### Upgrading Gradle
 
 `gradle/wrapper/gradle-wrapper.properties` carries a `distributionSha256Sum`, so the wrapper

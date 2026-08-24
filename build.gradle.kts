@@ -302,6 +302,31 @@ tasks.register("qualityCheckCi") {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The Spring Boot floor is the classpath of the build that publishes.
+//
+// settings.gradle.kts lets -Ppush2u.springBoot=<version> substitute the catalog's `springBoot` key
+// so that a named run can compile the starters against a NEWER Spring Boot than the floor they
+// advertise. That run has to publish nothing: an artifact built with a substituted value would
+// carry a floor its own bytes never satisfied, and nothing about the jar would say so. The
+// criterion ADR-032 states is checkable, so it is checked here rather than left to the release
+// workflow's habit of not passing the property.
+//
+// The invoked task names are what this reads, which catches the invocation and not a publishing
+// task some other task depends on. That is the whole exposure: publishing is entered by naming one
+// of these tasks, and Gradle's own task graph is not available this early without giving up
+// configuration-cache compatibility for a narrower failure mode.
+// ---------------------------------------------------------------------------------------------
+providers.gradleProperty("push2u.springBoot").orNull?.let { substitute ->
+    val publishing = gradle.startParameter.taskNames.filter { it.contains("publish", ignoreCase = true) }
+    require(publishing.isEmpty()) {
+        "-Ppush2u.springBoot=$substitute substitutes the Spring Boot version this build compiles " +
+            "against, and $publishing would publish artifacts built with it. The published " +
+            "starters must be compiled against the minimum Spring Boot they declare, which is the " +
+            "catalog value. Drop the property, or drop the publishing task."
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Maven Central upload — the aggregation half of publishing (the per-module half is the
 // push2u-publish convention plugin). nmcp gathers every module's publication and uploads ONE
 // bundle to the Central Portal, which validates the whole set together — a half-published

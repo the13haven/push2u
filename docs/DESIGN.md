@@ -1212,6 +1212,21 @@ present — a health indicator. Application beans of the same types override the
 application-supplied `PushSender` bypasses the starter's factory method entirely, so everything
 below concerns the *autoconfigured* sender alone.
 
+**What the starters say about Spring Boot's version is a floor and nothing else**
+([ADR-032](adr/0032-starters-declare-a-minimum-spring-boot.md)). One Spring Boot dependency leaves
+each starter — `spring-boot-autoconfigure`, at an ordinary `require` version — and Spring Boot's
+BOM leaves neither: it aligns this build's compile, annotation-processing and test classpaths and
+stops there. On a published configuration it did more than align, because a Gradle consumer reads
+that metadata: Spring Boot's whole version manifest became an input to their resolution and raised
+their Spring, Jackson and Micrometer to whatever version this project happened to build against.
+The floor's value is the same number this build compiles against — one catalog key, not two, so
+that a starter cannot use an API newer than the floor it advertises and the promise is one the
+compiler keeps. Where the floor binds and where it is only documentation is the consumer's build's
+business rather than this library's, and `docs/SPRING.md` states which is which. Nothing in either
+starter reads the framework's version at run time, deliberately: that would be a member of the
+startup-refusal list below, bought for the cells where resolution does not enforce the floor
+anyway.
+
 **Delivery is off by statement, never by omission**
 ([ADR-025](adr/0025-delivery-is-off-by-statement.md)). `push2u.enabled` is that statement, it
 defaults to on, and the third state — on, with neither a sender nor a signer in the context — fails
@@ -1726,3 +1741,13 @@ The standard verification commands are:
 ./gradlew clean build
 ./gradlew javadoc
 ```
+
+Both resolve Spring Boot at the floor the starters declare, because the catalog holds one number
+for both meanings. That makes the merge-blocking run blind by construction to anything a newer
+Spring Boot changes, so CI adds runs above it: one build of the two starter modules per released
+Spring Boot minor line at or above the floor's own, each at its newest GA patch, with
+`-Ppush2u.springBoot` substituting the catalog key for that invocation alone. Those runs are read,
+not obeyed — none is a required check, and the root build refuses the property outright if a
+publishing task is named alongside it, so nothing they build can be published. Which versions there
+are is computed from Spring Boot's own released list rather than written down, since a list here
+would go stale the week Spring publishes.

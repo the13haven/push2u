@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check. |
+| [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
 ## From `0.2.0`
@@ -57,6 +57,8 @@ of its own below, and no bearing on an application that only sends.
 - [A green build does not finish the `0.2.0` move](#a-green-build-does-not-finish-the-020-move)
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
 - [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
+- [The starters stop exporting Spring Boot's BOM](#the-starters-stop-exporting-spring-boots-bom)
+  - [Your Spring Boot version stops being raised by push2u](#your-spring-boot-version-stops-being-raised-by-push2u)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
 - [Checklist for the `0.2.0` move](#checklist-for-the-020-move)
 
@@ -276,6 +278,60 @@ threads colliding inside it. A red run is a real defect every time; a green one 
 check did not catch you. The requirement is the sentence in `VapidSigner`'s own contract, as it has
 been all along.
 
+### The starters stop exporting Spring Boot's BOM
+
+A third reader, and the one least likely to be looking: an application that uses either Spring Boot
+starter and builds with **Gradle**. Nothing in your source changes. What changes is what resolves.
+
+Until this release both starters declared Spring Boot's BOM on `api`, so it was published — as an
+imported BOM in the POM and as a dependency in the Gradle module metadata. For a Gradle consumer
+that made Spring Boot's entire version manifest a live input to their own resolution, and Gradle
+takes the higher of two requirements: a build that said Spring Boot 4.0.0 throughout resolved
+`spring-boot` 4.1.1, `spring-core` 7.0.9, `jackson-databind` 3.1.5 and `micrometer` 1.17.1 —
+because it had added a Web Push starter. Nothing warned about it.
+
+The starters now publish one Spring Boot dependency, `spring-boot-autoconfigure`, at the minimum
+version they support; the number is in
+[`README.md` → Requirements](../README.md#requirements) and what it does and does not enforce is in
+[`SPRING.md` → The minimum Spring Boot](SPRING.md#the-minimum-spring-boot). Everything the BOM used
+to manage that the starters do not themselves depend on — Jackson, Netty, Tomcat, the rest of the
+manifest — is no longer spoken about at all. What the starters still bring is that one dependency's
+own transitives, `spring-boot`, `spring-core` and Micrometer's observation artifacts, and only a
+build below the minimum is raised on those.
+
+**Two kinds of build see nothing at all here.** Maven was never affected: a `dependencyManagement`
+section reached through a dependency supplies versions to *that dependency's* own dependencies, not
+to your application's graph, so the manifest never arrived. Neither was a Gradle build applying
+`io.spring.dependency-management`, whose forced versions an imported BOM cannot outrank. If you are
+either, read on only for the floor: you are asked for a minimum Spring Boot that neither of you
+enforces.
+
+#### Your Spring Boot version stops being raised by push2u
+
+Here is the half no compiler reports on its own. If you were among the Gradle builds being raised,
+then for as long as you have had a push2u starter your application has been compiling and running
+against a **newer Spring Boot than your build asked for**. Two things follow, and only the first is
+loud:
+
+- **Your own code may have used an API from the version you were raised to.** With the raise gone,
+  that API is gone with it. Where your module recompiles, this is a compile error and the cheap
+  kind. Where it does not — a module you did not rebuild, a jar you assemble separately — it is a
+  `NoSuchMethodError` or a `NoClassDefFoundError` the first time that line runs.
+- **Your resolved graph moves, and not only in Spring's coordinates.** The BOM managed the whole
+  Spring Boot manifest, so Jackson, Netty, Tomcat and the rest were being raised too — and those
+  are the ones that now stop moving entirely rather than merely stopping at a lower number. A build
+  with a lockfile will report the change; a build without one will not.
+
+So the check is a resolution diff rather than a rebuild: resolve once before the upgrade and once
+after — `./gradlew :your-app:dependencies --configuration runtimeClasspath` is enough — and read
+what moved. If versions dropped, they dropped back to what your build says. Deciding whether you
+want them there is the point of the exercise: raise them in **your** build, where the decision is
+visible, if you do.
+
+One direction can still raise you: if your build asks for a Spring Boot **below** the declared
+minimum, resolution raises you to that minimum, the same way any dependency's requirement does.
+That bound is far lower than the version you were previously being pulled to.
+
 ### What the `0.2.0` move does not change
 
 Nothing about the decision moved — only the shape of its answer. Specifically:
@@ -317,6 +373,9 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] If you maintain a `VapidSigner` of your own, rerun its suite against the upgraded kit. The
       contract signs from several threads now, and a failure there is a defect that was already
       corrupting signatures under load rather than a new rule to satisfy.
+- [ ] If you build with Gradle and use either Spring Boot starter, diff your resolved runtime
+      classpath before and after. Spring, Jackson, Micrometer and Netty versions the starters used
+      to raise now come from your own build alone.
 
 ## From `0.1.0`
 

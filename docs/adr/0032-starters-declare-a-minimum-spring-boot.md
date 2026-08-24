@@ -1,6 +1,6 @@
 # ADR-032 — The starters declare a minimum Spring Boot, never impose one
 
-**Status:** Proposed
+**Status:** Accepted
 
 [ADR-002](0002-zero-dependency-core.md) settled what the core may carry: nothing, so that a consumer
 inherits no foreign surface and no foreign CVE by depending on this library. It says in one clause

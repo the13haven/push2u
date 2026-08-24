@@ -5,6 +5,53 @@ This is the configuration reference — [`README.md` → Spring Boot](../README.
 carries the dependency coordinate, the Spring Boot version the starters need, and the minimal
 working configuration.
 
+## The minimum Spring Boot
+
+The starters state a **minimum** Spring Boot version and nothing else about which one you run.
+[`README.md` → Requirements](../README.md#requirements) carries the number.
+
+What travels in the published metadata is one ordinary dependency: `spring-boot-autoconfigure` at
+that version. In Gradle's vocabulary that is a `require` — a floor another requirement may raise
+and none may lower — so a build already on a newer Spring Boot resolves its own, and a build below
+the minimum is raised to it, along with what that version of `spring-boot-autoconfigure` brings
+with it (`spring-boot`, `spring-core`, Micrometer's observation artifacts). Measured: a Gradle
+build declaring Spring Boot 4.0.0 resolves 4.0.8; one declaring 4.1.1 resolves 4.1.1, untouched.
+
+No Spring Boot BOM is published from either starter, and that is the wider half. **Everything the
+BOM used to manage that these starters do not themselves depend on — Jackson, Netty, Tomcat,
+Hibernate, the rest of the manifest — is no longer spoken about at all.** Earlier versions did
+export that BOM on `api`, and a Gradle consumer who added a starter had all of it raised to
+whatever this project happened to build against, silently; [`MIGRATION.md`](MIGRATION.md) has the
+note for a deployment that was on the receiving end of it.
+
+**No upper bound is published in any form** — not a range with a closed right end, not a rejection
+of future versions, not a "tested up to" presented as a ceiling. When you upgrade Spring Boot is
+your decision, and nothing here has an opinion about it.
+
+**Where the minimum is a constraint, and where it is only a statement.** This is worth knowing
+before you rely on it:
+
+| Your build | Is the minimum enforced? |
+|---|---|
+| Gradle, with `platform("org.springframework.boot:spring-boot-dependencies:…")` | **Yes** — resolution takes the higher of the two requirements, which is this one |
+| Gradle, with the `io.spring.dependency-management` plugin | **No** — the plugin *forces* its managed versions, in either direction |
+| Maven | **No** — a `dependencyManagement` section reached through a dependency governs that dependency's own dependencies, not your application's graph |
+
+There is no spelling of "not below X" that a POM carries, so for the last two rows the minimum is
+documentation and a version resolution is free to overrule. **Nothing in the library reads Spring
+Boot's version at runtime either**, deliberately: a starter below the minimum is not refused at
+startup, and what happens instead is whatever the missing API does at the point it is reached.
+
+**Spring Boot 3.x is not supported.** That is a statement about what this project builds against,
+tests and answers for — not a claim that these modules cannot run on it.
+
+**The minimum moves for two reasons only**: a starter needs an API the older version does not have,
+or a published vulnerability sits in the graph that version resolves and a patch of the same line
+fixes it. A newer Spring Boot merely existing is not one. Either move narrows the set of
+deployments this library answers for, so either one is written up in
+[`MIGRATION.md`](MIGRATION.md) — including in its silent-break section, since a raised floor can
+meet a lockfile or a `strictly` constraint you declared yourself.
+
 ## Properties
 
 Configure a local VAPID signer:
