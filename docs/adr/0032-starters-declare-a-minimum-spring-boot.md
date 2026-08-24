@@ -110,8 +110,9 @@ and `CONTRIBUTING.md` rather than here.
 
 This is the part most easily misread, so it is measured rather than asserted.
 
-**Spring Boot 3 is not ruled out by the code these starters compile.** Every Spring import in both
-starters' `main` sources — 36 of them — was checked against the unpacked `spring-boot-3.5.9.jar`,
+**Spring Boot 3 is not ruled out by the code these starters compile.** Both starters' `main` sources
+carry 103 Spring import declarations naming 36 distinct types; each of those 36 was checked against
+the unpacked `spring-boot-3.5.9.jar`,
 `spring-boot-autoconfigure-3.5.9.jar` and Spring Framework 6.2.15 (`spring-core`, `spring-beans`,
 `spring-context`). Exactly four are missing, all from `org.springframework.boot.health.*`:
 `HealthIndicator`, `Health`, `Status` and `ConditionalOnEnabledHealthIndicator`. The other 32 —
@@ -132,12 +133,18 @@ code compiles in the same module as everything else, against a versionless depen
 BOM does not manage. That is a property of how this build is currently arranged. It is not evidence
 of a runtime incompatibility, and no measurement taken here supports the stronger claim.
 
-**So the floor is a support policy.** 4.0 is the line this project builds against, tests and answers
-for, and the catalog's own comment already gives the reason: push2u is new, and its adopters build on
-the current Boot. Whether to support 3.x is a genuine question with a genuine cost — the health code
-would have to leave the module, or the module would have to be split — and **this record neither
-answers it nor forecloses it.** A later record that wants 3.x has to say what happens to the health
-indicator; it does not have to argue past an incompatibility that was never established.
+**So the floor is a support policy, and this record does make it.** Spring Boot 3.x is **declined**:
+4.0 is the line this project builds against, tests and answers for, and 3.x is outside what these
+starters are published to support — not because it cannot work, but because supporting a line costs
+building against it, testing against it and answering for it, and this project's adopters build on
+the current Boot. The catalog's own comment already says as much.
+
+**Declined at this stage, and reviewable by a record of its own.** What is open is whether to revisit
+the decision, not whether it has been taken. A later record arguing for 3.x inherits a cleared field:
+it has to say what becomes of the health code — which is what actually blocks the build today — and
+it does not have to argue past an incompatibility that was never established. How that is solved is
+not this record's to prescribe, and moving the health code out of the module or splitting the module
+are two shapes among others rather than the only ones.
 
 The floor was checked in the other direction too, by standing up real application contexts: starters
 built against the 4.0 line run on 4.0, on 4.1.1 and on 4.2.0-M1; starters built against 4.1.1 run on
