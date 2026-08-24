@@ -109,9 +109,12 @@ jobs:
         run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
 
       # The one rule in this build that `qualityCheckCi` cannot reach, because proving it means
-      # failing: -Ppush2u.springBoot substitutes the Spring Boot version the starters compile
-      # against, and no publishing task may run while it is set — otherwise a release declares a
-      # minimum it was never built against, with nothing about the artifacts to say so.
+      # failing: -Ppush2u.springBoot substitutes the catalog key, and no publishing task may run
+      # while it is set. That key is BOTH the version the starters compile against and the floor
+      # they publish, so a substituted release is internally consistent — compiled against the
+      # substituted version and declaring it — and wrong for the reason that consistency hides:
+      # the number it declares is not the minimum this project supports, and nothing about the
+      # artifacts says so.
       #
       # It lives in `quality` rather than in the informative matrix below, and that placement is
       # the point: `quality` blocks a merge, so deleting the guard turns this red instead of

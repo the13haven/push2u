@@ -340,12 +340,19 @@ number now, that is all.
 decides your Spring Boot version, before and after.* The old shape decided it through the BOM the
 starters imported, which resolved their own versionless `spring-boot-autoconfigure`; the new shape
 decides it by declaring `spring-boot-autoconfigure:4.0.8` outright. Nothing about that is a floor —
-a POM cannot express one — and there is no version you can declare that resolution will honour over
-it. **The only way to own the decision in Maven is to manage Spring Boot yourself**, with
-`spring-boot-starter-parent` as your parent or Boot's BOM imported into your
-`dependencyManagement`; then your management outranks the starter's declaration and push2u's number
-stops mattering. If that is what you want, this release is the moment to do it — otherwise your
-Spring Boot moves from whatever this project last built against down to the published minimum.
+a POM cannot express one — so it is a version handed to you rather than a minimum you may exceed,
+and your Spring Boot moves from whatever this project last built against down to the published
+minimum unless you say otherwise.
+
+Saying otherwise is ordinary Maven, and there are two ways of different quality. A **direct**
+dependency on `spring-boot-autoconfigure` in your own POM sits nearer the root than the starter's
+transitive one and wins by nearest-definition — one coordinate, one version, and it does work. What
+it does not do is govern the rest: `spring-boot`, `spring-core`, `spring-context` and the others
+still arrive at whatever the winning `spring-boot-autoconfigure` drags, and you are pinning one
+artifact of a set that is meant to move together. **The way to own the decision rather than one
+coordinate of it is to manage Spring Boot yourself** — `spring-boot-starter-parent` as your parent,
+or Boot's BOM imported into your `dependencyManagement`. Then every Boot and Spring version in your
+graph is yours, push2u's number stops mattering, and this release is a good moment to do it.
 
 Two things follow from a version that moved, and only the first is loud:
 
@@ -370,9 +377,11 @@ after — `./gradlew :your-app:dependencies --configuration runtimeClasspath`, o
 so in your own build: a declaration in Gradle, your own Boot parent or imported BOM in Maven. That
 is the point of the exercise; there is nothing to do here beyond it.
 
-One direction can still raise you: if your build asks for a Spring Boot **below** the declared
-minimum, resolution raises you to that minimum, the same way any dependency's requirement does.
-That bound is far lower than the version you were previously being pulled to.
+One direction can still raise you, in Gradle and under ordinary conflict resolution: a build asking
+for a Spring Boot **below** the declared minimum is raised to that minimum, the same way any
+dependency's requirement raises another. A build that *forces* versions is not raised — nor is
+Maven, where the number is a plain version and your own `dependencyManagement` settles it. Either
+way that bound is far lower than the version you were previously being pulled to.
 
 ### What the `0.2.0` move does not change
 
@@ -423,8 +432,10 @@ Nothing about the decision moved — only the shape of its answer. Specifically:
 - [ ] **Maven**, if you use either Spring Boot starter and are not on `spring-boot-starter-parent`
       and do not import Boot's BOM: your Spring Boot moves *down* to the published minimum, and
       push2u still decides it — a POM has no way to express a floor. `mvn dependency:tree` before
-      and after shows the move. To take the decision back, add the Boot parent or import its BOM;
-      nothing else in your POM will outrank the starter's declaration.
+      and after shows the move. To take the decision back for the whole Boot graph rather than one
+      coordinate of it, add the Boot parent or import its BOM; a direct dependency on
+      `spring-boot-autoconfigure` also outranks the starter's transitive one, and leaves the rest
+      of Spring following it.
 
 ## From `0.1.0`
 

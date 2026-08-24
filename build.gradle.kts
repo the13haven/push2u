@@ -406,11 +406,13 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                 }
 
                 // Decision 2, WHICH artifact: exactly one Spring Boot artifact is published from
-                // a starter, and it is spring-boot-autoconfigure. The version rule below cannot
-                // stand in for this one — spring-boot-dependencies declared without `platform()`
-                // is an ordinary dependency at the floor's own version, so it satisfies every
-                // version check while publishing the whole manifest to a Maven consumer, which is
-                // the thing this record exists to stop.
+                // a starter, and it is spring-boot-autoconfigure. This is a rule about identity
+                // and the version rules cannot stand in for it — spring-boot-dependencies declared
+                // WITHOUT `platform()` is an ordinary dependency at the floor's own version, so it
+                // leaves the dependencyManagement check and both version checks satisfied while
+                // putting a second Spring Boot coordinate on every consumer's classpath, which is
+                // a decision this library has not taken. What such a dependency does after that
+                // varies by ecosystem and is deliberately not what this check reasons about.
                 val bootDependencies = childElements(pomRoot, "dependencies")
                     .flatMap { childElements(it, "dependency") }
                     .filter { dependency ->
@@ -428,11 +430,12 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                     }
                 require(bootDependencies.map { it.first } == listOf("spring-boot-autoconfigure")) {
                     "$module publishes the Spring Boot artifacts " +
-                        "${bootDependencies.map { it.first }} in its POM. Exactly one leaves a " +
-                        "starter, spring-boot-autoconfigure. A BOM among them hands a consumer " +
-                        "Spring Boot's whole version manifest whether or not platform() was used " +
-                        "to declare it; anything else is a Spring Boot artifact this library has " +
-                        "not decided to put on a consumer's classpath."
+                        "${bootDependencies.map { it.first }} in its POM. Exactly one may leave a " +
+                        "starter, and it is spring-boot-autoconfigure — every other Spring Boot " +
+                        "coordinate here reaches a consumer's classpath through a decision this " +
+                        "library has not taken. spring-boot-dependencies is the one to watch for: " +
+                        "declared without platform() it is an ordinary dependency at the right " +
+                        "version, and every other check in this task passes it."
                 }
 
                 // Decisions 2 and 4, WHICH version: it carries the floor literally. A missing
