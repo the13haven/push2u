@@ -77,7 +77,7 @@ None of this applies to a vulnerability: there is no public issue to reference, 
 ## Work that has to file one
 
 The mirror of the section above. A change that leaves a debt behind opens the issue that collects
-it, and does so in its own pull request. The shape this repository has is a **tombstone**: the
+it, and does so in its own pull request. The shape it has taken here so far is a **tombstone**: the
 startup refusal a release leaves over a configuration property it removed, so that an operator
 upgrading with the dead key still in a YAML file is told where the setting went instead of having it
 ignored in silence — binding drops an unknown key without a word.
@@ -93,13 +93,20 @@ contained — which has already failed here once, and the tombstone was retired 
 someone happened to be holding it in their head. Written at the change instead, the debt and its
 record are made by the same hand in the same hour.
 
-The issue states the window as that rule and never as a number: the version this work ships in does
-not exist yet, and the section above forbids guessing it. It does not need one — the issue links its
-pull request, and that pull request shows its release once there is one, which is the release the
-window runs from. One issue covers every key the same change removed.
+The issue states the window as that rule, and does not have to name a version at all — never one
+before the tag, which the section above forbids outright. It links its pull request instead, and
+that pull request shows its release once there is one, which is the release the window runs from.
+One issue covers every key the same change removed, and it is opened before the pull request that
+references it — so if that pull request is abandoned, or the tombstone dropped in review, close the
+issue with it.
 
 `docs/RELEASING.md` keeps a check after the tag rather than the obligation itself, so a tombstone
 that reached a release without an issue is still caught.
+
+**ADR-023 and ADR-025 both say the release opens that work item**, the first of them in bold. That
+was the procedure when those decisions were taken, and it is what has since moved; the decisions
+themselves — that a tombstone has an end, that the window is one minor release, that the end is
+never written as a version — are untouched by the move and neither record is edited for it.
 
 ## Delegating
 
