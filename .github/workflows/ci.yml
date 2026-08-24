@@ -108,6 +108,39 @@ jobs:
       - name: Quality check
         run: ./gradlew qualityCheckCi --no-daemon --no-build-cache --stacktrace
 
+      # The one rule in this build that `qualityCheckCi` cannot reach, because proving it means
+      # failing: -Ppush2u.springBoot substitutes the Spring Boot version the starters compile
+      # against, and no publishing task may run while it is set — otherwise a release declares a
+      # minimum it was never built against, with nothing about the artifacts to say so.
+      #
+      # It lives in `quality` rather than in the informative matrix below, and that placement is
+      # the point: `quality` blocks a merge, so deleting the guard turns this red instead of
+      # leaving every required check green. The two invocations are the two ways the previous
+      # implementation was measured to be bypassed — Gradle's own camelCase abbreviation, and the
+      # Central bundle, which reaches every module's publication through a task whose name says
+      # nothing about publishing.
+      #
+      # The substituted value is the catalog's own, read out of the catalog. Nothing here needs a
+      # different Spring Boot, and using one would put a version literal in this file: what is
+      # being tested is that the property's PRESENCE is refused.
+      - name: A substituted build refuses to publish
+        run: |
+          set -euo pipefail
+          floor=$(sed -n 's/^springBoot = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          test -n "$floor"
+          for task in pTML nmcpZipAggregation; do
+            if output=$(./gradlew -Ppush2u.springBoot="$floor" "$task" --no-daemon 2>&1); then
+              echo "::error::$task published while -Ppush2u.springBoot was set; the guard is gone."
+              exit 1
+            fi
+            if ! grep -q "substitutes the Spring Boot version" <<<"$output"; then
+              echo "::error::$task failed, but not on the substitution guard. Output follows."
+              echo "$output"
+              exit 1
+            fi
+            echo "$task refused, as it must be."
+          done
+
       # Every module's JUnit XML (including fipsTest) under one directory — Codecov's test-results
       # upload takes a single path. Runs even when the build failed: a failed suite is exactly what
       # test analytics is for.

@@ -405,20 +405,41 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                         "compileOnly, annotationProcessor and test configurations."
                 }
 
-                // Decisions 2 and 4, in the POM: every Spring Boot dependency carries the floor
-                // literally. A missing version and a range both fail here, the second being the
-                // only spelling of an upper bound a POM can carry.
-                val pomVersions = childElements(pomRoot, "dependencies")
+                // Decision 2, WHICH artifact: exactly one Spring Boot artifact is published from
+                // a starter, and it is spring-boot-autoconfigure. The version rule below cannot
+                // stand in for this one — spring-boot-dependencies declared without `platform()`
+                // is an ordinary dependency at the floor's own version, so it satisfies every
+                // version check while publishing the whole manifest to a Maven consumer, which is
+                // the thing this record exists to stop.
+                val bootDependencies = childElements(pomRoot, "dependencies")
                     .flatMap { childElements(it, "dependency") }
                     .filter { dependency ->
                         childElements(dependency, "groupId")
                             .any { it.textContent.trim() == "org.springframework.boot" }
                     }
                     .map { dependency ->
-                        childElements(dependency, "version").map { it.textContent.trim() }
+                        val artifact = childElements(dependency, "artifactId")
+                            .map { it.textContent.trim() }
                             .firstOrNull()
+                        val version = childElements(dependency, "version")
+                            .map { it.textContent.trim() }
+                            .firstOrNull()
+                        artifact to version
                     }
-                require(pomVersions.isNotEmpty() && pomVersions.all { it == floor }) {
+                require(bootDependencies.map { it.first } == listOf("spring-boot-autoconfigure")) {
+                    "$module publishes the Spring Boot artifacts " +
+                        "${bootDependencies.map { it.first }} in its POM. Exactly one leaves a " +
+                        "starter, spring-boot-autoconfigure. A BOM among them hands a consumer " +
+                        "Spring Boot's whole version manifest whether or not platform() was used " +
+                        "to declare it; anything else is a Spring Boot artifact this library has " +
+                        "not decided to put on a consumer's classpath."
+                }
+
+                // Decisions 2 and 4, WHICH version: it carries the floor literally. A missing
+                // version and a range both fail here, the second being the only spelling of an
+                // upper bound a POM can carry.
+                val pomVersions = bootDependencies.map { it.second }
+                require(pomVersions.all { it == floor }) {
                     "$module publishes Spring Boot versions $pomVersions in its POM; the floor is " +
                         "$floor. A versionless dependency leaves a Maven consumer with nothing to " +
                         "resolve, and a range admits milestones."
@@ -427,13 +448,20 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                 // Decisions 2 and 4, in the Gradle metadata, where the spellings a POM cannot carry
                 // are visible: `strictly` fails a consumer's build outright, `rejects` is an upper
                 // bound wherever it names one, and both are invisible to the POM check above.
-                val gradleRequirements = Regex(
-                        "\"group\": ?\"org\\.springframework\\.boot\"(?:(?!\\}).)*?" +
-                            "\"version\": ?\\{([^}]*)\\}",
+                val gradleBootDependencies = Regex(
+                        "\"group\": ?\"org\\.springframework\\.boot\",\\s*" +
+                            "\"module\": ?\"([^\"]+)\",\\s*\"version\": ?\\{([^}]*)\\}",
                         RegexOption.DOT_MATCHES_ALL)
                     .findAll(moduleMetadata.get().asFile.readText())
-                    .map { it.groupValues[1] }
+                    .map { it.groupValues[1] to it.groupValues[2] }
                     .toList()
+                require(gradleBootDependencies.map { it.first }.toSet() ==
+                    setOf("spring-boot-autoconfigure")) {
+                    "$module publishes the Spring Boot modules " +
+                        "${gradleBootDependencies.map { it.first }.toSet()} in its module " +
+                        "metadata. Exactly one leaves a starter, spring-boot-autoconfigure."
+                }
+                val gradleRequirements = gradleBootDependencies.map { it.second }
                 // The same tolerance for optional whitespace the outer pattern allows — the two
                 // read the same file and a writer that tightened its spacing must not make one
                 // match and the other fail.

@@ -11,14 +11,19 @@ The starters state a **minimum** Spring Boot version and nothing else about whic
 [`README.md` → Requirements](../README.md#requirements) carries the number.
 
 What travels in the published metadata is one ordinary dependency: `spring-boot-autoconfigure` at
-that version. In Gradle's vocabulary that is a `require` — a floor another requirement may raise
-and none may lower — so a build already on a newer Spring Boot resolves its own, and a build below
-the minimum is raised to it, along with what that version of `spring-boot-autoconfigure` brings
-with it: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
-`spring-expression`, `commons-logging`, `micrometer-observation` and `micrometer-commons`.
-Measured, without naming versions that would go stale here rather than in README: a Gradle build
-declaring a Spring Boot below the minimum resolves the minimum, and one declaring anything at or
-above it keeps its own, untouched.
+that version. In Gradle's vocabulary that is a `require` — a floor that another *ordinary*
+requirement may raise and none may lower — so a build already on a newer Spring Boot resolves its
+own, and a build below the minimum is raised to it, along with what that version of
+`spring-boot-autoconfigure` brings with it: `spring-boot`, `spring-core`, `spring-context`,
+`spring-beans`, `spring-aop`, `spring-expression`, `commons-logging`, `micrometer-observation` and
+`micrometer-commons`. Measured, without naming versions that would go stale here rather than in
+README: a Gradle build declaring a Spring Boot below the minimum resolves the minimum, and one
+declaring anything at or above it keeps its own.
+
+"Ordinary" is doing work in that sentence, and the table below is where it is paid: a build that
+*forces* versions — `enforcedPlatform`, an explicit `force`, the `io.spring.dependency-management`
+plugin — overrules this requirement in either direction, downwards included. Nothing published here
+can prevent that, and nothing published here tries to.
 
 No Spring Boot BOM is published from either starter, and that is the wider half. **Everything the
 BOM used to manage that these starters do not themselves depend on — Jackson, Netty, Tomcat,

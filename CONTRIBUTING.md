@@ -122,7 +122,9 @@ To build against a newer Spring Boot without touching that number:
 
 The property substitutes the catalog key for that invocation alone, and any publishing task in the
 run then refuses to execute — the check is on the task type rather than on what you typed, so an
-abbreviated task name and a publish reached as somebody else's dependency are both caught. A
+abbreviated task name and a publish reached as somebody else's dependency are both caught. CI
+proves that rather than assuming it: the merge-blocking `quality` job runs both of those
+invocations and fails if either one publishes. A
 substituted run therefore cannot leave an artifact behind declaring a minimum this project does not
 support. CI runs exactly this, once per released Spring Boot minor line at or above the floor's own
 — informative jobs, not required checks. Read a red one as a floor move that may be due; it does
