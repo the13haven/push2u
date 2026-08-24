@@ -871,11 +871,11 @@ unless it is annotated `@Nullable`, and **`@Nullable` marks a value that may leg
 absent** — an unset message header, an unset builder value, a refusal reason the policy did not
 give, an unavailability the custodian declared no cause or retry moment for, an unset Spring
 property, the endpoint handed to a redaction that has to run on a logging path where there may not
-be one. What it never marks is a value that failed to arrive: nothing here returns `null` to report
-that something went wrong, which is what leaves the outcome types and the two seam exceptions as
-the only places a failure is expressed. The one `@Nullable` that is not this API's own statement is
-on the `equals(Object)` overrides, where it is the language's. The annotations are part of the
-published surface — NullAway, IntelliJ and the Kotlin compiler read the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
+be one. What it never marks is a value that failed to arrive: a failure here is expressed as a
+value or thrown, never as an absence. The one `@Nullable` that is not this API's own statement is
+on the `equals(Object)` overrides, where it is the language's. The annotations are
+part of the published surface — NullAway, IntelliJ and the Kotlin compiler read the same ones
+([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
 ## 6. Cryptography
 
