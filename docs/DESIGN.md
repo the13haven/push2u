@@ -94,7 +94,7 @@ push2u-spring-boot-starter
 
 push2u-signer-vault-spring-boot-starter
 ├── Vault signer properties and auto-configuration
-└── the partial-configuration diagnostic, ordered after it
+└── the partial-configuration diagnostic, behind the core starter's sender
 ```
 
 The dependency direction is one-way: the optional modules depend on the core, and no Spring or
@@ -169,8 +169,7 @@ exception.
 of them is `class Nullable in module org.jspecify is not indirectly exported` — one per `@Nullable`
 in an exported signature, so their number moves with the API and is deliberately not written down
 here — and the change lint asks for, `requires static transitive org.jspecify`, silences them and
-breaks
-every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
+breaks every module-path consumer that does not itself ship JSpecify: `transitive` makes the module
 mandatory at the consumer's compile time, and such a consumer fails with `module not found:
 org.jspecify` (measured; with plain `requires static` the same consumer compiles). The annotations
 are metadata for analysers, not types a caller must name, so the warning describes a problem this
@@ -478,26 +477,32 @@ Three seams in the core are public, and only three
 ### Boundary validators
 
 Two public utility classes let an application enforce the `Subscription` contract at its own
-registration boundary — rejecting a bad registration before persisting it — instead of storing
-data every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030
-contract, plus the log-safe `redact`) and `P256PublicKeys` for the key material. One check of the
+registration boundary — rejecting a bad registration before persisting it — instead of storing data
+every later send will refuse: `Endpoints` for the endpoint (`requireSecure`, the RFC 8030 contract,
+plus the log-safe `redact`) and `P256PublicKeys` for the key material. One check of the
 `Subscription` contract deliberately does not live in `requireSecure`: the 2048-character endpoint
-length bound ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)) is a resource control
-with no RFC 8030 clause behind it, and `requireSecure` stays the protocol check ADR-005 named it —
-the bound sits in `Subscription`'s canonical constructor, which every construction path runs.
+length bound ([ADR-020](adr/0020-subscription-endpoint-length-bound.md)) is a resource control with
+no RFC 8030 clause behind it, and `requireSecure` stays the protocol check ADR-005 named it — the
+bound sits in `Subscription`'s canonical constructor, which every construction path runs.
 `P256PublicKeys` carries two checks of deliberately different strength: `requireUncompressedPoint`
-is structural
-(65 bytes, the `0x04` X9.62 tag) and `requireOnCurve` is the full check — coordinates inside the
-P-256 prime field and the curve equation satisfied. The full check runs on hard-coded FIPS 186-4
-domain parameters and touches no JCA provider, so it works wherever a `Subscription` is created,
-before and independently of any `PushSender`; hard-coding is sound because P-256 is a fixed named
-curve, and a test (with a BC-FIPS twin) pins each constant against what a provider answers for
+is structural (65 bytes, the `0x04` X9.62 tag) and `requireOnCurve` is the full check — coordinates
+inside the P-256 prime field and the curve equation satisfied. The full check runs on hard-coded
+FIPS 186-4 domain parameters and touches no JCA provider, so it works wherever a `Subscription` is
+created, before and independently of any `PushSender`; hard-coding is sound because P-256 is a fixed
+named curve, and a test (with a BC-FIPS twin) pins each constant against what a provider answers for
 `secp256r1`. `Subscription`'s constructor applies `requireOnCurve` to `p256dh` — the value is
 attacker-supplied, and an off-curve point would otherwise be accepted, persisted, and then raise
-`PushCryptoException` on every send, far from the request that supplied it, as the recurring
-failure it is. `VapidKeys` applies the same full check to its public half, catching a
-corrupted configuration value where the pair is created. Section 6 describes how these checks
-relate to the provider-parameter check the send pipeline still performs.
+`PushCryptoException` on every send, far from the request that supplied it, as the recurring failure
+it is. `VapidKeys` applies the same full check to its public half, catching a corrupted
+configuration value where the pair is created. Section 6 describes how these checks relate to the
+provider-parameter check the send pipeline still performs.
+
+**A third public utility sits beside these two without enforcing the `Subscription` contract.**
+`Es256Verifier` answers whether a raw `r || s` signature verifies against the 65-byte point a
+signer advertises. It is public because that is the only check available to a caller holding the
+`VapidSigner` SPI and nothing else, and it lives in the core rather than in the starter that drives
+it — the health indicator — because it has to mirror the core's own ES256 provider resolution, DER
+fallback included, or it would condemn a healthy signer on a FIPS platform.
 
 ### VapidSigner
 
@@ -687,17 +692,15 @@ this library writes no log lines on the send path and the core holds no logger �
 zero-dependency, it could not take one; the starter's health indicator is the one component in the
 tree that logs, and it reports readiness
 ([ADR-031](adr/0031-telemetry-is-emitted-by-the-deployment.md)) — so every diagnostic the send path
-produces is a value
-handed to a caller who renders it, and only the policy can
-say what it knew at the moment it refused. That is a sentence an operator reads, not a code a
-program branches on; a consumer that genuinely has to branch on the *kind* of refusal is looking at a
-missing type rather than at a component this one should have grown. No endpoint component is carried
-because both callers already hold the endpoint they just passed in, and because the redaction of a
-capability URL stays this library's own work: `send` renders the redacted endpoint from the
-subscription it holds, whatever the policy wrote, so one of `EndpointRejected`'s two components is a
-structural guarantee rather than a promise resting on a seam's contract. The reason keeps the
-obligation the exception message carried — an implementation naming an endpoint renders it through
-`Endpoints.redact` first.
+produces is a value handed to a caller who renders it, and only the policy can say what it knew at
+the moment it refused. That is a sentence an operator reads, not a code a program branches on; a
+consumer that genuinely has to branch on the *kind* of refusal is looking at a missing type rather
+than at a component this one should have grown. No endpoint component is carried because both
+callers already hold the endpoint they just passed in, and because the redaction of a capability URL
+stays this library's own work: `send` renders the redacted endpoint from the subscription it holds,
+whatever the policy wrote, so one of `EndpointRejected`'s two components is a structural guarantee
+rather than a promise resting on a seam's contract. The reason keeps the obligation the exception
+message carried — an implementation naming an endpoint renders it through `Endpoints.redact` first.
 
 **`Refused` validates nothing, and that is a decision.** A `null` reason is stored as `""` and a
 blank one is permitted, which is exactly what `PushOutcome.EndpointRejected` permits — one refusal
@@ -849,14 +852,6 @@ behaviour belongs to the transport — where `JdkPushHttpClient` enforces `Redir
 just ran. Strict guarantees require
 resolution/egress pinning inside a `PushHttpClient` implementation.
 
-**A third public utility is not one of these**, and belongs here only because a reader touring the
-published surface would otherwise not meet it. `Es256Verifier` answers whether a raw `r || s`
-signature verifies against the 65-byte point a signer advertises. It is public because that is the
-only check available to a caller holding the `VapidSigner` SPI and nothing else, and it lives in
-the core rather than in the starter that drives it — the health indicator — because it has to
-mirror the core's own ES256 provider resolution, DER fallback included, or it would condemn a
-healthy signer on a FIPS platform.
-
 ### Deliberately concrete components
 
 The RFC 8291 encryptor, the HKDF implementation and the origin serialization are not public SPIs
@@ -874,16 +869,17 @@ signers manage their own providers.
 
 Every package carries JSpecify's `@NullMarked`, so a reference type in the public API is non-null
 unless it is annotated `@Nullable`. Most of the exceptions are values a caller may legitimately
-omit: the optional message headers (`PushMessage.ttl`, `urgency`, `topic`), the unset builder
-fields and the `cryptoProvider` a caller passes to leave the provider unchosen,
-`EndpointAssessment.Refused`'s reason, `Endpoints.redact`'s argument, the optional cause and retry
-hint of `VapidSignerUnavailableException`, and the Spring properties. The rest are the two
-`equals(@Nullable Object)` overrides the language's own contract requires, on `PushMessage` and
-`Subscription`. That is the whole list, and the part of it that lives in `push2u-core` is what the
-`[exports]` warnings above enumerate — one warning per annotated position, so the two are checkable
-against each other. The Spring properties are in another module and raise none. The
-annotations are part of the published surface — NullAway, IntelliJ and the Kotlin compiler read
-the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
+omit, and the annotation sits where the caller writes: the optional message header components
+(`PushMessage.ttl`, `urgency`, `topic`) and the builder methods that set them, the `cryptoProvider`
+parameter that leaves the provider unchosen, `EndpointAssessment.Refused`'s constructor parameter —
+the component itself is non-null, a `null` arriving as `""` — the argument of `Endpoints.redact`,
+the optional cause and retry-hint parameters of `VapidSignerUnavailableException`, and the Spring
+properties. The rest are the two `equals(@Nullable Object)` overrides the language's own contract
+requires, on `PushMessage` and `Subscription`. That is the whole list, and the part of it that lives
+in `push2u-core` is what the `[exports]` warnings above enumerate — one warning per annotated
+position, so the two are checkable against each other. The Spring properties are in another module
+and raise none. The annotations are part of the published surface — NullAway, IntelliJ and the
+Kotlin compiler read the same ones ([ADR-012](adr/0012-nullness-declared-with-jspecify.md)).
 
 ## 6. Cryptography
 
@@ -985,9 +981,9 @@ bare `builder()` would have made one of the equal modes the default by omission.
 Everything required is a factory-method parameter, so an incomplete signer does not compile and
 `build()` never refuses over a missing value — and everything required is also validated at the
 factory. The address must be an absolute URI with a host and no query or fragment, and its path —
-legal, because a Vault behind a reverse proxy or ingress prefix is a legitimate topology — obeys
-the same per-segment rule as `mount` below, since it prefixes every token-bearing request path.
-The scheme must be `http` or `https` (case-insensitively), whitelisted at the factory — the signer
+legal, because a Vault behind a reverse proxy or ingress prefix is a legitimate topology — obeys the
+same per-segment rule as `mount` below, since it prefixes every token-bearing request path. The
+scheme must be `http` or `https` (case-insensitively), whitelisted at the factory — the signer
 speaks Vault's HTTP API and nothing else, and `ftp://vault.example` used to pass validation only to
 fail on the first sign inside the transport. `https` is always accepted; plain `http` is accepted
 out of the box only towards a literal loopback host (`localhost`, names under `.localhost`,
@@ -1000,23 +996,22 @@ otherwise cross the network in clear text. That one rule lives in `build()` rath
 factory — the opt-in is a builder step, callable only after the factory has returned — and runs
 before the fetched mode's Vault read, so a refused address contacts nothing. Loopback is decided
 from the literal host text, never by resolution, keeping the rule readable from the address alone
-([ADR-015](adr/0015-vault-address-scheme-policy.md)). The Spring starter deliberately adds no
-opt-in property: plaintext transport for the token costs a code change (an application-supplied
-signer bean), not a YAML edit. The API paths are joined onto the address by explicit normalization
-— scheme and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` —
-and deliberately not by `URI.resolve`: per RFC 3986 §5.3 an absolute-path reference
-(`resolve("/v1/…")`) replaces the base path entirely, silently discarding a prefix like `/vault`,
-and the relative form (`resolve("v1/…")`) merges by dropping everything after the base path's last
-`/`, so a prefix without a trailing slash would lose its final segment — quieter, not better.
+([ADR-015](adr/0015-vault-address-scheme-policy.md)). The Spring starter deliberately adds no opt-in
+property: plaintext transport for the token costs a code change (an application-supplied signer
+bean), not a YAML edit. The API paths are joined onto the address by explicit normalization — scheme
+and authority verbatim, the address's path with a trailing slash dropped, then `/v1/…` — and
+deliberately not by `URI.resolve`: per RFC 3986 §5.3 an absolute-path reference (`resolve("/v1/…")`)
+replaces the base path entirely, silently discarding a prefix like `/vault`, and the relative form
+(`resolve("v1/…")`) merges by dropping everything after the base path's last `/`, so a prefix
+without a trailing slash would lose its final segment — quieter, not better.
 `https://gw.example/vault` and `https://gw.example/vault/` therefore address the same Vault, and a
-root address like `https://vault.example:8200` joins as it reads. The key name and the token
-travel as the value types `TransitKeyName` and `VaultToken` rather than bare strings: the types make
-the positional
-arguments impossible to transpose, and each carries its value's contract. `TransitKeyName`
-enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`, `^\w(([\w-.]+)?\w)?$` in
-Vault's `path_keys.go` — so no name Vault would accept is refused, while every URL-breaking
-character (`/`, `?`, `#`, `%`, whitespace, non-ASCII) is refused without being enumerated.
-`VaultToken` requires a non-empty, visible-ASCII value (0x21–0x7E) — rejecting the
+root address like `https://vault.example:8200` joins as it reads. The key name and the token travel
+as the value types `TransitKeyName` and `VaultToken` rather than bare strings: the types make the
+positional arguments impossible to transpose, and each carries its value's contract.
+`TransitKeyName` enforces Vault's own Transit key-name rule — `GenericNameRegex("name")`,
+`^\w(([\w-.]+)?\w)?$` in Vault's `path_keys.go` — so no name Vault would accept is refused, while
+every URL-breaking character (`/`, `?`, `#`, `%`, whitespace, non-ASCII) is refused without being
+enumerated. `VaultToken` requires a non-empty, visible-ASCII value (0x21–0x7E) — rejecting the
 trailing-newline misconfiguration, a pasted `Bearer ` prefix and stray whitespace — while
 deliberately not validating the token's *format*, which has changed across Vault versions and is
 arbitrary in dev mode; its `toString()` never prints the token. Because a `VaultToken` is valid by
@@ -1331,10 +1326,9 @@ The annotation processor generates `spring-configuration-metadata.json` from the
 metadata only for its own contributors, listed one by one. Both are declared in the core starter's
 `META-INF/additional-spring-configuration-metadata.json`; the Vault starter has a file of its own
 holding one thing, the value hint for `public-key-fetch`, whose accepted spellings no record can
-express. That file is merged
-into the generated one only where the processor finds it on the classpath it runs with, which is
-something the build has to arrange and whose absence is silent — hence the check in the suite rather
-than trust.
+express. Either file is merged into the generated one only where the
+processor finds it on the classpath it runs with, which is something each module's build has to
+arrange and whose absence is silent — hence the check in the suite rather than trust.
 
 Every optional property therefore travels through one translate-the-error helper, which skips an
 unset value and re-throws a rejection with the YAML key in front of the core's own message. There is
@@ -1380,15 +1374,17 @@ class contributes nothing else.** Two rules meet there. An auto-configuration th
 bean an operator might want to remove may not also host a check: excluding an auto-configuration is
 the framework's ordinary tool for removing its contribution, and a check riding beside the bean
 would vanish with it — the refusal would disappear in exactly the deployment whose operator reached
-for the standard tool. And the hosting class carries no condition of any kind, so
-whether a check runs is decided by that check alone. Most carry none: their row in the table below
-says "runs" on both sides of the switch because nothing suppresses them. The two that do carry
-conditions are the ones about whether a signer exists — the general refusal here, and the signer
-starter's own diagnostic — and each carries the same pair: the switch its row names, and a
-stand-down over a `VapidSigner` or `PushSender` bean, which is a suppression no row could state,
-being about what the context holds rather than about what it says. Excluding the checks' own class is the
-deliberate way to switch them off, visible in the exclusion line that names it, and it is the single
-route by which a stated allowlist can boot beside an application policy bean.
+for the standard tool. And this class carries no condition of any kind, so whether one of its checks
+runs is decided by that check alone. Most carry none: their row in the table below says "runs" on
+both sides of the switch because nothing suppresses them. The one that does is the general refusal
+over a missing signer, and it carries two — the switch its row names, and a stand-down over a
+`VapidSigner` or `PushSender` bean, which is a suppression no row could state, being about what the
+context holds rather than about what it says. The signer starter's diagnostic answers to the same
+two and is the worked example of the rule above rather than an exception to it: only the stand-down
+is on its bean method, while the switch is a condition on its auto-configuration class, reaching the
+check by standing between it and the context. Excluding the checks' own class is the deliberate way
+to switch them off, visible in the exclusion line that names it, and it is the single route by which
+a stated allowlist can boot beside an application policy bean.
 
 **Which side of the switch a check falls on is decided by what it is about, never by where it is
 implemented.** Most of this starter family's refusals need no decision at all: one raised *while a
@@ -1407,8 +1403,8 @@ left is the five that take a declared position, and they are the whole of this t
 
 The rows that run on both sides are about a *value*: an entry that is not an origin is not an origin
 in a context that sends nothing either. The two that are skipped are about the *delivery path* —
-each asks, in its own words, whether
-this deployment can sign, and a deployment that has said it does not send has answered that.
+each asks, in its own words, whether this deployment can sign, and a deployment that has said it
+does not send has answered that.
 
 A signer starter's diagnostic is gated by the switch although it is not a contribution, and the
 reason is its own stand-down: that stand-down is over an existing `VapidSigner` or `PushSender`
@@ -1845,13 +1841,12 @@ without the auto-formatting, `./gradlew qualityCheckCi --no-build-cache`.
 
 Every one of them resolves Spring Boot at the floor the starters declare, because the catalog holds
 one number for both meanings. That makes the merge-blocking run blind by construction to anything a
-newer Spring Boot changes, so CI adds runs above it: one build of the two starter modules per released
-Spring Boot minor line at or above the floor's own, each at its newest GA patch, with
+newer Spring Boot changes, so CI adds runs above it: one build of the two starter modules per
+released Spring Boot minor line at or above the floor's own, each at its newest GA patch, with
 `-Ppush2u.springBoot` substituting the catalog key for that invocation alone. Those runs are read,
 not obeyed — none is a required check, and every publishing task in the build refuses to execute
 while that property is set, so nothing such a run builds can be published. The check is on the task
 type: a name filter would be spelled around by Gradle's own camelCase abbreviation and would miss
 the Central bundle, which reaches each module's publication through tasks nobody names. Which
 versions there are is computed from Spring Boot's own released list rather than written down, since
-a list here
-would go stale the week Spring publishes.
+a list here would go stale the week Spring publishes.
