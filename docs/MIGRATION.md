@@ -58,7 +58,7 @@ of its own below, and no bearing on an application that only sends.
   - [`policy.assess(uri);` as a bare statement admits every endpoint](#policyassessuri-as-a-bare-statement-admits-every-endpoint)
 - [`VapidSignerContractTest` now signs from several threads at once](#vapidsignercontracttest-now-signs-from-several-threads-at-once)
 - [The starters stop exporting Spring Boot's BOM](#the-starters-stop-exporting-spring-boots-bom)
-  - [Your Spring Boot version stops being raised by push2u](#your-spring-boot-version-stops-being-raised-by-push2u)
+  - [Your Spring Boot version stops being decided by push2u](#your-spring-boot-version-stops-being-decided-by-push2u)
 - [What the `0.2.0` move does not change](#what-the-020-move-does-not-change)
 - [Checklist for the `0.2.0` move](#checklist-for-the-020-move)
 
@@ -281,7 +281,8 @@ been all along.
 ### The starters stop exporting Spring Boot's BOM
 
 A third reader, and the one least likely to be looking: an application that uses either Spring Boot
-starter and builds with **Gradle**. Nothing in your source changes. What changes is what resolves.
+starter and does not manage Spring Boot's version itself. Gradle or Maven — both are here, moving
+in opposite directions. Nothing in your source changes. What changes is what resolves.
 
 Until this release both starters declared Spring Boot's BOM on `api`, so it was published — as an
 imported BOM in the POM and as a dependency in the Gradle module metadata. For a Gradle consumer
@@ -298,7 +299,8 @@ to manage that the starters do not themselves depend on — Jackson, Netty, Tomc
 manifest — is no longer spoken about at all. What the starters still bring is that one dependency's
 own transitives: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
 `spring-expression`, `commons-logging` and Micrometer's `micrometer-observation` and
-`micrometer-commons`. Only a build below the minimum is raised on those.
+`micrometer-commons`. A Gradle build below the minimum is raised on those; a Maven build that
+managed no Spring Boot of its own moves the other way, which is the paragraph after next.
 
 **Who sees nothing here.** An application that manages Spring Boot itself — a Maven build on
 `spring-boot-starter-parent` or importing Boot's BOM, or a Gradle build applying
@@ -313,30 +315,36 @@ direction.** A `dependencyManagement` section reached through a dependency suppl
 declared with no version, resolved by the BOM they imported. So an application that simply added a
 starter got Boot at whatever version this project built against. Measured, resolving both published
 shapes with Maven: the old one handed such a consumer `spring-boot-autoconfigure` 4.1.1, the new one
-hands it 4.0.8. That is a **downgrade across a minor line**, which is the direction the next section
-is about — read it whichever build tool you use.
+hands it 4.0.8. That is a **downgrade across a minor line** — the direction that surfaces at run
+time rather than at compile time, and the subject of the next section, which is written for both
+cohorts.
 
-#### Your Spring Boot version stops being raised by push2u
+#### Your Spring Boot version stops being decided by push2u
 
-Here is the half no compiler reports on its own. If you were among the Gradle builds being raised,
-then for as long as you have had a push2u starter your application has been compiling and running
-against a **newer Spring Boot than your build asked for**. Two things follow, and only the first is
-loud:
+Here is the half no compiler reports on its own, and it reads the same whichever direction your
+build moves in. If the starters were choosing your Spring Boot — raising a Gradle build to what
+this project compiled against, or supplying a Maven build with a version it never asked for — then
+for as long as you have had a push2u starter your application has been compiling and running
+against a **Spring Boot your build did not name**, and this release stops that. Two things follow,
+and only the first is loud:
 
-- **Your own code may have used an API from the version you were raised to.** With the raise gone,
-  that API is gone with it. Where your module recompiles, this is a compile error and the cheap
-  kind. Where it does not — a module you did not rebuild, a jar you assemble separately — it is a
-  `NoSuchMethodError` or a `NoClassDefFoundError` the first time that line runs.
+- **Your own code may have used an API from the version you were being given.** It is gone with
+  it — the Gradle build drops back to what it declared, the Maven build down to the minimum. Where
+  your module recompiles, this is a compile error and the cheap kind. Where it does not — a module
+  you did not rebuild, a jar you assemble separately — it is a `NoSuchMethodError` or a
+  `NoClassDefFoundError` the first time that line runs.
 - **Your resolved graph moves, and not only in Spring's coordinates.** The BOM managed the whole
   Spring Boot manifest, so Jackson, Netty, Tomcat and the rest were being raised too — and those
   are the ones that now stop moving entirely rather than merely stopping at a lower number.
-  Versions can also *drop* below what the BOM used to hand you without any Spring coordinate
-  changing: `commons-logging` resolves 1.3.5 through the floor's own graph where the exported BOM
-  raised it to 1.3.6. A build with a lockfile will report all of this; a build without one will not.
+  Versions can also *drop* below what the BOM used to hand a Gradle build, without any Spring
+  coordinate changing: there `commons-logging` resolves 1.3.5 through the floor's own graph where
+  the exported BOM raised it to 1.3.6. This second bullet is Gradle's alone — a Maven consumer
+  never received the manifest, so only Spring Boot's own coordinates move for them. A build with a
+  lockfile will report all of this; a build without one will not.
 
 So the check is a resolution diff rather than a rebuild: resolve once before the upgrade and once
-after — `./gradlew :your-app:dependencies --configuration runtimeClasspath` is enough — and read
-what moved. If versions dropped, they dropped back to what your build says. Deciding whether you
+after — `./gradlew :your-app:dependencies --configuration runtimeClasspath`, or
+`mvn dependency:tree` — and read what moved. If versions dropped, they dropped back to what your build says. Deciding whether you
 want them there is the point of the exercise: raise them in **your** build, where the decision is
 visible, if you do.
 

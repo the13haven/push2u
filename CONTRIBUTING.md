@@ -68,7 +68,10 @@ Error Prone, NullAway and the coverage threshold.
 
 Javadoc is the exception, and worth knowing before it surprises you: `build` fails on any javadoc
 warning, because `assemble` builds the published `-javadoc` jar and that task runs with `-Xwerror`.
-See [What the build enforces](#what-the-build-enforces).
+See [What the build enforces](#what-the-build-enforces). For the two Spring Boot starters a bare
+`check` reaches it as well, and deliberately: `verifyPublishedSpringBootFloor` reads the generated
+publication metadata, whose task hashes every published file — the `-javadoc` jar with them. What
+that check is for is [Building against a newer Spring Boot](#building-against-a-newer-spring-boot).
 
 Useful narrower runs:
 

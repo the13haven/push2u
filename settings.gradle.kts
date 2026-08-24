@@ -27,8 +27,8 @@ include("push2u-signer-vault-spring-boot-starter")
 // finds it. This is how such a run asks for one, without a second key that would let the starters
 // compile against one Spring Boot while advertising another.
 //
-// A substituted run publishes nothing — the root build fails a publishing invocation that carries
-// this property, rather than leaving that to habit. `create("libs")` here configures the catalog
+// A substituted run publishes nothing — every publishing task in the build refuses to execute
+// while this property is set, rather than leaving that to habit. `create("libs")` configures the catalog
 // Gradle already built from gradle/libs.versions.toml; it does not declare a second one, which is
 // why there is no `from(...)` call to go with it.
 dependencyResolutionManagement {

@@ -185,7 +185,7 @@ jobs:
           import json, re, sys, xml.etree.ElementTree as ET
 
           floor = re.search(
-              r'^springBoot = "([^"]+)"$', open("gradle/libs.versions.toml").read(), re.M
+              r'^springBoot = "([^"]+)"', open("gradle/libs.versions.toml").read(), re.M
           ).group(1)
           floor_line = tuple(int(part) for part in floor.split(".")[:2])
 
@@ -245,9 +245,10 @@ jobs:
           gradle-version: wrapper
 
       # Only the two starter modules: they are the whole of what Spring Boot's version reaches.
-      # -Ppush2u.springBoot substitutes the catalog key for this invocation alone, and the root
-      # build refuses the property outright if a publishing task is named alongside it, so a run
-      # here cannot leave an artifact built against anything but the floor.
+      # -Ppush2u.springBoot substitutes the catalog key for this invocation alone, and every
+      # publishing task in the build refuses to execute while it is set — a check on the task type,
+      # so no spelling of a task name gets past it — which is why a run here cannot leave an
+      # artifact behind declaring a minimum this project does not support.
       - name: Build the starters against Spring Boot ${{ matrix.spring-boot }}
         run: |
           ./gradlew -Ppush2u.springBoot=${{ matrix.spring-boot }} \

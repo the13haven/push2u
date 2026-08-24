@@ -1,4 +1,6 @@
 import java.math.BigDecimal
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 import org.gradle.api.plugins.JavaPluginExtension
 import pl.allegro.tech.build.axion.release.domain.hooks.HookContext
 import pl.allegro.tech.build.axion.release.domain.preRelease
@@ -318,6 +320,12 @@ tasks.register("qualityCheckCi") {
 // module's publication through nmcpZipAggregation depending on tasks nobody named. Every path into
 // publishing — local, Central, the aggregation, and any of them reached as a dependency — runs an
 // AbstractPublishToMaven, and each one asks here first.
+//
+// Every module, and not only the two starters whose floor is at stake. That breadth is deliberate:
+// the Central upload is one bundle validated as a whole, so a run that would publish push2u-core
+// under a substituted invocation is the same run that would publish the starters. Refusing the
+// invocation wherever it first reaches a publication is simpler than deciding which module's
+// artifacts a substitution could have changed.
 // ---------------------------------------------------------------------------------------------
 val springBootSubstitute = providers.gradleProperty("push2u.springBoot")
 
@@ -351,6 +359,13 @@ allprojects {
 // ---------------------------------------------------------------------------------------------
 val springBootFloor = libs.versions.springBoot.get()
 
+/** The direct child elements of [parent] with this tag — never a grandchild, which is the point. */
+fun childElements(parent: Element, tag: String): List<Element> =
+    (0 until parent.childNodes.length)
+        .map { parent.childNodes.item(it) }
+        .filterIsInstance<Element>()
+        .filter { it.tagName == tag }
+
 listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter").forEach { path ->
     project(path) {
         val module = path
@@ -370,13 +385,20 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
 
             val floor = springBootFloor
             doLast {
-                val pomText = pom.get().asFile.readText()
+                // The POM is read as XML rather than matched as text, and the difference is not
+                // fastidiousness: <groupId> is also the element an <exclusions> block uses, so any
+                // pattern that finds this group inside a <dependency> window finds an exclusion
+                // too and then reports the excluding artifact's version as a Spring Boot one.
+                // Walking direct children cannot make that mistake.
+                val pomRoot = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                    .parse(pom.get().asFile)
+                    .documentElement
 
                 // Decision 1. An imported BOM is a <dependency> with <scope>import</scope> inside
                 // <dependencyManagement>, and the element is absent from these POMs entirely — the
                 // starters declare no constraints of any other kind either, so the stricter check
                 // is also the simpler one.
-                require(!pomText.contains("<dependencyManagement>")) {
+                require(pomRoot.getElementsByTagName("dependencyManagement").length == 0) {
                     "$module publishes a <dependencyManagement> section. Spring Boot's BOM on a " +
                         "published configuration hands a Gradle consumer Spring Boot's whole " +
                         "version manifest as an input to their own resolution; it belongs on " +
@@ -386,13 +408,16 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                 // Decisions 2 and 4, in the POM: every Spring Boot dependency carries the floor
                 // literally. A missing version and a range both fail here, the second being the
                 // only spelling of an upper bound a POM can carry.
-                val pomVersions = Regex(
-                        "<dependency>(?:(?!</dependency>).)*?org\\.springframework\\.boot" +
-                            "(?:(?!</dependency>).)*?</dependency>",
-                        RegexOption.DOT_MATCHES_ALL)
-                    .findAll(pomText)
-                    .map { Regex("<version>([^<]*)</version>").find(it.value)?.groupValues?.get(1) }
-                    .toList()
+                val pomVersions = childElements(pomRoot, "dependencies")
+                    .flatMap { childElements(it, "dependency") }
+                    .filter { dependency ->
+                        childElements(dependency, "groupId")
+                            .any { it.textContent.trim() == "org.springframework.boot" }
+                    }
+                    .map { dependency ->
+                        childElements(dependency, "version").map { it.textContent.trim() }
+                            .firstOrNull()
+                    }
                 require(pomVersions.isNotEmpty() && pomVersions.all { it == floor }) {
                     "$module publishes Spring Boot versions $pomVersions in its POM; the floor is " +
                         "$floor. A versionless dependency leaves a Maven consumer with nothing to " +
@@ -409,8 +434,12 @@ listOf(":push2u-spring-boot-starter", ":push2u-signer-vault-spring-boot-starter"
                     .findAll(moduleMetadata.get().asFile.readText())
                     .map { it.groupValues[1] }
                     .toList()
+                // The same tolerance for optional whitespace the outer pattern allows — the two
+                // read the same file and a writer that tightened its spacing must not make one
+                // match and the other fail.
+                val requiresFloor = Regex("\"requires\": ?\"" + Regex.escape(floor) + "\"")
                 require(gradleRequirements.isNotEmpty() &&
-                    gradleRequirements.all { it.contains("\"requires\": \"$floor\"") }) {
+                    gradleRequirements.all { requiresFloor.containsMatchIn(it) }) {
                     "$module publishes Spring Boot requirements $gradleRequirements in its module " +
                         "metadata; each must be an ordinary requires of $floor."
                 }

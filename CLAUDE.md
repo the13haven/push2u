@@ -255,7 +255,10 @@ Notes that matter in practice:
   discipline above disables only what rides along with `check`; there is nothing about `javadoc` for
   it to disable. A doclint error has therefore always failed a plain `build`; `-Xwerror` only widens
   what a plain `build` catches from doclint errors to any javadoc warning, on the same always-on
-  task.
+  task. For the two Spring Boot starters `javadoc` now also sits in **`check`**'s graph, which is
+  the one place that paragraph's shape does not hold: `verifyPublishedSpringBootFloor` reads the
+  generated publication metadata, and the task producing it hashes every published file, the
+  `-javadoc` jar included.
 - Checkstyle/PMD/SpotBugs analyse `main` sources only. Error Prone also covers test compilations
   (defects, not style); NullAway covers `main` and `testFixtures`.
 - Aggregated JaCoCo threshold is 80 % of instructions, enforced by `testCodeCoverageVerification`,

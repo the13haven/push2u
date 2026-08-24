@@ -20,10 +20,12 @@ testcontainers = "2.0.5"
 # switched off for these coordinates while its security updates are not. Either move narrows what
 # this project answers for and is noted in docs/MIGRATION.md.
 #
-# Two files carry this number and only two. This one, and README.md — which states it in its
-# feature requirements and in its Spring Boot section, and which docs/SPRING.md defers to rather
+# Two LIVING documents carry this number and only two. This one, and README.md — which states it
+# under Requirements and in its Spring Boot section, and which docs/SPRING.md defers to rather
 # than repeating, so one stale README falsifies both at once. CI reads the value from here by
 # regex and follows on its own; README does not. Move the number in both, in the same change.
+# docs/MIGRATION.md names it too and is not a third place to edit: a migration section describes
+# what one release did and its numbers are frozen on purpose.
 #
 # To run a build against a NEWER Spring Boot — which is how the next floor move is found — pass
 # -Ppush2u.springBoot=<version> (see settings.gradle.kts). Such a run publishes nothing.

@@ -16,8 +16,9 @@ and none may lower — so a build already on a newer Spring Boot resolves its ow
 the minimum is raised to it, along with what that version of `spring-boot-autoconfigure` brings
 with it: `spring-boot`, `spring-core`, `spring-context`, `spring-beans`, `spring-aop`,
 `spring-expression`, `commons-logging`, `micrometer-observation` and `micrometer-commons`.
-Measured: a Gradle build declaring Spring Boot 4.0.0 resolves 4.0.8; one declaring 4.1.1 resolves
-4.1.1, untouched.
+Measured, without naming versions that would go stale here rather than in README: a Gradle build
+declaring a Spring Boot below the minimum resolves the minimum, and one declaring anything at or
+above it keeps its own, untouched.
 
 No Spring Boot BOM is published from either starter, and that is the wider half. **Everything the
 BOM used to manage that these starters do not themselves depend on — Jackson, Netty, Tomcat,
@@ -42,8 +43,8 @@ before you rely on it:
 There is no spelling of "not below X" that a POM carries, so for the last two rows the minimum is
 documentation and a version resolution is free to overrule. A Maven build that manages no Spring
 Boot of its own will in practice resolve the minimum, because nothing competes with it — but that
-is an outcome, not a floor: another dependency declaring Boot nearer in the graph takes it, at any
-version. **Nothing in the library reads Spring Boot's version at runtime either**, deliberately: a
+is an outcome, not a floor: another dependency declaring Boot nearer in the graph takes it at any
+version, as does one declaring it at the same depth but earlier in your POM. **Nothing in the library reads Spring Boot's version at runtime either**, deliberately: a
 starter below the minimum is not refused at startup, and what happens instead is whatever the
 missing API does at the point it is reached.
 
