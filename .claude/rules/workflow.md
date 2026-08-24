@@ -105,8 +105,13 @@ that reached a release without an issue is still caught.
 
 **ADR-023 and ADR-025 both say the release opens that work item**, the first of them in bold. That
 was the procedure when those decisions were taken, and it is what has since moved; the decisions
-themselves — that a tombstone has an end, that the window is one minor release, that the end is
-never written as a version — are untouched by the move and neither record is edited for it.
+themselves — that a tombstone has an end, that the window is one minor release, that its end is
+never written as a version number that does not exist yet — are untouched by the move, and neither
+record is edited for it.
+
+None of this applies to a vulnerability either. A property whose removal closes a hole is on the
+advisory path with everything else about it, and a public issue naming the key would be the
+disclosure that path exists to prevent.
 
 ## Delegating
 

@@ -286,9 +286,11 @@ piece of work somebody has to be holding.
 **The change that writes a tombstone is what opens that issue**, in its own pull request, where the
 debt and its record are made by the same hand — `.claude/rules/workflow.md` and `CONTRIBUTING.md`
 carry that rule. This step is the net under it rather than the rule itself, and it is a question
-about this release and not a sweep of the tree: did anything merged since the previous tag remove a
-`push2u.*` property? If so, each removal has a startup refusal naming the key and an open issue that
-retires it. Open the issue here if one is missing.
+about this release and not a sweep of the tree: did anything merged since the previous tag remove
+one of this library's configuration properties — under `push2u.`, or the `management.health.push2u.`
+keys the health indicator owns? If so, each removal has a startup refusal naming the key and an open
+issue that retires it. Open the issue here if that is what is missing; a missing *refusal* ships
+with this release either way, so file that as the defect it is rather than holding the tag for it.
 
 Such an issue states the window as that rule rather than as a version, and links the pull request
 that wrote the tombstone. From this tag onward that pull request shows the release it went out in,

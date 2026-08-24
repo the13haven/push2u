@@ -364,9 +364,10 @@ release your change will appear in — that version is decided when the tag is c
 notes are generated then from the pull request labels below.
 
 **If your change *removes* a configuration property, file the issue that undoes its tombstone.** A
-removed `push2u.*` key leaves a startup refusal behind it, so that an operator upgrading with the
-dead key still in a YAML file is told where the setting went rather than having it ignored in
-silence. That refusal is temporary: it is carried for one minor release after the one that removed
+removed key of this library's own — under `push2u.`, or the `management.health.push2u.` ones the
+health indicator owns — leaves a startup refusal behind it, which your change is the one to write:
+an operator upgrading with the dead key still in a YAML file is then told where the setting went
+rather than having it ignored in silence. That refusal is temporary: it is carried for one minor release after the one that removed
 the property, and the work of retiring it needs an owner from the moment it exists. Open the issue
 and write `Refs #N` in your pull request — state the window in those words and not as a version
 number, which nobody knows yet.
