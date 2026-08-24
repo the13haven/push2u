@@ -1387,9 +1387,10 @@ in it:
    stand down once its definition does. Steps 1 to 3 have no such stand-down and must not grow one:
    none of them is about a signer.
 
-A position is a claim only about a check that exists: the list has a gap where the removed-property
-check sat, and the numbers around it did not move, because a number reserved for a check nobody has
-written would be a claim nothing keeps true.
+The steps are renumbered whenever one leaves, but the *constants* behind them are not: a position is
+a claim only about a check that exists, so the number the removed-property check held was vacated
+where it sat and its neighbours stayed put. A number reserved for a check nobody has written would
+be a claim nothing keeps true, and the next check needing that place is free to take it.
 
 Steps 2 through 5 are specific before general, a value before the path; step 1 sits ahead of all of
 it because it decides whether the configuration underneath it can be read at face value at all. The order is about which message an operator holding several faults reads first, and nothing

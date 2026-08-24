@@ -285,9 +285,10 @@ been all along.
 in this release** — a leftover key is bound away in silence now, like any key nothing reads.
 
 For nearly everyone this changes nothing: on `0.2.0` such a context could not start, so the keys are
-long deleted. The exception is a key the refusal never saw, because it read the *bound* environment
-— one sitting in a profile that was not active passed `0.2.0` untouched, and the day that profile is
-activated the context boots green and ignores it. Three of the six matter there:
+long deleted. The exception is a key the refusal never *saw*: it read the environment
+the context was refreshed with, and an inactive profile's properties are not in it — a key sitting
+in one passed `0.2.0` untouched, and the day that profile is activated the context boots green and
+ignores it. Three of the six matter there:
 `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and `push2u.retry.max-backoff`, whose
 absence changes delivery rather than a diagnostic. Grep every configuration source, not only the
 active profile. The [`0.1.0` table](#the-push2u-keys-that-010-had-and-no-later-version-reads) lists

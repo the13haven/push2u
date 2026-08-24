@@ -17,13 +17,15 @@ import org.springframework.core.Ordered;
  * then the allowlist refusals, then a signer starter's own diagnostic, then the general refusal over a missing signer.
  * A check declares only the position it implements — a number reserved for a check that does not exist yet would be a
  * claim nothing keeps true — and consecutive positions are at least 100 apart so the checks between them can take
- * theirs when they are built. A wider interval means a check once declared there has been retired: its number is
- * vacated rather than held, and the next check needing that place is free to take it. Positions of checks in other
- * modules cannot live here, because a signer starter deliberately does not depend on this one; each module keeps its
- * own constants and reads them against the same list. What pins the list is therefore not any constant's value — a test
- * asserting that a number here equals a number written in the decision proves only that someone typed it twice, and
- * stays green while the module next door moves its own — but the message that arrives in a context holding every
- * starter and earning several refusals at once.
+ * theirs when they are built. **A wider interval is not by itself free space.** One of them is a position another
+ * module holds and this one cannot name; the other is a number a retired check vacated, which the next check needing
+ * that place may take. Each constant below says which of the two its own neighbourhood is, and reading that before
+ * taking a number is the whole of the care this list asks for. Positions of checks in other modules cannot live here,
+ * because a signer starter deliberately does not depend on this one; each module keeps its own constants and reads them
+ * against the same list. What pins the list is therefore not any constant's value — a test asserting that a number here
+ * equals a number written in the decision proves only that someone typed it twice, and stays green while the module
+ * next door moves its own — but the message that arrives in a context holding every starter and earning several
+ * refusals at once.
  *
  * <p>The framework sorts post-processors into buckets by the kind of precedence their <em>class</em> declares and
  * compares numbers only within a bucket, so every check taking a position from this class implements {@link Ordered} on
@@ -47,6 +49,10 @@ final class StartupCheckOrder {
      * most specific finding of the family, so it precedes the contradiction below and every signer refusal: an entry
      * that is not an origin is wrong whoever ends up reading it, and an operator holding several faults should meet the
      * one that points at a value before any that describes the configuration around it.
+     *
+     * <p>The distance to the position above is wider than the usual step because a check once declared between the two
+     * has been retired: the refusal over properties a release had removed, whose window closed. That number is vacated
+     * rather than reserved, and a check needing a place between the switch and this one may take it.
      */
     static final int MALFORMED_ALLOWLIST_ENTRY = Ordered.HIGHEST_PRECEDENCE + 300;
 

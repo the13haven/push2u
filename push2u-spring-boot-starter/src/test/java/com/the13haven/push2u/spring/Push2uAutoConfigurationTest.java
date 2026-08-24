@@ -63,10 +63,10 @@ class Push2uAutoConfigurationTest {
     private static String otherPublicKeyB64;
 
     // The full starter composition, exactly as the imports file ships it. The endpoint-policy
-    // autoconfiguration rides along so every sender wired here takes its policy from the bean, the way a real context
-    // does
-    // — and so the refusals that stayed with pushSender demonstrably fire with the policy
-    // autoconfiguration PRESENT, rather than being satisfied by the starter's own bean.
+    // autoconfiguration rides along so every sender wired here takes its policy from the bean, the
+    // way a real context does — and so the refusals that stayed with pushSender demonstrably fire
+    // with the policy autoconfiguration PRESENT, rather than being satisfied by the starter's own
+    // bean.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     Push2uAutoConfiguration.class,

@@ -122,15 +122,14 @@ that list. **There is no `push2u.retry.*` block**: the library performs one POST
 send and schedules no repeat, so there is nothing under this prefix to configure — see
 [The outcome a Spring caller reads](#the-outcome-a-spring-caller-reads).
 
-**If you are upgrading from a version that had one, delete it from your YAML — the context will not
-start until you do.** All three of `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and
-`push2u.retry.max-backoff` fail the context at startup, in any spelling relaxed binding accepts,
-with a message naming the key and where the decision it configured went. They are refused rather
-than ignored for the sharpest of the reasons any removed key is: ignored, a context still carrying
-the block would start cleanly and then send without a single repeat, so a deployment that had
-configured three attempts would quietly be making one, and nothing at startup or at run time would
-say that the block had stopped meaning anything. The refusals are transition aids, carried for one
-minor release after the release that removed the properties, and then removed themselves.
+**If you are upgrading from a version that had one, delete it from your YAML by hand — nothing
+warns you.** `push2u.retry.max-attempts`, `push2u.retry.initial-backoff` and
+`push2u.retry.max-backoff` are bound away in silence now, like any key nothing reads. The release
+that removed them refused a context still holding one, and that refusal was a transition aid and
+has been retired. This is the sharpest case of a leftover key there is: the block still reads as
+though it were in force, while a deployment that configured three attempts starts cleanly and makes
+one — nothing at startup and nothing at run time says otherwise. Grep every configuration source,
+inactive profiles included, in every spelling relaxed binding used to accept.
 
 `jwt-expiry`, `jwt-renew-before`, `jwt-reuse`, `jwt-cache-size`, `default-ttl` and
 `max-encrypted-body-bytes` are optional; unset, they leave `PushSender`'s defaults untouched (12h,
@@ -145,14 +144,12 @@ Setting any of them to a value the builder rejects (`jwt-expiry` not strictly po
 with the builder's own message, prefixed by the YAML property name — the builder names only its
 Java parameter, and the operator wrote the property.
 
-**`push2u.record-size` no longer exists, and leaving it in your YAML fails the context at
-startup** — in any spelling relaxed binding accepts (`push2u.record-size`, `push2u.recordSize`,
-`PUSH2U_RECORD_SIZE`), with a message naming the key and where its effect went. Like the retry
-block above, this key is refused rather than ignored: it named a limit, and a limit silently out of
-force is exactly what an operator must not go on believing in. Delete the key; if it was raised to
-carry larger payloads, raise `max-encrypted-body-bytes` instead, which the derived record size now
-follows. The refusal is a transition aid, carried for one minor release after the release that
-removed the property, and then removed itself.
+**`push2u.record-size` no longer exists, and a leftover one is ignored rather than reported** — in
+any spelling (`push2u.record-size`, `push2u.recordSize`, `PUSH2U_RECORD_SIZE`). The release that
+removed it refused such a context, and like the retry block's refusal above that was a transition
+aid and has been retired. It named a limit, and a limit silently out of force is exactly what an
+operator must not go on believing in, so delete the key; if it was raised to carry larger payloads,
+raise `max-encrypted-body-bytes` instead, which the derived record size now follows.
 
 **The three `jwt-*` reuse properties are the ones to know about before something surprises you.**
 With `jwt-reuse` at its default, an autoconfigured sender signs one VAPID token per push-service
@@ -670,8 +667,8 @@ When Spring Boot health support is present, the starter also registers a health 
 contributor name `push2u`, that exercises the configured signer: it signs a probe input and verifies
 the result against that signer's own advertised public key. Its two keys are Spring Boot's own,
 `management.health.push2u.enabled` and `management.health.push2u.cache-ttl`, and not `push2u.*` —
-earlier versions spelled them `push2u.health.enabled` and `push2u.health.cache-ttl`, and both of
-those now fail the context at startup with a message naming the replacement.
+earlier versions spelled them `push2u.health.enabled` and `push2u.health.cache-ttl`, and a leftover
+one of those is now ignored in silence rather than reported, so delete it by hand.
 
 `push2u.enabled: false` removes the indicator too, and its own key cannot bring it back: the switch
 sits upstream of it, so a deployment that has turned delivery off has no probe left to opt out of.
