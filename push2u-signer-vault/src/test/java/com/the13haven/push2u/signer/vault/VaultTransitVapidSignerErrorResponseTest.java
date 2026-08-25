@@ -182,7 +182,7 @@ class VaultTransitVapidSignerErrorResponseTest {
     }
 
     /**
-     * {@code mount(...)} is validated where it is set, in both builders — per segment, against the explicit allowed set
+     * {@code mount(...)} is validated where it is set, in every builder — per segment, against the explicit allowed set
      * {@code [A-Za-z0-9_.-]}. The heaviest cases are the dot segments and their percent-encoded doubles:
      * {@link java.net.URI#resolve} does <em>not</em> normalize dot segments, so a {@code ..} — or a {@code %2e%2e} that
      * a literal check would miss — travels in the raw request path as written. A {@code %2F} is decoded by Vault's own

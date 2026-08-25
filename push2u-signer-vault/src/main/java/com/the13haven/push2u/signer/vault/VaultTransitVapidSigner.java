@@ -234,7 +234,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     private static final String MANAGED_KEY_TYPE = "managed_key";
     /** An ES256 signature is exactly {@code r || s}, two 32-byte big-endian scalars. */
     private static final int SIGNATURE_LENGTH = 2 * COORDINATE_LENGTH;
-    /** The Transit mount path both builders assume unless {@code mount(...)} says otherwise — Vault's own default. */
+    /** The Transit mount path every builder assumes unless {@code mount(...)} says otherwise — Vault's own default. */
     private static final String DEFAULT_MOUNT = "transit";
     /** The one scheme always acceptable for the Vault address: TLS keeps the token confidential on the wire. */
     private static final String HTTPS_SCHEME = "https";
@@ -1735,7 +1735,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
      * {@code http} to a host that is not a literal loopback is refused unless the builder's {@code allowInsecureHttp()}
      * step opted in. This is the one address rule that cannot live at the factory, where every other
      * invalid-but-present value is rejected — the opt-in is a builder step and is called only after the factory has
-     * returned — so both builders call this first thing in {@code build()}, before any other work; in the fetched mode
+     * returned — so every builder calls this first thing in {@code build()}, before any other work; in the fetched mode
      * that means before the Vault read, so a refused address fails without contacting anything.
      *
      * <p>Loopback is decided from the literal host text, never by resolving the name: resolution would be a network
@@ -1860,7 +1860,7 @@ public final class VaultTransitVapidSigner implements VapidSigner {
     }
 
     /**
-     * Validate a slash-separated Vault path value where it is set — both builders' {@code mount(...)} and
+     * Validate a slash-separated Vault path value where it is set — every builder's {@code mount(...)} and
      * {@code namespace(...)} steps share this one rule, with {@code name} naming the offending value in the failure and
      * {@code nestedExample} showing the legal nested shape. The rule is looser than {@link TransitKeyName}'s because
      * nesting is legal — {@code secrets/transit} names a Transit engine mounted under a prefix, {@code team-a/sub} a

@@ -569,9 +569,16 @@ which fakes the seam without a socket in sight. What the harness owes so the con
 transport rather than one HTTP stack is fixed: both `Content-Length` and chunked request bodies are
 read, header names are compared case-insensitively, extra headers are permitted, the URI is checked
 through what a server can observe of it — request target and `Host` — and every response closes the
-connection so reuse is never accidentally part of a check. It names no JCE provider, and the
-failure messages name headers, counts and statuses but never render an endpoint, a header value or
-a body, because the contract's failures go to the same build log a leaked value would.
+connection so reuse is never accidentally part of a check. The listener advertises nothing in ALPN,
+which is the answer to the question a transport built on a stack that prefers HTTP/2 raises: it
+negotiates nothing, falls back to HTTP/1.1 by itself, and is measured on the wire the harness
+speaks. What the harness will not do is negotiate on the transport's behalf: a stack that insists
+on HTTP/2 with no fallback meets a handshake offering it nothing, and what the contract reports
+then is the failure that encounter produces, framed no better than the subject frames it.
+
+The harness names no JCE provider, and its failure messages name headers, counts and statuses but
+never render an endpoint, a header value or a body, because the contract's failures go to the same
+build log a leaked value would.
 
 One thing is deliberately not withheld, and it is worth stating exactly rather than reassuringly. A
 subject's own exception travels as the failure's cause, and a test runner prints a cause with

@@ -182,7 +182,7 @@ class VaultTransitVapidSignerNamespaceTest {
     }
 
     /**
-     * {@code namespace(...)} is validated where it is set, in both builders, by the same per-segment rule as
+     * {@code namespace(...)} is validated where it is set, in every builder, by the same per-segment rule as
      * {@code mount(...)} — and no rejected value ever reaches the transport ({@code alwaysFails()}). The reason is not
      * the mount's: a namespace rides in a header, where none of the path-collapsing hops act on it. It is that the
      * value lands in an HTTP header, where anything outside the allowed set is one hop away from splitting the header

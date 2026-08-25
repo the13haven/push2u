@@ -387,7 +387,7 @@ fetched modes, the one-time `transit/keys/<key>` GET — so no custom `VaultHttp
 add the header. When it is not set, no such header is sent at all, which is what Vault OSS (no
 namespaces) expects.
 
-In the builder it is the optional `namespace(...)` step, on both builders:
+In the builder it is the optional `namespace(...)` step, on every builder:
 
 ```java
 VapidSigner signer = VaultTransitVapidSigner.builderWithFetchedPublicKey(

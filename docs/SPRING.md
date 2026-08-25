@@ -550,7 +550,7 @@ that property's list, `push2u.allowed-origins[2]`, since the starter builds each
 one entry of one named property. It, too, fails **whether or not the deployment sends**, from a
 startup check that runs ahead of the property-beside-a-bean contradiction above and ahead of every
 bean-creation failure — so of the allowlist's own complaints, the value to fix is the message that
-arrives; only the refusal over a removed `push2u.*` key outranks it. The entry appears in the
+arrives; only the activation switch's own value outranks it. The entry appears in the
 message the way an endpoint appears in a rejection: an origin entry with its path and query
 stripped, because a pasted capability URL is precisely the mistake being reported, and a domain
 entry verbatim only when it is a plain host-shaped token.
