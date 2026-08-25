@@ -6,6 +6,7 @@
 package com.the13haven.push2u.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -87,5 +88,25 @@ final class FixedWidthTest {
         Arrays.fill(minimalForm, 2, 32, (byte) 0x11);
 
         assertThat(FixedWidth.of(new BigInteger(1, minimalForm))).isEqualTo(minimalForm);
+    }
+
+    /**
+     * A value that does not fit 32 bytes is refused, never truncated: its low 32 bytes encode a different number, and a
+     * syntactically perfect wrong coordinate would fail far from the call that produced it. 2<sup>256</sup> is the
+     * smallest violation — its low 32 bytes are all zero.
+     */
+    @Test
+    void aValueOfTwoToTheTwoHundredFiftySixOrAboveIsRefusedNotTruncated() {
+        assertThatThrownBy(() -> FixedWidth.of(BigInteger.ONE.shiftLeft(256)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2^256")
+                .hasMessageContaining("257-bit");
+    }
+
+    @Test
+    void aNegativeValueIsRefusedNotWrittenAsTwosComplement() {
+        assertThatThrownBy(() -> FixedWidth.of(BigInteger.valueOf(-1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("negative");
     }
 }
