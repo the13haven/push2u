@@ -352,11 +352,18 @@ public final class PushSender {
      * {@link PushMessage#payload()}, which copies.
      *
      * <p>Asking is optional, and being told is not: {@link #send} checks the payload again and reports an oversized one
-     * as {@link PushOutcome.PayloadRejected} whether or not it was assessed first.
+     * as {@link PushOutcome.PayloadRejected} whether or not it was assessed first. So having asked, read the answer —
+     * {@code sender.assessPayloadSize(payload);} as a bare statement is a question whose reply is thrown away, and the
+     * language reports nothing about that. This method carries an annotation named {@code CheckReturnValue}, which
+     * Error Prone's <a href="https://errorprone.info/bugpattern/CheckReturnValue">check of that name</a> matches by
+     * simple name and reads straight out of the class file: on by default at {@code ERROR} severity, so a build already
+     * running Error Prone has that statement fail as an error, and a build running no such analyser is unaffected.
+     * Error Prone is the one this was measured against, and nothing is claimed here about another analyser or an IDE.
      *
      * @param payload the serialized payload, exactly as it would be handed to {@link PushMessage}
      * @return whether the payload fits, and if not, the budget to render against
      */
+    @CheckReturnValue
     public PayloadSizeAssessment assessPayloadSize(byte[] payload) {
         Objects.requireNonNull(payload, "payload");
         if (payload.length > maximumPayloadBytes) {

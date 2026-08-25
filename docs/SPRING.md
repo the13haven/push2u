@@ -490,19 +490,34 @@ key-material and length rules. So: the `Subscription` first, the policy on the e
 second, the row stored third.
 
 **The answer has to be read, and here that is the only thing enforcing anything.**
-`endpointPolicy.assess(uri);` on a line of its own is legal Java: it compiles with no diagnostic of
-any kind, `-Xlint:all` included, the verdict is discarded, and every endpoint that got past step 1
-is stored — `https://10.0.0.5/notify` included, since step 1 checks the shape of the URL and not
-where it points. Inside a send that slip cannot open the network: `send` performs the assessment
-itself, on every send, and acts on the value. At this boundary nothing stands between the discarded
-answer and `store.save` — the row is written on the strength of this one reading, and a row the
-policy would have refused is exactly the dead row the paragraph opening this section is about. So
-the `switch` above — or an `if`, or any other reading of the returned value — is not a style
-choice, it is the control itself, and the compiler will not tell you it is missing: javac says
-nothing about a discarded return value, and the annotation that would mark this one as
-non-discardable lives in a dependency the zero-dependency core may not take. Static analysis you
-configure yourself — an Error Prone check, an IDE inspection — is what can catch it, and this is
-the call site worth pointing it at.
+`endpointPolicy.assess(uri);` on a line of its own is legal Java: javac reports nothing about a
+discarded return value, `-Xlint:all` included, so the verdict is thrown away and every endpoint that
+got past step 1 is stored — `https://10.0.0.5/notify` included, since step 1 checks the shape of the
+URL and not where it points. Inside a send that slip cannot open the network: `send` performs the
+assessment itself, on every send, and acts on the value. At this boundary nothing stands between the
+discarded answer and `store.save` — the row is written on the strength of this one reading, and a
+row the policy would have refused is exactly the dead row the paragraph opening this section is
+about. So the `switch` above — or an `if`, or any other reading of the returned value — is not a
+style choice, it is the control itself.
+
+The language will not tell you it is missing, but a static analyser can, and this call site is
+already marked for one: `assess` carries an annotation named `CheckReturnValue`, and
+[Error Prone](https://errorprone.info/bugpattern/CheckReturnValue) matches that mark by its *simple
+name* whatever package it comes from, reading it straight out of the class file. Its check of that
+name is on by default at `ERROR` severity, so a build already running Error Prone has the bare
+statement fail as an error, with nothing to configure and no dependency of yours to add — and
+`endpoints.forEach(endpointPolicy::assess)`, a method reference that drops every answer, fails with
+it. Error Prone is the only analyser this was measured against; what another tool or your IDE makes
+of the mark is not something this library claims, so do not read a green IDE as a checked one. A
+build running no such analyser is unaffected: javac has no opinion about an annotation nothing in
+the build acts on.
+
+**The mark and a grep are two nets, and neither contains the other.** The mark is not inherited by
+an override, so a call through your own `EndpointPolicy` implementation type — a class of your own,
+called through that class rather than through the interface every `EndpointPolicies` factory hands
+back — carries no mark to report. A search of your sources for `assess(` covers exactly that, and
+misses the method reference, which has no `assess(` in it to find. Run the search, and take the
+result as one of the two rather than as the whole.
 
 What the application does choose is what each refusal answers to its client. A malformed
 subscription — the `IllegalArgumentException` from step 1 — and a policy refusal can both sensibly
@@ -520,8 +535,8 @@ echoing its message on the application's behalf — and that requirement is met 
 value than it ever was by an ancestry: there is no exception for a mapping to see, so nothing
 translates a refusal for you and nothing can echo the reason unless the application writes it into
 the response itself. What the shape does move is the other way round, and it is the discarded answer
-two paragraphs above: an unhandled exception could not pass unnoticed, and a discarded value
-can.
+above: an unhandled exception could not pass unnoticed, and a discarded value can — in a build with
+no analyser reading the mark, which is what the annotation narrows rather than closes.
 
 The registration check does not replace the send-time one. The policy is configuration and can
 change after rows were stored, so `send` assesses every send regardless and reports a refusal as the

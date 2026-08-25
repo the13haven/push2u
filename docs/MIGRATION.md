@@ -27,8 +27,125 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
+| [`0.3.0`](#from-030) | Three answers that must be read — `EndpointPolicy.assess`, `PushSender.assessPayloadSize` and `Es256Verifier.verify` — are marked for Error Prone, so a build running it stops compiling a call that discards the answer. All three keep their signatures — the mark is the whole of it. |
 | [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM, and the refusal over the keys `0.2.0` removed is retired. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
+
+## From `0.3.0`
+
+`0.3.0` is where this upgrade starts. It is the version this section is written against, and the one
+it names throughout; the release it lands in is deliberately unnamed, for the reason above.
+
+None of the three methods below changed shape. What changed is that each now carries an annotation,
+and one kind of build reads it: `EndpointPolicy.assess(URI)`,
+`PushSender.assessPayloadSize(byte[])` and `Es256Verifier.verify(byte[], byte[], byte[])` are marked
+as methods whose returned value is the whole of their answer — the call reports nothing, changes
+nothing and refuses nothing on its own, so dropping the value is indistinguishable from never having
+asked *and leaves you believing a check was made*. That last part is what separates these three from
+an ordinary accessor, which nobody needs a compiler's help to drop. A project compiling under an
+analyser that acts on such a mark finds a call that discards the answer failing where it used to
+compile. That is all this change asks of you, and it asks it only of code that both calls one of
+those three methods *and* runs such an analyser; nothing else about the three moved, and an
+application that only sends is untouched by it.
+
+- [A discarded `assess`, `assessPayloadSize` or `Es256Verifier.verify` can now fail your build](#a-discarded-assess-assesspayloadsize-or-es256verifierverify-can-now-fail-your-build)
+- [What the `0.3.0` move does not change](#what-the-030-move-does-not-change)
+- [Checklist for the `0.3.0` move](#checklist-for-the-030-move)
+
+### A discarded `assess`, `assessPayloadSize` or `Es256Verifier.verify` can now fail your build
+
+**Who this is about:** a build running Error Prone. Its
+[check of that name](https://errorprone.info/bugpattern/CheckReturnValue) matches an annotation
+called `CheckReturnValue` by that simple name whatever package it comes from, and is on by default
+at `ERROR` severity — so no configuration of yours switched this on and none is needed to keep it.
+Error Prone is the only analyser this was measured against: another one may match the same way, and
+this document does not claim it does, so treat a green build under anything else as unmeasured
+rather than as cover. If your build runs no such analyser, this change asks nothing of you at all —
+javac has never had a diagnostic for a discarded return value under any option, `-Xlint:all`
+included, and it has no opinion about an annotation nothing in the build acts on.
+
+**What fails.** A call whose answer goes nowhere:
+
+```java
+// Compiles under 0.3.0; an error once the mark is read
+policy.assess(uri);
+sender.assessPayloadSize(payload);
+Es256Verifier.verify(publicKey, signingInput, signature);
+
+// The same defect wearing another shape, and reported the same way
+endpoints.forEach(policy::assess);
+```
+
+`Es256Verifier.verify` is the one worth pausing on if you use it: a signature that does not verify
+raises nothing, the `false` is the whole of the report, and a discarded call is one that accepted
+every signature it was written to reject.
+
+**What to do about it, in order.** First ask whether the discard was the defect the mark exists to
+catch. For `assess` at a registration boundary it almost certainly is: nothing re-checks there, so a
+discarded verdict stores every endpoint a client offers — the hazard the [`0.2.0`](#from-020)
+section below already described, now with a build failure in front of it. Read the answer:
+
+```java
+switch (policy.assess(uri)) {
+    case EndpointAssessment.Allowed() -> store.save(subscription);
+    case EndpointAssessment.Refused r -> {
+        log.info("Registration refused: {}", r.reason());
+        return ResponseEntity.badRequest().build();
+    }
+}
+```
+
+If the discard really is deliberate — a probe in a test, a warm-up call — say so where the compiler
+can see it, rather than switching the check off for the file:
+
+```java
+var unused = policy.assess(uri);
+```
+
+**The mark is not inherited by an override.** A call made through your own implementation type —
+`myPolicy.assess(uri)` where `MyPolicy` is your class rather than the `EndpointPolicy` interface —
+is not covered unless your own overriding method carries an annotation of that name too. Every
+`EndpointPolicies` factory answers the interface type, so this needs a policy class of your own
+*and* a call through that class; `assessPayloadSize` and `Es256Verifier.verify` cannot be overridden
+at all.
+
+So the grep the [`0.2.0`](#from-020) section below asks for is not retired by the mark, and does not
+retire it either: the grep sees the call your override hides from the mark, the mark sees the method
+reference no search for `assess(` will match. Two nets, neither containing the other.
+
+### What the `0.3.0` move does not change
+
+- **The three marked methods.** Each keeps the signature, return type and exceptions it had. What
+  they answer, when they answer it and what a caller does with the answer are all as before — the
+  mark adds no behaviour and takes none away.
+- **The annotation's own surface.** It is not part of this library's API: not `public`, so nothing
+  outside its own package can name it. You cannot write it in your own code and you never need to.
+- **What the mark costs you.** Nothing, and no module gained a dependency for it: the analyser
+  matches by name, so the library declares its own annotation rather than depending on an
+  analyser's.
+- **`send` and `sendAsync`.** Both are deliberately unmarked, and a discarded `PushOutcome` or
+  `CompletableFuture` still compiles everywhere it did. Dropping an outcome does lose real
+  information — a `SubscriptionExpired` above all — but fire-and-forget is a legitimate way to send
+  and it is the ordinary shape of a discarded future, so marking either would break correct code.
+- **javac.** Unchanged, and not going to report any of this. The compiler help here comes from an
+  analyser or from nowhere.
+- **What runs.** An annotation changes nothing at run time, and this change moved no code behind any
+  of the three methods. Where your build still compiles, these three answer exactly what they
+  answered before.
+
+### Checklist for the `0.3.0` move
+
+- [ ] Rebuild. If nothing failed, this part of the move is done.
+- [ ] For each `CheckReturnValue` error the build reports, decide which case it is: an answer that
+      should have been read — fix it by reading it — or a genuinely deliberate discard, which
+      becomes `var unused = ...` at that one call site.
+- [ ] Take a registration boundary's error as a defect until you have proved otherwise. It is the
+      one place where nothing re-checks the endpoint, and the row is stored on the strength of that
+      single reading.
+- [ ] Take a discarded `Es256Verifier.verify` as a defect outright: there is no reading of it under
+      which the signature was checked.
+- [ ] Grep for `assess(` anyway, if your own code implements `EndpointPolicy`: a call through your
+      implementation type is invisible to the mark unless your override carries one of its own.
 
 ## From `0.2.0`
 
