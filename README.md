@@ -56,7 +56,7 @@ Add the core module from Maven Central:
 
 ```kotlin
 dependencies {
-    implementation("com.the13haven:push2u-core:0.2.0")
+    implementation("com.the13haven:push2u-core:0.3.0")
 }
 ```
 
@@ -548,7 +548,7 @@ Add the core starter:
 
 ```kotlin
 dependencies {
-    implementation("com.the13haven:push2u-spring-boot-starter:0.2.0")
+    implementation("com.the13haven:push2u-spring-boot-starter:0.3.0")
 }
 ```
 
@@ -619,7 +619,7 @@ Java, add the signer module:
 
 ```kotlin
 dependencies {
-    implementation("com.the13haven:push2u-signer-vault:0.2.0")
+    implementation("com.the13haven:push2u-signer-vault:0.3.0")
 }
 ```
 
@@ -638,8 +638,8 @@ brings in `push2u-signer-vault`:
 
 ```kotlin
 dependencies {
-    implementation("com.the13haven:push2u-spring-boot-starter:0.2.0")
-    implementation("com.the13haven:push2u-signer-vault-spring-boot-starter:0.2.0")
+    implementation("com.the13haven:push2u-spring-boot-starter:0.3.0")
+    implementation("com.the13haven:push2u-signer-vault-spring-boot-starter:0.3.0")
 }
 ```
 
@@ -961,7 +961,7 @@ custom [HTTP transport](#custom-http-transport):
 
 ```kotlin
 dependencies {
-    testImplementation("com.the13haven:push2u-testkit:0.2.0")
+    testImplementation("com.the13haven:push2u-testkit:0.3.0")
 }
 ```
 
