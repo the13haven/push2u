@@ -29,13 +29,19 @@ public final class VapidKeys {
     // LocalEcVapidSigner's later PushCryptoException; and no 65-byte non-point can ever be a valid
     // VAPID key, so nothing legal is refused. The check needs no JCA provider (this type
     // deliberately carries no JCA state).
+    //
+    // The copies are taken first and the checks run on the copies, so the value this type retains
+    // is by construction the value that was validated — never the caller's array, which the caller
+    // still holds and may mutate between a check and a copy.
     private VapidKeys(byte[] publicKey, byte[] privateScalar) {
-        P256PublicKeys.requireOnCurve(publicKey, "VAPID public key");
-        if (privateScalar.length != EcKeys.COORDINATE_LENGTH) {
+        byte[] publicKeyCopy = publicKey.clone();
+        byte[] privateScalarCopy = privateScalar.clone();
+        P256PublicKeys.requireOnCurve(publicKeyCopy, "VAPID public key");
+        if (privateScalarCopy.length != EcKeys.COORDINATE_LENGTH) {
             throw new IllegalArgumentException("VAPID private key must be a 32-byte P-256 scalar");
         }
-        this.publicKey = publicKey.clone();
-        this.privateScalar = privateScalar.clone();
+        this.publicKey = publicKeyCopy;
+        this.privateScalar = privateScalarCopy;
     }
 
     /**

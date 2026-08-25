@@ -59,8 +59,9 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
     private static final int MAX_ENDPOINT_LENGTH = 2048;
 
     /**
-     * Validates the key material, requires an absolute {@code https} endpoint of bounded length, and defensively copies
-     * the arrays.
+     * Defensively copies the arrays and validates the copies, and requires an absolute {@code https} endpoint of
+     * bounded length. The copies come first so the values the record retains are by construction the values that were
+     * validated — never the caller's arrays, which the caller still holds.
      *
      * <p>{@code p256dh} gets the full {@link P256PublicKeys#requireOnCurve} check — shape, coordinates inside the P-256
      * field, curve equation — not merely the structural one. The value is attacker-supplied (a registration endpoint
@@ -74,6 +75,8 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(p256dh, "p256dh");
         Objects.requireNonNull(auth, "auth");
+        p256dh = p256dh.clone();
+        auth = auth.clone();
         P256PublicKeys.requireOnCurve(p256dh, "p256dh");
         if (auth.length != 16) {
             throw new IllegalArgumentException("auth must be 16 bytes (RFC 8291 §3.2)");
@@ -86,8 +89,6 @@ public record Subscription(String endpoint, byte[] p256dh, byte[] auth) {
                     "endpoint must be at most " + MAX_ENDPOINT_LENGTH + " characters, was " + endpoint.length());
         }
         Endpoints.requireSecure(endpoint);
-        p256dh = p256dh.clone();
-        auth = auth.clone();
     }
 
     /**
