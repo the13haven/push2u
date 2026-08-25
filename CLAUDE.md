@@ -188,8 +188,9 @@ instead. The exception is a document that is *about* one version and is never re
 correct.
 
 `.claude/rules/workflow.md` carries the branch-implement-review-merge workflow, including who
-approves a merge into `main` and how work that started from a tracker issue references it. It loads
-automatically alongside this file.
+approves a merge into `main`, how work that started from a tracker issue references it, and the
+mirror of that — the work that has to *file* one, which so far has meant a change leaving a tombstone
+behind a removed property. It loads automatically alongside this file.
 
 Two skills hold the procedures that do not belong in this file:
 `.claude/skills/push2u-implement/SKILL.md` for how recurring multi-file changes are made here, and

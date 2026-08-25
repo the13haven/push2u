@@ -74,6 +74,45 @@ has to state the release in its own words, that is said after the tag, never bef
 None of this applies to a vulnerability: there is no public issue to reference, and
 `.claude/skills/push2u-advisory/SKILL.md` carries that path instead.
 
+## Work that has to file one
+
+The mirror of the section above. A change that leaves a debt behind opens the issue that collects
+it, and does so in its own pull request. The shape it has taken here so far is a **tombstone**: the
+startup refusal a release leaves over a configuration property it removed, so that an operator
+upgrading with the dead key still in a YAML file is told where the setting went instead of having it
+ignored in silence — binding drops an unknown key without a word.
+
+A tombstone has an end. It is there to catch a configuration written against the *previous* release,
+and one carried indefinitely becomes code refusing keys nobody has written in years. The window is
+one minor release after the one that removed the property.
+
+**The change that writes the tombstone opens the issue that removes it**, in the same pull request,
+referenced with `Refs #N`. Not the release that ships it: filing there makes the obligation depend
+on whoever cuts a release recalling, months later and for an unrelated reason, what a change
+contained — which has already failed here once, and the tombstone was retired on time only because
+someone happened to be holding it in their head. Written at the change instead, the debt and its
+record are made by the same hand in the same hour.
+
+The issue states the window as that rule, and does not have to name a version at all — never one
+before the tag, which the section above forbids outright. It links its pull request instead, and
+that pull request shows its release once there is one, which is the release the window runs from.
+One issue covers every key the same change removed, and it is opened before the pull request that
+references it — so if that pull request is abandoned, or the tombstone dropped in review, close the
+issue with it.
+
+`docs/RELEASING.md` keeps a check after the tag rather than the obligation itself, so a tombstone
+that reached a release without an issue is still caught.
+
+**ADR-023 and ADR-025 both say the release opens that work item**, the first of them in bold. That
+was the procedure when those decisions were taken, and it is what has since moved; the decisions
+themselves — that a tombstone has an end, that the window is one minor release, that its end is
+never written as a version number that does not exist yet — are untouched by the move, and neither
+record is edited for it.
+
+None of this applies to a vulnerability either. A property whose removal closes a hole is on the
+advisory path with everything else about it, and a public issue naming the key would be the
+disclosure that path exists to prevent.
+
 ## Delegating
 
 A subagent starts with a fresh context. It inherits `CLAUDE.md` and these rules, but **not** the

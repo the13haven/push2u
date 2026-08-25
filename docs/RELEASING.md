@@ -271,7 +271,7 @@ Central, which is immutable.
 - **GitHub:** the *Releases* tab shows the new release with its generated notes, and the
   `v<X.Y.Z>` tag exists.
 
-### 5. Open the removal work item for every tombstone this release shipped
+### 5. Check that every tombstone this release shipped has its removal issue
 
 A release that *removes* a configuration property leaves a tombstone behind it — a startup refusal
 that fails the context while the dead key is still in a YAML file, so an operator who upgrades is
@@ -283,13 +283,19 @@ release, and one carried indefinitely becomes code that refuses keys nobody has 
 The window is **one minor release after the one that removed the property**, and closing it is a
 piece of work somebody has to be holding.
 
-**So the release that ships a tombstone opens the issue that removes it, and this is the step where
-that happens** — after the tag, not before. Until the tag exists there is no number to count the
-window from, and writing one in advance is a guess that outlives the guessing.
+**The change that writes a tombstone is what opens that issue**, in its own pull request, where the
+debt and its record are made by the same hand — `.claude/rules/workflow.md` and `CONTRIBUTING.md`
+carry that rule. This step is the net under it rather than the rule itself, and it is a question
+about this release and not a sweep of the tree: did anything merged since the previous tag remove
+one of this library's configuration properties — under `push2u.`, or the `management.health.push2u.`
+keys the health indicator owns? If so, each removal has a startup refusal naming the key and an open
+issue that retires it. Open the issue here if that is what is missing; a missing *refusal* has
+shipped with this release either way, so file that as the defect it is.
 
-One issue covers every tombstone the same release shipped. It lists each removed key and names this
-release as the one the window runs from; it does not name the version the removal will ship in,
-which is decided when *that* release is cut.
+Such an issue states the window as that rule rather than as a version, and links the pull request
+that wrote the tombstone. From this tag onward that pull request shows the release it went out in,
+which is the release the window runs from — so the issue needs no version number of its own, and it
+would take one only after a tag, never before.
 
 ## Setting the next version
 
