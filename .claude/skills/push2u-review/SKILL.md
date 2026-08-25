@@ -163,7 +163,13 @@ browser's `PushSubscription` JSON verbatim. Everything below follows from that.
   `PushOutcome.Indeterminate`, and timing. Passing it means *reading its answer*:
   `policy.assess(uri);` as a bare statement compiles with no diagnostic and admits everything, so a
   call site that discards the `EndpointAssessment` — in the library, in a document's recipe, or in a
-  test's fixture — is the same finding.
+  test's fixture — is the same finding. That sentence still holds where it matters for a review — on
+  the `./gradlew build` path, where Error Prone is off, and for a recipe in a document, which is not
+  compiled at all — but the gate now catches more than it did: `assess` carries a `CheckReturnValue`
+  mark that Error Prone matches by simple name, so under `qualityCheck`/`qualityCheckCi` a bare call
+  in `main`, `testFixtures`, `test` or `fipsTest` is a compile error rather than something review has
+  to find first. A method reference that drops the answer is caught the same way; a call through a
+  concrete implementation type whose override carries no mark is not.
 - **`Endpoints.requireSecure` is a protocol check, not a security control.** Which hosts a
   deployment may contact is policy and lives in `EndpointPolicy`. Conflating them weakens both.
 - **The push transport must not read the response body**, so a hostile service cannot create memory

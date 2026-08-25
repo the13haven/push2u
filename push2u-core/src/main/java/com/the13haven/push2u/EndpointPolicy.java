@@ -97,13 +97,15 @@ public interface EndpointPolicy {
      * the caller there must switch on the returned {@link EndpointAssessment} and refuse to store the row on a
      * {@link EndpointAssessment.Refused} — typically answering a {@code 400} with no row stored.
      *
-     * <p>What help there is comes from outside the language: this method is marked with an annotation that static
-     * analysers matching such a mark by its simple name — Error Prone's <a
-     * href="https://errorprone.info/bugpattern/CheckReturnValue">{@code CheckReturnValue}</a> check among them — read
-     * straight out of the class file, so a build already running one has the bare statement fail as an error with
-     * nothing to configure. A build running none is unaffected and loses nothing. One shape stays uncovered either way:
-     * a call made through an implementation type of your own whose overriding {@code assess} does not carry the mark
-     * itself, since the annotation is not inherited by an override.
+     * <p>What help there is comes from outside the language: this method carries an annotation named
+     * {@code CheckReturnValue}, which Error Prone's <a href="https://errorprone.info/bugpattern/CheckReturnValue">check
+     * of that name</a> matches by simple name and reads straight out of the class file. That check is on by default at
+     * {@code ERROR} severity, so a build already running Error Prone has the bare statement fail — and a method
+     * reference that drops every answer, {@code endpoints.forEach(policy::assess)}, with it — while a build running no
+     * such analyser is unaffected. Error Prone is the one this was measured against; what another analyser or an IDE
+     * makes of the mark is not claimed here. One shape stays outside it in any case: a call made through an
+     * implementation type of your own whose overriding {@code assess} does not carry such a mark itself, since the
+     * annotation is not inherited by an override.
      *
      * <p>The argument's precondition is part of this seam's contract at both call sites: the endpoint has already
      * passed {@link Endpoints#requireSecure} (an absolute {@code https} URL with a host). The sender guarantees that

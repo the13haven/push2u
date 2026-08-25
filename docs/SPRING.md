@@ -501,15 +501,23 @@ about. So the `switch` above — or an `if`, or any other reading of the returne
 style choice, it is the control itself.
 
 The language will not tell you it is missing, but a static analyser can, and this call site is
-already marked for one: `assess` carries an annotation that analysers matching such a mark by its
-*simple name* — Error Prone's
-[`CheckReturnValue`](https://errorprone.info/bugpattern/CheckReturnValue) check among them — read
-straight out of the class file, so a build already running one has the bare statement fail as an
-error, with nothing to configure and no dependency of yours to add. A build running none is
-unaffected: an annotation type it does not know is ignored. What it does not cover is a call made
-through your own `EndpointPolicy` implementation type, whose overriding `assess` does not inherit
-the mark — so a search of your own sources for `assess(`, checking that every hit is read, is still
-the one command that catches everything.
+already marked for one: `assess` carries an annotation named `CheckReturnValue`, and
+[Error Prone](https://errorprone.info/bugpattern/CheckReturnValue) matches that mark by its *simple
+name* whatever package it comes from, reading it straight out of the class file. Its check of that
+name is on by default at `ERROR` severity, so a build already running Error Prone has the bare
+statement fail as an error, with nothing to configure and no dependency of yours to add — and
+`endpoints.forEach(endpointPolicy::assess)`, a method reference that drops every answer, fails with
+it. Error Prone is the only analyser this was measured against; what another tool or your IDE makes
+of the mark is not something this library claims, so do not read a green IDE as a checked one. A
+build running no such analyser is unaffected: javac has no opinion about an annotation nothing in
+the build acts on.
+
+**The mark and a grep are two nets, and neither contains the other.** The mark is not inherited by
+an override, so a call through your own `EndpointPolicy` implementation type — a class of your own,
+called through that class rather than through the interface every `EndpointPolicies` factory hands
+back — carries no mark to report. A search of your sources for `assess(` covers exactly that, and
+misses the method reference, which has no `assess(` in it to find. Run the search, and take the
+result as one of the two rather than as the whole.
 
 What the application does choose is what each refusal answers to its client. A malformed
 subscription — the `IllegalArgumentException` from step 1 — and a policy refusal can both sensibly

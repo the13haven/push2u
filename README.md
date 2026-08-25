@@ -532,9 +532,9 @@ numeric maximum: the first question about a payload is always answered by the li
 told is not — `send` checks every payload again, and a caller that never asks simply meets the
 outcome. Asking and then dropping the answer is the shape worth naming:
 `sender.assessPayloadSize(payload);` on a line of its own compiles, and javac says nothing. Like
-`EndpointPolicy.assess`, this method carries an annotation that a static analyser matching it by
-simple name turns into a compile error — [*Endpoint policy*](#endpoint-policy-ssrf-hardening) has
-the detail, and it applies to both.
+`EndpointPolicy.assess`, this method carries a `CheckReturnValue` annotation that Error Prone turns
+into a compile error — [*Endpoint policy*](#endpoint-policy-ssrf-hardening) has the detail, which
+applies here unchanged.
 
 ## Spring Boot
 
@@ -754,15 +754,22 @@ switch (pushServices.assess(endpoint)) {
 > fail forever — is precisely the point where nothing re-checks, so the returned value is what has
 > to decide whether the row is stored.
 >
-> The language offers nothing here, but the library does: `assess` carries an annotation that static
-> analysers matching such a mark by its *simple name* — Error Prone's
-> [`CheckReturnValue`](https://errorprone.info/bugpattern/CheckReturnValue) check among them — read
-> straight out of the class file, so a build already running one has the bare statement fail as an
-> error, with nothing to configure and no dependency of yours to add. A build running none sees no
-> diagnostic and loses nothing: an annotation type it does not know is ignored. One shape stays
-> uncovered either way — a call made through your own `EndpointPolicy` implementation type, whose
-> overriding `assess` does not inherit the mark — so searching your own sources for `assess(` and
-> checking that every hit is read is still worth the one command it costs.
+> The language offers nothing here, but the library does: `assess` carries an annotation named
+> `CheckReturnValue`, and [Error Prone](https://errorprone.info/bugpattern/CheckReturnValue) matches
+> that mark by its *simple name* whatever package it comes from, reading it straight out of the class
+> file. Its check of that name is on by default at `ERROR` severity, so a build already running Error
+> Prone has the bare statement fail as an error, with nothing to configure and no dependency of yours
+> to add — and `endpoints.forEach(pushServices::assess)`, a method reference that discards every
+> answer, is reported the same way. Error Prone is the only analyser this was measured against; what
+> another tool or an IDE makes of the mark is not something this library claims. A build running no
+> such analyser is unaffected: javac has no opinion about an annotation nothing in the build acts on.
+>
+> The mark is not inherited by an override, so one shape stays outside it — a call through your own
+> `EndpointPolicy` implementation type whose overriding `assess` carries no such annotation. Every
+> `EndpointPolicies` factory hands you the interface type, so this needs a policy class of your own
+> *and* a call through that class. Searching your own sources for `assess(` covers what the mark
+> cannot see there, as the mark covers the method reference no search for `assess(` will match —
+> neither net contains the other, and the search is still worth the one command it costs.
 
 A refusing policy does not throw, and is not expected to: `PushSender` turns a `Refused` into
 `PushOutcome.EndpointRejected` itself, rendering the endpoint in its own redacted form rather than

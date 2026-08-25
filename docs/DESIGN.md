@@ -459,10 +459,12 @@ of a requested send, whether or not a POST was reached, while an exception is re
 API wrongly, for a defect the caller cannot act on per send, and for cancellation. Neither channel
 forces meaningful handling — an exception can be caught and dropped, a value can be discarded at the
 call site, and Java has no `#[must_use]`. What the sealed hierarchy buys is that a caller who does
-`switch` has every case put in front of them, and that there is one place to look. Where a discarded
-answer is the whole of the loss and fire-and-forget is not a legitimate reading — `assessPayloadSize`
-and `EndpointPolicy.assess`, not `send` — an annotation the core declares itself makes an analyser
-say so; the `EndpointPolicy` subsection below has the mechanism and its limits.
+`switch` has every case put in front of them, and that there is one place to look. Where the returned
+value is the *whole* of the answer — where the call reports nothing, changes nothing and refuses
+nothing on its own, so dropping the value is indistinguishable from never having asked —
+an annotation the core declares itself makes an analyser say so. `assessPayloadSize` is such a
+method and `send` is not, since a send happens whether or not its outcome is read; the
+`EndpointPolicy` subsection below has the mechanism, the rule and its limits.
 
 A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
 sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
@@ -504,7 +506,10 @@ provider-parameter check the send pipeline still performs.
 signer advertises. It is public because that is the only check available to a caller holding the
 `VapidSigner` SPI and nothing else, and it lives in the core rather than in the starter that drives
 it — the health indicator — because it has to mirror the core's own ES256 provider resolution, DER
-fallback included, or it would condemn a healthy signer on a FIPS platform.
+fallback included, or it would condemn a healthy signer on a FIPS platform. Its answer is a
+`boolean` and a signature that does not verify raises nothing, so a discarded call accepts every
+signature it was made to reject; it carries the `CheckReturnValue` mark the endpoint policy's
+subsection below describes, under the same rule.
 
 ### VapidSigner
 
@@ -744,21 +749,36 @@ network, because `send` performs the assessment itself and acts on it; the regis
 the point where nothing re-checks, which is why the seam's own Javadoc says so where a consumer
 reads it.
 
-**What the language does not give, an annotation does — without a dependency.** `assess` and
-`PushSender.assessPayloadSize` carry `CheckReturnValue`, a package-private annotation of the core's
-own, and the point of declaring one rather than depending on somebody's is that the analysers which
-act on it match it by *simple name* and not by package: Error Prone's check of that name is on by
-default at `ERROR` severity, and reads the mark straight out of the class file. So a consumer
-already running such an analyser has `policy.assess(uri);` fail their build with nothing configured
-and nothing added, and a consumer running none is unaffected — an annotation type absent from the
-classpath is ignored. The retention is `RUNTIME` rather than `CLASS`, which the matching does not
-need, so that a test here can assert by reflection that a refactoring has not dropped the mark;
-`SOURCE` would have been a silent no-op. What is deliberately outside it: the mark is not inherited
-by an override, so a call made through a consumer's own implementation type whose `assess` is
-unannotated is not covered, and the grep the consumer-facing documents ask for is what covers it.
-`send` and `sendAsync` are deliberately unmarked — discarding a `PushOutcome` loses the
-`SubscriptionExpired` a caller wanted, but fire-and-forget is a legitimate way to send and the
-ordinary shape of a discarded `CompletableFuture`, so marking either would break correct code.
+**What the language does not give, an annotation does — without a dependency.** `assess` carries
+`CheckReturnValue`, a package-private annotation of the core's own, and the point of declaring one
+rather than depending on somebody's is that the tool acting on it matches by *simple name* and not
+by package: Error Prone's check of that name is on by default at `ERROR` severity and reads the mark
+straight out of the class file. So a consumer already running Error Prone has `policy.assess(uri);`
+fail their build with nothing configured and nothing added — as does `uris.forEach(policy::assess)`,
+which no search for `assess(` would have found — and a consumer running no such analyser is
+unaffected, since javac has no diagnostic for a discarded return value and no opinion about an
+annotation nothing in the build acts on. Error Prone is what this was measured against; nothing is
+claimed here about any other analyser or any IDE, and the documents say so rather than inviting a
+reader to assume cover they may not have.
+
+The retention is `RUNTIME` rather than the `CLASS` the matching needs, so that a test here can read
+the mark by reflection and fail if a refactoring drops it. `SOURCE` would not reach the artifact a
+consumer compiles against, which is the only place this has to work. What is deliberately outside
+the mark: it is not inherited by an override, so a call made through a consumer's own implementation
+type whose `assess` is unannotated is not covered — narrow in practice, since every `EndpointPolicies`
+factory answers the interface type, so it takes a policy class of the consumer's own *and* a call
+through that class. The grep the consumer-facing documents ask for covers that, and the mark covers
+the method reference the grep cannot see; the two are described there as two nets rather than one.
+
+**What earns the mark is a rule, not a list.** A method takes it when its returned value is the
+whole of its answer — when the call reports nothing, changes nothing and refuses nothing on its own,
+so that dropping the value is indistinguishable from never having asked and leaves the caller
+believing a check was made. That is what `assess`, `PushSender.assessPayloadSize` and
+`Es256Verifier.verify` have in common: a refusal, a budget and a failed signature each arrive as a
+value and by no other channel. It excludes `send` and `sendAsync` on the same rule rather than by
+exception — the send happens whether or not the outcome is read, so fire-and-forget is a real way to
+use them and the ordinary shape of a discarded `CompletableFuture`, and marking either would break
+correct code.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
@@ -1780,10 +1800,10 @@ The automated suite covers:
   stored as `""` and an `Allowed` carrying nothing and equal by value (`EndpointAssessmentTest`), and
   a policy that answers `null` or throws anything at all read as the defect it is rather than as an
   outcome (`PushSenderEndpointPolicyTest`, `PushSenderSeamConversionTest`);
-- the `CheckReturnValue` mark on `assess` and `assessPayloadSize`, its absence on `send` and
-  `sendAsync`, and the name and retention the analysers reading it depend on — a check against a
-  refactoring dropping it in silence, since nothing in this build compiles worse without it
-  (`CheckReturnValueTest`);
+- the `CheckReturnValue` mark on each method whose returned value is the whole of its answer, its
+  absence on `send` and `sendAsync`, and the name and retention the analyser reading it depends on —
+  a check against a refactoring dropping it in silence, since nothing in this build compiles worse
+  without it (`CheckReturnValueTest`);
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
   shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in

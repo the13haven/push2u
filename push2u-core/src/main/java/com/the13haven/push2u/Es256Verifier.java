@@ -55,6 +55,16 @@ public final class Es256Verifier {
      * Verifies a raw ES256 signature over {@code signingInput} against the given public key, using the JVM's default
      * providers.
      *
+     * <p><b>The answer is the whole of the verification.</b> A failed check is reported by the returned {@code false}
+     * and by nothing else — no exception is thrown for a signature that simply does not verify — so
+     * {@code Es256Verifier.verify(key, input, signature);} as a bare statement accepts every signature, including the
+     * ones this call was made to reject. For that reason the method carries an annotation named
+     * {@code CheckReturnValue}, which Error Prone's <a href="https://errorprone.info/bugpattern/CheckReturnValue">check
+     * of that name</a> matches by simple name and reads straight out of the class file: on by default at {@code ERROR}
+     * severity, so a build already running Error Prone has that statement fail as an error, and a build running no such
+     * analyser is unaffected. Error Prone is the one this was measured against, and nothing is claimed here about
+     * another analyser or an IDE.
+     *
      * @param uncompressedPublicKey the P-256 public key as a 65-byte X9.62 uncompressed point ({@code 0x04 || X || Y})
      * @param signingInput the exact bytes that were signed
      * @param rawSignature the 64-byte raw {@code r || s} signature to check
@@ -63,6 +73,7 @@ public final class Es256Verifier {
      * @throws PushCryptoException if the key cannot be imported, or no ES256 primitive is available (see
      *     {@link #isSupported()})
      */
+    @CheckReturnValue
     public static boolean verify(byte[] uncompressedPublicKey, byte[] signingInput, byte[] rawSignature) {
         return verify(PLATFORM_JCA, uncompressedPublicKey, signingInput, rawSignature);
     }
