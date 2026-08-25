@@ -63,8 +63,10 @@ is your application server's published identity: a browser subscription is bound
 whose key is not the one that subscription was created under. So a signer that starts answering
 `publicKey()` differently has already broken every restricted subscription taken out before the
 change — rotation is a re-subscription event that produces a *new* signer, not a new answer from
-the existing one. The library cannot check this from outside, since two equal answers say nothing
-about the next one, and states it as contract instead.
+the existing one. The library cannot check the whole of this from outside, since two equal answers
+say nothing about the next one, and states it as contract instead. The checkable half — that two
+consecutive calls describe the same key — the conformance kit does enforce, in the same check that
+makes each of those calls hand out a fresh array.
 
 ## The conformance kit
 
@@ -86,9 +88,10 @@ class MySignerContractTest extends VapidSignerContractTest {
 Seven checks run: the advertised public key is 65 bytes with the X9.62 uncompressed prefix, its
 coordinates really do satisfy the P-256 curve equation (a well-framed off-curve point is imported
 by the JCA without complaint), `publicKeyBase64Url()` is exactly the unpadded URL-safe base64 of
-those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than
-one the signer keeps — two successive calls must not return the same object — a signature is
-the raw 64-byte `r || s` that verifies against that key, and several threads signing at once each
+those same bytes, `publicKey()` and `sign()` each hand out a fresh array rather than one the signer
+keeps — two successive calls must not return the same object, and for `publicKey()` the two arrays
+must still describe the same key, which is the stability requirement's checkable half — a signature
+is the raw 64-byte `r || s` that verifies against that key, and several threads signing at once each
 come back with a signature that verifies against the input that call handed in.
 
 That last one is the concurrency smoke check described above, and three of its choices are worth

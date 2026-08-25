@@ -221,10 +221,19 @@ this one.
 ### A group that names `push2u`
 
 **A name in a group's `include` or `exclude` is a claim that the contributor exists.** Spring Boot
-4.1 validates both sides while the context starts, and fails it with
+validates both sides while the context starts and fails it — since 4.0, the minimum these starters
+declare, so no supported deployment is without the check. What moved in 4.1 is the wording, which
+matters only because it is the string you will search the log for. From 4.1 the message names the
+property:
 
 ```
 Health contributor 'push2u' defined in 'management.endpoint.health.group.container.exclude' does not exist
+```
+
+while on the 4.0 line the same refusal names the side and the group instead:
+
+```
+Excluded health contributor 'push2u' in group 'container' does not exist
 ```
 
 By the conditions above, the `push2u` contributor is absent from a deployment that set

@@ -304,7 +304,7 @@ Until this release both starters declared Spring Boot's BOM on `api`, so it was 
 imported BOM in the POM and as a dependency in the Gradle module metadata. For a Gradle consumer
 that made Spring Boot's entire version manifest a live input to their own resolution, and Gradle
 takes the higher of two requirements: a build that said Spring Boot 4.0.0 throughout resolved
-`spring-boot` 4.1.1, `spring-core` 7.0.9, `jackson-databind` 3.1.5 and `micrometer` 1.17.1 —
+`spring-boot` 4.1.0, `spring-core` 7.0.8, `jackson-databind` 3.1.4 and `micrometer` 1.17.0 —
 because it had added a Web Push starter. Nothing warned about it.
 
 The starters now publish one Spring Boot dependency, `spring-boot-autoconfigure`, at the minimum
@@ -331,7 +331,7 @@ direction.** A `dependencyManagement` section reached through a dependency suppl
 *that dependency's* own dependencies — and the starters' own `spring-boot-autoconfigure` was
 declared with no version, resolved by the BOM they imported. So an application that simply added a
 starter got Boot at whatever version this project built against. Measured, resolving both published
-shapes with Maven: the old one handed such a consumer `spring-boot-autoconfigure` 4.1.1, the new one
+shapes with Maven: the old one handed such a consumer `spring-boot-autoconfigure` 4.1.0, the new one
 hands it 4.0.8. That is a **downgrade across a minor line** — the direction that surfaces at run
 time rather than at compile time. What it is *not* is push2u letting go of the decision: a POM
 carries no minimum, so the starter's declaration is simply the version, and taking that decision
