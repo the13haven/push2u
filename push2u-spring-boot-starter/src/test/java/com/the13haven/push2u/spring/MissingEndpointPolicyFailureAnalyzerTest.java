@@ -413,7 +413,9 @@ class MissingEndpointPolicyFailureAnalyzerTest {
 
         @Bean
         String subscriptionValidator(EndpointPolicy endpointPolicy) {
-            return endpointPolicy.toString();
+            // The parameter is the whole of it: it is what leaves this bean unsatisfiable without a policy. Nothing
+            // reads what the bean itself is, so it is a constant rather than anything derived from the policy.
+            return "subscription-validator";
         }
     }
 
@@ -423,7 +425,7 @@ class MissingEndpointPolicyFailureAnalyzerTest {
 
         @Bean
         String transportDependent(PushHttpClient transport) {
-            return transport.toString();
+            return "transport-dependent";
         }
     }
 

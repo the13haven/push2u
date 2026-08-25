@@ -399,7 +399,9 @@ class Push2uDeliverySwitchTest {
 
         @Bean
         String senderDependent(@Autowired PushSender sender) {
-            return sender.toString();
+            // The parameter is the whole of it: it is what leaves this bean unsatisfiable without a sender. Nothing
+            // reads what the bean itself is, so it is a constant rather than anything derived from the sender.
+            return "sender-dependent";
         }
     }
 
