@@ -461,10 +461,13 @@ forces meaningful handling — an exception can be caught and dropped, a value c
 call site, and Java has no `#[must_use]`. What the sealed hierarchy buys is that a caller who does
 `switch` has every case put in front of them, and that there is one place to look. Where the returned
 value is the *whole* of the answer — where the call reports nothing, changes nothing and refuses
-nothing on its own, so dropping the value is indistinguishable from never having asked —
-an annotation the core declares itself makes an analyser say so. `assessPayloadSize` is such a
-method and `send` is not, since a send happens whether or not its outcome is read; the
-`EndpointPolicy` subsection below has the mechanism, the rule and its limits.
+nothing on its own, so that dropping it is indistinguishable from never having asked **and leaves
+the caller believing a check was made** — an annotation the core declares itself makes an analyser
+say so. That last clause is the working half of the rule, and it is what keeps every ordinary
+accessor out: dropping `PushMessage.payload()` or `PushOutcome.retryAfter()` leaves no one believing
+anything. `assessPayloadSize` is such a method and `send` is not, since a send happens whether or
+not its outcome is read; the `EndpointPolicy` subsection below has the mechanism, the rule in full
+and its limits.
 
 A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
 sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
@@ -507,9 +510,12 @@ signer advertises. It is public because that is the only check available to a ca
 `VapidSigner` SPI and nothing else, and it lives in the core rather than in the starter that drives
 it — the health indicator — because it has to mirror the core's own ES256 provider resolution, DER
 fallback included, or it would condemn a healthy signer on a FIPS platform. Its answer is a
-`boolean` and a signature that does not verify raises nothing, so a discarded call accepts every
+`boolean` and a signature that does not verify raises nothing, so a discarded `verify` accepts every
 signature it was made to reject; it carries the `CheckReturnValue` mark the endpoint policy's
-subsection below describes, under the same rule.
+subsection below describes, under the rule stated there. Its `isSupported` does not, and the same
+rule is what leaves it out: dropping a capability question hides nothing when the operation behind
+it — `verify` on a platform with no ES256 primitive — refuses with a `PushCryptoException` rather
+than an answer.
 
 ### VapidSigner
 
@@ -772,13 +778,22 @@ the method reference the grep cannot see; the two are described there as two net
 
 **What earns the mark is a rule, not a list.** A method takes it when its returned value is the
 whole of its answer — when the call reports nothing, changes nothing and refuses nothing on its own,
-so that dropping the value is indistinguishable from never having asked and leaves the caller
-believing a check was made. That is what `assess`, `PushSender.assessPayloadSize` and
+so that dropping the value is indistinguishable from never having asked **and leaves the caller
+believing a check was made**. The last clause carries the rule. Without it every clean accessor in
+the tree would qualify, since `PushMessage.payload()`, `VapidKeys.publicKey()` and
+`PushOutcome.retryAfter()` also report nothing and change nothing — but a dropped accessor leaves
+nobody believing anything was checked, and a dropped question about admission, size or a signature
+leaves exactly that. That is what `assess`, `PushSender.assessPayloadSize` and
 `Es256Verifier.verify` have in common: a refusal, a budget and a failed signature each arrive as a
-value and by no other channel. It excludes `send` and `sendAsync` on the same rule rather than by
-exception — the send happens whether or not the outcome is read, so fire-and-forget is a real way to
-use them and the ordinary shape of a discarded `CompletableFuture`, and marking either would break
-correct code.
+value and by no other channel.
+
+The rule excludes two kinds of method rather than exempting them. `send` and `sendAsync`: the send
+happens whether or not the outcome is read, so fire-and-forget is a real way to use them and the
+ordinary shape of a discarded `CompletableFuture`, and marking either would break correct code. And
+a question about *capability* whose discard opens no silent path, because the operation behind it
+refuses loudly — `Es256Verifier.isSupported()` sits unmarked beside `verify` for that reason: a
+caller who drops it and calls `verify` anyway on a platform with no ES256 primitive gets a
+`PushCryptoException`, not a signature quietly treated as valid.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:

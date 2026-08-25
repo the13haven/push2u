@@ -27,7 +27,7 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
-| [`0.3.0`](#from-030) | Three answers that must be read — `EndpointPolicy.assess`, `PushSender.assessPayloadSize` and `Es256Verifier.verify` — are marked for Error Prone, so a build running it stops compiling a call that discards the answer. No API change. |
+| [`0.3.0`](#from-030) | Three answers that must be read — `EndpointPolicy.assess`, `PushSender.assessPayloadSize` and `Es256Verifier.verify` — are marked for Error Prone, so a build running it stops compiling a call that discards the answer. All three keep their signatures — the mark is the whole of it. |
 | [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM, and the refusal over the keys `0.2.0` removed is retired. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
 
@@ -36,15 +36,17 @@ key is unique on its own; one naming a role in the document carries its source v
 `0.3.0` is where this upgrade starts. It is the version this section is written against, and the one
 it names throughout; the release it lands in is deliberately unnamed, for the reason above.
 
-No type, method or property changed. What changed is that three methods now carry an annotation, and
-one kind of build reads it: `EndpointPolicy.assess(URI)`, `PushSender.assessPayloadSize(byte[])` and
-`Es256Verifier.verify(byte[], byte[], byte[])` are marked as methods whose returned value is the
-whole of their answer — the call reports nothing, changes nothing and refuses nothing on its own, so
-dropping the value is indistinguishable from never having asked. A project compiling under an
+None of the three methods below changed shape. What changed is that each now carries an annotation,
+and one kind of build reads it: `EndpointPolicy.assess(URI)`,
+`PushSender.assessPayloadSize(byte[])` and `Es256Verifier.verify(byte[], byte[], byte[])` are marked
+as methods whose returned value is the whole of their answer — the call reports nothing, changes
+nothing and refuses nothing on its own, so dropping the value is indistinguishable from never having
+asked *and leaves you believing a check was made*. That last part is what separates these three from
+an ordinary accessor, which nobody needs a compiler's help to drop. A project compiling under an
 analyser that acts on such a mark finds a call that discards the answer failing where it used to
 compile. That is all this change asks of you, and it asks it only of code that both calls one of
-those three methods *and* runs such an analyser; nothing else about the three moved, and an application that
-only sends is untouched by it.
+those three methods *and* runs such an analyser; nothing else about the three moved, and an
+application that only sends is untouched by it.
 
 - [A discarded `assess`, `assessPayloadSize` or `Es256Verifier.verify` can now fail your build](#a-discarded-assess-assesspayloadsize-or-es256verifierverify-can-now-fail-your-build)
 - [What the `0.3.0` move does not change](#what-the-030-move-does-not-change)
@@ -113,11 +115,14 @@ reference no search for `assess(` will match. Two nets, neither containing the o
 
 ### What the `0.3.0` move does not change
 
-- **The API.** No signature, no return type, no exception, no property key. The annotation is not
-  part of this library's public surface: it is not `public`, so nothing outside its own package can
-  name it — you cannot write it in your own code and you never need to.
-- **Your dependencies.** Nothing was added to any module. The mark works by name, so the library
-  declares its own rather than depending on an analyser's.
+- **The three marked methods.** Each keeps the signature, return type and exceptions it had. What
+  they answer, when they answer it and what a caller does with the answer are all as before — the
+  mark adds no behaviour and takes none away.
+- **The annotation's own surface.** It is not part of this library's API: not `public`, so nothing
+  outside its own package can name it. You cannot write it in your own code and you never need to.
+- **What the mark costs you.** Nothing, and no module gained a dependency for it: the analyser
+  matches by name, so the library declares its own annotation rather than depending on an
+  analyser's.
 - **`send` and `sendAsync`.** Both are deliberately unmarked, and a discarded `PushOutcome` or
   `CompletableFuture` still compiles everywhere it did. Dropping an outcome does lose real
   information — a `SubscriptionExpired` above all — but fire-and-forget is a legitimate way to send
