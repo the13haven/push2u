@@ -363,13 +363,14 @@ final class TransportContractHttpTest {
 
         String response = new String(TransportContractHttp.response(301, headers), StandardCharsets.ISO_8859_1);
 
-        assertThat(response)
-                .isEqualTo("HTTP/1.1 301 Contract\r\n"
-                        + "Location: https://elsewhere.example/push\r\n"
-                        + "Retry-After: 120\r\n"
-                        + "Content-Length: 0\r\n"
-                        + "Connection: close\r\n"
-                        + "\r\n");
+        assertThat(response).isEqualTo("""
+                        HTTP/1.1 301 Contract\r
+                        Location: https://elsewhere.example/push\r
+                        Retry-After: 120\r
+                        Content-Length: 0\r
+                        Connection: close\r
+                        \r
+                        """);
     }
 
     /** A response with nothing of its own is still a complete one, which is the shape most of the checks use. */
@@ -418,6 +419,10 @@ final class TransportContractHttpTest {
      * would exhaust the test JVM, so a reader that lost its bound fails here by assertion rather than by
      * {@link OutOfMemoryError}.
      */
+    // InputStreamSlowMultibyteRead: the reader takes a line one byte at a time and this stream is given to nothing
+    // else, so the bulk read a faster stream would override is never called on it. Overriding it here would be code
+    // no test can reach, and the byte-by-byte delivery is what the ceiling counts.
+    @SuppressWarnings("InputStreamSlowMultibyteRead")
     private static final class EndlessLine extends InputStream {
 
         private static final int CEILING = 8 * 1024 * 1024;
