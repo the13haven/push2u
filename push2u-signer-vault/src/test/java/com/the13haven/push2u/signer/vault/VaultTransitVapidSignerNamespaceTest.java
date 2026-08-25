@@ -24,9 +24,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The {@code namespace(...)} step (Vault Enterprise/HCP): when set, the {@code X-Vault-Namespace} header rides on
- * <em>both</em> Vault calls — the fetched mode's {@code transit/keys/<name>} GET, which runs inside {@code build()}
- * before the signer exists and is the easy one to miss, and every {@code sign} POST. When unset, no such header is sent
- * at all — Vault OSS has no namespaces, and the pre-namespace request shape must stay byte-identical. Everything is
+ * <em>every</em> Vault call — the fetched mode's {@code transit/keys/<name>} GET, which runs inside {@code build()}
+ * before the signer exists and is the easy one to miss, the deferred mode's same GET at first use, which is just as
+ * easy to miss for running long after construction, and every {@code sign} POST. When unset, no such header is sent at
+ * all — Vault OSS has no namespaces, and the pre-namespace request shape must stay byte-identical. Everything is
  * asserted on the headers the transport actually saw, never on a field read back.
  *
  * <p>The value is validated at the step, by the same per-segment rule as {@code mount(...)} — and validation matters
@@ -85,6 +86,29 @@ class VaultTransitVapidSignerNamespaceTest {
                         .containsKey("X-Vault-Token"));
     }
 
+    /**
+     * The deferred mode performs the same metadata read as the fetched one, only at first use — the namespace must ride
+     * that first-use GET exactly as it rides the construction-time one, and every {@code sign} POST after it.
+     */
+    @Test
+    void theDeferredModeSendsTheNamespaceOnItsFirstUseReadAndItsSignRequests() throws Exception {
+        HeaderRecordingTransport transport = new HeaderRecordingTransport(metadataBody(generateP256KeyPair()));
+
+        VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .namespace("team-a")
+                .transport(transport)
+                .build()
+                .sign("namespace probe".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(transport.calls).extracting(Call::method).containsExactly("GET", "POST");
+        assertThat(transport.calls)
+                .allSatisfy(call -> assertThat(call.headers())
+                        .as("%s carries the exact namespace next to the token", call.method())
+                        .containsEntry(NAMESPACE_HEADER, "team-a")
+                        .containsKey("X-Vault-Token"));
+    }
+
     @Test
     void theSuppliedKeyModeSendsTheNamespaceOnItsSignRequests() throws Exception {
         KeyPair keyPair = generateP256KeyPair();
@@ -103,8 +127,8 @@ class VaultTransitVapidSignerNamespaceTest {
     }
 
     /**
-     * The default: without the step, no {@code X-Vault-Namespace} header exists on any call, in either mode — not an
-     * empty one, none. Vault OSS deployments must keep seeing exactly the pre-namespace request shape.
+     * The default: without the step, no {@code X-Vault-Namespace} header exists on any call, in any mode — not an empty
+     * one, none. Vault OSS deployments must keep seeing exactly the pre-namespace request shape.
      */
     @Test
     void withoutTheStepNoCallCarriesANamespaceHeader() throws Exception {
@@ -113,6 +137,13 @@ class VaultTransitVapidSignerNamespaceTest {
         HeaderRecordingTransport fetched = new HeaderRecordingTransport(metadataBody(keyPair));
         VaultTransitVapidSigner.builderWithFetchedPublicKey(VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
                 .transport(fetched)
+                .build()
+                .sign("no namespace probe".getBytes(StandardCharsets.UTF_8));
+
+        HeaderRecordingTransport deferred = new HeaderRecordingTransport(metadataBody(keyPair));
+        VaultTransitVapidSigner.builderWithDeferredPublicKeyFetch(
+                        VAULT, new TransitKeyName("vapid"), new VaultToken(TOKEN))
+                .transport(deferred)
                 .build()
                 .sign("no namespace probe".getBytes(StandardCharsets.UTF_8));
 
@@ -125,8 +156,9 @@ class VaultTransitVapidSignerNamespaceTest {
                 .sign("no namespace probe".getBytes(StandardCharsets.UTF_8));
 
         assertThat(fetched.calls).extracting(Call::method).containsExactly("GET", "POST");
+        assertThat(deferred.calls).extracting(Call::method).containsExactly("GET", "POST");
         assertThat(supplied.calls).extracting(Call::method).containsExactly("POST");
-        for (HeaderRecordingTransport transport : List.of(fetched, supplied)) {
+        for (HeaderRecordingTransport transport : List.of(fetched, deferred, supplied)) {
             assertThat(transport.calls)
                     .allSatisfy(call -> assertThat(call.headers())
                             .as("%s must not carry any namespace header", call.method())
