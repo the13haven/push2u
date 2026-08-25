@@ -466,8 +466,8 @@ the caller believing a check was made** — an annotation the core declares itse
 say so. That last clause is the working half of the rule, and it is what keeps every ordinary
 accessor out: dropping `PushMessage.payload()` or `PushOutcome.retryAfter()` leaves no one believing
 anything. `assessPayloadSize` is such a method and `send` is not, since a send happens whether or
-not its outcome is read; the `EndpointPolicy` subsection below has the mechanism, the rule in full
-and its limits.
+not its outcome is read; the `EndpointPolicy` subsection below has the mechanism, the rule and its
+limits.
 
 A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
 sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
@@ -787,13 +787,14 @@ leaves exactly that. That is what `assess`, `PushSender.assessPayloadSize` and
 `Es256Verifier.verify` have in common: a refusal, a budget and a failed signature each arrive as a
 value and by no other channel.
 
-The rule excludes two kinds of method rather than exempting them. `send` and `sendAsync`: the send
-happens whether or not the outcome is read, so fire-and-forget is a real way to use them and the
-ordinary shape of a discarded `CompletableFuture`, and marking either would break correct code. And
-a question about *capability* whose discard opens no silent path, because the operation behind it
-refuses loudly — `Es256Verifier.isSupported()` sits unmarked beside `verify` for that reason: a
-caller who drops it and calls `verify` anyway on a platform with no ES256 primitive gets a
-`PushCryptoException`, not a signature quietly treated as valid.
+The rule excludes rather than exempts, and two cases are worth naming because they look like
+exemptions. `send` and `sendAsync`: the send happens whether or not the outcome is read, so
+fire-and-forget is a real way to use them and the ordinary shape of a discarded
+`CompletableFuture`, and marking either would break correct code. And a question about *capability*
+whose discard opens no silent path, because the operation behind it refuses loudly —
+`Es256Verifier.isSupported()` sits unmarked beside `verify` for that reason: a caller who drops it
+and calls `verify` anyway on a platform with no ES256 primitive gets a `PushCryptoException`, not a
+signature quietly treated as valid.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
