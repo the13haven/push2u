@@ -530,7 +530,11 @@ passes for non-ASCII payloads it should fail, which is also why the sender publi
 numeric maximum: the first question about a payload is always answered by the library.
 `ExceedsLimit` carries the same two numbers `PayloadRejected` reports. Asking is optional; being
 told is not — `send` checks every payload again, and a caller that never asks simply meets the
-outcome.
+outcome. Asking and then dropping the answer is the shape worth naming:
+`sender.assessPayloadSize(payload);` on a line of its own compiles, and javac says nothing. Like
+`EndpointPolicy.assess`, this method carries an annotation that a static analyser matching it by
+simple name turns into a compile error — [*Endpoint policy*](#endpoint-policy-ssrf-hardening) has
+the detail, and it applies to both.
 
 ## Spring Boot
 
@@ -742,14 +746,23 @@ switch (pushServices.assess(endpoint)) {
 ```
 
 > [!WARNING]
-> `pushServices.assess(endpoint);` written as a bare statement compiles with no diagnostic of any
-> kind — `-Xlint:all` included — discards the answer, and admits every endpoint. Inside a send that
-> slip cannot open the network: `send` performs the assessment itself, on every send, and acts on
-> the value. The registration boundary — where you apply the policy for the reason above, so that a
-> row the policy refuses never enters the store to fail forever — is precisely the point where
-> nothing re-checks, so the returned value is what has to decide whether the row is stored. No
-> annotation marks the result as one you may not discard: the one that would lives in a dependency
-> the zero-dependency core cannot take.
+> `pushServices.assess(endpoint);` written as a bare statement is legal Java — javac reports nothing
+> about a discarded return value, `-Xlint:all` included — so the answer is thrown away and every
+> endpoint is admitted. Inside a send that slip cannot open the network: `send` performs the
+> assessment itself, on every send, and acts on the value. The registration boundary — where you
+> apply the policy for the reason above, so that a row the policy refuses never enters the store to
+> fail forever — is precisely the point where nothing re-checks, so the returned value is what has
+> to decide whether the row is stored.
+>
+> The language offers nothing here, but the library does: `assess` carries an annotation that static
+> analysers matching such a mark by its *simple name* — Error Prone's
+> [`CheckReturnValue`](https://errorprone.info/bugpattern/CheckReturnValue) check among them — read
+> straight out of the class file, so a build already running one has the bare statement fail as an
+> error, with nothing to configure and no dependency of yours to add. A build running none sees no
+> diagnostic and loses nothing: an annotation type it does not know is ignored. One shape stays
+> uncovered either way — a call made through your own `EndpointPolicy` implementation type, whose
+> overriding `assess` does not inherit the mark — so searching your own sources for `assess(` and
+> checking that every hit is read is still worth the one command it costs.
 
 A refusing policy does not throw, and is not expected to: `PushSender` turns a `Refused` into
 `PushOutcome.EndpointRejected` itself, rendering the endpoint in its own redacted form rather than

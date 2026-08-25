@@ -90,12 +90,20 @@ public interface EndpointPolicy {
      * value, so one hostile row never aborts a fan-out over a whole subscription store.
      *
      * <p><b>The answer must be read where nothing re-checks.</b> {@code policy.assess(uri);} as a bare statement is
-     * legal Java: it compiles with no diagnostic of any kind, the returned value is discarded, and every endpoint is
-     * admitted. Inside a send that slip cannot open the network — {@link PushSender#send} performs this assessment
-     * itself, on every send, and acts on the value. An application applying the same policy where it accepts
+     * legal Java: the language reports nothing about a discarded return value, so the verdict is thrown away and every
+     * endpoint is admitted. Inside a send that slip cannot open the network — {@link PushSender#send} performs this
+     * assessment itself, on every send, and acts on the value. An application applying the same policy where it accepts
      * subscriptions has no such backstop: the registration boundary is exactly the point where nothing re-checks, so
      * the caller there must switch on the returned {@link EndpointAssessment} and refuse to store the row on a
      * {@link EndpointAssessment.Refused} — typically answering a {@code 400} with no row stored.
+     *
+     * <p>What help there is comes from outside the language: this method is marked with an annotation that static
+     * analysers matching such a mark by its simple name — Error Prone's <a
+     * href="https://errorprone.info/bugpattern/CheckReturnValue">{@code CheckReturnValue}</a> check among them — read
+     * straight out of the class file, so a build already running one has the bare statement fail as an error with
+     * nothing to configure. A build running none is unaffected and loses nothing. One shape stays uncovered either way:
+     * a call made through an implementation type of your own whose overriding {@code assess} does not carry the mark
+     * itself, since the annotation is not inherited by an override.
      *
      * <p>The argument's precondition is part of this seam's contract at both call sites: the endpoint has already
      * passed {@link Endpoints#requireSecure} (an absolute {@code https} URL with a host). The sender guarantees that
@@ -113,5 +121,6 @@ public interface EndpointPolicy {
      * @return {@link EndpointAssessment.Allowed} if this endpoint may be contacted, or
      *     {@link EndpointAssessment.Refused} with the policy's account of the refusal; never {@code null}
      */
+    @CheckReturnValue
     EndpointAssessment assess(URI endpoint);
 }

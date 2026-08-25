@@ -459,7 +459,10 @@ of a requested send, whether or not a POST was reached, while an exception is re
 API wrongly, for a defect the caller cannot act on per send, and for cancellation. Neither channel
 forces meaningful handling — an exception can be caught and dropped, a value can be discarded at the
 call site, and Java has no `#[must_use]`. What the sealed hierarchy buys is that a caller who does
-`switch` has every case put in front of them, and that there is one place to look.
+`switch` has every case put in front of them, and that there is one place to look. Where a discarded
+answer is the whole of the loss and fire-and-forget is not a legitimate reading — `assessPayloadSize`
+and `EndpointPolicy.assess`, not `send` — an annotation the core declares itself makes an analyser
+say so; the `EndpointPolicy` subsection below has the mechanism and its limits.
 
 A built sender is thread-safe and shared across every sending thread — `sendAsync` makes concurrent
 sends the normal case. Its configuration is final, and the one thing it holds beyond configuration
@@ -734,12 +737,28 @@ produced it.
 **What the change costs is said out loud rather than netted off.** Implementations became safer:
 falling off the end of a `void` is no longer a way to admit everything, and a policy must positively
 return `Allowed`. Call sites became riskier by exactly the shape a discarded value has —
-`policy.assess(uri);` as a bare statement compiles with no diagnostic of any kind, `-Xlint:all`
-included, and admits every endpoint. No compiler help is available for that: the annotation marking a
-return value as one a caller may not discard lives in a dependency the core may not take. Inside a
-send the slip cannot open the network, because `send` performs the assessment itself and acts on it;
-the registration boundary is the point where nothing re-checks, which is why the seam's own Javadoc
-says so where a consumer reads it.
+`policy.assess(uri);` as a bare statement compiles and admits every endpoint. The language offers
+nothing against that: there is no `#[must_use]`, and no javac option — `-Xlint:all` included —
+reports a discarded return value. Inside a send the slip cannot open the
+network, because `send` performs the assessment itself and acts on it; the registration boundary is
+the point where nothing re-checks, which is why the seam's own Javadoc says so where a consumer
+reads it.
+
+**What the language does not give, an annotation does — without a dependency.** `assess` and
+`PushSender.assessPayloadSize` carry `CheckReturnValue`, a package-private annotation of the core's
+own, and the point of declaring one rather than depending on somebody's is that the analysers which
+act on it match it by *simple name* and not by package: Error Prone's check of that name is on by
+default at `ERROR` severity, and reads the mark straight out of the class file. So a consumer
+already running such an analyser has `policy.assess(uri);` fail their build with nothing configured
+and nothing added, and a consumer running none is unaffected — an annotation type absent from the
+classpath is ignored. The retention is `RUNTIME` rather than `CLASS`, which the matching does not
+need, so that a test here can assert by reflection that a refactoring has not dropped the mark;
+`SOURCE` would have been a silent no-op. What is deliberately outside it: the mark is not inherited
+by an override, so a call made through a consumer's own implementation type whose `assess` is
+unannotated is not covered, and the grep the consumer-facing documents ask for is what covers it.
+`send` and `sendAsync` are deliberately unmarked — discarding a `PushOutcome` loses the
+`SubscriptionExpired` a caller wanted, but fire-and-forget is a legitimate way to send and the
+ordinary shape of a discarded `CompletableFuture`, so marking either would break correct code.
 
 **A policy is a required argument of both `PushSender` factory methods**
 ([ADR-016](adr/0016-endpoint-policy-is-a-required-decision.md)), not an optional builder step:
@@ -1761,6 +1780,10 @@ The automated suite covers:
   stored as `""` and an `Allowed` carrying nothing and equal by value (`EndpointAssessmentTest`), and
   a policy that answers `null` or throws anything at all read as the defect it is rather than as an
   outcome (`PushSenderEndpointPolicyTest`, `PushSenderSeamConversionTest`);
+- the `CheckReturnValue` mark on `assess` and `assessPayloadSize`, its absence on `send` and
+  `sendAsync`, and the name and retention the analysers reading it depend on — a check against a
+  refactoring dropping it in silence, since nothing in this build compiles worse without it
+  (`CheckReturnValueTest`);
 - the key-material boundary: the hard-coded P-256 constants against two providers' `secp256r1`
   parameters (`P256PublicKeysTest`, `BcFipsP256PublicKeysTest`), the invalid-curve rejection
   shapes at `Subscription` construction (`SubscriptionValueTest`), and — both in

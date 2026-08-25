@@ -27,8 +27,100 @@ key is unique on its own; one naming a role in the document carries its source v
 
 | Moving from | What that release changed |
 |---|---|
+| [`0.3.0`](#from-030) | Two answers that must be read — `EndpointPolicy.assess` and `PushSender.assessPayloadSize` — are marked for static analysers, so a build running one stops compiling a call that discards the answer. No API change. |
 | [`0.2.0`](#from-020) | The endpoint policy answers with a value: `EndpointPolicy.validate` becomes `assess`, returning an `EndpointAssessment`, and `EndpointRejectedException` is removed. Separately, the published signer conformance contract runs one more check, and the Spring Boot starters stop publishing Spring Boot's BOM, and the refusal over the keys `0.2.0` removed is retired. |
 | [`0.1.0`](#from-010) | The result type, the retry loop, the exception taxonomy, one of the two size knobs, six Spring keys, and a bound on the subscription endpoint. |
+
+## From `0.3.0`
+
+`0.3.0` is where this upgrade starts. It is the version this section is written against, and the one
+it names throughout; the release it lands in is deliberately unnamed, for the reason above.
+
+No type, method or property changed. What changed is that two methods now carry an annotation, and
+one kind of build reads it: `EndpointPolicy.assess(URI)` and `PushSender.assessPayloadSize(byte[])`
+are marked as methods whose returned value is the whole of their answer, so a project compiling
+under a static analyser that acts on such a mark finds a call that discards the answer failing where
+it used to compile. That is the whole of this release's obligation, it lands only on code that both
+calls one of those two methods *and* runs such an analyser, and everything else here is unaffected —
+including every application that only sends.
+
+- [A discarded `assess` or `assessPayloadSize` can now fail your build](#a-discarded-assess-or-assesspayloadsize-can-now-fail-your-build)
+- [What the `0.3.0` move does not change](#what-the-030-move-does-not-change)
+- [Checklist for the `0.3.0` move](#checklist-for-the-030-move)
+
+### A discarded `assess` or `assessPayloadSize` can now fail your build
+
+**Who this is about:** a build running Error Prone, or another analyser that recognises an
+annotation named `CheckReturnValue` by its simple name whatever package it comes from. Error Prone's
+[check of that name](https://errorprone.info/bugpattern/CheckReturnValue) is on by default at
+`ERROR` severity, so no configuration of yours switched this on and none is needed to keep it. If
+your build runs no such analyser, this release asks nothing of you at all: an annotation type your
+compilation does not know is ignored, and javac has never had a diagnostic for a discarded return
+value under any option, `-Xlint:all` included.
+
+**What fails.** A call whose answer goes nowhere:
+
+```java
+// Compiles under 0.3.0; an error once the mark is read
+policy.assess(uri);
+sender.assessPayloadSize(payload);
+```
+
+**What to do about it, in order.** First ask whether the discard was the defect the mark exists to
+catch. For `assess` at a registration boundary it almost certainly is: nothing re-checks there, so a
+discarded verdict stores every endpoint a client offers — the hazard the [`0.2.0`](#from-020)
+section below already described, now with a build failure in front of it. Read the answer:
+
+```java
+switch (policy.assess(uri)) {
+    case EndpointAssessment.Allowed() -> store.save(subscription);
+    case EndpointAssessment.Refused r -> {
+        log.info("Registration refused: {}", r.reason());
+        return ResponseEntity.badRequest().build();
+    }
+}
+```
+
+If the discard really is deliberate — a probe in a test, a warm-up call — say so where the compiler
+can see it, rather than switching the check off for the file:
+
+```java
+var unused = policy.assess(uri);
+```
+
+**The mark is not inherited by an override.** A call made through your own implementation type —
+`myPolicy.assess(uri)` where `MyPolicy` is your class rather than the `EndpointPolicy` interface —
+is not covered unless your own overriding method carries an annotation of that name too. So the grep
+the [`0.2.0`](#from-020) section below asks for is not retired by the mark; it is what covers what
+the mark cannot see.
+
+### What the `0.3.0` move does not change
+
+- **The API.** No signature, no return type, no exception, no property key. The annotation is not
+  part of this library's public surface: it is not `public`, it is not exported, you cannot write it
+  in your own code and you never need to.
+- **Your dependencies.** Nothing was added to any module. The mark works by name, so the library
+  declares its own rather than depending on an analyser's.
+- **`send` and `sendAsync`.** Both are deliberately unmarked, and a discarded `PushOutcome` or
+  `CompletableFuture` still compiles everywhere it did. Dropping an outcome does lose real
+  information — a `SubscriptionExpired` above all — but fire-and-forget is a legitimate way to send
+  and it is the ordinary shape of a discarded future, so marking either would break correct code.
+- **javac.** Unchanged, and not going to report any of this. The compiler help here comes from an
+  analyser or from nowhere.
+- **What runs.** Nothing about delivery, classification, cryptography or the endpoint decision moved
+  in this release. A build that compiles after the upgrade behaves exactly as it did before it.
+
+### Checklist for the `0.3.0` move
+
+- [ ] Rebuild. If nothing failed, you are done with this release.
+- [ ] For each `CheckReturnValue` error the build reports, decide which case it is: an answer that
+      should have been read — fix it by reading it — or a genuinely deliberate discard, which
+      becomes `var unused = ...` at that one call site.
+- [ ] Take a registration boundary's error as a defect until you have proved otherwise. It is the
+      one place where nothing re-checks the endpoint, and the row is stored on the strength of that
+      single reading.
+- [ ] Grep for `assess(` anyway, if your own code implements `EndpointPolicy`: a call through your
+      implementation type is invisible to the mark unless your override carries one of its own.
 
 ## From `0.2.0`
 
