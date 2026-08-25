@@ -419,9 +419,9 @@ final class TransportContractHttpTest {
      * would exhaust the test JVM, so a reader that lost its bound fails here by assertion rather than by
      * {@link OutOfMemoryError}.
      */
-    // The reader takes a line one byte at a time and this stream is given to nothing else, so the bulk read a faster
-    // stream would override is never called on it. Overriding it here would be code no test can reach, and the
-    // byte-by-byte delivery is what the ceiling counts.
+    // InputStreamSlowMultibyteRead: the reader takes a line one byte at a time and this stream is given to nothing
+    // else, so the bulk read a faster stream would override is never called on it. Overriding it here would be code
+    // no test can reach, and the byte-by-byte delivery is what the ceiling counts.
     @SuppressWarnings("InputStreamSlowMultibyteRead")
     private static final class EndlessLine extends InputStream {
 
