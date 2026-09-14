@@ -41,7 +41,7 @@ springBoot = "4.0.8"
 # through. No module-level constraint applies it either; a constraint on a published module travels
 # into its metadata. Jackson is not pinned — Spring Boot's own BOM governs it on the starter
 # classpaths, at whatever version the declared floor manages.
-bouncycastle = "1.85.2"
+bouncycastle = "1.86"
 # BC-FIPS — test-only provider for the ES256 provider matrix (registers only DER-format ECDSA,
 # exercising the DER fallback). Isolated in push2u-core's fipsTest source set: bc-fips and stock
 # bcprov ship incompatible org.bouncycastle.crypto classes and can never share a classpath.
