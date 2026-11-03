@@ -61,13 +61,13 @@ checkstyle = "13.9.0"
 pmd = "7.26.0"
 spotbugs = "4.10.3"
 errorprone = "2.51.0"
-nullaway = "0.14.2"
+nullaway = "0.14.3"
 jacoco = "0.8.15"
 palantir = "2.96.0"
 
 # Quality tool Gradle plugins — resolved by the build-logic included build, never by push2u
 # modules themselves.
-spotbugsPlugin = "6.5.12"
+spotbugsPlugin = "6.5.13"
 errorpronePlugin = "5.1.1"
 spotlessPlugin = "8.10.4"
 
