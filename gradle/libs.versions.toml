@@ -68,7 +68,7 @@ palantir = "2.96.0"
 # Quality tool Gradle plugins — resolved by the build-logic included build, never by push2u
 # modules themselves.
 spotbugsPlugin = "6.5.13"
-errorpronePlugin = "5.1.1"
+errorpronePlugin = "5.2.0"
 spotlessPlugin = "8.11.0"
 
 # Release & publishing plugins — build-time only, like the quality stack above: they run in the
